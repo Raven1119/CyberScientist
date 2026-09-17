@@ -1,5 +1,4 @@
 import { useEffect } from 'react'
-import { notifyPairingRequired } from './api'
 import type { RunEvent } from './types'
 import { useStableCallback } from './app-context'
 
@@ -24,15 +23,7 @@ export function useRunEventStream(runId: string | null, onEvent: (event: RunEven
       try {
         const res = await fetch(`/api/v1/runs/${runId}/events?after=${maxSeq}`, {
           signal: abort.signal,
-          credentials: 'same-origin',
         })
-        if (res.status === 401) {
-          const data = await res.json().catch(() => null)
-          if (data?.code === 'PAIRING_REQUIRED') {
-            notifyPairingRequired()
-            return
-          }
-        }
         if (!res.ok || !res.body) {
           throw new Error(`events HTTP ${res.status}`)
         }

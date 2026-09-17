@@ -1,6 +1,5 @@
 import { AppProvider, useApp } from './app-context'
 import type { Page } from './app-context'
-import { PairDialog } from './components'
 import ResearchPage from './pages/ResearchPage'
 import ExperiencePage from './pages/ExperiencePage'
 import SettingsPage from './pages/SettingsPage'
@@ -17,8 +16,16 @@ const CRUMBS: Record<Page, string> = {
   settings: '连接与设置',
 }
 
+export default function App() {
+  return (
+    <AppProvider>
+      <Shell />
+    </AppProvider>
+  )
+}
+
 function Shell() {
-  const { page, setPage, demoMode, healthTime, paired, setPairDialogOpen } = useApp()
+  const { page, setPage, demoMode, healthTime } = useApp()
 
   return (
     <div className="app">
@@ -50,16 +57,9 @@ function Shell() {
         </nav>
         <div className="side-note">
           <strong>一轮实验，一份证据。</strong>
-          大脑判断方向，Prime 自主执行。
+          大脑判断方向，执行器自主执行。
           <br />
           科学计算保留远程来源。
-          <br />
-          <br />
-          {!paired && (
-            <button type="button" className="btn small ghost-light" onClick={() => setPairDialogOpen(true)}>
-              输入配对码
-            </button>
-          )}
         </div>
       </aside>
       <main className="main">
@@ -84,15 +84,6 @@ function Shell() {
           <footer className="footer">CyberScientist · 生产前端 · 数据来自本地后端 API</footer>
         </div>
       </main>
-      <PairDialog />
     </div>
-  )
-}
-
-export default function App() {
-  return (
-    <AppProvider>
-      <Shell />
-    </AppProvider>
   )
 }

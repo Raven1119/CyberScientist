@@ -22,6 +22,14 @@ def _controller() -> RunController:
     return RunController()
 
 
+@pytest.fixture(autouse=True)
+def _demo_mode():
+    """Run 模式快照自 settings；本文件默认 demo，connected 用例自行覆盖。"""
+    settings = config.load_settings()
+    settings["app"]["mode"] = "demo"
+    config.save_settings(settings)
+
+
 async def _wait_for(pred, timeout=15.0):
     deadline = asyncio.get_event_loop().time() + timeout
     while asyncio.get_event_loop().time() < deadline:
@@ -112,7 +120,9 @@ async def test_connected_mode_blocked_without_components(tmp_path):
     _seed_challenge()
     settings = config.load_settings()
     settings["app"]["mode"] = "connected"
-    settings["brain"]["executable"] = ""
+    settings["brain"]["runtime"] = "codex"
+    settings["brain"]["executable"] = str(tmp_path / "no-brain")
+    settings["executor"]["runtime"] = "prime"
     settings["prime"]["executable"] = str(tmp_path / "no-prime")
     config.save_settings(settings)
     c = _controller()

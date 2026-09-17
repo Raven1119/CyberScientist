@@ -17,7 +17,8 @@ from .brains.base import BrainRuntime
 from .brains.codex import CodexBrain
 from .brains.demo import DemoBrain
 from .brains.kimi import KimiBrain
-from .prime import DemoPrime, PrimeRpc, PrimeRuntime
+from .prime import (CodexExecutor, DemoPrime, KimiExecutor, PrimeRpc,
+                    PrimeRuntime)
 
 log = logging.getLogger("cyberscientist.controller")
 
@@ -66,6 +67,9 @@ class RunController:
         self._tasks: dict[str, asyncio.Task] = {}
         self._signals: dict[str, asyncio.Queue] = {}
         self._prime_sessions: dict[str, str] = {}
+        self._pumps: dict[str, asyncio.Task] = {}
+        self._start_pump: dict[str, Any] = {}
+        self._prime_instances: dict[str, Any] = {}
         self._demo_prime = DemoPrime()
         self._brain_sessions: dict[str, Any] = {}
 
@@ -73,16 +77,68 @@ class RunController:
     def _make_brain(self, settings: dict[str, Any]) -> BrainRuntime:
         if settings["app"]["mode"] == "demo":
             return DemoBrain()
-        runtime = settings["brain"]["runtime"]
+        brain_cfg = settings["brain"]
+        runtime = brain_cfg["runtime"]
         if runtime == "codex":
-            return CodexBrain(executable=settings["brain"].get("executable") or None,
-                              model=settings["brain"].get("model_id"))
-        return KimiBrain()
+            return CodexBrain(executable=brain_cfg.get("executable") or None,
+                              model=brain_cfg.get("model_id"),
+                              effort=brain_cfg.get("reasoning_effort"))
+        return KimiBrain(executable=brain_cfg.get("executable") or None,
+                         model=brain_cfg.get("model_id"),
+                         effort=brain_cfg.get("reasoning_effort"))
 
     def _make_prime(self, settings: dict[str, Any]) -> PrimeRuntime:
+        """执行系统三选一：kimi（默认）/ prime / codex；demo 模式仍 DemoPrime。"""
         if settings["app"]["mode"] == "demo":
             return self._demo_prime
-        return PrimeRpc(settings["prime"].get("executable", ""))
+        exec_cfg = settings.get("executor") or {}
+        runtime = exec_cfg.get("runtime", "kimi")
+        if runtime == "prime":
+            import shutil
+            exe = settings["prime"].get("executable") \
+                or shutil.which("prime-agent") or ""
+            return PrimeRpc(exe)
+        if runtime == "codex":
+            return CodexExecutor(
+                executable=exec_cfg.get("executable") or None,
+                model=exec_cfg.get("model_id"),
+                effort=exec_cfg.get("reasoning_effort"))
+        return KimiExecutor(executable=exec_cfg.get("executable") or None,
+                            model=exec_cfg.get("model_id"),
+                            effort=exec_cfg.get("reasoning_effort"))
+
+    def _prime_spec(self, run_id: str, settings: dict[str, Any]) -> dict[str, Any]:
+        """执行器启动参数：工作目录 + 运行时专有配置。"""
+        import os
+        run = self._require_run(run_id)
+        challenge_dir = config.WORKSPACE_DIR / "challenges" / run["challenge_id"]
+        challenge_dir.mkdir(parents=True, exist_ok=True)
+        runtime = (settings.get("executor") or {}).get("runtime", "kimi")
+        spec: dict[str, Any] = {
+            "run_id": run_id,
+            "working_directory": str(challenge_dir),
+        }
+        if runtime == "prime":
+            # Prime 专有：项目隔离 session 目录 + 环境 allowlist + 模型选择
+            profile = next((p for p in settings.get("llm_profiles", [])
+                            if p["id"] == settings["prime"].get("llm_profile_id")),
+                           None)
+            env = {k: os.environ[k] for k in
+                   ("PATH", "SYSTEMROOT", "WINDIR", "TEMP", "TMP", "USERPROFILE",
+                    "HOME", "APPDATA") if k in os.environ}
+            if profile:
+                value = config.resolve_secret(profile.get("secret_ref", ""))
+                if value:
+                    env[profile.get("env_var") or "PRIME_LLM_API_KEY"] = value
+            run_dir = config.WORKSPACE_DIR / "runs" / run_id / "prime"
+            run_dir.mkdir(parents=True, exist_ok=True)
+            spec.update({
+                "session_dir": run_dir,
+                "env": env,
+                "provider": (profile or {}).get("prime_provider"),
+                "model": (profile or {}).get("model_id"),
+            })
+        return spec
 
     # ---------- Run 生命周期 ----------
     def create_run(self, challenge_id: str, mode: str | None = None) -> dict[str, Any]:
@@ -257,6 +313,8 @@ class RunController:
                 return {"status": existing["status"], "deduplicated": True}
             db.execute("UPDATE runs SET phase='cancelled', ended_at=? WHERE id=?",
                        (db.utcnow(), run_id))
+            db.execute("UPDATE trials SET status='interrupted'"
+                       " WHERE run_id=? AND status='active'", (run_id,))
             db.append_event(run_id, "controller", "run.terminated", {
                 "notice": "证据与历史 Attempt 保留；远程 Job 取消属阶段 2 范围"})
             if q:
@@ -272,6 +330,7 @@ class RunController:
         settings = config.load_settings()
         brain = self._make_brain(settings)
         prime = self._make_prime(settings)
+        self._prime_instances[run_id] = prime
         run = self._require_run(run_id)
         try:
             b_session = await brain.open({"working_directory": None})
@@ -282,21 +341,29 @@ class RunController:
                             {"message": str(exc)[:300]})
             return
 
-        prime_sid = await prime.start({"run_id": run_id})
+        prime_sid = await prime.start(self._prime_spec(run_id, settings))
         self._prime_sessions[run_id] = prime_sid
 
-        async def prime_event_pump() -> None:
+        async def prime_event_pump(sid: str) -> None:
             try:
-                async for ev in prime.events(prime_sid):
+                async for ev in prime.events(sid):
                     await q.put({"type": "prime_event", "event": ev})
-                    if ev.get("type") in ("trial.completed", "run.aborted"):
+                    if ev.get("type") in ("trial.completed", "run.aborted",
+                                          "trial.stalled"):
                         break
             except asyncio.CancelledError:
                 raise
             except Exception as exc:  # noqa: BLE001
                 await q.put({"type": "prime_error", "message": str(exc)[:300]})
 
-        pump = asyncio.create_task(prime_event_pump())
+        def start_pump() -> asyncio.Task:
+            task = asyncio.create_task(
+                prime_event_pump(self._prime_sessions[run_id]))
+            self._pumps[run_id] = task
+            return task
+
+        self._start_pump[run_id] = start_pump
+        start_pump()
         try:
             # 启动即唤醒大脑
             await self._brain_review(run_id, brain, b_session, trigger="run_start")
@@ -313,7 +380,7 @@ class RunController:
                                     {"notice": "达到授权时长上限；已暂停新增受控操作"})
                     continue
                 if phase == "pausing":
-                    receipt = await prime.abort(prime_sid)
+                    receipt = await prime.abort(self._prime_sessions[run_id])
                     if receipt.status == "confirmed":
                         db.execute("UPDATE runs SET phase='paused' WHERE id=?",
                                    (run_id,))
@@ -337,7 +404,9 @@ class RunController:
                     continue
                 await self._handle_signal(signal, run_id, q,
                                           brain=brain, b_session=b_session,
-                                          prime=prime, prime_sid=prime_sid)
+                                          prime=prime,
+                                          prime_sid=self._prime_sessions[run_id],
+                                          start_pump=start_pump)
                 if signal["type"] == "steer":
                     # 用户指导立即唤醒一次判断
                     await self._brain_review(run_id, brain, b_session,
@@ -346,7 +415,9 @@ class RunController:
         except asyncio.CancelledError:
             pass
         finally:
-            pump.cancel()
+            pump = self._pumps.pop(run_id, None)
+            if pump:
+                pump.cancel()
             try:
                 await brain.close(b_session)
             except Exception:  # noqa: BLE001
@@ -354,7 +425,9 @@ class RunController:
             self._signals.pop(run_id, None)
             self._tasks.pop(run_id, None)
             self._prime_sessions.pop(run_id, None)
+            self._prime_instances.pop(run_id, None)
             self._brain_sessions.pop(run_id, None)
+            self._start_pump.pop(run_id, None)
 
     def _handle_signal_guarded_pause(self, run_id: str) -> bool:
         """暂停/正在暂停期间：只记账，不驱动 Trial 完成与大脑判断。"""
@@ -383,6 +456,29 @@ class RunController:
                                 {"trial_id": trial_id})
                 await self._brain_review(run_id, ctx["brain"], ctx["b_session"],
                                          trigger="trial_done")
+            if etype == "trial.stalled":
+                # 执行器挂起：如实记失败，交大脑裁决（finish/换路线）
+                await ctx["prime"].abort(ctx["prime_sid"])
+                db.execute("UPDATE trials SET status='failed' WHERE id=?"
+                           " AND status='active'", (trial_id,))
+                db.append_event(run_id, "controller", "trial.stalled",
+                                {"trial_id": trial_id,
+                                 "notice": "事件流超时判挂；已 abort"})
+                # abort 后旧会话拒绝新输入（"queued session input is
+                # suspended"），必须换全新会话并重启事件泵
+                try:
+                    await ctx["prime"].close(ctx["prime_sid"])
+                except Exception:  # noqa: BLE001
+                    pass
+                settings = config.load_settings()
+                new_sid = await ctx["prime"].start(
+                    self._prime_spec(run_id, settings))
+                self._prime_sessions[run_id] = new_sid
+                ctx["start_pump"]()
+                db.append_event(run_id, "prime", "prime.session_restarted",
+                                {"reason": "trial.stalled"}, trial_id=trial_id)
+                await self._brain_review(run_id, ctx["brain"], ctx["b_session"],
+                                         trigger="trial_stalled")
             if etype == "run.aborted":
                 db.append_event(run_id, "prime", "prime.aborted",
                                 {"detail": ev.get("detail", "")})
@@ -406,6 +502,10 @@ class RunController:
                                         {"status": receipt.status,
                                          "detail": receipt.detail},
                                         trial_id=trial_id)
+                        if receipt.status == "accepted":
+                            starter = self._start_pump.get(run_id)
+                            if starter:
+                                starter()
         elif stype in ("pause", "terminate"):
             pass  # 状态转换已在 control()/主循环处理
         elif stype == "prime_error":
@@ -428,8 +528,14 @@ class RunController:
                             {"limit": defaults["max_brain_reviews"]})
             return
 
-        trial = db.query_one("SELECT * FROM trials WHERE id=?",
-                             (run["current_trial_id"],)) if run["current_trial_id"] else None
+        active_tid = self._active_trial_id(run)
+        if active_tid:
+            trial = db.query_one("SELECT * FROM trials WHERE id=?", (active_tid,))
+        else:
+            # 无活跃 Trial 时仍汇报最近一次 Trial 的状态（done/failed），
+            # 否则大脑拿不到 latest_trial_status，只会永远 wait
+            trial = db.query_one("SELECT * FROM trials WHERE run_id=?"
+                                 " ORDER BY rowid DESC LIMIT 1", (run_id,))
         recent = db.events_after(run_id, max(0, self._last_seq(run_id) - 20))
         packet = {
             "run_id": run_id,
@@ -454,6 +560,12 @@ class RunController:
         }
         db.execute("UPDATE runs SET brain_reviews_used=? WHERE id=?",
                    (reviews_used + 1, run_id))
+        db.append_event(run_id, "brain", "brain.review_started",
+                        {"trigger": trigger,
+                         "review_index": reviews_used + 1,
+                         "trial_status": trial["status"] if trial else None,
+                         "guidance": (user_guidance or "")[:200] or None})
+        raw_parts: list[str] = []
         try:
             async for ev in brain.review(b_session, packet):
                 if ev.type == "decision":
@@ -465,10 +577,14 @@ class RunController:
                 elif ev.type == "approval_request":
                     db.append_event(run_id, "brain", "brain.approval_request",
                                     ev.payload)
-                # token/message：高频增量只记最后一条
+                elif ev.type in ("token", "message", "raw"):
+                    raw_parts.append(str(ev.payload.get("text", "")))
         except Exception as exc:  # noqa: BLE001
             db.append_event(run_id, "brain", "brain.error",
                             {"message": f"{exc.__class__.__name__}: {str(exc)[:300]}"})
+        if raw_parts:
+            db.append_event(run_id, "brain", "brain.raw_output",
+                            {"text": "".join(raw_parts)[:2000]})
 
     def _last_seq(self, run_id: str) -> int:
         row = db.query_one("SELECT COALESCE(MAX(seq),0) AS s FROM events WHERE run_id=?",
@@ -489,6 +605,17 @@ class RunController:
                              "title": item["title"]})
         return manifest[:settings["memory"]["max_global_entries"]
                         + settings["memory"]["max_challenge_entries"]]
+
+    @staticmethod
+    def _active_trial_id(run: Any) -> str | None:
+        tid = run["current_trial_id"]
+        if not tid:
+            return None
+        t = db.query_one("SELECT status FROM trials WHERE id=?", (tid,))
+        return tid if (t and t["status"] == "active") else None
+
+    def _has_active_trial(self, run: Any) -> bool:
+        return self._active_trial_id(run) is not None
 
     async def _apply_decision(self, run_id: str, dec: dict[str, Any],
                               packet: dict[str, Any], brain: BrainRuntime,
@@ -511,8 +638,8 @@ class RunController:
                           f"当前 {run['state_version']}；保存但不执行"})
             return
         semantic = decision_mod.validate_semantics(
-            dec, has_active_trial=bool(run["current_trial_id"]),
-            current_trial_id=run["current_trial_id"],
+            dec, has_active_trial=self._has_active_trial(run),
+            current_trial_id=self._active_trial_id(run),
             allow_formal_submission=settings["policy"]["allow_formal_submission"])
         if semantic:
             db.append_event(run_id, "brain", "brain.decision_rejected",
@@ -539,7 +666,7 @@ class RunController:
                                 {"reason": str(exc)[:200]})
 
         prime_sid = self._prime_sessions.get(run_id)
-        prime = self._make_prime(settings)
+        prime = self._prime_instances.get(run_id) or self._make_prime(settings)
         for action in dec["actions"]:
             op = action["op"]
             if op == "start_trial":
@@ -570,6 +697,11 @@ class RunController:
                 db.append_event(run_id, "prime", "prime.task_accepted",
                                 {"status": receipt.status, "detail": receipt.detail},
                                 trial_id=trial_id)
+                if receipt.status == "accepted":
+                    # 泵在 trial.completed 后已退出；新回合需要重新挂接
+                    starter = self._start_pump.get(run_id)
+                    if starter:
+                        starter()
             elif op == "steer":
                 receipt = await prime.steer(prime_sid, action["message"])
                 db.append_event(run_id, "prime", "prime.steer", {

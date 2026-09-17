@@ -41,3 +41,24 @@
 | 用户指导文本会进入事件库与操作日志 | 入库前截断（2000 字符）并遮蔽明显密钥形态（sk-/AKIA/Bearer 等） | `controller._redact` + 审查修复 |
 | `model_turns` 等授权上限在阶段 1 无真实模型调用路径可强制 | Trial 数/运行时长/大脑判断数立即强制；`model_turns` 在 budget 响应中显式标 `enforced:false` + 原因 | `controller._budget_status` |
 | 暂停期间 Demo 执行器仍会发完脚本事件 | 控制器在 pausing/paused 期间只记账不推进 Trial/大脑；恢复时若执行器空闲则重新下发任务（`prime.task_resumed`） | smoke 暂停/恢复/继续闭环 22/22 |
+| 官方 install.sh 仅支持 macOS/Linux，Windows 无官方安装路径 | 手动复现脚本行为：R2 发布桶解析 stable 版本 → 下载 tarball + SHA256SUMS → 校验 → `npm install -g`（v0.9.5，190 包） | `prime-agent --version` = 0.9.5；INTEGRATION_STATUS.md |
+| Prime RPC 实为 type-tagged JSONL（`{"type":...}`+可选 id 关联、响应 `{"type":"response"}`、`extension_ui_request` 需应答），非 JSON-RPC | 适配器按官方 docs/rpc.md v0.9.5 重写为 `PrimeJsonlClient`；JsonRpcStdio 保留给 Codex | get_state 探针成功，返回字段与文档一致 |
+| OpenRouter 免费 GLM（`z-ai/glm-5.2:free`）不支持工具调用；智谱「GLM-5.3-Flash 夜间畅用」免费仅限 ZCode | Prime 执行器模型改用 `deepseek/deepseek-v4.1-flash`（用户授权付费，$0.15/$0.6 每 M token，工具支持）；密钥经 env 引用不入 models.json | 真实工具往返 PASS：ipython 写读文件，成本 $0.00185775，transcript 存 `checks/fixtures/real/` |
+| npm 全局 bin 的 `.cmd` shim 不能经 CreateProcess 直接执行 | `PrimeRpc._resolve_argv` 解析全路径并用 `cmd /c` 包装 | spawn 矩阵测试 + 往返探针 |
+
+## 施工期记录（2026-09-18，阶段 1.5/1.6：Kimi 大脑 + 执行系统三选一）
+
+| 事实 | 最小修改 | 实测证据 |
+|---|---|---|
+| Kimi Code 2.0（TypeScript 重写版）已移除 `--wire`；程序化接入面是 `kimi acp`（ACP，JSON-RPC 2.0 stdio） | 大脑适配器改为 ACP：`initialize` → `session/new`（**必须带 `mcpServers: []`**）→ `session/prompt` | `checks/probe_kimi_brain.py` PASS；agentInfo=Kimi Code CLI 2.0.0 |
+| ACP 流式 chunk 是增量片段 | 空字符串无缝拼接（不可用换行），否则 Decision JSON 被切碎 | 探针 transcript；`brains/kimi.py` |
+| ACP 反向 `session/request_permission` 应答形状未按标准形状生效（两种形状实测均判 rejected） | 执行器会话改用 `session/set_config_option {configId:"mode", value:"yolo"}`（引擎内自动批准），工具事件仍全程留痕；保留兜底自动同意分支 | `checks/probe_kimi_executor*.py`：yolo 后零权限请求、写文件 PASS |
+| ACP `session/set_config_option` 支持 `model`/`thinking`（low\|high\|max）/`mode` | 思考强度 UI 通用档映射：low→low、medium→high、high→high、xhigh→max；大脑与执行器各自生效 | 探针 v2 实测 setter 返回更新后的 configOptions |
+| Prime 的模型流式调用可无超时悬挂（实测 8 分钟死寂、CPU 全闲） | 执行器事件流加 240s 无事件看门狗（`with_stall_watchdog`），产 `trial.stalled`；控制器 abort+记 failed+大脑裁决 | run_7865220639 事件流；run_19c53aed8c 看门狗触发实测 |
+| abort 后 Prime 会话拒绝新输入（"queued session input is suspended"）且事件泵已退出 | stall 处置改为：关旧会话、开全新会话、重启事件泵 | run_19c53aed8c `prime.task_accepted rejected` 事件 |
+| Trial 正常完成后控制器事件泵退出，同会话下一 Trial 无事件来源（Kimi 执行器实测卡死） | `_apply_decision` start_trial 受理后重启泵（`_start_pump` 回调）；resume 路径同样 | run_82d3af8c4e 卡死 → 修复后 run_9785db28ab 两 Trial 连续完成 |
+| Trial done 后 `_active_trial_id` 为 None 导致大脑 packet 丢 `latest_trial_status` | 无活跃 Trial 时回填最近一次 Trial | demo 闭环测试恢复通过 |
+| 单用户本地工具，配对码/CSRF 是多余摩擦 | 删除配对码、会话 cookie、CSRF；后端仅绑 127.0.0.1，无任何认证（用户明确确认该边界） | 用户决定；前端配对门已删 |
+| Prime 的 `~/.prime/agent/models.json` 手工维护会与 secrets.json 漂移 | 后端托管：secrets/settings 变更与启动时从 `llm_profiles`+secrets 重建 models.json；`_status.prime_models_synced` 真实回读校验 | PUT settings 后 `_status.prime_models_synced=true` 实测 |
+| 执行系统选型落地为三选一 | `settings.executor.runtime` ∈ kimi（默认）/prime/codex；包目录仍名 `prime/`（改名 executors 留债阶段 2） | controller._make_prime 分发；run_9785db28ab 默认路径闭环 |
+| Codex 执行器无额度无法实测 | `prime/codex_exec.py` 保守实现并显式标「未验证」；不作为默认可用路径宣传 | STATUS.md 未验证清单 |

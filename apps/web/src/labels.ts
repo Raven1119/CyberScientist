@@ -39,13 +39,18 @@ const EVENT_LABELS: Record<string, string> = {
   'run.finished': '研究完成',
   'run.blocked': '研究被阻塞',
   'brain.decision': '大脑决策',
+  'brain.review_started': '大脑开始判断',
+  'brain.raw_output': '大脑原始输出',
   'brain.wait': '大脑等待',
   'brain.error': '大脑出错',
   'prime.task_accepted': '任务已接受',
+  'prime.approval.granted': '工具自动批准',
   'prime.trial.started': 'Trial 开始',
   'prime.execution.progress': '执行进度',
   'prime.checkpoint.created': '检查点已创建',
   'prime.trial.completed': 'Trial 完成',
+  'prime.trial.stalled': '执行器挂起已处置',
+  'controller.trial.stalled': '执行器挂起已处置',
   'prime.steer': '指导已接收',
   'prime.steer.consumed': '指导已生效',
   'trial.created': 'Trial 创建',
@@ -71,16 +76,26 @@ export function eventText(event: {
   const message = typeof p.message === 'string' ? p.message : null
   const goal = typeof p.goal === 'string' ? p.goal : null
   const text = typeof p.text === 'string' ? p.text : null
+  const trigger = typeof p.trigger === 'string' ? p.trigger : null
 
   switch (event.type) {
     case 'brain.decision':
       return summary ?? detail ?? '大脑给出决策。'
+    case 'brain.review_started':
+      return trigger ? `触发：${trigger}` : '大脑开始判断。'
+    case 'brain.raw_output':
+      return text ?? ''
     case 'brain.wait':
       return reason ?? detail ?? '大脑等待中。'
     case 'brain.error':
       return message ?? detail ?? '大脑报告错误。'
+    case 'prime.approval.granted':
+      return detail ?? '执行器工具已自动批准。'
     case 'prime.execution.progress':
       return detail ?? summary ?? '执行器推进中。'
+    case 'prime.trial.stalled':
+    case 'controller.trial.stalled':
+      return reason ?? message ?? detail ?? '执行器挂起已处置。'
     case 'prime.steer':
     case 'prime.steer.consumed':
       return text ?? detail ?? ''

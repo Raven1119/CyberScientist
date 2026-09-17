@@ -209,6 +209,10 @@ a {
   background: var(--amber-soft);
   color: var(--amber);
 }
+.badge.purple {
+  background: #f0ebf8;
+  color: #6b4fa3;
+}
 .badge.danger {
   background: var(--danger-soft);
   color: var(--danger);
@@ -570,8 +574,8 @@ textarea.editor {
   color: #44546a;
 }
 .avatar.src-brain {
-  background: var(--accent-soft);
-  color: var(--accent);
+  background: #f0ebf8;
+  color: #6b4fa3;
 }
 .avatar.src-prime {
   background: var(--blue-soft);
@@ -581,8 +585,13 @@ textarea.editor {
   background: var(--amber-soft);
   color: var(--amber);
 }
+.avatar.src-demo {
+  background: #dfe3e8;
+  color: #3d4956;
+}
 .event-body {
   min-width: 0;
+  flex: 1;
 }
 .event-top {
   display: flex;
@@ -590,15 +599,60 @@ textarea.editor {
   gap: 10px;
   font-size: 12px;
   color: var(--muted);
+  align-items: center;
 }
 .event-role {
   font-weight: 650;
   color: var(--ink);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.event-type {
+  font-weight: 550;
 }
 .event-body p {
-  margin: 2px 0 0;
+  margin: 4px 0 0;
   white-space: pre-wrap;
   word-break: break-word;
+}
+.event-approval {
+  background: var(--amber-soft);
+  border: 1px solid #ecd9a8;
+  border-radius: 10px;
+  padding: 8px 10px;
+}
+.event-approval-text {
+  color: var(--amber);
+  font-weight: 550;
+}
+.event-stalled {
+  background: var(--danger-soft);
+  border: 1px solid #e5c0c0;
+  border-radius: 10px;
+  padding: 8px 10px;
+}
+.event-stalled-text {
+  color: var(--danger);
+  font-weight: 550;
+}
+.event-raw {
+  font-family: ui-monospace, 'Cascadia Code', Consolas, 'Courier New', monospace;
+  font-size: 12px;
+  color: var(--muted);
+}
+.link-btn {
+  border: 0;
+  background: none;
+  color: var(--accent);
+  padding: 2px 0;
+  font-size: 12px;
+  font-weight: 550;
+}
+.link-btn:hover:not(:disabled) {
+  text-decoration: underline;
+  background: none;
 }
 .jump-latest {
   position: sticky;
@@ -748,16 +802,6 @@ textarea.editor {
   border-radius: 10px;
   padding: 12px 14px 6px;
   margin-top: 12px;
-}
-.pair-inline {
-  display: inline-flex;
-  gap: 8px;
-  align-items: center;
-  margin-left: 10px;
-}
-.pair-inline input {
-  width: 160px;
-  padding: 6px 10px;
 }
 .secret-field .secret-row {
   display: flex;

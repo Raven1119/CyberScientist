@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
-import { api, registerPairingHandler } from './api'
-import type { HealthInfo, SessionInfo } from './types'
+import { api } from './api'
+import type { HealthInfo } from './types'
 
 export type Page = 'research' | 'experience' | 'settings'
 
@@ -9,11 +9,7 @@ interface AppState {
   page: Page
   setPage: (page: Page) => void
   demoMode: boolean
-  paired: boolean
-  setPaired: (paired: boolean) => void
   healthTime: string | null
-  pairDialogOpen: boolean
-  setPairDialogOpen: (open: boolean) => void
   currentChallengeId: string | null
   setCurrentChallengeId: (id: string | null) => void
   toast: (message: string) => void
@@ -33,8 +29,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [page, setPage] = useState<Page>('research')
   const [demoMode, setDemoMode] = useState(false)
   const [healthTime, setHealthTime] = useState<string | null>(null)
-  const [paired, setPaired] = useState<boolean | null>(null)
-  const [pairDialogOpen, setPairDialogOpen] = useState(false)
   const [currentChallengeId, setCurrentChallengeId] = useState<string | null>(null)
   const [toasts, setToasts] = useState<{ id: number; text: string }[]>([])
 
@@ -47,7 +41,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [])
 
   useEffect(() => {
-    registerPairingHandler(() => setPairDialogOpen(true))
     api
       .get<HealthInfo>('/api/v1/health')
       .then((h) => {
@@ -57,21 +50,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
       .catch(() => {
         toast('无法连接后端，请确认服务已在 127.0.0.1:8765 运行。')
       })
-    api
-      .get<SessionInfo>('/api/v1/session')
-      .then((s) => setPaired(s.paired))
-      .catch(() => setPaired(false))
   }, [toast])
 
   const state: AppState = {
     page,
     setPage,
     demoMode,
-    paired: paired === true,
-    setPaired,
     healthTime,
-    pairDialogOpen,
-    setPairDialogOpen,
     currentChallengeId,
     setCurrentChallengeId,
     toast,

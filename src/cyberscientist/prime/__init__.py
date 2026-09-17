@@ -34,6 +34,26 @@ class PrimeRuntime(Protocol):
     def events(self, session_id: str) -> AsyncIterator[dict[str, Any]]: ...
 
 
+async def with_stall_watchdog(events: AsyncIterator[dict[str, Any]],
+                              timeout: float) -> AsyncIterator[dict[str, Any]]:
+    """执行器事件流挂起看门狗：timeout 秒无任何事件则判挂并终止流。
+
+    典型场景：模型流式调用无超时悬挂（Prime/DeepSeek 实测 8 分钟死寂）。
+    绝不静默等待——如实上报 trial.stalled，由控制器处置。
+    """
+    it = events.__aiter__()
+    while True:
+        try:
+            ev = await asyncio.wait_for(it.__anext__(), timeout)
+        except StopAsyncIteration:
+            return
+        except asyncio.TimeoutError:
+            yield {"type": "trial.stalled",
+                   "detail": f"{int(timeout)}s 无执行器事件，判定挂起"}
+            return
+        yield ev
+
+
 class DemoPrime:
     """脚本化执行器：驱动演示 Run 的事件流，不调用任何外部服务。"""
 
@@ -104,53 +124,6 @@ class DemoPrime:
             yield await q.get()
 
 
-class PrimeRpc:
-    """prime-agent --mode rpc 适配壳。
-
-    上游协议细节（请求/响应帧形状）尚未在本机核实——prime-agent 未安装。
-    适配器只做两件事：inspect 如实报告未安装；协议发送前以 get_state
-    最小探针为准，未核实前不把任何帧语义当成已确认。
-    """
-
-    kind = "prime-rpc"
-
-    def __init__(self, executable: str):
-        self.executable = executable
-        self._verified = False
-
-    async def inspect(self) -> PrimeHealth:
-        import os
-        if not self.executable or not os.path.exists(self.executable):
-            return PrimeHealth(
-                installed=False,
-                detail="prime-agent 未安装；RPC 协议（prompt/steer/abort/get_state，"
-                       "stdin/stdout JSONL）按官方文档实现但未经真实探针核实",
-                capabilities={"resume_conversation": False,
-                              "steer_delivery": False,
-                              "usage_reporting": False})
-        return PrimeHealth(
-            installed=True, detail="可执行文件存在，但 RPC 帧格式未经 get_state "
-                                   "探针核实，能力标记保持保守",
-            capabilities={"resume_conversation": False,
-                          "steer_delivery": False,
-                          "usage_reporting": False})
-
-    async def start(self, spec: dict[str, Any]) -> str:
-        raise RuntimeError("Prime RPC 未经 get_state 探针核实，拒绝启动真实会话")
-
-    async def prompt(self, session_id: str, text: str) -> ActionReceipt:
-        return ActionReceipt(status="rejected", detail="Prime 未接入")
-
-    async def steer(self, session_id: str, text: str) -> ActionReceipt:
-        return ActionReceipt(status="rejected", detail="Prime 未接入")
-
-    async def abort(self, session_id: str) -> ActionReceipt:
-        return ActionReceipt(status="rejected", detail="Prime 未接入")
-
-    async def state(self, session_id: str) -> dict[str, Any]:
-        return {"status": "unavailable"}
-
-    async def events(self, session_id: str) -> AsyncIterator[dict[str, Any]]:
-        if False:
-            yield {}
-        return
+from .rpc import PrimeJsonlClient, PrimeRpc  # noqa: E402
+from .kimi_acp import KimiExecutor  # noqa: E402
+from .codex_exec import CodexExecutor  # noqa: E402

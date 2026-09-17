@@ -60,10 +60,38 @@ def probe_command(name: str, *candidates: str) -> dict:
             "version": "未在 PATH 或常见安装位置发现"}
 
 
+def probe_prime() -> dict:
+    import shutil
+    exe = shutil.which("prime-agent")
+    result: dict = {"executable": exe or "(未找到)", "probes": []}
+    if exe:
+        from cyberscientist.prime import PrimeRpc
+        try:
+            v = subprocess.run([exe, "--version"], capture_output=True, text=True,
+                               timeout=30)
+            result["probes"].append({"cmd": "prime-agent --version",
+                                     "ok": v.returncode == 0,
+                                     "output": (v.stdout or v.stderr).strip()[:200]})
+        except Exception as exc:  # noqa: BLE001
+            result["probes"].append({"cmd": "prime-agent --version", "ok": False,
+                                     "output": f"{exc.__class__.__name__}: {exc}"})
+        try:
+            health = asyncio.run(PrimeRpc(exe).inspect())
+            result["probes"].append({
+                "cmd": "prime-agent --mode rpc (get_state)",
+                "ok": health.installed and "探针成功" in health.detail,
+                "output": health.detail,
+                "state_keys": getattr(health, "raw_state_keys", [])})
+        except Exception as exc:  # noqa: BLE001
+            result["probes"].append({"cmd": "prime-agent --mode rpc", "ok": False,
+                                     "output": f"{exc.__class__.__name__}: {exc}"})
+    return result
+
+
 def main() -> None:
     date = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     codex = probe_codex()
-    prime = probe_command("prime-agent", "prime-agent", "prime")
+    prime = probe_prime()
     bohr = probe_command("bohr", "bohr")
     kimi = probe_command("kimi", "kimi", "kimi-code")
 
@@ -82,10 +110,17 @@ def main() -> None:
               "- 未证实：thread/start、turn/start 的字段形状与终态事件（需一次授权的模型往返）；\n",
               "  turn/interrupt、thread/resume、审批请求处理。能力标记保持保守。\n"]
     lines += ["\n## Prime Agent\n",
-              f"- 安装：{'是' if prime['installed'] else '否'}（{prime['path']}）\n",
-              f"- 版本：{prime['version']}\n",
-              "- RPC 协议（`prime-agent --mode rpc`，JSONL stdin/stdout）按官方仓库文档实现适配壳，"
-              "未经真实探针核实；可执行文件缺失时不启动真实会话。\n"]
+              f"- 可执行文件：`{prime['executable']}`\n"]
+    for p in prime["probes"]:
+        lines.append(f"- `{'✅' if p['ok'] else '❌'} {p['cmd']}` → {p.get('output', '')[:220]}\n")
+    if prime["probes"] and prime["probes"][-1].get("state_keys"):
+        lines.append(f"- get_state 返回字段（原样记录）: `{', '.join(prime['probes'][-1]['state_keys'])}`\n")
+    lines += ["- 已证实：版本探针 + RPC 模式启动 + `get_state` 零模型调用响应"
+              "（sessionId/isStreaming/steeringMode 等字段与官方文档一致）。\n",
+              "- 已证实（文档级，未实测）：prompt/steer/abort 命令形状、steer 排队语义、"
+              "get_session_stats 用量/成本。\n",
+              "- 未证实：真实模型回合（需用户授权额度与模型供应商配置）；"
+              "项目隔离 `--session-dir` 与自定义 models.json 的两 Profile 不串配置测试。\n"]
     lines += ["\n## bohr（Bohrium CLI）\n",
               f"- 安装：{'是' if bohr['installed'] else '否'}（{bohr['path']}）\n",
               f"- 版本：{bohr['version']}\n",

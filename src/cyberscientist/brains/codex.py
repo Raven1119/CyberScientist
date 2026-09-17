@@ -13,13 +13,13 @@ import os
 import re
 from typing import Any, AsyncIterator
 
+from ..decision_extraction import extract_decision
 from ..jsonrpc_stdio import JsonRpcStdio, ProtocolError
 from .base import BrainEvent, RuntimeHealth, SessionRef
 
 log = logging.getLogger("cyberscientist.brain.codex")
 
 CLIENT_INFO = {"name": "cyberscientist", "version": "0.1.0"}
-DECISION_RE = re.compile(r"\{.*\}", re.DOTALL)
 
 
 def default_executable() -> str | None:
@@ -43,9 +43,11 @@ def _which(name: str) -> str | None:
 class CodexBrain:
     kind = "codex"
 
-    def __init__(self, executable: str | None = None, model: str | None = None):
+    def __init__(self, executable: str | None = None, model: str | None = None,
+                 effort: str | None = None):
         self.executable = executable or default_executable() or ""
         self.model = model
+        self.effort = effort
         self.rpc: JsonRpcStdio | None = None
         self.server_version: str | None = None
         self.capabilities: dict[str, bool] = {
@@ -106,9 +108,18 @@ class CodexBrain:
         }
         if self.model:
             params["model"] = self.model
+        if self.effort:
+            params["effort"] = self.effort
         if spec.get("instructions"):
             params["userInstructions"] = spec["instructions"]
-        result = await self.rpc.request("thread/start", params, timeout=30)
+        try:
+            result = await self.rpc.request("thread/start", params, timeout=30)
+        except ProtocolError:
+            # 旧版本 thread/start 不支持 effort：降级重试一次
+            if "effort" not in params:
+                raise
+            params.pop("effort")
+            result = await self.rpc.request("thread/start", params, timeout=30)
         thread = result.get("thread", result)
         return SessionRef(runtime="codex", session_id=thread["id"],
                           raw={"thread": thread})
@@ -169,7 +180,7 @@ class CodexBrain:
         if error_msg:
             yield BrainEvent("error", {"message": error_msg})
             return
-        decision = self._extract_decision("\n".join(final_text), packet)
+        decision = extract_decision("\n".join(final_text), packet)
         if decision is None:
             yield BrainEvent("error",
                              {"message": "最终消息中未找到合法 Decision JSON"})
@@ -180,31 +191,24 @@ class CodexBrain:
     def _render_prompt(packet: dict[str, Any]) -> str:
         return (
             "你是 CyberScientist 的大脑，负责研究方向的判断，不直接执行工具。\n"
-            "根据下面的 ReviewPacket 做出一次判断。只输出一个 JSON 代码块，"
-            "内容必须符合 CyberScientist Decision schema（schema_version=1），"
-            "不要输出其他文字。\n\n"
+            "根据下面的 ReviewPacket 做出一次判断。只输出一个 JSON 代码块，不要输出其他文字。\n\n"
+            "Decision 结构（必须严格遵守，不得增删顶层字段）：\n"
+            '{"schema_version":1,"decision_id":"任意唯一字符串",'
+            '"run_id":"见 ReviewPacket","observed_state_version":见 ReviewPacket,'
+            '"summary":"一句话判断","evidence_refs":["引用见 ReviewPacket 事件"],'
+            '"actions":[{"op":"..."}],"experience_proposals":[]}\n'
+            "actions 中每个元素只能是以下形状之一（1-3 个，最多一个主动作）：\n"
+            '- {"op":"start_trial","goal":"...","success_check":"..."}\n'
+            '- {"op":"steer","trial_id":"当前 Trial","message":"..."}\n'
+            '- {"op":"wait","reason":"..."}\n'
+            '- {"op":"pause","reason":"..."}\n'
+            '- {"op":"refresh_platform","reason":"..."}\n'
+            '- {"op":"request_submission","trial_id":"...","bundle_manifest_ref":"..."}\n'
+            '- {"op":"promote_experience","experience_id":"...","revision_hash":"...",'
+            '"reason":"...","evidence_refs":["..."]}\n'
+            '- {"op":"finish","reason":"..."}\n\n'
             f"ReviewPacket:\n```json\n{json.dumps(packet, ensure_ascii=False)}\n```"
         )
-
-    @staticmethod
-    def _extract_decision(text: str, packet: dict[str, Any]) -> dict[str, Any] | None:
-        candidates = []
-        fence = re.search(r"```(?:json)?\s*\n(.*?)```", text, re.DOTALL)
-        if fence:
-            candidates.append(fence.group(1))
-        m = DECISION_RE.search(text)
-        if m:
-            candidates.append(m.group(0))
-        candidates.append(text)
-        for raw in candidates:
-            try:
-                obj = json.loads(raw)
-            except json.JSONDecodeError:
-                continue
-            if isinstance(obj, dict) and obj.get("schema_version") == 1:
-                obj.setdefault("run_id", packet.get("run_id", ""))
-                return obj
-        return None
 
     async def cancel(self, session: SessionRef) -> dict[str, Any]:
         if not self.rpc:

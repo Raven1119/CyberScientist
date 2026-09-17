@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useState } from 'react'
-import { api, pair } from '../api'
+import { api } from '../api'
 import { useApp } from '../app-context'
 import { Badge } from '../components'
 import { formatTime } from '../labels'
-import type { ConnectionTestResult, LlmProfile, Settings } from '../types'
+import type { ConnectionTestResult, LlmProfile, ReasoningEffort, Settings } from '../types'
 
-type ConnId = 'brain' | 'prime' | 'playground' | 'bohrium'
+type ConnId = 'brain' | 'executor' | 'prime' | 'playground' | 'bohrium'
 
 interface ConnState {
   result?: ConnectionTestResult
@@ -17,38 +17,78 @@ interface ConnState {
 
 const PROTOCOLS = ['openai_chat_completions', 'openai_responses', 'anthropic_messages']
 
+const EFFORT_OPTIONS: Record<string, { value: ReasoningEffort; label: string }[]> = {
+  kimi: [
+    { value: 'low', label: 'low · 快' },
+    { value: 'high', label: 'high · 深（默认）' },
+    { value: 'max', label: 'max · 最深' },
+  ],
+  codex: [
+    { value: 'low', label: 'low · 快' },
+    { value: 'medium', label: 'medium · 均衡' },
+    { value: 'high', label: 'high · 深（默认）' },
+    { value: 'xhigh', label: 'xhigh · 最深' },
+  ],
+}
+EFFORT_OPTIONS.prime = EFFORT_OPTIONS.codex
+
+const DEFAULT_EFFORT: ReasoningEffort = 'high'
+
+function effortsFor(runtime: string): { value: ReasoningEffort; label: string }[] {
+  return EFFORT_OPTIONS[runtime] ?? EFFORT_OPTIONS.codex
+}
+
+function normalizeEffort(runtime: string, value: ReasoningEffort): ReasoningEffort {
+  return effortsFor(runtime).some((e) => e.value === value) ? value : DEFAULT_EFFORT
+}
+
+const BRAIN_MODEL_DEFAULTS: Record<string, string> = {
+  kimi: 'kimi-code/k3',
+  codex: 'gpt-6-astra',
+}
+
+const EXECUTOR_MODEL_DEFAULTS: Record<string, string> = {
+  kimi: 'kimi-code/k3-256k',
+  codex: 'gpt-5.6-terra',
+}
+
+const EXECUTOR_RUNTIME_LABELS: Record<string, string> = {
+  kimi: 'Kimi Code',
+  prime: 'Prime Agent',
+  codex: 'Codex',
+}
+
 export default function SettingsPage() {
-  const { toast, paired, setPaired } = useApp()
+  const { toast } = useApp()
   const [settings, setSettings] = useState<Settings | null>(null)
   const [baseRevision, setBaseRevision] = useState(0)
   const [conns, setConns] = useState<Record<ConnId, ConnState>>({
     brain: {},
+    executor: {},
     prime: {},
     playground: {},
     bohrium: {},
   })
   const [confirmSpend, setConfirmSpend] = useState<Record<ConnId, boolean>>({
     brain: false,
+    executor: false,
     prime: false,
     playground: false,
     bohrium: false,
   })
-  const [pairCode, setPairCode] = useState('')
-  const [pairBusy, setPairBusy] = useState(false)
-  const [pairError, setPairError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
 
+  const reload = useCallback(async () => {
+    const fresh = await api.get<Settings>('/api/v1/settings')
+    setSettings(fresh)
+    setBaseRevision(fresh.revision)
+  }, [])
+
   useEffect(() => {
-    api
-      .get<Settings>('/api/v1/settings')
-      .then((s) => {
-        setSettings(s)
-        setBaseRevision(s.revision)
-      })
-      .catch((err) => {
-        if (err instanceof Error) toast('加载设置失败：' + err.message)
-      })
-  }, [toast])
+    reload().catch((err) => {
+      if (err instanceof Error) toast('加载设置失败：' + err.message)
+    })
+  }, [reload, toast])
 
   const update = useCallback((fn: (s: Settings) => Settings) => {
     setSettings((prev) => (prev ? fn(structuredClone(prev)) : prev))
@@ -60,33 +100,11 @@ export default function SettingsPage() {
     try {
       await api.put('/api/v1/settings', { settings, base_revision: baseRevision })
       toast('设置已保存。')
-      const fresh = await api.get<Settings>('/api/v1/settings')
-      setSettings(fresh)
-      setBaseRevision(fresh.revision)
+      await reload()
     } catch (err) {
       toast('保存设置失败：' + (err instanceof Error ? err.message : String(err)))
     } finally {
       setSaving(false)
-    }
-  }
-
-  async function submitPair() {
-    const code = pairCode.trim()
-    if (!code) {
-      setPairError('请输入配对码。')
-      return
-    }
-    setPairBusy(true)
-    setPairError(null)
-    try {
-      await pair(code)
-      setPaired(true)
-      setPairCode('')
-      toast('配对成功。')
-    } catch (err) {
-      setPairError(err instanceof Error ? err.message : '配对失败。')
-    } finally {
-      setPairBusy(false)
     }
   }
 
@@ -104,18 +122,18 @@ export default function SettingsPage() {
     }
   }
 
-  async function writeSecret(secretId: string, value: string, onSaved: (ref: string) => void) {
+  async function writeSecret(secretId: string, value: string) {
     if (!secretId.trim() || !value) {
       toast('请填写 secret_id 和密钥值。')
       return
     }
     try {
-      const res = await api.post<{ secret_ref: string; configured: boolean }>('/api/v1/secrets', {
+      await api.post<{ secret_ref: string; configured: boolean }>('/api/v1/secrets', {
         secret_id: secretId.trim(),
         value,
       })
-      onSaved(res.secret_ref)
-      toast(`密钥 ${secretId.trim()} 已配置。`)
+      toast(`密钥 ${secretId.trim()} 已保存。`)
+      await reload()
     } catch (err) {
       toast('保存密钥失败：' + (err instanceof Error ? err.message : String(err)))
     }
@@ -132,7 +150,7 @@ export default function SettingsPage() {
     )
   }
 
-  const brainRuntime = settings.app.mode === 'demo' ? 'demo' : settings.brain.runtime
+  const secretsStatus = settings._status?.secrets ?? {}
 
   return (
     <section aria-label="连接与设置">
@@ -140,34 +158,12 @@ export default function SettingsPage() {
         <div>
           <div className="eyebrow">CONNECTIONS / SEPARATE BY RESPONSIBILITY</div>
           <h1>连接与设置</h1>
-          <p className="sub">代理运行时、模型 API、平台 API 独立配置。</p>
+          <p className="sub">大脑、执行器、模型 API、平台 API 独立配置。</p>
         </div>
         <button type="button" className="btn primary" disabled={saving} onClick={() => void saveSettings()}>
           {saving ? '保存中…' : '保存设置'}
         </button>
       </div>
-
-      {!paired && (
-        <div className="callout" role="alert">
-          <strong>尚未配对。</strong>
-          输入配对码后本会话才能执行写操作。
-          <span className="pair-inline">
-            <label htmlFor="settings-pair-code" className="sr-only">
-              配对码
-            </label>
-            <input
-              id="settings-pair-code"
-              value={pairCode}
-              onChange={(e) => setPairCode(e.target.value)}
-              placeholder="配对码"
-            />
-            <button type="button" className="btn small" disabled={pairBusy} onClick={() => void submitPair()}>
-              {pairBusy ? '配对中…' : '配对'}
-            </button>
-          </span>
-          {pairError && <span className="form-error">{pairError}</span>}
-        </div>
-      )}
 
       <div className="settings-stack">
         <article className="card">
@@ -181,7 +177,7 @@ export default function SettingsPage() {
           <div className="card-body">
             <div className="meta-row">
               <span>当前运行时</span>
-              <span>{brainRuntime === 'demo' ? '演示模式' : brainRuntime === 'kimi' ? 'Kimi Code' : 'Codex'}</span>
+              <span>{settings.brain.runtime === 'kimi' ? 'Kimi Code' : 'Codex'}</span>
             </div>
             <div className="fields">
               <div className="field">
@@ -189,10 +185,48 @@ export default function SettingsPage() {
                 <select
                   id="brain-runtime"
                   value={settings.brain.runtime}
-                  onChange={(e) => update((s) => ({ ...s, brain: { ...s.brain, runtime: e.target.value } }))}
+                  onChange={(e) =>
+                    update((s) => ({
+                      ...s,
+                      brain: {
+                        ...s.brain,
+                        runtime: e.target.value,
+                        model_id: BRAIN_MODEL_DEFAULTS[e.target.value] ?? s.brain.model_id,
+                        reasoning_effort: normalizeEffort(e.target.value, s.brain.reasoning_effort),
+                      },
+                    }))
+                  }
                 >
-                  <option value="codex">Codex · App Server</option>
-                  <option value="kimi">Kimi Code · Wire</option>
+                  <option value="kimi">Kimi Code</option>
+                  <option value="codex">Codex</option>
+                </select>
+              </div>
+              <div className="field">
+                <label htmlFor="brain-model">模型 ID</label>
+                <input
+                  id="brain-model"
+                  value={settings.brain.model_id}
+                  onChange={(e) => update((s) => ({ ...s, brain: { ...s.brain, model_id: e.target.value } }))}
+                  placeholder={BRAIN_MODEL_DEFAULTS[settings.brain.runtime] ?? '留空使用默认'}
+                />
+              </div>
+              <div className="field">
+                <label htmlFor="brain-effort">思考强度</label>
+                <select
+                  id="brain-effort"
+                  value={normalizeEffort(settings.brain.runtime, settings.brain.reasoning_effort)}
+                  onChange={(e) =>
+                    update((s) => ({
+                      ...s,
+                      brain: { ...s.brain, reasoning_effort: e.target.value as ReasoningEffort },
+                    }))
+                  }
+                >
+                  {effortsFor(settings.brain.runtime).map((e) => (
+                    <option key={e.value} value={e.value}>
+                      {e.label}
+                    </option>
+                  ))}
                 </select>
               </div>
               <div className="field">
@@ -202,17 +236,6 @@ export default function SettingsPage() {
                   value={settings.brain.executable}
                   onChange={(e) => update((s) => ({ ...s, brain: { ...s.brain, executable: e.target.value } }))}
                   placeholder="留空使用 PATH 中的默认命令"
-                />
-              </div>
-              <div className="field">
-                <label htmlFor="brain-model">模型 ID</label>
-                <input
-                  id="brain-model"
-                  value={settings.brain.model_id ?? ''}
-                  onChange={(e) =>
-                    update((s) => ({ ...s, brain: { ...s.brain, model_id: e.target.value || null } }))
-                  }
-                  placeholder="留空使用原生配置"
                 />
               </div>
             </div>
@@ -228,9 +251,6 @@ export default function SettingsPage() {
               onTest={(kind) => void testConnection('brain', kind)}
             />
             <HealthDetail state={conns.brain} />
-            {settings.brain.runtime === 'kimi' && (
-              <p className="inline-note">Kimi Code 适配尚未完全接入时，检查结果会显示“尚未接入”，这属于已知状态而非错误。</p>
-            )}
           </div>
         </article>
 
@@ -238,7 +258,109 @@ export default function SettingsPage() {
           <div className="card-head">
             <div className="settings-heading">
               <span className="setting-num">02</span>
-              <h2>Prime 执行器</h2>
+              <h2>执行系统</h2>
+            </div>
+            <div className="actions">
+              {settings._status && (
+                <Badge tone={settings._status.prime_models_synced ? 'green' : 'amber'}>
+                  {settings._status.prime_models_synced ? 'Prime models 已同步' : 'Prime models 未同步'}
+                </Badge>
+              )}
+              <HealthBadge state={conns.executor} />
+            </div>
+          </div>
+          <div className="card-body">
+            <div className="fields">
+              <div className="field">
+                <label htmlFor="executor-runtime">执行器运行时</label>
+                <select
+                  id="executor-runtime"
+                  value={settings.executor.runtime}
+                  onChange={(e) =>
+                    update((s) => ({
+                      ...s,
+                      executor: {
+                        ...s.executor,
+                        runtime: e.target.value,
+                        model_id: EXECUTOR_MODEL_DEFAULTS[e.target.value] ?? s.executor.model_id,
+                        reasoning_effort: normalizeEffort(e.target.value, s.executor.reasoning_effort),
+                      },
+                    }))
+                  }
+                >
+                  <option value="kimi">Kimi Code（默认）</option>
+                  <option value="prime">Prime Agent</option>
+                  <option value="codex">Codex</option>
+                </select>
+              </div>
+              <div className="field">
+                <label htmlFor="executor-model">模型 ID</label>
+                <input
+                  id="executor-model"
+                  value={settings.executor.model_id}
+                  onChange={(e) =>
+                    update((s) => ({ ...s, executor: { ...s.executor, model_id: e.target.value } }))
+                  }
+                  placeholder={EXECUTOR_MODEL_DEFAULTS[settings.executor.runtime] ?? '留空使用默认'}
+                />
+              </div>
+              <div className="field">
+                <label htmlFor="executor-effort">思考强度</label>
+                <select
+                  id="executor-effort"
+                  value={normalizeEffort(settings.executor.runtime, settings.executor.reasoning_effort)}
+                  onChange={(e) =>
+                    update((s) => ({
+                      ...s,
+                      executor: { ...s.executor, reasoning_effort: e.target.value as ReasoningEffort },
+                    }))
+                  }
+                >
+                  {effortsFor(settings.executor.runtime).map((e) => (
+                    <option key={e.value} value={e.value}>
+                      {e.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="field">
+                <label htmlFor="executor-executable">可执行文件路径</label>
+                <input
+                  id="executor-executable"
+                  value={settings.executor.executable}
+                  onChange={(e) =>
+                    update((s) => ({ ...s, executor: { ...s.executor, executable: e.target.value } }))
+                  }
+                  placeholder="留空使用 PATH 中的默认命令"
+                />
+              </div>
+            </div>
+            <div className="meta-row">
+              <span>当前配置</span>
+              <span>
+                {EXECUTOR_RUNTIME_LABELS[settings.executor.runtime] ?? settings.executor.runtime}
+                {settings.executor.model_id && ` · ${settings.executor.model_id}`}
+              </span>
+            </div>
+            <ConnActions
+              id="executor"
+              state={conns.executor}
+              confirmSpend={confirmSpend.executor}
+              onConfirmSpendChange={(v) => setConfirmSpend((c) => ({ ...c, executor: v }))}
+              onTest={(kind) => void testConnection('executor', kind)}
+            />
+            <HealthDetail state={conns.executor} />
+            <p className="inline-note">
+              连接测试按当前配置路由到所选执行器；如需 Prime 专有排障，请用下方 Prime 排障入口。
+            </p>
+          </div>
+        </article>
+
+        <article className="card">
+          <div className="card-head">
+            <div className="settings-heading">
+              <span className="setting-num">03</span>
+              <h2>Prime 排障</h2>
             </div>
             <HealthBadge state={conns.prime} />
           </div>
@@ -271,13 +393,16 @@ export default function SettingsPage() {
                 </select>
               </div>
             </div>
-            <ConnActions
-              id="prime"
-              state={conns.prime}
-              confirmSpend={confirmSpend.prime}
-              onConfirmSpendChange={(v) => setConfirmSpend((c) => ({ ...c, prime: v }))}
-              onTest={(kind) => void testConnection('prime', kind)}
-            />
+            <div className="actions">
+              <button
+                type="button"
+                className="btn"
+                disabled={conns.prime.busy}
+                onClick={() => void testConnection('prime', 'inspect')}
+              >
+                检查 Prime 安装/认证
+              </button>
+            </div>
             <HealthDetail state={conns.prime} />
           </div>
         </article>
@@ -285,13 +410,13 @@ export default function SettingsPage() {
         <article className="card">
           <div className="card-head">
             <div className="settings-heading">
-              <span className="setting-num">03</span>
+              <span className="setting-num">04</span>
               <h2>模型 Profile 列表</h2>
             </div>
             <Badge tone="neutral">{settings.llm_profiles.length} 个</Badge>
           </div>
           <div className="card-body">
-            <p className="sub">Prime 调模型使用的供应商配置。API Key 通过下方密钥输入写入后端，不保存在设置里。</p>
+            <p className="sub">执行器调模型使用的供应商配置。API Key 通过下方密钥输入写入后端，不保存在设置里。</p>
             {settings.llm_profiles.length === 0 && (
               <p className="small-text">还没有模型 Profile，点击下方“新增 Profile”。</p>
             )}
@@ -333,7 +458,7 @@ export default function SettingsPage() {
         <article className="card">
           <div className="card-head">
             <div className="settings-heading">
-              <span className="setting-num">04</span>
+              <span className="setting-num">05</span>
               <h2>玻尔平台</h2>
             </div>
             <HealthBadge state={conns.bohrium} />
@@ -357,12 +482,8 @@ export default function SettingsPage() {
               <SecretField
                 label="Playground Token"
                 secretId={settings.playground.token_secret_ref || 'playground_token'}
-                configured={!!settings.playground.token_secret_ref}
-                onSave={(sid, value) =>
-                  void writeSecret(sid, value, (ref) =>
-                    update((s) => ({ ...s, playground: { ...s.playground, token_secret_ref: ref } })),
-                  )
-                }
+                configured={secretsStatus[settings.playground.token_secret_ref || 'playground_token'] ?? !!settings.playground.token_secret_ref}
+                onSave={(sid, value) => void writeSecret(sid, value)}
               />
             </div>
             <div className="divider" />
@@ -391,19 +512,31 @@ export default function SettingsPage() {
               <SecretField
                 label="Bohrium AccessKey"
                 secretId={settings.bohrium.access_key_secret_ref || 'bohrium_access_key'}
-                configured={!!settings.bohrium.access_key_secret_ref}
-                onSave={(sid, value) =>
-                  void writeSecret(sid, value, (ref) =>
-                    update((s) => ({ ...s, bohrium: { ...s.bohrium, access_key_secret_ref: ref } })),
-                  )
-                }
+                configured={secretsStatus[settings.bohrium.access_key_secret_ref || 'bohrium_access_key'] ?? !!settings.bohrium.access_key_secret_ref}
+                onSave={(sid, value) => void writeSecret(sid, value)}
+              />
+              <SecretField
+                label="OpenRouter API Key（执行器模型）"
+                secretId="openrouter_api_key"
+                configured={secretsStatus['openrouter_api_key'] ?? false}
+                onSave={(sid, value) => void writeSecret(sid, value)}
               />
             </div>
             <div className="actions" style={{ marginTop: 10 }}>
-              <button type="button" className="btn" disabled={conns.playground.busy} onClick={() => void testConnection('playground', 'inspect')}>
+              <button
+                type="button"
+                className="btn"
+                disabled={conns.playground.busy}
+                onClick={() => void testConnection('playground', 'inspect')}
+              >
                 检查 Playground 连接
               </button>
-              <button type="button" className="btn" disabled={conns.bohrium.busy} onClick={() => void testConnection('bohrium', 'inspect')}>
+              <button
+                type="button"
+                className="btn"
+                disabled={conns.bohrium.busy}
+                onClick={() => void testConnection('bohrium', 'inspect')}
+              >
                 检查 bohr 安装
               </button>
             </div>
@@ -560,7 +693,7 @@ function SecretField({
         </button>
       </div>
       <p className="small-text" role="status">
-        {configured ? '已配置' : '未配置'}（保存后输入框清空，不回显密钥）
+        {configured ? '已配置' : '未配置'}（后端回读 secrets.json 状态，不回显值）
       </p>
     </div>
   )
@@ -612,7 +745,7 @@ function ProfileEditor({
           <input
             value={profile.secret_ref}
             onChange={(e) => onChange({ ...profile, secret_ref: e.target.value })}
-            placeholder="先在下方面板写入密钥"
+            placeholder="先在下方密钥区写入密钥"
           />
         </div>
         <div className="field">

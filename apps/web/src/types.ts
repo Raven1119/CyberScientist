@@ -4,8 +4,11 @@ export interface HealthInfo {
   time: string
 }
 
-export interface SessionInfo {
-  paired: boolean
+export type ReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max'
+
+export interface SettingsStatus {
+  secrets: Record<string, boolean>
+  prime_models_synced: boolean
 }
 
 export interface Settings {
@@ -15,9 +18,15 @@ export interface Settings {
   brain: {
     runtime: string
     executable: string
+    model_id: string
+    reasoning_effort: ReasoningEffort
     auth_mode: string
-    model_id: string | null
-    custom_profile_id: string | null
+  }
+  executor: {
+    runtime: string
+    executable: string
+    model_id: string
+    reasoning_effort: ReasoningEffort
   }
   prime: {
     executable: string
@@ -53,6 +62,7 @@ export interface Settings {
     max_challenge_entries: number
     max_injected_characters: number
   }
+  _status?: SettingsStatus
 }
 
 export interface LlmProfile {

@@ -71,9 +71,7 @@ export default function ExperiencePage() {
       setItems(data.items)
       setLoadErrors(data.errors ?? [])
     } catch (err) {
-      if (!(err instanceof ApiError && err.code === 'PAIRING_REQUIRED')) {
-        toast('加载经验失败：' + (err instanceof Error ? err.message : String(err)))
-      }
+      toast('加载经验失败：' + (err instanceof Error ? err.message : String(err)))
     }
   }, [filter, currentChallengeId, toast])
 

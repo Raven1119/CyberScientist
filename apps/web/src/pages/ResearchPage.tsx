@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { api, ApiError } from '../api'
+import { api } from '../api'
 import { useApp } from '../app-context'
 import { Badge, Modal } from '../components'
 import {
@@ -67,9 +67,7 @@ export default function ResearchPage() {
       const data = await api.get<{ items: ChallengeSummary[] }>('/api/v1/challenges')
       setChallenges(data.items)
     } catch (err) {
-      if (!(err instanceof ApiError && err.code === 'PAIRING_REQUIRED')) {
-        toast('加载题目列表失败：' + (err instanceof Error ? err.message : String(err)))
-      }
+      toast('加载题目列表失败：' + (err instanceof Error ? err.message : String(err)))
     }
   }, [toast])
 
@@ -78,9 +76,7 @@ export default function ResearchPage() {
       const data = await api.get<{ items: RunSummary[] }>('/api/v1/runs')
       setRuns(data.items)
     } catch (err) {
-      if (!(err instanceof ApiError && err.code === 'PAIRING_REQUIRED')) {
-        toast('加载 Run 列表失败：' + (err instanceof Error ? err.message : String(err)))
-      }
+      toast('加载 Run 列表失败：' + (err instanceof Error ? err.message : String(err)))
     }
   }, [toast])
 
@@ -187,7 +183,9 @@ export default function ResearchPage() {
     [refreshRunDetail, refreshRuns, refreshCheckpoints],
   )
 
-  useRunEventStream(active ? (currentRun?.id ?? null) : null, handleEvent)
+  // 只要选中了 Run 就订阅事件流：进行中的 Run 持续推送，
+  // 已结束的 Run 由服务端一次性回放历史事件后保持静默。
+  useRunEventStream(currentRun?.id ?? null, handleEvent)
 
   // 自动滚动：用户停留在底部时跟随新事件；上翻阅读时不强制滚动。
   useEffect(() => {
@@ -431,25 +429,7 @@ export default function ResearchPage() {
                         <p>开始研究后，大脑、执行器与控制器的交接会显示在这里。</p>
                       </div>
                     ) : (
-                      events.map((e) => (
-                        <div className="event" key={e.event_id ?? e.seq}>
-                          <div
-                            className={`avatar src-${e.source}`}
-                            aria-hidden="true"
-                          >
-                            {SOURCE_AVATAR[e.source] ?? '?'}
-                          </div>
-                          <div className="event-body">
-                            <div className="event-top">
-                              <span className="event-role">
-                                {SOURCE_LABELS[e.source] ?? e.source} · {eventLabel(e.type)}
-                              </span>
-                              <time>{formatTime(e.occurred_at)}</time>
-                            </div>
-                            {eventText(e) && <p>{eventText(e)}</p>}
-                          </div>
-                        </div>
-                      ))
+                      events.map((e) => <EventItem key={e.event_id ?? e.seq} event={e} />)
                     )}
                   </div>
                   {showJump && (
@@ -688,6 +668,69 @@ function lastSourceEvent(events: RunEvent[], source: string): string {
     if (events[i].source === source) return eventLabel(events[i].type)
   }
   return '尚无事件'
+}
+
+const SOURCE_BADGE_TONE: Record<string, 'purple' | 'blue' | 'neutral' | 'green' | 'neutral'> = {
+  brain: 'purple',
+  prime: 'blue',
+  controller: 'neutral',
+  user: 'green',
+  demo: 'neutral',
+}
+
+const COLLAPSE_LIMIT = 300
+
+function EventItem({ event }: { event: RunEvent }) {
+  const [expanded, setExpanded] = useState(false)
+  const rawText = eventText(event)
+  const isStalled = event.type === 'prime.trial.stalled' || event.type === 'controller.trial.stalled'
+  const isApproval = event.type === 'prime.approval.granted'
+  const isRawOutput = event.type === 'brain.raw_output'
+  const longText = !isRawOutput && rawText.length > COLLAPSE_LIMIT
+  const shownText =
+    isRawOutput && !expanded
+      ? `（大脑原始输出，共 ${rawText.length} 字，已折叠）`
+      : longText && !expanded
+        ? rawText.slice(0, COLLAPSE_LIMIT) + '…'
+        : rawText
+
+  const rowClass = ['event']
+  if (isApproval) rowClass.push('event-approval')
+  if (isStalled) rowClass.push('event-stalled')
+
+  return (
+    <div className={rowClass.join(' ')}>
+      <div className={`avatar src-${event.source}`} aria-hidden="true">
+        {SOURCE_AVATAR[event.source] ?? '?'}
+      </div>
+      <div className="event-body">
+        <div className="event-top">
+          <span className="event-role">
+            <Badge tone={SOURCE_BADGE_TONE[event.source] ?? 'neutral'}>
+              {SOURCE_LABELS[event.source] ?? event.source}
+            </Badge>
+            <span className="event-type">{eventLabel(event.type)}</span>
+          </span>
+          <time>{formatTime(event.occurred_at)}</time>
+        </div>
+        {isApproval && <p className="event-approval-text">执行器工具已自动批准：{shownText}</p>}
+        {isStalled && <p className="event-stalled-text">执行器挂起已处置：{shownText}</p>}
+        {!isApproval && !isStalled && rawText && (
+          <p className={isRawOutput ? 'event-raw' : undefined}>{shownText}</p>
+        )}
+        {(longText || isRawOutput) && (
+          <button
+            type="button"
+            className="btn small link-btn"
+            onClick={() => setExpanded((v) => !v)}
+            aria-expanded={expanded}
+          >
+            {expanded ? '收起' : isRawOutput ? '展开原始输出' : '展开'}
+          </button>
+        )}
+      </div>
+    </div>
+  )
 }
 
 function ImportDialog({
