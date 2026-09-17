@@ -1,0 +1,28 @@
+# Runtime, private state and credentials
+.cyberscientist/
+workspace/
+demo-data/
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+config/workspace.local.yaml
+# Build and dependencies
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+node_modules/
+dist/
+coverage/
+playwright-report/
+test-results/
+# Local editor/OS state
+.DS_Store
+.idea/
+# Keep editable experience in version control; never put secrets in it.
+
+.package-checks/

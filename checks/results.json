@@ -1,0 +1,90 @@
+[
+  {
+    "check": "config schema self-validation",
+    "status": "pass"
+  },
+  {
+    "check": "decision schema self-validation",
+    "status": "pass"
+  },
+  {
+    "check": "YAML configuration sample validates",
+    "status": "pass"
+  },
+  {
+    "check": "decision sample validates",
+    "status": "pass"
+  },
+  {
+    "check": "configuration rejects automatic refine in v0.1",
+    "status": "pass"
+  },
+  {
+    "check": "decision rejects incomplete steer action",
+    "status": "pass"
+  },
+  {
+    "check": "decision rejects global proposal with challenge identity",
+    "status": "pass"
+  },
+  {
+    "check": "experience template YAML parses",
+    "status": "pass"
+  },
+  {
+    "check": "local Markdown links resolve",
+    "status": "pass"
+  },
+  {
+    "check": "initial screen explicitly labels demo and no real score",
+    "status": "pass"
+  },
+  {
+    "check": "start, advance, pause and resume simulation",
+    "status": "pass"
+  },
+  {
+    "check": "guidance queue and safe text rendering",
+    "status": "pass"
+  },
+  {
+    "check": "Markdown edit, immutable revisions and restore-as-new-revision",
+    "status": "pass"
+  },
+  {
+    "check": "running memory snapshot survives experience edits",
+    "status": "pass"
+  },
+  {
+    "check": "secrets cleared and excluded from browser storage",
+    "status": "pass"
+  },
+  {
+    "check": "active run retains original brain selection after settings change",
+    "status": "pass"
+  },
+  {
+    "check": "nonsecret configuration and revisions restore using explicit in-memory Storage fixture",
+    "status": "pass"
+  },
+  {
+    "check": "connection check never claims an actual connection",
+    "status": "pass"
+  },
+  {
+    "check": "three pages have no document-level horizontal overflow at 390px",
+    "status": "pass"
+  },
+  {
+    "check": "browser reports no uncaught JavaScript errors",
+    "status": "pass"
+  },
+  {
+    "check": "no external network requests during prototype interaction",
+    "status": "pass"
+  },
+  {
+    "check": "prototype remains usable when browser storage is unavailable",
+    "status": "pass"
+  }
+]

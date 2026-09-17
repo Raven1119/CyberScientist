@@ -1,0 +1,383 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "CyberScientist workspace draft configuration",
+  "description": "Draft configuration may contain null connection fields. Passing this schema never grants authorization or proves a connection works.",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "app": {
+      "type": "object",
+      "properties": {
+        "host": {
+          "const": "127.0.0.1"
+        },
+        "port": {
+          "type": "integer",
+          "minimum": 1024,
+          "maximum": 65535
+        },
+        "mode": {
+          "enum": [
+            "demo",
+            "connected"
+          ]
+        },
+        "data_dir": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "host",
+        "port",
+        "mode",
+        "data_dir"
+      ],
+      "additionalProperties": false
+    },
+    "brain": {
+      "type": "object",
+      "properties": {
+        "runtime": {
+          "enum": [
+            "codex",
+            "kimi"
+          ]
+        },
+        "executable": {
+          "type": "string",
+          "minLength": 1
+        },
+        "auth_mode": {
+          "enum": [
+            "native",
+            "custom_provider"
+          ]
+        },
+        "model_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        },
+        "custom_profile_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        }
+      },
+      "required": [
+        "runtime",
+        "executable",
+        "auth_mode",
+        "model_id",
+        "custom_profile_id"
+      ],
+      "additionalProperties": false
+    },
+    "prime": {
+      "type": "object",
+      "properties": {
+        "executable": {
+          "type": "string",
+          "minLength": 1
+        },
+        "llm_profile_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "automatic_refine": {
+          "const": false
+        },
+        "subagents_enabled": {
+          "const": false
+        }
+      },
+      "required": [
+        "executable",
+        "llm_profile_id",
+        "automatic_refine",
+        "subagents_enabled"
+      ],
+      "additionalProperties": false
+    },
+    "llm_profiles": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "label": {
+            "type": "string",
+            "minLength": 1
+          },
+          "protocol": {
+            "enum": [
+              "openai_chat_completions",
+              "openai_responses",
+              "anthropic_messages"
+            ]
+          },
+          "base_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uri"
+          },
+          "model_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "minLength": 1
+          },
+          "secret_ref": {
+            "type": "string",
+            "pattern": "^(env|keyring|local):[A-Za-z0-9_.:/-]+$"
+          },
+          "reasoning": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "minLength": 1
+          },
+          "context_window": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1
+          },
+          "max_output_tokens": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1
+          },
+          "compat": {
+            "type": "object",
+            "description": "Only adapter-validated compatibility keys may be applied; reject unsupported keys at runtime."
+          },
+          "pricing": {
+            "anyOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "currency": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "input_per_million": {
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  "output_per_million": {
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  "source": {
+                    "enum": [
+                      "user",
+                      "provider"
+                    ]
+                  }
+                },
+                "required": [
+                  "currency",
+                  "input_per_million",
+                  "output_per_million",
+                  "source"
+                ],
+                "additionalProperties": false
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "label",
+          "protocol",
+          "base_url",
+          "model_id",
+          "secret_ref",
+          "reasoning",
+          "context_window",
+          "max_output_tokens",
+          "compat",
+          "pricing"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "playground": {
+      "type": "object",
+      "properties": {
+        "base_url": {
+          "type": "string",
+          "format": "uri"
+        },
+        "token_secret_ref": {
+          "type": "string",
+          "pattern": "^(env|keyring|local):[A-Za-z0-9_.:/-]+$"
+        }
+      },
+      "required": [
+        "base_url",
+        "token_secret_ref"
+      ],
+      "additionalProperties": false
+    },
+    "bohrium": {
+      "type": "object",
+      "properties": {
+        "executable": {
+          "type": "string",
+          "minLength": 1
+        },
+        "access_key_secret_ref": {
+          "type": "string",
+          "pattern": "^(env|keyring|local):[A-Za-z0-9_.:/-]+$"
+        },
+        "project_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        },
+        "host_overrides": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "format": "uri"
+          }
+        }
+      },
+      "required": [
+        "executable",
+        "access_key_secret_ref",
+        "project_id",
+        "host_overrides"
+      ],
+      "additionalProperties": false
+    },
+    "policy": {
+      "type": "object",
+      "properties": {
+        "science_compute": {
+          "const": "bohrium_only"
+        },
+        "default_authorization": {
+          "const": "read_only"
+        },
+        "allow_formal_submission": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "science_compute",
+        "default_authorization",
+        "allow_formal_submission"
+      ],
+      "additionalProperties": false
+    },
+    "run_defaults": {
+      "type": "object",
+      "properties": {
+        "max_active_runs": {
+          "const": 1
+        },
+        "max_trials": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_brain_reviews": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_run_minutes": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_model_turns": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "max_jobs": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "max_submissions": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "max_active_runs",
+        "max_trials",
+        "max_brain_reviews",
+        "max_run_minutes",
+        "max_model_turns",
+        "max_jobs",
+        "max_submissions"
+      ],
+      "additionalProperties": false
+    },
+    "memory": {
+      "type": "object",
+      "properties": {
+        "root": {
+          "type": "string",
+          "minLength": 1
+        },
+        "max_global_entries": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "max_challenge_entries": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "max_injected_characters": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "required": [
+        "root",
+        "max_global_entries",
+        "max_challenge_entries",
+        "max_injected_characters"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "schema_version",
+    "app",
+    "brain",
+    "prime",
+    "llm_profiles",
+    "playground",
+    "bohrium",
+    "policy",
+    "run_defaults",
+    "memory"
+  ],
+  "additionalProperties": false
+}

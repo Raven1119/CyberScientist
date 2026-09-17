@@ -1,0 +1,221 @@
+"""SQLite 权威存储：Run 状态、事件、Trial、授权、经验修订、操作日志。
+
+事件与关键状态更新在同一事务提交；(run_id, seq) 唯一。
+"""
+from __future__ import annotations
+
+import json
+import sqlite3
+import threading
+from datetime import datetime, timezone
+from typing import Any, Iterable
+
+from . import config
+
+_local = threading.local()
+
+
+def utcnow() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def get_db() -> sqlite3.Connection:
+    conn = getattr(_local, "conn", None)
+    if conn is None:
+        config.ensure_dirs()
+        conn = sqlite3.connect(config.DB_PATH, check_same_thread=False)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA foreign_keys=ON")
+        _local.conn = conn
+    return conn
+
+
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS challenges (
+    id TEXT PRIMARY KEY,
+    platform_challenge_id TEXT,
+    origin TEXT NOT NULL,
+    title TEXT NOT NULL,
+    content TEXT NOT NULL,
+    content_hash TEXT NOT NULL,
+    contract_status TEXT NOT NULL DEFAULT 'unknown',
+    eligibility TEXT,
+    imported_at TEXT NOT NULL,
+    is_demo INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS runs (
+    id TEXT PRIMARY KEY,
+    challenge_id TEXT NOT NULL REFERENCES challenges(id),
+    mode TEXT NOT NULL,                -- demo | connected
+    phase TEXT NOT NULL DEFAULT 'created',
+    state_version INTEGER NOT NULL DEFAULT 0,
+    intention TEXT,
+    authorization_id TEXT,
+    config_snapshot TEXT NOT NULL,
+    experience_snapshot TEXT,
+    current_trial_id TEXT,
+    block_reason TEXT,
+    brain_reviews_used INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    started_at TEXT,
+    ended_at TEXT
+);
+CREATE TABLE IF NOT EXISTS authorizations (
+    id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL REFERENCES runs(id),
+    scope TEXT NOT NULL,               -- demo | model_roundtrip
+    allow_model_calls INTEGER NOT NULL DEFAULT 0,
+    max_model_turns INTEGER NOT NULL DEFAULT 0,
+    max_run_minutes INTEGER NOT NULL DEFAULT 0,
+    max_submissions INTEGER NOT NULL DEFAULT 0,
+    granted_at TEXT NOT NULL,
+    note TEXT
+);
+CREATE TABLE IF NOT EXISTS trials (
+    id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL REFERENCES runs(id),
+    parent_trial_id TEXT,
+    goal TEXT NOT NULL,
+    success_check TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'active',
+    created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS events (
+    event_id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL REFERENCES runs(id),
+    seq INTEGER NOT NULL,
+    occurred_at TEXT NOT NULL,
+    recorded_at TEXT NOT NULL,
+    source TEXT NOT NULL,              -- brain | prime | controller | user | demo
+    type TEXT NOT NULL,
+    trial_id TEXT,
+    payload TEXT NOT NULL DEFAULT '{}',
+    raw_ref TEXT,
+    UNIQUE(run_id, seq)
+);
+CREATE TABLE IF NOT EXISTS operations (
+    operation_id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    status TEXT NOT NULL,              -- accepted | confirmed | rejected | unknown
+    request_summary TEXT,
+    payload_hash TEXT,
+    created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS checkpoints (
+    id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL,
+    trial_id TEXT,
+    report TEXT NOT NULL,
+    evidence_refs TEXT NOT NULL DEFAULT '[]',
+    created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS experience_revisions (
+    id TEXT PRIMARY KEY,
+    experience_id TEXT NOT NULL,
+    revision_hash TEXT NOT NULL,
+    parent_hash TEXT,
+    file_path TEXT NOT NULL,
+    frontmatter TEXT NOT NULL,
+    body_md TEXT NOT NULL,
+    full_content TEXT NOT NULL,
+    operator TEXT NOT NULL,
+    reason TEXT,
+    evidence_refs TEXT NOT NULL DEFAULT '[]',
+    created_at TEXT NOT NULL,
+    applied INTEGER NOT NULL DEFAULT 1,
+    UNIQUE(experience_id, revision_hash)
+);
+CREATE INDEX IF NOT EXISTS idx_events_run_seq ON events(run_id, seq);
+CREATE INDEX IF NOT EXISTS idx_rev_exp ON experience_revisions(experience_id, created_at);
+"""
+
+_db_lock = threading.RLock()
+
+
+def init_db() -> None:
+    with _db_lock:
+        get_db().executescript(SCHEMA)
+        get_db().commit()
+
+
+def query(sql: str, params: Iterable[Any] = ()) -> list[sqlite3.Row]:
+    with _db_lock:
+        return get_db().execute(sql, tuple(params)).fetchall()
+
+
+def query_one(sql: str, params: Iterable[Any] = ()) -> sqlite3.Row | None:
+    rows = query(sql, params)
+    return rows[0] if rows else None
+
+
+def execute(sql: str, params: Iterable[Any] = ()) -> None:
+    with _db_lock:
+        get_db().execute(sql, tuple(params))
+        get_db().commit()
+
+
+def append_event(run_id: str, source: str, type_: str,
+                 payload: dict[str, Any] | None = None,
+                 trial_id: str | None = None,
+                 raw_ref: str | None = None) -> dict[str, Any]:
+    """在事务内分配 seq 并追加事件。"""
+    with _db_lock:
+        conn = get_db()
+        row = conn.execute(
+            "SELECT COALESCE(MAX(seq), 0) + 1 AS next FROM events WHERE run_id=?",
+            (run_id,)).fetchone()
+        seq = row["next"]
+        import uuid
+        event_id = f"evt_{uuid.uuid4().hex[:12]}"
+        now = utcnow()
+        conn.execute(
+            "INSERT INTO events(event_id, run_id, seq, occurred_at, recorded_at,"
+            " source, type, trial_id, payload, raw_ref)"
+            " VALUES(?,?,?,?,?,?,?,?,?,?)",
+            (event_id, run_id, seq, now, now, source, type_, trial_id,
+             json.dumps(payload or {}, ensure_ascii=False), raw_ref))
+        conn.commit()
+        return {"event_id": event_id, "run_id": run_id, "seq": seq,
+                "occurred_at": now, "recorded_at": now, "source": source,
+                "type": type_, "trial_id": trial_id,
+                "payload": payload or {}, "raw_ref": raw_ref}
+
+
+def bump_state_version(run_id: str) -> int:
+    with _db_lock:
+        conn = get_db()
+        conn.execute("UPDATE runs SET state_version = state_version + 1 WHERE id=?",
+                     (run_id,))
+        conn.commit()
+        row = query_one("SELECT state_version FROM runs WHERE id=?", (run_id,))
+        return row["state_version"] if row else 0
+
+
+def events_after(run_id: str, after_seq: int, limit: int = 500) -> list[dict[str, Any]]:
+    rows = query("SELECT * FROM events WHERE run_id=? AND seq>? ORDER BY seq LIMIT ?",
+                 (run_id, after_seq, limit))
+    return [dict(r) | {"payload": json.loads(r["payload"])} for r in rows]
+
+
+def record_operation(operation_id: str, run_id: str, kind: str, status: str,
+                     request_summary: str = "",
+                     payload_hash: str = "") -> bool:
+    """记录受控操作；重复 operation_id 返回 False（不创建重复外部动作）。"""
+    with _db_lock:
+        conn = get_db()
+        try:
+            conn.execute(
+                "INSERT INTO operations(operation_id, run_id, kind, status,"
+                " request_summary, payload_hash, created_at) VALUES(?,?,?,?,?,?,?)",
+                (operation_id, run_id, kind, status, request_summary,
+                 payload_hash, utcnow()))
+            conn.commit()
+            return True
+        except sqlite3.IntegrityError:
+            return False
+
+
+def row_to_dict(row: sqlite3.Row | None) -> dict[str, Any] | None:
+    return dict(row) if row else None

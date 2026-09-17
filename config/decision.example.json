@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "decision_id": "DEMO_DECISION_001",
+  "run_id": "DEMO_RUN_001",
+  "observed_state_version": 0,
+  "summary": "真实连接和本轮预算尚未授权，等待配置；这是一份输出格式示例。",
+  "evidence_refs": [],
+  "actions": [
+    {
+      "op": "wait",
+      "reason": "缺少真实连接验证及本轮授权。"
+    }
+  ],
+  "experience_proposals": []
+}

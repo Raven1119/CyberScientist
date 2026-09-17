@@ -1,0 +1,57 @@
+# CyberScientist 自有配置，不是任何上游 CLI 的原生配置。
+# 这是可通过结构校验的未配置草稿；null 字段需要在 UI 补全。
+# 所有凭据只使用 SecretRef。示例不赋予真实付费/提交权限。
+schema_version: 1
+app:
+  host: 127.0.0.1
+  port: 8765
+  mode: demo
+  data_dir: .cyberscientist
+brain:
+  runtime: codex
+  executable: codex
+  auth_mode: native
+  model_id: null
+  custom_profile_id: null
+prime:
+  executable: prime-agent
+  llm_profile_id: prime-default
+  automatic_refine: false
+  subagents_enabled: false
+llm_profiles:
+  - id: prime-default
+    label: Prime 科学执行模型
+    protocol: openai_chat_completions
+    base_url: null
+    model_id: null
+    secret_ref: env:CYBER_PRIME_API_KEY
+    reasoning: null
+    context_window: null
+    max_output_tokens: null
+    compat: {}
+    pricing: null
+playground:
+  base_url: https://play.bohrium.com/api
+  token_secret_ref: env:PLAYGROUND_USER_TOKEN
+bohrium:
+  executable: bohr
+  access_key_secret_ref: env:BOHR_ACCESS_KEY
+  project_id: null
+  host_overrides: {}
+policy:
+  science_compute: bohrium_only
+  default_authorization: read_only
+  allow_formal_submission: false
+run_defaults:
+  max_active_runs: 1
+  max_trials: 1
+  max_brain_reviews: 3
+  max_run_minutes: 30
+  max_model_turns: 0
+  max_jobs: 0
+  max_submissions: 0
+memory:
+  root: experience
+  max_global_entries: 3
+  max_challenge_entries: 5
+  max_injected_characters: 24000
