@@ -26,6 +26,7 @@ class JsonRpcStdio:
         self._server_requests: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
         self._notifications: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
         self._reader_task: asyncio.Task | None = None
+        self._stderr_task: asyncio.Task | None = None
         self._stderr_tail: list[str] = []
 
     async def start(self) -> None:
@@ -34,6 +35,22 @@ class JsonRpcStdio:
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
             env=self.env, cwd=self.cwd)
         self._reader_task = asyncio.create_task(self._read_loop())
+        # A8：stderr 必须持续消费，否则管道写满会阻塞子进程
+        self._stderr_task = asyncio.create_task(self._drain_stderr())
+
+    async def _drain_stderr(self) -> None:
+        assert self.proc and self.proc.stderr
+        while True:
+            line = await self.proc.stderr.readline()
+            if not line:
+                break
+            text = line.decode("utf-8", errors="replace").rstrip()
+            self._stderr_tail.append(text[:300])
+            del self._stderr_tail[:-20]  # 只保留尾窗，有界
+            log.debug("%s stderr: %.200s", self.name, text)
+
+    def stderr_tail(self) -> list[str]:
+        return list(self._stderr_tail)
 
     async def _read_loop(self) -> None:
         assert self.proc and self.proc.stdout
@@ -75,7 +92,7 @@ class JsonRpcStdio:
         rid = self._next_id
         fut = asyncio.get_running_loop().create_future()
         self._pending[rid] = fut
-        frame = json.dumps({"id": rid, "method": method,
+        frame = json.dumps({"jsonrpc": "2.0", "id": rid, "method": method,
                             "params": params or {}}, ensure_ascii=False) + "\n"
         self.proc.stdin.write(frame.encode("utf-8"))
         await self.proc.stdin.drain()
@@ -103,7 +120,9 @@ class JsonRpcStdio:
 
     async def respond(self, req_id: Any, result: Any = None,
                       error: Any = None) -> None:
-        msg: dict[str, Any] = {"id": req_id}
+        # JSON-RPC 2.0 响应必须带 jsonrpc 字段：ACP 较新的代码路径
+        # （elicitation 等）严格校验，缺字段会被当作 RPC 失败回退
+        msg: dict[str, Any] = {"jsonrpc": "2.0", "id": req_id}
         if error is not None:
             msg["error"] = error
         else:
@@ -119,6 +138,8 @@ class JsonRpcStdio:
     async def stop(self) -> None:
         if self._reader_task:
             self._reader_task.cancel()
+        if self._stderr_task:
+            self._stderr_task.cancel()
         if self.proc:
             try:
                 self.proc.terminate()

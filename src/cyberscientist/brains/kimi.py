@@ -15,15 +15,44 @@ import logging
 import os
 import shutil
 import sys
+from pathlib import Path
 from typing import Any, AsyncIterator
 
-from ..decision_extraction import extract_decision
+from ..decision_extraction import (extract_decision, extract_question_answer,
+                                   extract_review_result)
 from ..jsonrpc_stdio import JsonRpcStdio, ProtocolError
 from .base import BrainEvent, RuntimeHealth, SessionRef
 
 log = logging.getLogger("cyberscientist.brain.kimi")
 
 ACP_PROTOCOL_VERSION = 1
+
+_BRAIN_PROMPT_PATH = (Path(__file__).resolve().parent.parent.parent.parent
+                      / "prompts" / "collaboration" / "brain.md")
+
+
+def _brain_instruction() -> str:
+    try:
+        return _BRAIN_PROMPT_PATH.read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+
+
+def _question_prompt(packet: dict[str, Any]) -> str:
+    """执行器提问（AskUserQuestion）的大脑回答提示词：系统里没有人类用户，
+    大脑就是提问对象。Codex/Kimi 两个大脑共用。"""
+    return (
+        "你是 CyberScientist 的大脑。执行器（正在干活的代理）通过 "
+        "AskUserQuestion 向你提问——本系统是全自动科研系统，没有人类用户在线，"
+        "你就是提问的对象。基于下面的 Run 上下文与你对研究方向的判断直接回答，"
+        "不要反问、不要等待人类。\n"
+        "只输出一个 JSON 代码块，不要输出其他文字，不要使用任何工具：\n"
+        '{"schema_version":1,"answers":{"<问题id>":"<所选选项的 const 值>"},'
+        '"reason_md":"一句话理由"}\n'
+        "answers 必须覆盖 question.questions 中的每个 id；每个 value 必须取自"
+        "该题 options 中某一项的 const（不得自创）。\n\n"
+        f"上下文与问题:\n```json\n{json.dumps(packet, ensure_ascii=False)}\n```"
+    )
 
 
 def default_executable() -> str | None:
@@ -223,9 +252,25 @@ class KimiBrain:
         if os.environ.get("CS_DEBUG_BRAIN"):
             print(f"[kimi-brain raw {len(joined)} chars]: {joined[:800]}",
                   file=sys.stderr)
-        decision = extract_decision(joined, packet)
         if joined.strip():
             yield BrainEvent("raw", {"text": joined})
+        if packet.get("protocol") == "review_result":
+            result = extract_review_result(joined)
+            if result is None:
+                yield BrainEvent("error", {
+                    "message": "最终消息中未找到合法 ReviewResult JSON"})
+                return
+            yield BrainEvent("review_result", {"result": result})
+            return
+        if packet.get("protocol") == "executor_question":
+            answer = extract_question_answer(joined)
+            if answer is None:
+                yield BrainEvent("error", {
+                    "message": "最终消息中未找到合法回答 JSON"})
+                return
+            yield BrainEvent("question_answer", answer)
+            return
+        decision = extract_decision(joined, packet)
         if decision is None:
             yield BrainEvent("error",
                              {"message": "最终消息中未找到合法 Decision JSON"})
@@ -274,10 +319,50 @@ class KimiBrain:
 
     @staticmethod
     def _render_prompt(packet: dict[str, Any]) -> str:
+        if packet.get("protocol") == "executor_question":
+            return _question_prompt(packet)
+        if packet.get("protocol") == "review_result":
+            return (
+                _brain_instruction() + "\n\n"
+                "ReviewResult 结构（必须严格遵守）：\n"
+                '{"schema_version":1,"message_type":"review_result",'
+                '"frame_id":"见 ObservationFrame","disposition":"silent|intervene",'
+                '"private_note_md":"...","watchlist":[],"guidance":null}\n'
+                "watchlist 最多 3 项，每项必须是对象："
+                '{"id":"短标识","hypothesis_md":"假设","evidence_needed_md":"需要什么证据",'
+                '"intervene_when_md":"何时介入","evidence_refs":[]}\n'
+                "没有观察项就输出空数组 []；禁止输出字符串数组。\n"
+                "guidance 非空时结构："
+                '{"kind":"nudge|steer|stop|submit","intent":"continue|observe|reframe",'
+                '"text_md":"...","reason_md":"...","evidence_refs":[],'
+                '"expected_change_md":"...","revisit_when_md":"..."}\n'
+                "kind=submit：结果包已可提交时发出，系统自动用实验邮箱提交"
+                "（不投递给执行器、无需用户确认），随后异步等待评分。\n"
+                "只输出一个 JSON 代码块，不要输出其他文字，不要使用任何工具。\n\n"
+                f"ObservationFrame:\n```json\n"
+                f"{json.dumps(packet, ensure_ascii=False)}\n```"
+            )
         return (
             "你是 CyberScientist 的大脑，负责研究方向的判断，不直接执行工具。\n"
-            "根据下面的 ReviewPacket 做出一次判断。只输出一个 JSON 代码块，不要输出其他文字，"
-            "不要使用任何工具。\n\n"
+            "常驻目标（用户设定，优先级高于节省配额）：题目未拿到满分前不得 "
+            "finish；只要预算（审阅/Trial/提交/算力）未耗尽，就应主动提出可检验假设、"
+            "指导执行器做实验迭代提分——花掉已授权的配额正是你的职责，"
+            "「验证一个假设」本身就是可检验实验，不算盲探。"
+            "只有两种情况允许 finish：已确认满分；或所有可行路径都被证据堵死"
+            "（此时 finish 理由必须列明缺什么、用户能补什么）。"
+            "pause 只用于必须等用户才能推进的真正抉择点，不得为省配额而 pause。\n"
+            + (
+                "本次 trigger=run_start（开局）：先使用可用工具（网页访问等）亲自探查 "
+                "ReviewPacket.challenge.platform_url 的题目页面（概览/完整指南/资源页），"
+                "并对照 challenge.content 与 challenge.resources，核实数据获取路径、"
+                "工具链可得性、评分契约与满分可达性；把任务要素准备齐全后再输出首个 "
+                "Decision（第一个 Trial 应是带着完整计划的行动，不是从零侦察）。"
+                "探查结论写进 summary 与 evidence_refs。不得凭转述下结论："
+                "公开仓库查无 ≠ 不可得，先查平台资源页与文档。\n"
+                if packet.get("trigger") == "run_start" else
+                "不要使用任何工具。\n"
+            ) +
+            "根据下面的 ReviewPacket 做出一次判断。只输出一个 JSON 代码块，不要输出其他文字。\n\n"
             "Decision 结构（必须严格遵守，不得增删顶层字段）：\n"
             '{"schema_version":1,"decision_id":"任意唯一字符串",'
             '"run_id":"见 ReviewPacket","observed_state_version":见 ReviewPacket,'
@@ -292,8 +377,13 @@ class KimiBrain:
             '- {"op":"refresh_platform","reason":"..."}\n'
             '- {"op":"request_submission","trial_id":"...","bundle_manifest_ref":"..."}\n'
             '- {"op":"promote_experience","experience_id":"...","revision_hash":"...",'
-            '"reason":"...","evidence_refs":["..."]}\n'
-            '- {"op":"finish","reason":"..."}\n\n'
+            '"reason":"...","evidence_refs":["..."]}（仅题内；全局由用户审批，勿用）\n'
+            '- {"op":"finish","reason":"..."}\n'
+            "experience_proposals 每项：scope/challenge_id/title/body_md/applicability/"
+            "evidence_refs 必填；可选 target_id（更新已有条目，先读库再决定新建/"
+            "更新/不变，同主题勿重复新建）与 kind（仅限 "
+            "heuristic/procedure/failure/platform 四值，勿自创）。"
+            "题内提议直接生效为 active；全局提议落 candidate 待用户审批。\n\n"
             f"ReviewPacket:\n```json\n{json.dumps(packet, ensure_ascii=False)}\n```"
         )
 

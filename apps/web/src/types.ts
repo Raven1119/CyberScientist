@@ -56,6 +56,16 @@ export interface Settings {
     max_jobs: number
     max_submissions: number
   }
+  shadow: {
+    enabled: boolean
+    min_interval_seconds: number
+    max_interval_seconds: number
+    max_reviews: number
+  }
+  mailbox: {
+    platform: string
+    submission_limit: number
+  }
   memory: {
     root: string
     max_global_entries: number
@@ -66,6 +76,7 @@ export interface Settings {
 }
 
 export interface LlmProfile {
+  id: string
   label: string
   protocol: string
   base_url: string
@@ -79,7 +90,7 @@ export interface ConnectionHealth {
   authenticated: boolean | null
   detail: string
   version: string | null
-  capabilities: string[]
+  capabilities: Record<string, boolean> | string[]
 }
 
 export interface ConnectionTestResult {
@@ -101,6 +112,21 @@ export interface ChallengeDetail extends ChallengeSummary {
   content?: string
 }
 
+export interface SkillInfo {
+  id: string
+  name: string
+  description: string
+  source: string
+  always_on: boolean
+  bound: boolean
+}
+
+export interface SkillCatalogResponse {
+  skills: SkillInfo[]
+  always_on: string[]
+  bound: string[]
+}
+
 export interface TrialSummary {
   id: string
   goal: string
@@ -111,8 +137,13 @@ export interface TrialSummary {
 export interface RunBudget {
   brain_reviews_used: number
   max_brain_reviews: number
+  trials_used: number
+  max_trials: number
+  run_minutes_limit: number
+  run_minutes_exceeded: boolean
   model_turns: { limit: number; known_cost: number | null; unknown_cost: boolean | number }
   max_submissions: number
+  max_jobs: number
 }
 
 export type RunPhase =
@@ -121,6 +152,7 @@ export type RunPhase =
   | 'pausing'
   | 'paused'
   | 'blocked'
+  | 'recovering'
   | 'finished'
   | 'failed'
   | 'cancelled'
@@ -176,6 +208,7 @@ export interface ExperienceFrontmatter {
 }
 
 export interface ExperienceItem extends ExperienceFrontmatter {
+  review_note: string | null
   file: string
   current_hash: string
   revision_hash: string
@@ -204,4 +237,107 @@ export interface RevisionConflictDetails {
   current_hash: string
   current_content: string
   your_content: string
+}
+
+export type SupervisionGate = 'open' | 'yielding' | 'waiting_brain' | 'stopped'
+
+export type GuidanceStatus =
+  | 'queued'
+  | 'sending'
+  | 'sent'
+  | 'acknowledged'
+  | 'unknown'
+  | 'rejected'
+  | 'superseded'
+  | 'invalidated'
+
+export interface SupervisionWatchItem {
+  id: string
+  hypothesis_md: string
+  evidence_needed_md: string
+  intervene_when_md: string
+  evidence_refs: string[]
+}
+
+export interface SupervisionPendingRequest {
+  id: string
+  source: string
+  blocking: boolean
+  status: string
+  trigger: string
+  created_at: string
+}
+
+export interface SupervisionGuidance {
+  id: string
+  kind: string
+  intent: string
+  status: GuidanceStatus | string
+  text_md: string
+  target_trial_id: string | null
+  ack_disposition: string | null
+  created_at: string
+}
+
+export interface SupervisionStatus {
+  enabled: number
+  shadow_epoch: number
+  covered_seq: number
+  evidence_revision: number
+  reviews_used: number
+  max_reviews: number
+  private_note_md: string
+  watchlist: SupervisionWatchItem[]
+  last_review_at: string | null
+  degraded: number
+  degrade_reason: string | null
+  brain_busy: boolean
+  gate: SupervisionGate
+  executor_busy: boolean
+  pending_requests: SupervisionPendingRequest[]
+  guidance: SupervisionGuidance[]
+  latest_seq: number
+}
+
+export interface ReviewRequestResult {
+  review_id: string
+  status: string
+}
+
+export interface Mailbox {
+  id: string
+  role: 'harvest' | 'experiment'
+  email: string
+  platform: string
+  status: 'active' | 'exhausted' | 'disabled'
+  submission_limit: number
+  submissions_used: number
+  is_demo: number
+  secret_configured: boolean
+  created_at: string
+}
+
+export interface MailboxList {
+  items: Mailbox[]
+  platform: string
+  platform_is_demo: boolean
+}
+
+export interface Submission {
+  id: string
+  run_id: string
+  trial_id: string | null
+  mailbox_id: string
+  mailbox_email?: string
+  package_path: string
+  package_sha256: string
+  status: string
+  score: number | null
+  score_status: 'unknown' | 'pending' | 'scored' | 'failed'
+  is_harvest: number
+  platform_ref: string | null
+  error: string | null
+  created_at: string
+  submitted_at: string | null
+  scored_at: string | null
 }

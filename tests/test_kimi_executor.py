@@ -55,10 +55,13 @@ async def test_watchdog_passthrough():
 async def test_watchdog_stall():
     async def gen():
         yield {"type": "execution.progress", "detail": "x"}
-        await asyncio.sleep(10)
+        await asyncio.sleep(0.6)
+        yield {"type": "execution.progress", "detail": "恢复"}
 
     seen = []
     async for ev in with_stall_watchdog(gen(), 0.2):
         seen.append(ev)
-    assert [e["type"] for e in seen] == ["execution.progress", "trial.stalled"]
-    assert "挂起" in seen[-1]["detail"]
+    # A9：stalled 只上报一次，流保持开放，恢复后事件继续透传
+    assert [e["type"] for e in seen] == [
+        "execution.progress", "trial.stalled", "execution.progress"]
+    assert "活性告警" in seen[1]["detail"]

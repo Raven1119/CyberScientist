@@ -1,14 +1,16 @@
 """SQLite 权威存储：Run 状态、事件、Trial、授权、经验修订、操作日志。
 
 事件与关键状态更新在同一事务提交；(run_id, seq) 唯一。
+多步写入（检查点+审阅请求、审阅结果+指导 outbox）使用 transaction()。
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import sqlite3
 import threading
 from datetime import datetime, timezone
-from typing import Any, Iterable
+from typing import Any, Iterable, Iterator
 
 from . import config
 
@@ -131,13 +133,201 @@ CREATE INDEX IF NOT EXISTS idx_events_run_seq ON events(run_id, seq);
 CREATE INDEX IF NOT EXISTS idx_rev_exp ON experience_revisions(experience_id, created_at);
 """
 
+# 协作与静默监督（迁移 v2）：全部幂等（IF NOT EXISTS / 列存在性检查）
+SCHEMA_V2_TABLES = """
+CREATE TABLE IF NOT EXISTS supervision (
+    run_id TEXT PRIMARY KEY REFERENCES runs(id),
+    enabled INTEGER NOT NULL DEFAULT 0,
+    shadow_epoch INTEGER NOT NULL DEFAULT 0,
+    covered_seq INTEGER NOT NULL DEFAULT 0,
+    evidence_revision INTEGER NOT NULL DEFAULT 0,
+    reviews_used INTEGER NOT NULL DEFAULT 0,
+    private_note_md TEXT NOT NULL DEFAULT '',
+    watchlist TEXT NOT NULL DEFAULT '[]',
+    last_review_at TEXT,
+    degraded INTEGER NOT NULL DEFAULT 0,
+    degrade_reason TEXT,
+    updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS review_requests (
+    id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL REFERENCES runs(id),
+    source TEXT NOT NULL,            -- shadow | executor | user | lifecycle
+    blocking INTEGER NOT NULL DEFAULT 0,
+    checkpoint_id TEXT,
+    status TEXT NOT NULL DEFAULT 'pending',
+        -- pending | running | done | error | obsolete
+    trigger TEXT,
+    from_seq INTEGER,
+    through_seq INTEGER,
+    state_version INTEGER,
+    evidence_revision INTEGER,
+    shadow_epoch INTEGER,
+    frame_id TEXT,
+    frame_json TEXT,
+    result_json TEXT,
+    error TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_review_requests_run ON review_requests(run_id, status);
+CREATE TABLE IF NOT EXISTS guidance (
+    id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL REFERENCES runs(id),
+    review_request_id TEXT,
+    frame_id TEXT,
+    source TEXT NOT NULL,            -- shadow | requested | user
+    target_trial_id TEXT,
+    kind TEXT NOT NULL,              -- nudge | steer | stop | submit
+    intent TEXT NOT NULL,            -- continue | observe | reframe
+    text_md TEXT NOT NULL,
+    reason_md TEXT,
+    evidence_refs TEXT NOT NULL DEFAULT '[]',
+    expected_change_md TEXT,
+    revisit_when_md TEXT,
+    state_version INTEGER,
+    evidence_revision INTEGER,
+    shadow_epoch INTEGER,
+    status TEXT NOT NULL DEFAULT 'queued',
+        -- queued | sending | sent | acknowledged | unknown | rejected
+        -- | superseded | invalidated
+    delivery_channel TEXT,
+    operation_id TEXT,
+    ack_disposition TEXT,
+    ack_reason_md TEXT,
+    acked_at TEXT,
+    applied_evidence TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_guidance_run ON guidance(run_id, status);
+CREATE TABLE IF NOT EXISTS capability_tokens (
+    token_hash TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL REFERENCES runs(id),
+    role TEXT NOT NULL,              -- executor
+    session_ref TEXT,
+    generation INTEGER NOT NULL DEFAULT 0,
+    revoked INTEGER NOT NULL DEFAULT 0,
+    expires_at TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+-- 邮箱账号：harvest（收割，唯一，用户提供）/ experiment（实验，批量注册）
+CREATE TABLE IF NOT EXISTS mailboxes (
+    id TEXT PRIMARY KEY,
+    role TEXT NOT NULL,
+    email TEXT NOT NULL,
+    platform TEXT NOT NULL,
+    secret_ref TEXT,
+    status TEXT NOT NULL DEFAULT 'active',  -- active | exhausted | disabled
+    submission_limit INTEGER NOT NULL DEFAULT 10,
+    submissions_used INTEGER NOT NULL DEFAULT 0,
+    is_demo INTEGER NOT NULL DEFAULT 0,
+    note TEXT,
+    created_at TEXT NOT NULL,
+    disabled_at TEXT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_mailboxes_harvest_active
+    ON mailboxes(role) WHERE role='harvest' AND status<>'disabled';
+-- 提交记录：实验邮箱是提交主体；收割行 is_harvest=1 且引用来源提交
+CREATE TABLE IF NOT EXISTS submissions (
+    id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL REFERENCES runs(id),
+    trial_id TEXT,
+    mailbox_id TEXT NOT NULL REFERENCES mailboxes(id),
+    package_path TEXT NOT NULL,
+    package_sha256 TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'unknown',  -- submitted | failed | unknown
+    score REAL,                              -- 不知道就是 NULL
+    score_status TEXT NOT NULL DEFAULT 'unknown',  -- unknown|pending|scored|failed
+    is_harvest INTEGER NOT NULL DEFAULT 0,
+    source_submission_id TEXT,               -- 收割提交引用的实验提交
+    operation_id TEXT UNIQUE,                -- 幂等去重
+    error TEXT,
+    created_at TEXT NOT NULL,
+    submitted_at TEXT,
+    scored_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_submissions_run ON submissions(run_id);
+CREATE INDEX IF NOT EXISTS idx_submissions_mailbox ON submissions(mailbox_id);
+-- 随题目启用的技能绑定；source 记录绑定来源（user 等）
+CREATE TABLE IF NOT EXISTS challenge_skills (
+    challenge_id TEXT NOT NULL,
+    skill_id TEXT NOT NULL,
+    source TEXT NOT NULL DEFAULT 'user',
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (challenge_id, skill_id)
+);
+"""
+
+# submissions 表 v2 新增列（对既有库做幂等 ALTER）
+SUBMISSION_V2_COLUMNS = {
+    "platform_ref": "TEXT",  # 平台侧 attempt id 等回执引用
+}
+
+# checkpoints 表 v2 新增列（对既有库做幂等 ALTER）
+CHECKPOINT_V2_COLUMNS = {
+    "checkpoint_key": "TEXT",
+    "content_hash": "TEXT",
+    "stage": "TEXT",
+    "review": "TEXT",
+    "source": "TEXT NOT NULL DEFAULT 'user'",
+}
+
+# runs 表 v2 新增列：研究门禁（checkpoint blocking / stop / stalled 用）
+RUN_V2_COLUMNS = {
+    # open | yielding | waiting_brain | stopped
+    "gate": "TEXT NOT NULL DEFAULT 'open'",
+}
+
+# authorizations 表 v2 新增列：付费算力（Bohrium Job）有界授权
+AUTHORIZATION_V2_COLUMNS = {
+    "max_jobs": "INTEGER NOT NULL DEFAULT 0",
+}
+
+# challenges 表 v2 新增列：平台资源清单（数据集/工具/服务），导入时从
+# 平台详情 JSON 落库，供大脑 run_start 探查与规划
+CHALLENGE_V2_COLUMNS = {
+    "resources_json": "TEXT",
+}
+
 _db_lock = threading.RLock()
+
+
+def _ensure_columns(conn: sqlite3.Connection, table: str,
+                    columns: dict[str, str]) -> None:
+    existing = {r["name"] for r in
+                conn.execute(f"PRAGMA table_info({table})").fetchall()}
+    for name, decl in columns.items():
+        if name not in existing:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")
 
 
 def init_db() -> None:
     with _db_lock:
-        get_db().executescript(SCHEMA)
-        get_db().commit()
+        conn = get_db()
+        conn.executescript(SCHEMA)
+        conn.executescript(SCHEMA_V2_TABLES)
+        _ensure_columns(conn, "checkpoints", CHECKPOINT_V2_COLUMNS)
+        _ensure_columns(conn, "runs", RUN_V2_COLUMNS)
+        _ensure_columns(conn, "submissions", SUBMISSION_V2_COLUMNS)
+        _ensure_columns(conn, "authorizations", AUTHORIZATION_V2_COLUMNS)
+        _ensure_columns(conn, "challenges", CHALLENGE_V2_COLUMNS)
+        conn.commit()
+
+
+@contextlib.contextmanager
+def transaction() -> Iterator[sqlite3.Connection]:
+    """多步写入的唯一事务入口。事务内只允许用 conn 直接执行和
+    append_event_tx 等 _tx 变体；禁止调用会自行 commit 的旧 helper。"""
+    with _db_lock:
+        conn = get_db()
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            yield conn
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
 
 
 def query(sql: str, params: Iterable[Any] = ()) -> list[sqlite3.Row]:
@@ -156,6 +346,29 @@ def execute(sql: str, params: Iterable[Any] = ()) -> None:
         get_db().commit()
 
 
+def append_event_tx(conn: sqlite3.Connection, run_id: str, source: str,
+                    type_: str, payload: dict[str, Any] | None = None,
+                    trial_id: str | None = None,
+                    raw_ref: str | None = None) -> dict[str, Any]:
+    """append_event 的事务内变体：分配 seq 但不 commit。"""
+    row = conn.execute(
+        "SELECT COALESCE(MAX(seq), 0) + 1 AS next FROM events WHERE run_id=?",
+        (run_id,)).fetchone()
+    seq = row["next"]
+    import uuid
+    event_id = f"evt_{uuid.uuid4().hex[:12]}"
+    now = utcnow()
+    conn.execute(
+        "INSERT INTO events(event_id, run_id, seq, occurred_at, recorded_at,"
+        " source, type, trial_id, payload, raw_ref) VALUES(?,?,?,?,?,?,?,?,?,?)",
+        (event_id, run_id, seq, now, now, source, type_, trial_id,
+         json.dumps(payload or {}, ensure_ascii=False), raw_ref))
+    return {"event_id": event_id, "run_id": run_id, "seq": seq,
+            "occurred_at": now, "recorded_at": now, "source": source,
+            "type": type_, "trial_id": trial_id,
+            "payload": payload or {}, "raw_ref": raw_ref}
+
+
 def append_event(run_id: str, source: str, type_: str,
                  payload: dict[str, Any] | None = None,
                  trial_id: str | None = None,
@@ -163,24 +376,10 @@ def append_event(run_id: str, source: str, type_: str,
     """在事务内分配 seq 并追加事件。"""
     with _db_lock:
         conn = get_db()
-        row = conn.execute(
-            "SELECT COALESCE(MAX(seq), 0) + 1 AS next FROM events WHERE run_id=?",
-            (run_id,)).fetchone()
-        seq = row["next"]
-        import uuid
-        event_id = f"evt_{uuid.uuid4().hex[:12]}"
-        now = utcnow()
-        conn.execute(
-            "INSERT INTO events(event_id, run_id, seq, occurred_at, recorded_at,"
-            " source, type, trial_id, payload, raw_ref)"
-            " VALUES(?,?,?,?,?,?,?,?,?,?)",
-            (event_id, run_id, seq, now, now, source, type_, trial_id,
-             json.dumps(payload or {}, ensure_ascii=False), raw_ref))
+        result = append_event_tx(conn, run_id, source, type_, payload,
+                                 trial_id, raw_ref)
         conn.commit()
-        return {"event_id": event_id, "run_id": run_id, "seq": seq,
-                "occurred_at": now, "recorded_at": now, "source": source,
-                "type": type_, "trial_id": trial_id,
-                "payload": payload or {}, "raw_ref": raw_ref}
+        return result
 
 
 def bump_state_version(run_id: str) -> int:
@@ -219,3 +418,28 @@ def record_operation(operation_id: str, run_id: str, kind: str, status: str,
 
 def row_to_dict(row: sqlite3.Row | None) -> dict[str, Any] | None:
     return dict(row) if row else None
+
+
+def list_challenge_skills(conn: sqlite3.Connection,
+                          challenge_id: str) -> list[str]:
+    rows = conn.execute(
+        "SELECT skill_id FROM challenge_skills WHERE challenge_id=?"
+        " ORDER BY skill_id", (challenge_id,)).fetchall()
+    return [r["skill_id"] for r in rows]
+
+
+def bind_challenge_skill(conn: sqlite3.Connection, challenge_id: str,
+                         skill_id: str, source: str = "user") -> None:
+    """事务内变体：不自行 commit，由调用方事务收尾。"""
+    conn.execute(
+        "INSERT OR IGNORE INTO challenge_skills(challenge_id, skill_id,"
+        " source, created_at) VALUES(?,?,?,?)",
+        (challenge_id, skill_id, source, utcnow()))
+
+
+def unbind_challenge_skill(conn: sqlite3.Connection, challenge_id: str,
+                           skill_id: str) -> None:
+    """事务内变体：不自行 commit，由调用方事务收尾。"""
+    conn.execute(
+        "DELETE FROM challenge_skills WHERE challenge_id=? AND skill_id=?",
+        (challenge_id, skill_id))

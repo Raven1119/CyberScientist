@@ -30,6 +30,9 @@ export function Modal({
   wide?: boolean
 }) {
   const ref = useRef<HTMLDialogElement>(null)
+  // 只有「按下」和「抬起」都在背板上才关闭：输入框里拖选文本后
+  // 在背板松手时 click 的 target 也是 dialog，不能因此误关。
+  const downOnBackdrop = useRef(false)
 
   useEffect(() => {
     const dialog = ref.current
@@ -43,8 +46,13 @@ export function Modal({
       ref={ref}
       className={wide ? 'modal modal-wide' : 'modal'}
       onClose={onClose}
+      onMouseDown={(e) => {
+        downOnBackdrop.current = e.target === ref.current
+      }}
       onClick={(e) => {
-        if (e.target === ref.current) onClose()
+        const wasDownOnBackdrop = downOnBackdrop.current
+        downOnBackdrop.current = false
+        if (e.target === ref.current && wasDownOnBackdrop) onClose()
       }}
       aria-label={title}
     >

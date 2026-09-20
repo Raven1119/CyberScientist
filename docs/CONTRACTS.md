@@ -79,7 +79,7 @@ class PrimeRuntime(Protocol):
 
 ## 大脑输入与输出
 
-ReviewPacket 包含 `run_id / state_version / trigger / current_intention / trial_summary / evidence_index / latest_platform_state / budget_remaining / experience_manifest / new_events_since_last_review`。只附相关摘要与文件引用，允许按需读原始证据，不默认把全量 Trace 塞入每个判断。
+ReviewPacket 包含 `run_id / state_version / trigger / current_intention / trial_summary / evidence_index / latest_platform_state / budget_remaining / experience_manifest / new_events_since_last_review`（notable 事件与执行器实质进展带 `excerpt` 摘录）；shadow/requested 帧另有 `checkpoint_summaries / notable_events / executor_digest`（执行器非思考类进展摘录，已脱敏）。只附相关摘要与文件引用，允许按需读原始证据，不默认把全量 Trace 塞入每个判断；执行器思考流不进帧。
 
 输出按 `contracts/decision.schema.json` 校验。动作的语义：
 

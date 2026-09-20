@@ -1,9 +1,15 @@
 import { useCallback, useEffect, useState } from 'react'
-import { api } from '../api'
+import { api, listSkills, putAlwaysOnSkills } from '../api'
 import { useApp } from '../app-context'
 import { Badge } from '../components'
 import { formatTime } from '../labels'
-import type { ConnectionTestResult, LlmProfile, ReasoningEffort, Settings } from '../types'
+import type {
+  ConnectionTestResult,
+  LlmProfile,
+  ReasoningEffort,
+  Settings,
+  SkillInfo,
+} from '../types'
 
 type ConnId = 'brain' | 'executor' | 'prime' | 'playground' | 'bohrium'
 
@@ -122,20 +128,42 @@ export default function SettingsPage() {
     }
   }
 
-  async function writeSecret(secretId: string, value: string) {
+  async function writeSecret(secretId: string, value: string, applyRef?: (s: Settings, ref: string) => void) {
     if (!secretId.trim() || !value) {
       toast('请填写 secret_id 和密钥值。')
       return
     }
     try {
-      await api.post<{ secret_ref: string; configured: boolean }>('/api/v1/secrets', {
+      const res = await api.post<{ secret_ref: string; configured: boolean }>('/api/v1/secrets', {
         secret_id: secretId.trim(),
         value,
       })
       toast(`密钥 ${secretId.trim()} 已保存。`)
+      if (applyRef && settings) {
+        // 密钥引用同步写回设置并立即落盘，连接测试/导入立即可用
+        const next = structuredClone(settings)
+        applyRef(next, res.secret_ref)
+        await api.put('/api/v1/settings', { settings: next, base_revision: baseRevision })
+      }
       await reload()
     } catch (err) {
       toast('保存密钥失败：' + (err instanceof Error ? err.message : String(err)))
+    }
+  }
+
+  async function deleteSecret(secretId: string, applyRef?: (s: Settings, ref: string) => void) {
+    if (!secretId.trim()) return
+    try {
+      await api.delete(`/api/v1/secrets/${encodeURIComponent(secretId.trim())}`)
+      toast(`密钥 ${secretId.trim()} 已删除。`)
+      if (applyRef && settings) {
+        const next = structuredClone(settings)
+        applyRef(next, '')
+        await api.put('/api/v1/settings', { settings: next, base_revision: baseRevision })
+      }
+      await reload()
+    } catch (err) {
+      toast('删除密钥失败：' + (err instanceof Error ? err.message : String(err)))
     }
   }
 
@@ -249,6 +277,7 @@ export default function SettingsPage() {
               confirmSpend={confirmSpend.brain}
               onConfirmSpendChange={(v) => setConfirmSpend((c) => ({ ...c, brain: v }))}
               onTest={(kind) => void testConnection('brain', kind)}
+              allowRoundtrip
             />
             <HealthDetail state={conns.brain} />
           </div>
@@ -386,11 +415,12 @@ export default function SettingsPage() {
                 >
                   <option value="">未选择</option>
                   {settings.llm_profiles.map((p) => (
-                    <option key={p.label} value={p.label}>
-                      {p.label}（{p.model_id}）
+                    <option key={p.id || p.label} value={p.id}>
+                      {p.label || p.id}（{p.model_id}）
                     </option>
                   ))}
                 </select>
+                <p className="small-text">按 Profile 的 ID 关联；UI 新建 Profile 时请填写唯一 ID。</p>
               </div>
             </div>
             <div className="actions">
@@ -445,7 +475,7 @@ export default function SettingsPage() {
                   ...s,
                   llm_profiles: [
                     ...s.llm_profiles,
-                    { label: '', protocol: 'openai_chat_completions', base_url: '', model_id: '', secret_ref: '' },
+                    { id: '', label: '', protocol: 'openai_chat_completions', base_url: '', model_id: '', secret_ref: '' },
                   ],
                 }))
               }
@@ -481,9 +511,18 @@ export default function SettingsPage() {
               </div>
               <SecretField
                 label="Playground Token"
-                secretId={settings.playground.token_secret_ref || 'playground_token'}
-                configured={secretsStatus[settings.playground.token_secret_ref || 'playground_token'] ?? !!settings.playground.token_secret_ref}
-                onSave={(sid, value) => void writeSecret(sid, value)}
+                secretId={(settings.playground.token_secret_ref || 'local:playground_token').replace(/^local:/, '')}
+                configured={secretsStatus[(settings.playground.token_secret_ref || 'local:playground_token').replace(/^local:/, '')] ?? false}
+                onSave={(sid, value) =>
+                  void writeSecret(sid, value, (s, ref) => {
+                    s.playground.token_secret_ref = ref
+                  })
+                }
+                onDelete={(sid) =>
+                  void deleteSecret(sid, (s) => {
+                    s.playground.token_secret_ref = ''
+                  })
+                }
               />
             </div>
             <div className="divider" />
@@ -511,15 +550,25 @@ export default function SettingsPage() {
               </div>
               <SecretField
                 label="Bohrium AccessKey"
-                secretId={settings.bohrium.access_key_secret_ref || 'bohrium_access_key'}
-                configured={secretsStatus[settings.bohrium.access_key_secret_ref || 'bohrium_access_key'] ?? !!settings.bohrium.access_key_secret_ref}
-                onSave={(sid, value) => void writeSecret(sid, value)}
+                secretId={(settings.bohrium.access_key_secret_ref || 'local:bohrium_access_key').replace(/^local:/, '')}
+                configured={secretsStatus[(settings.bohrium.access_key_secret_ref || 'local:bohrium_access_key').replace(/^local:/, '')] ?? false}
+                onSave={(sid, value) =>
+                  void writeSecret(sid, value, (s, ref) => {
+                    s.bohrium.access_key_secret_ref = ref
+                  })
+                }
+                onDelete={(sid) =>
+                  void deleteSecret(sid, (s) => {
+                    s.bohrium.access_key_secret_ref = ''
+                  })
+                }
               />
               <SecretField
                 label="OpenRouter API Key（执行器模型）"
                 secretId="openrouter_api_key"
                 configured={secretsStatus['openrouter_api_key'] ?? false}
                 onSave={(sid, value) => void writeSecret(sid, value)}
+                onDelete={(sid) => void deleteSecret(sid)}
               />
             </div>
             <div className="actions" style={{ marginTop: 10 }}>
@@ -548,8 +597,219 @@ export default function SettingsPage() {
             )}
           </div>
         </article>
+
+        <article className="card">
+          <div className="card-head">
+            <div className="settings-heading">
+              <span className="setting-num">06</span>
+              <h2>运行模式与监督</h2>
+            </div>
+            <Badge tone={settings.app.mode === 'demo' ? 'amber' : 'green'}>
+              {settings.app.mode === 'demo' ? '演示模式' : '真实连接'}
+            </Badge>
+          </div>
+          <div className="card-body">
+            <div className="fields">
+              <div className="field">
+                <label htmlFor="app-mode">运行模式</label>
+                <select
+                  id="app-mode"
+                  value={settings.app.mode}
+                  onChange={(e) => update((s) => ({ ...s, app: { ...s.app, mode: e.target.value } }))}
+                >
+                  <option value="demo">demo · 合成数据，不作真实证据</option>
+                  <option value="connected">connected · 真实大脑/执行器/平台</option>
+                </select>
+              </div>
+              <div className="field">
+                <label htmlFor="mailbox-platform">邮箱平台（提交目标）</label>
+                <select
+                  id="mailbox-platform"
+                  value={settings.mailbox?.platform ?? 'demo'}
+                  onChange={(e) =>
+                    update((s) => ({ ...s, mailbox: { ...s.mailbox, platform: e.target.value } }))
+                  }
+                >
+                  <option value="demo">demo · 本地合成邮箱</option>
+                  <option value="bohrium_playground">bohrium_playground · 真实竞赛平台</option>
+                </select>
+              </div>
+              <div className="field">
+                <label htmlFor="shadow-max-reviews">静默监督审阅上限（次/Run）</label>
+                <input
+                  id="shadow-max-reviews"
+                  type="number"
+                  min={0}
+                  value={settings.shadow?.max_reviews ?? 8}
+                  onChange={(e) =>
+                    update((s) => ({
+                      ...s,
+                      shadow: { ...s.shadow, max_reviews: Number(e.target.value) || 0 },
+                    }))
+                  }
+                />
+              </div>
+              <div className="field">
+                <label htmlFor="shadow-min-interval">静默监督最小间隔（秒）</label>
+                <input
+                  id="shadow-min-interval"
+                  type="number"
+                  min={1}
+                  value={settings.shadow?.min_interval_seconds ?? 60}
+                  onChange={(e) =>
+                    update((s) => ({
+                      ...s,
+                      shadow: { ...s.shadow, min_interval_seconds: Number(e.target.value) || 60 },
+                    }))
+                  }
+                />
+              </div>
+            </div>
+            <p className="inline-note">
+              保存后对新启动的 Run 生效；运行中的 Run 用创建时的快照。演示模式始终标识、使用独立数据，不作为真实联调证据。
+            </p>
+          </div>
+        </article>
+
+        <SkillsCard />
+
+        <div className="save-bar">
+          <button type="button" className="btn primary" disabled={saving} onClick={() => void saveSettings()}>
+            {saving ? '保存中…' : '保存设置'}
+          </button>
+        </div>
       </div>
     </section>
+  )
+}
+
+function SkillsCard() {
+  const { toast } = useApp()
+  const [skills, setSkills] = useState<SkillInfo[] | null>(null)
+  const [checked, setChecked] = useState<Set<string>>(new Set())
+  const [dirty, setDirty] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [query, setQuery] = useState('')
+
+  const reload = useCallback(async () => {
+    const data = await listSkills()
+    setSkills(data.skills)
+    setChecked(new Set(data.always_on))
+    setDirty(false)
+  }, [])
+
+  useEffect(() => {
+    reload().catch((err) => {
+      toast('加载技能目录失败：' + (err instanceof Error ? err.message : String(err)))
+    })
+  }, [reload, toast])
+
+  function toggle(id: string) {
+    setChecked((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+    setDirty(true)
+  }
+
+  async function save() {
+    setSaving(true)
+    try {
+      await putAlwaysOnSkills([...checked])
+      toast('常驻技能已保存。')
+      await reload()
+    } catch (err) {
+      toast('保存常驻技能失败：' + (err instanceof Error ? err.message : String(err)))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const q = query.trim().toLowerCase()
+  const filtered =
+    skills === null || !q
+      ? skills
+      : skills.filter(
+          (s) =>
+            s.name.toLowerCase().includes(q) ||
+            s.description.toLowerCase().includes(q) ||
+            s.id.toLowerCase().includes(q),
+        )
+
+  return (
+    <article className="card">
+      <div className="card-head">
+        <div className="settings-heading">
+          <span className="setting-num">07</span>
+          <h2>技能管理</h2>
+        </div>
+        <div className="actions">
+          {skills && (
+            <Badge tone="neutral">
+              {q ? `${filtered?.length ?? 0} / ${skills.length}` : `${skills.length}`} 个技能
+            </Badge>
+          )}
+          <button
+            type="button"
+            className="btn small"
+            disabled={!dirty || saving}
+            onClick={() => void save()}
+          >
+            {saving ? '保存中…' : '保存常驻技能'}
+          </button>
+        </div>
+      </div>
+      <div className="card-body">
+        <p className="sub">
+          常驻技能对所有 Trial 生效；随题目启用的技能在研究工作台按题绑定。
+          启用 = 启动 Trial 时把技能名称与描述注入执行器任务文本。
+        </p>
+        {skills !== null && skills.length > 0 && (
+          <div className="field" style={{ marginBottom: 10 }}>
+            <label htmlFor="skill-search">搜索技能（按名称 / 描述过滤）</label>
+            <input
+              id="skill-search"
+              type="search"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="输入关键词过滤技能…"
+            />
+          </div>
+        )}
+        {skills === null ? (
+          <p className="small-text">正在加载技能目录…</p>
+        ) : skills.length === 0 ? (
+          <p className="small-text">
+            未在 ~/.kimi-code/skills、~/.agents/skills、~/.codex/skills 发现技能（含 SKILL.md 的子目录）。
+          </p>
+        ) : filtered && filtered.length === 0 ? (
+          <p className="small-text">没有匹配「{query}」的技能。</p>
+        ) : (
+          <ul className="plain-list">
+            {(filtered ?? []).map((s) => (
+              <li key={s.id} className="row-item">
+                <div>
+                  <strong>{s.name}</strong>
+                  {s.description && <div className="small-text">{s.description}</div>}
+                  <div className="small-text">{s.source}</div>
+                </div>
+                <div className="field checkbox">
+                  <input
+                    id={`skill-always-${s.id}`}
+                    type="checkbox"
+                    checked={checked.has(s.id)}
+                    onChange={() => toggle(s.id)}
+                  />
+                  <label htmlFor={`skill-always-${s.id}`}>常驻</label>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </article>
   )
 }
 
@@ -593,12 +853,20 @@ function HealthDetail({ state, title }: { state: ConnState; title?: string }) {
           <span>{h.detail}</span>
         </div>
       )}
-      {h.capabilities?.length > 0 && (
-        <div className="meta-row">
-          <span>能力</span>
-          <span>{h.capabilities.join('、')}</span>
-        </div>
-      )}
+      {(() => {
+        const caps = h.capabilities
+        const entries = Array.isArray(caps)
+          ? caps.map((c) => [c, true] as const)
+          : Object.entries(caps ?? {})
+        const enabled = entries.filter(([, v]) => v).map(([k]) => k)
+        if (enabled.length === 0) return null
+        return (
+          <div className="meta-row">
+            <span>能力</span>
+            <span>{enabled.join('、')}</span>
+          </div>
+        )
+      })()}
       {state.testedAt && (
         <p className="small-text">
           测试类型 {state.kind === 'model_roundtrip' ? '模型工具调用（消耗额度）' : '安装/认证检查'} · 时间{' '}
@@ -615,12 +883,14 @@ function ConnActions({
   confirmSpend,
   onConfirmSpendChange,
   onTest,
+  allowRoundtrip = false,
 }: {
   id: ConnId
   state: ConnState
   confirmSpend: boolean
   onConfirmSpendChange: (v: boolean) => void
   onTest: (kind: 'inspect' | 'model_roundtrip') => void
+  allowRoundtrip?: boolean
 }) {
   return (
     <div className="conn-actions">
@@ -628,20 +898,29 @@ function ConnActions({
         <button type="button" className="btn" disabled={state.busy} onClick={() => onTest('inspect')}>
           检查安装/认证
         </button>
-        <button type="button" className="btn" disabled={state.busy} onClick={() => onTest('model_roundtrip')}>
-          测试模型工具调用
-        </button>
+        {allowRoundtrip && (
+          <button type="button" className="btn" disabled={state.busy} onClick={() => onTest('model_roundtrip')}>
+            测试模型工具调用
+          </button>
+        )}
       </div>
-      <div className="field checkbox">
-        <input
-          id={`${id}-confirm-spend`}
-          type="checkbox"
-          checked={confirmSpend}
-          onChange={(e) => onConfirmSpendChange(e.target.checked)}
-        />
-        <label htmlFor={`${id}-confirm-spend`}>我确认消耗额度</label>
-      </div>
-      <p className="inline-note">“检查安装/认证”不调用付费模型；模型工具调用测试会消耗额度，需勾选确认。</p>
+      {allowRoundtrip && (
+        <>
+          <div className="field checkbox">
+            <input
+              id={`${id}-confirm-spend`}
+              type="checkbox"
+              checked={confirmSpend}
+              onChange={(e) => onConfirmSpendChange(e.target.checked)}
+            />
+            <label htmlFor={`${id}-confirm-spend`}>我确认消耗额度</label>
+          </div>
+          <p className="inline-note">“检查安装/认证”不调用付费模型；模型工具调用测试会消耗额度，需勾选确认。</p>
+        </>
+      )}
+      {!allowRoundtrip && (
+        <p className="inline-note">模型工具调用往返仅大脑支持；此处只提供零费用的安装/认证检查。</p>
+      )}
     </div>
   )
 }
@@ -651,11 +930,13 @@ function SecretField({
   secretId,
   configured,
   onSave,
+  onDelete,
 }: {
   label: string
   secretId: string
   configured: boolean
   onSave: (secretId: string, value: string) => void
+  onDelete?: (secretId: string) => void
 }) {
   const [id, setId] = useState(secretId)
   const [value, setValue] = useState('')
@@ -691,6 +972,15 @@ function SecretField({
         >
           保存密钥
         </button>
+        {onDelete && configured && (
+          <button
+            type="button"
+            className="btn small danger"
+            onClick={() => onDelete(id)}
+          >
+            删除
+          </button>
+        )}
       </div>
       <p className="small-text" role="status">
         {configured ? '已配置' : '未配置'}（后端回读 secrets.json 状态，不回显值）
@@ -711,6 +1001,14 @@ function ProfileEditor({
   return (
     <div className="profile-editor">
       <div className="fields triple">
+        <div className="field">
+          <label>ID（关联键，唯一）</label>
+          <input
+            value={profile.id}
+            onChange={(e) => onChange({ ...profile, id: e.target.value.trim() })}
+            placeholder="如 dsv41-flash"
+          />
+        </div>
         <div className="field">
           <label>标签</label>
           <input value={profile.label} onChange={(e) => onChange({ ...profile, label: e.target.value })} />

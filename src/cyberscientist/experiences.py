@@ -114,6 +114,7 @@ def _scan_dir(directory: Path, scope: str, challenge_id: str | None,
             "applicability": fm.get("applicability", ""),
             "evidence_refs": fm.get("evidence_refs", []),
             "expires_at": fm.get("expires_at"),
+            "review_note": fm.get("review_note"),
             "file": _rel(path),
             "current_hash": content_hash(content),
             "revision_hash": rev["revision_hash"] if rev else None,
@@ -267,6 +268,31 @@ def save_experience(exp_id: str, frontmatter: dict[str, Any], body_md: str,
         (exp_id, rev_hash))
     return {"id": exp_id, "revision_hash": rev_hash, "current_hash": rev_hash,
             "file": _rel(existing_path)}
+
+
+def approve_experience(exp_id: str) -> dict[str, Any]:
+    """用户审批通过：candidate → active（全局经验的唯一晋升通道）。"""
+    exp = get_experience(exp_id)
+    fm = dict(exp["frontmatter"])
+    fm["status"] = "active"
+    fm["evidence_status"] = "observed"
+    fm.pop("review_note", None)
+    return save_experience(exp_id, fm, exp["body_md"], operator="user",
+                           reason="用户审批通过", base_hash=exp["current_hash"])
+
+
+def reject_experience(exp_id: str, note: str) -> dict[str, Any]:
+    """用户驳回：保持/退回 candidate 并附批注；大脑下轮整理时参考
+    review_note 重写或放弃。"""
+    if not note.strip():
+        raise ExperienceError("INVALID_EXPERIENCE", "驳回必须附批注")
+    exp = get_experience(exp_id)
+    fm = dict(exp["frontmatter"])
+    fm["status"] = "candidate"
+    fm["review_note"] = note.strip()[:2000]
+    return save_experience(exp_id, fm, exp["body_md"], operator="user",
+                           reason=f"用户驳回: {note.strip()[:80]}",
+                           base_hash=exp["current_hash"])
 
 
 def restore_revision(exp_id: str, revision_hash: str, operator: str,

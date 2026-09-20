@@ -115,7 +115,8 @@ class CodexExecutor:
         sess.busy = True
         sess.turn_task = asyncio.create_task(self._run_turn(sess, text))
         return ActionReceipt(status="accepted",
-                             detail="turn 已启动；以 trial.completed 事件确认",
+                             detail="turn 已启动；以 executor.turn_completed "
+                                    "事件确认回合结束",
                              operation_id=f"op_{uuid.uuid4().hex[:10]}")
 
     async def _run_turn(self, sess: _Session, text: str) -> None:
@@ -209,9 +210,12 @@ class CodexExecutor:
                     turn = params.get("turn", {})
                     sess.busy = False
                     if turn.get("status") == "completed":
+                        # A4：原生回合结束 ≠ 实验交付
                         await sess.queue.put({
-                            "type": "trial.completed",
-                            "detail": "turn 完成（turn/completed）"})
+                            "type": "executor.turn_completed",
+                            "stop_reason": "completed",
+                            "detail": "turn 完成（turn/completed）；"
+                                      "不代表实验交付"})
                     else:
                         await sess.queue.put({
                             "type": "run.aborted",

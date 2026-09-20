@@ -246,6 +246,19 @@
               "type": "string",
               "minLength": 1
             }
+          },
+          "target_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "更新已有经验条目的 id；缺省=新建。冲突语义=追加新修订"
+          },
+          "kind": {
+            "enum": [
+              "heuristic",
+              "procedure",
+              "failure",
+              "platform"
+            ]
           }
         },
         "required": [

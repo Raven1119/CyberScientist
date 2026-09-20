@@ -1,0 +1,293 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "CyberScientist collaboration write messages v1",
+  "description": "Project-owned write contract. Identity, target versions, evidence validity, deduplication and runtime state require server-side validation.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/Checkpoint"
+    },
+    {
+      "$ref": "#/$defs/ReviewResult"
+    },
+    {
+      "$ref": "#/$defs/GuidanceAck"
+    }
+  ],
+  "$defs": {
+    "Checkpoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "message_type": {
+          "const": "checkpoint"
+        },
+        "checkpoint_key": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "review": {
+          "enum": [
+            "none",
+            "async",
+            "blocking"
+          ]
+        },
+        "stage": {
+          "enum": [
+            "progress",
+            "blocked",
+            "trial_complete"
+          ]
+        },
+        "report_md": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 12000
+        },
+        "evidence_refs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "maxItems": 32,
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "schema_version",
+        "message_type",
+        "checkpoint_key",
+        "review",
+        "stage",
+        "report_md",
+        "evidence_refs"
+      ]
+    },
+    "ReviewResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "message_type": {
+          "const": "review_result"
+        },
+        "frame_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "disposition": {
+          "enum": [
+            "silent",
+            "intervene"
+          ]
+        },
+        "private_note_md": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 2400
+        },
+        "watchlist": {
+          "type": "array",
+          "maxItems": 3,
+          "items": {
+            "$ref": "#/$defs/Watch"
+          }
+        },
+        "guidance": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/Guidance"
+            }
+          ]
+        }
+      },
+      "required": [
+        "schema_version",
+        "message_type",
+        "frame_id",
+        "disposition",
+        "private_note_md",
+        "watchlist",
+        "guidance"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "disposition": {
+                "const": "silent"
+              }
+            },
+            "required": [
+              "disposition"
+            ]
+          },
+          "then": {
+            "properties": {
+              "guidance": {
+                "type": "null"
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "guidance": {
+                "$ref": "#/$defs/Guidance"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "GuidanceAck": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "message_type": {
+          "const": "guidance_ack"
+        },
+        "guidance_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "disposition": {
+          "enum": [
+            "accepted",
+            "challenged"
+          ]
+        },
+        "reason_md": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        }
+      },
+      "required": [
+        "schema_version",
+        "message_type",
+        "guidance_id",
+        "disposition",
+        "reason_md"
+      ]
+    },
+    "Watch": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 96
+        },
+        "hypothesis_md": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000
+        },
+        "evidence_needed_md": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000
+        },
+        "intervene_when_md": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000
+        },
+        "evidence_refs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "maxItems": 32,
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "id",
+        "hypothesis_md",
+        "evidence_needed_md",
+        "intervene_when_md",
+        "evidence_refs"
+      ]
+    },
+    "Guidance": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "enum": [
+            "nudge",
+            "steer",
+            "stop",
+            "submit"
+          ]
+        },
+        "intent": {
+          "enum": [
+            "continue",
+            "observe",
+            "reframe"
+          ]
+        },
+        "text_md": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4000
+        },
+        "reason_md": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        },
+        "evidence_refs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "maxItems": 32,
+          "uniqueItems": true
+        },
+        "expected_change_md": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1200
+        },
+        "revisit_when_md": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1200
+        }
+      },
+      "required": [
+        "kind",
+        "intent",
+        "text_md",
+        "reason_md",
+        "evidence_refs",
+        "expected_change_md",
+        "revisit_when_md"
+      ]
+    }
+  }
+}

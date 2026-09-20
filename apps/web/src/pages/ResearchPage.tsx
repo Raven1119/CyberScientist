@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { api } from '../api'
+import { ApiError, api, bindChallengeSkill, listSkills, unbindChallengeSkill, updateRunBudget } from '../api'
 import { useApp } from '../app-context'
 import { Badge, Modal } from '../components'
 import {
@@ -10,18 +10,26 @@ import {
   formatTime,
   PHASE_LABELS,
   PHASE_TONES,
+  SCORE_STATUS_LABELS,
   SOURCE_LABELS,
+  TERMINAL_PHASES,
   TRIAL_STATUS_LABELS,
 } from '../labels'
 import type {
   ChallengeDetail,
   ChallengeSummary,
   Checkpoint,
+  RunBudget,
   RunDetail,
   RunEvent,
   RunSummary,
+  ReviewRequestResult,
+  SkillCatalogResponse,
+  Submission,
+  SupervisionGuidance,
+  SupervisionStatus,
 } from '../types'
-import { useRunEventStream } from '../useRunEventStream'
+import { useRunEventStream, type StreamStatus } from '../useRunEventStream'
 
 type Tab = 'events' | 'trials' | 'checkpoints' | 'submission'
 
@@ -35,6 +43,7 @@ const TABS: { key: Tab; label: string }[] = [
 const SOURCE_AVATAR: Record<string, string> = {
   brain: 'B',
   prime: 'P',
+  executor: 'P',
   user: 'U',
   controller: 'CS',
   demo: 'D',
@@ -54,9 +63,17 @@ export default function ResearchPage() {
   const [importOpen, setImportOpen] = useState(false)
   const [startOpen, setStartOpen] = useState(false)
   const [terminateOpen, setTerminateOpen] = useState(false)
+  const [budgetOpen, setBudgetOpen] = useState(false)
   const [busy, setBusy] = useState(false)
   const [steerText, setSteerText] = useState('')
-  const [steerState, setSteerState] = useState<{ opId: string; state: 'queued' | 'consumed' } | null>(null)
+  const [steerState, setSteerState] = useState<{
+    opId: string
+    sentAt: number
+    state: 'queued' | 'consumed'
+  } | null>(null)
+  const [supervision, setSupervision] = useState<SupervisionStatus | null>(null)
+  const [subRefresh, setSubRefresh] = useState(0)
+  const [streamStatus, setStreamStatus] = useState<StreamStatus>('idle')
 
   const eventsRef = useRef<HTMLDivElement>(null)
   const atBottomRef = useRef(true)
@@ -116,10 +133,17 @@ export default function ResearchPage() {
 
   const [runDetail, setRunDetail] = useState<RunDetail | null>(null)
 
+  const phase = runDetail?.phase ?? currentRun?.phase ?? null
+  const paused = phase === 'paused'
+  const pausing = phase === 'pausing'
+  const recovering = phase === 'recovering'
+  const terminal = phase !== null && TERMINAL_PHASES.includes(phase)
+
   useEffect(() => {
     setRunDetail(null)
     setEvents([])
     setSteerState(null)
+    setSupervision(null)
   }, [currentRun?.id])
 
   const refreshRunDetail = useCallback(async () => {
@@ -154,11 +178,29 @@ export default function ResearchPage() {
     }
   }, [currentRun])
 
+  const refreshSupervision = useCallback(async () => {
+    if (!currentRun) return
+    try {
+      const data = await api.get<SupervisionStatus>(`/api/v1/runs/${currentRun.id}/supervision`)
+      setSupervision(data)
+    } catch {
+      // 监督接口失败不打扰用户；下次轮询或事件会重试
+    }
+  }, [currentRun])
+
+  // 挂载即拉取一次，另保留 10s 轮询兜底；SSE 事件另行触发即时刷新
+  useEffect(() => {
+    if (!currentRun) return
+    void refreshSupervision()
+    const timer = window.setInterval(() => void refreshSupervision(), 10000)
+    return () => window.clearInterval(timer)
+  }, [currentRun, refreshSupervision])
+
   useEffect(() => {
     if (tab === 'checkpoints') void refreshCheckpoints()
   }, [tab, refreshCheckpoints])
 
-  const steerStateRef = useRef<{ opId: string; state: 'queued' | 'consumed' } | null>(null)
+  const steerStateRef = useRef<{ opId: string; sentAt: number; state: 'queued' | 'consumed' } | null>(null)
   useEffect(() => {
     steerStateRef.current = steerState
   }, [steerState])
@@ -166,10 +208,19 @@ export default function ResearchPage() {
   const handleEvent = useCallback(
     (event: RunEvent) => {
       setEvents((list) => [...list, event])
-      if (event.type === 'prime.steer.consumed' && steerStateRef.current) {
-        const op = event.payload?.operation_id
-        if (!op || op === steerStateRef.current.opId) {
-          setSteerState({ opId: steerStateRef.current.opId, state: 'consumed' })
+      const pendingSteer = steerStateRef.current
+      if (pendingSteer && pendingSteer.state === 'queued') {
+        // 后端不把前端的 operation_id 带回事件（guidance.sent 里是执行器回执 id），
+        // 改为时间序匹配：只认发送之后到达的消费信号，避免历史回放误判
+        const at = Date.parse(event.occurred_at)
+        const afterSend = Number.isNaN(at) || at >= pendingSteer.sentAt - 1000
+        const consumed =
+          event.type === 'prime.steer.consumed' ||
+          event.type === 'guidance.sent' ||
+          event.type === 'guidance.acknowledged' ||
+          (event.type === 'guidance.queued' && event.payload?.kind === 'steer')
+        if (consumed && afterSend) {
+          setSteerState({ ...pendingSteer, state: 'consumed' })
         }
       }
       if (event.type.startsWith('run.')) {
@@ -179,13 +230,28 @@ export default function ResearchPage() {
       if (event.type === 'prime.checkpoint.created' || event.type === 'checkpoint.created') {
         void refreshCheckpoints()
       }
+      if (event.type.startsWith('submission.')) {
+        setSubRefresh((n) => n + 1)
+      }
+      if (
+        event.type === 'brain.review_done' ||
+        event.type === 'review.requested' ||
+        event.type.startsWith('guidance.') ||
+        event.type.startsWith('shadow.') ||
+        event.type.startsWith('run.')
+      ) {
+        void refreshSupervision()
+      }
     },
-    [refreshRunDetail, refreshRuns, refreshCheckpoints],
+    [refreshRunDetail, refreshRuns, refreshCheckpoints, refreshSupervision],
   )
 
   // 只要选中了 Run 就订阅事件流：进行中的 Run 持续推送，
-  // 已结束的 Run 由服务端一次性回放历史事件后保持静默。
-  useRunEventStream(currentRun?.id ?? null, handleEvent)
+  // 已结束的 Run 由服务端一次性回放历史事件后归档（closed），不再重连。
+  useRunEventStream(currentRun?.id ?? null, handleEvent, {
+    onStatus: setStreamStatus,
+    terminal,
+  })
 
   // 自动滚动：用户停留在底部时跟随新事件；上翻阅读时不强制滚动。
   useEffect(() => {
@@ -218,6 +284,7 @@ export default function ResearchPage() {
     const text = steerText.trim()
     if (!text || !currentRun) return
     const opId = crypto.randomUUID()
+    const sentAt = Date.now()
     setBusy(true)
     try {
       await api.post(`/api/v1/runs/${currentRun.id}/control`, {
@@ -226,7 +293,7 @@ export default function ResearchPage() {
         operation_id: opId,
       })
       setSteerText('')
-      setSteerState({ opId, state: 'queued' })
+      setSteerState({ opId, sentAt, state: 'queued' })
       toast('指导已排队。')
     } catch (err) {
       toast('发送指导失败：' + (err instanceof Error ? err.message : String(err)))
@@ -281,10 +348,6 @@ export default function ResearchPage() {
       setBusy(false)
     }
   }
-
-  const phase = runDetail?.phase ?? currentRun?.phase ?? null
-  const paused = phase === 'paused'
-  const pausing = phase === 'pausing'
 
   return (
     <section aria-label="研究工作台">
@@ -356,6 +419,8 @@ export default function ResearchPage() {
         </div>
       )}
 
+      {challengeId && <ChallengeSkills key={challengeId} challengeId={challengeId} />}
+
       {phase === 'blocked' && runDetail?.block_reason && (
         <div className="callout danger" role="alert">
           <strong>研究被阻塞：</strong>
@@ -384,6 +449,11 @@ export default function ResearchPage() {
             <div className="card-head">
               <h2>研究活动</h2>
               <div className="actions">
+                {streamStatus === 'open' && <Badge tone="green">事件流已连接</Badge>}
+                {(streamStatus === 'connecting' || streamStatus === 'reconnecting') && (
+                  <Badge tone="amber">事件流已断开，正在重连…</Badge>
+                )}
+                {streamStatus === 'closed' && <Badge tone="neutral">事件流已归档</Badge>}
                 {phase === 'running' && (
                   <button type="button" className="btn" onClick={() => void pauseRun()}>
                     暂停研究
@@ -394,9 +464,14 @@ export default function ResearchPage() {
                     恢复研究
                   </button>
                 )}
-                {active && !paused && !pausing && (
+                {recovering && (
+                  <button type="button" className="btn" onClick={() => void resumeRun()}>
+                    恢复研究（后端重启后）
+                  </button>
+                )}
+                {(active || recovering) && !paused && (
                   <button type="button" className="btn danger" onClick={() => setTerminateOpen(true)}>
-                    终止研究
+                    {pausing ? '终止研究（不等暂停确认）' : '终止研究'}
                   </button>
                 )}
               </div>
@@ -499,11 +574,12 @@ export default function ResearchPage() {
                 </div>
               )}
 
-              {tab === 'submission' && (
-                <div className="empty">
-                  <strong>提交与评分：阶段 2 接入，当前不可用</strong>
-                  <p>正式提交前会分别核对提交包清单与 hash、远程 Attempt 与上传、官方反馈与参赛资格。</p>
-                </div>
+              {tab === 'submission' && challengeId && (
+                <SubmissionsPanel
+                  challengeId={challengeId}
+                  runId={currentRun?.id ?? null}
+                  refreshKey={subRefresh}
+                />
               )}
             </div>
           </article>
@@ -522,11 +598,13 @@ export default function ResearchPage() {
               </div>
               <div className="meta-row">
                 <span>大脑状态</span>
-                <span>{lastSourceEvent(events, 'brain')}</span>
+                <span>{terminal && phase ? PHASE_LABELS[phase] : lastSourceEvent(events, 'brain')}</span>
               </div>
               <div className="meta-row">
-                <span>Prime 状态</span>
-                <span>{lastSourceEvent(events, 'prime')}</span>
+                <span>执行器状态</span>
+                <span>
+                  {terminal && phase ? PHASE_LABELS[phase] : lastSourceEvent(events, 'prime', 'executor')}
+                </span>
               </div>
               <div className="meta-row">
                 <span>预算 · 大脑判断</span>
@@ -564,6 +642,20 @@ export default function ResearchPage() {
                 <span>提交上限</span>
                 <span>{runDetail?.budget ? runDetail.budget.max_submissions : '—'}</span>
               </div>
+              <div className="meta-row">
+                <span>算力上限</span>
+                <span>{runDetail?.budget ? runDetail.budget.max_jobs : '—'}</span>
+              </div>
+              {currentRun && runDetail?.budget && (
+                <button
+                  type="button"
+                  className="btn small"
+                  style={{ width: '100%', marginTop: 8 }}
+                  onClick={() => setBudgetOpen(true)}
+                >
+                  调整预算（运行中生效）
+                </button>
+              )}
               {currentRun && (
                 <details className="snapshot">
                   <summary>本轮配置快照</summary>
@@ -576,13 +668,23 @@ export default function ResearchPage() {
             </div>
           </article>
 
+          {currentRun && (
+            <SupervisionPanel
+              runId={currentRun.id}
+              supervision={supervision}
+              runEnded={terminal}
+              onChanged={(s) => setSupervision(s)}
+              onRefresh={() => void refreshSupervision()}
+            />
+          )}
+
           <article className="card">
             <div className="card-head">
               <h2>人工指导</h2>
               <Badge tone="blue">保留执行自主权</Badge>
             </div>
             <div className="card-body">
-              <p className="sub">告诉大脑或 Prime 需要区分什么、保留什么。</p>
+              <p className="sub">告诉大脑或执行器需要区分什么、保留什么。</p>
               <label htmlFor="steer-text">指导内容</label>
               <textarea
                 id="steer-text"
@@ -593,11 +695,16 @@ export default function ResearchPage() {
                 placeholder="例如：先区分环境错误和算法局限，再决定是否重跑。"
                 disabled={!active || paused || pausing}
               />
-              {steerState && (
+              {steerState && !terminal && (
                 <p className="small-text" role="status">
                   {steerState.state === 'queued'
-                    ? '已排队，尚未生效。'
-                    : '指导已被执行器接收并生效。'}
+                    ? '已排队，等待大脑审阅后投递。'
+                    : '指导已被 Run 消费（转为正式指导或已投递执行器）。'}
+                </p>
+              )}
+              {terminal && (
+                <p className="small-text" role="status">
+                  Run 已结束{phase ? `（${PHASE_LABELS[phase]}）` : ''}，不能再发送指导。
                 </p>
               )}
               <button
@@ -605,6 +712,7 @@ export default function ResearchPage() {
                 className="btn primary"
                 style={{ width: '100%', marginTop: 10 }}
                 disabled={!active || paused || pausing || !steerText.trim() || busy}
+                title={terminal ? 'Run 已结束，不能发送指导' : undefined}
                 onClick={() => void sendSteer()}
               >
                 发送指导
@@ -659,15 +767,307 @@ export default function ResearchPage() {
           </button>
         </div>
       </Modal>
+
+      {currentRun && runDetail?.budget && (
+        <BudgetDialog
+          open={budgetOpen}
+          onClose={() => setBudgetOpen(false)}
+          runId={currentRun.id}
+          budget={runDetail.budget}
+          onSaved={() => {
+            setBudgetOpen(false)
+            void refreshRunDetail()
+          }}
+        />
+      )}
     </section>
   )
 }
 
-function lastSourceEvent(events: RunEvent[], source: string): string {
+function BudgetDialog({
+  open,
+  onClose,
+  runId,
+  budget,
+  onSaved,
+}: {
+  open: boolean
+  onClose: () => void
+  runId: string
+  budget: RunBudget
+  onSaved: () => void
+}) {
+  const { toast } = useApp()
+  const [form, setForm] = useState({
+    max_brain_reviews: 0,
+    max_trials: 0,
+    max_model_turns: 0,
+    max_run_minutes: 0,
+    max_submissions: 0,
+    max_jobs: 0,
+  })
+  const [busy, setBusy] = useState(false)
+
+  useEffect(() => {
+    if (open) {
+      setForm({
+        max_brain_reviews: budget.max_brain_reviews,
+        max_trials: budget.max_trials,
+        max_model_turns: budget.model_turns.limit,
+        max_run_minutes: budget.run_minutes_limit,
+        max_submissions: budget.max_submissions,
+        max_jobs: budget.max_jobs,
+      })
+    }
+  }, [open, budget])
+
+  // 语义核对：max_model_turns/max_submissions 为 0 表示不再授权；max_run_minutes 为 0 表示不设限；
+  // 大脑判断与 Trial 上限作用于全局设置，为 0 会锁死后续研究，故最小为 1。
+  const FIELDS: { key: keyof typeof form; label: string; min: number }[] = [
+    { key: 'max_brain_reviews', label: '大脑判断上限', min: 1 },
+    { key: 'max_trials', label: 'Trial 上限', min: 1 },
+    { key: 'max_model_turns', label: '模型调用上限（0 = 不再授权）', min: 0 },
+    { key: 'max_run_minutes', label: '运行时长（分钟，0 = 不设限）', min: 0 },
+    { key: 'max_submissions', label: '提交上限（0 = 不再授权）', min: 0 },
+    { key: 'max_jobs', label: '算力上限（Bohrium Job 数）', min: 1 },
+  ]
+
+  async function save() {
+    const current = {
+      max_brain_reviews: budget.max_brain_reviews,
+      max_trials: budget.max_trials,
+      max_model_turns: budget.model_turns.limit,
+      max_run_minutes: budget.run_minutes_limit,
+      max_submissions: budget.max_submissions,
+      max_jobs: budget.max_jobs,
+    }
+    const body: Record<string, number> = {}
+    for (const { key } of FIELDS) {
+      if (form[key] !== current[key]) body[key] = form[key]
+    }
+    if (Object.keys(body).length === 0) {
+      onClose()
+      return
+    }
+    setBusy(true)
+    try {
+      await updateRunBudget(runId, body)
+      toast('预算已更新，立即生效。')
+      onSaved()
+    } catch (err) {
+      toast('预算更新失败：' + (err instanceof Error ? err.message : String(err)))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <Modal open={open} onClose={onClose} title="调整预算">
+      <p className="sub">
+        保存后立即生效，无需重启或中断当前 Run。大脑判断与 Trial 上限作用于全局设置；模型调用、运行时长与提交上限作用于本 Run 的授权。
+      </p>
+      {FIELDS.map(({ key, label, min }) => (
+        <div className="field" key={key}>
+          <label htmlFor={`budget-${key}`}>{label}</label>
+          <input
+            id={`budget-${key}`}
+            type="number"
+            min={min}
+            value={form[key]}
+            onChange={(e) =>
+              setForm((prev) => ({ ...prev, [key]: Number(e.target.value) }))
+            }
+          />
+        </div>
+      ))}
+      <div className="modal-actions">
+        <button type="button" className="btn" onClick={onClose}>
+          取消
+        </button>
+        <button
+          type="button"
+          className="btn primary"
+          disabled={busy}
+          onClick={() => void save()}
+        >
+          {busy ? '保存中…' : '保存'}
+        </button>
+      </div>
+    </Modal>
+  )
+}
+
+function lastSourceEvent(events: RunEvent[], ...sources: string[]): string {
   for (let i = events.length - 1; i >= 0; i--) {
-    if (events[i].source === source) return eventLabel(events[i].type)
+    if (sources.includes(events[i].source)) return eventLabel(events[i].type)
   }
   return '尚无事件'
+}
+
+function ChallengeSkills({ challengeId }: { challengeId: string }) {
+  const { toast } = useApp()
+  const [data, setData] = useState<SkillCatalogResponse | null>(null)
+  const [manageOpen, setManageOpen] = useState(false)
+
+  const reload = useCallback(async () => {
+    try {
+      setData(await listSkills(challengeId))
+    } catch (err) {
+      toast('加载技能失败：' + (err instanceof Error ? err.message : String(err)))
+    }
+  }, [challengeId, toast])
+
+  useEffect(() => {
+    void reload()
+  }, [reload])
+
+  async function remove(skillId: string) {
+    try {
+      await unbindChallengeSkill(challengeId, skillId)
+      toast('已移除本题技能。')
+      await reload()
+    } catch (err) {
+      toast('移除技能失败：' + (err instanceof Error ? err.message : String(err)))
+    }
+  }
+
+  const boundSkills = data?.skills.filter((s) => s.bound) ?? []
+
+  return (
+    <div className="skill-bar">
+      <span className="skill-bar-label">本题技能</span>
+      {data === null ? (
+        <span className="small-text">加载中…</span>
+      ) : boundSkills.length === 0 ? (
+        <span className="small-text">未绑定技能</span>
+      ) : (
+        <span className="skill-chips">
+          {boundSkills.map((s) => (
+            <span key={s.id} className="skill-chip" title={s.description || s.id}>
+              {s.name}
+              <button
+                type="button"
+                className="skill-chip-remove"
+                aria-label={`移除技能 ${s.name}`}
+                onClick={() => void remove(s.id)}
+              >
+                ×
+              </button>
+            </span>
+          ))}
+        </span>
+      )}
+      <button type="button" className="btn small" onClick={() => setManageOpen(true)}>
+        管理技能
+      </button>
+      <SkillManageDialog
+        open={manageOpen}
+        onClose={() => setManageOpen(false)}
+        challengeId={challengeId}
+        data={data}
+        onSaved={() => {
+          setManageOpen(false)
+          void reload()
+        }}
+      />
+    </div>
+  )
+}
+
+function SkillManageDialog({
+  open,
+  onClose,
+  challengeId,
+  data,
+  onSaved,
+}: {
+  open: boolean
+  onClose: () => void
+  challengeId: string
+  data: SkillCatalogResponse | null
+  onSaved: () => void
+}) {
+  const { toast } = useApp()
+  const [checked, setChecked] = useState<Set<string>>(new Set())
+  const [busy, setBusy] = useState(false)
+
+  useEffect(() => {
+    if (open) setChecked(new Set(data?.bound ?? []))
+  }, [open, data])
+
+  function toggle(id: string) {
+    setChecked((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  async function save() {
+    if (!data) return
+    setBusy(true)
+    try {
+      const before = new Set(data.bound)
+      for (const id of checked) {
+        if (!before.has(id)) await bindChallengeSkill(challengeId, id)
+      }
+      for (const id of before) {
+        if (!checked.has(id)) await unbindChallengeSkill(challengeId, id)
+      }
+      toast('本题技能已保存；下一个 Trial 启动时生效。')
+      onSaved()
+    } catch (err) {
+      toast('保存技能失败：' + (err instanceof Error ? err.message : String(err)))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <Modal open={open} onClose={onClose} title="管理本题技能">
+      {!data || data.skills.length === 0 ? (
+        <p className="sub">
+          未在技能目录发现技能（~/.kimi-code/skills、~/.agents/skills、~/.codex/skills 下含 SKILL.md 的子目录）。
+        </p>
+      ) : (
+        <ul className="plain-list">
+          {data.skills.map((s) => (
+            <li key={s.id} className="row-item">
+              <div>
+                <strong>{s.name}</strong>
+                {s.always_on && <Badge tone="blue">常驻</Badge>}
+                {s.description && <div className="small-text">{s.description}</div>}
+                <div className="small-text">{s.source}</div>
+              </div>
+              <div className="field checkbox">
+                <input
+                  id={`skill-bind-${s.id}`}
+                  type="checkbox"
+                  checked={checked.has(s.id)}
+                  onChange={() => toggle(s.id)}
+                />
+                <label htmlFor={`skill-bind-${s.id}`}>本题启用</label>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+      <div className="modal-actions">
+        <button type="button" className="btn" onClick={onClose}>
+          取消
+        </button>
+        <button
+          type="button"
+          className="btn primary"
+          disabled={busy || !data}
+          onClick={() => void save()}
+        >
+          {busy ? '保存中…' : '保存'}
+        </button>
+      </div>
+    </Modal>
+  )
 }
 
 const SOURCE_BADGE_TONE: Record<string, 'purple' | 'blue' | 'neutral' | 'green' | 'neutral'> = {
@@ -683,7 +1083,10 @@ const COLLAPSE_LIMIT = 300
 function EventItem({ event }: { event: RunEvent }) {
   const [expanded, setExpanded] = useState(false)
   const rawText = eventText(event)
-  const isStalled = event.type === 'prime.trial.stalled' || event.type === 'controller.trial.stalled'
+  const isStalled =
+    event.type === 'prime.trial.stalled' ||
+    event.type === 'controller.trial.stalled' ||
+    event.type === 'trial.stalled'
   const isApproval = event.type === 'prime.approval.granted'
   const isRawOutput = event.type === 'brain.raw_output'
   const longText = !isRawOutput && rawText.length > COLLAPSE_LIMIT
@@ -865,24 +1268,28 @@ function StartDialog({
 }) {
   const { toast } = useApp()
   const [allowModelCalls, setAllowModelCalls] = useState(false)
+  const [shadowEnabled, setShadowEnabled] = useState(false)
   const [maxModelTurns, setMaxModelTurns] = useState(0)
   const [maxRunMinutes, setMaxRunMinutes] = useState(30)
   const [maxSubmissions, setMaxSubmissions] = useState(0)
+  const [maxJobs, setMaxJobs] = useState(0)
   const [note, setNote] = useState('')
   const [busy, setBusy] = useState(false)
 
   useEffect(() => {
     if (open) {
       setAllowModelCalls(false)
+      setShadowEnabled(false)
       setNote('')
       api
-        .get<{ run_defaults: { max_model_turns: number; max_run_minutes: number; max_submissions: number } }>(
+        .get<{ run_defaults: { max_model_turns: number; max_run_minutes: number; max_submissions: number; max_jobs: number } }>(
           '/api/v1/settings',
         )
         .then((s) => {
           setMaxModelTurns(s.run_defaults.max_model_turns)
           setMaxRunMinutes(s.run_defaults.max_run_minutes)
           setMaxSubmissions(s.run_defaults.max_submissions)
+          setMaxJobs(s.run_defaults.max_jobs)
         })
         .catch(() => undefined)
     }
@@ -892,13 +1299,17 @@ function StartDialog({
     if (!challengeId) return
     setBusy(true)
     try {
-      const run = await api.post<{ id: string }>('/api/v1/runs', { challenge_id: challengeId })
+      const run = await api.post<{ id: string }>('/api/v1/runs', {
+        challenge_id: challengeId,
+        shadow_enabled: shadowEnabled,
+      })
       await api.post(`/api/v1/runs/${run.id}/authorize`, {
-        scope: 'demo',
+        scope: demoMode ? 'demo' : 'model_roundtrip',
         allow_model_calls: allowModelCalls,
         max_model_turns: maxModelTurns,
         max_run_minutes: maxRunMinutes,
         max_submissions: maxSubmissions,
+        max_jobs: maxJobs,
         note: note.trim() || undefined,
       })
       await api.post(`/api/v1/runs/${run.id}/start`)
@@ -955,6 +1366,15 @@ function StartDialog({
         />
         <label htmlFor="auth-model-calls">允许模型调用（会消耗模型额度）</label>
       </div>
+      <div className="field checkbox">
+        <input
+          id="auth-shadow-enabled"
+          type="checkbox"
+          checked={shadowEnabled}
+          onChange={(e) => setShadowEnabled(e.target.checked)}
+        />
+        <label htmlFor="auth-shadow-enabled">开启静默监督（大脑后台观察，有独立观察额度）</label>
+      </div>
       <div className="fields triple">
         <div className="field">
           <label htmlFor="auth-turns">模型调用上限</label>
@@ -986,6 +1406,16 @@ function StartDialog({
             onChange={(e) => setMaxSubmissions(Number(e.target.value))}
           />
         </div>
+        <div className="field">
+          <label htmlFor="auth-jobs">算力上限（Bohrium Job 数）</label>
+          <input
+            id="auth-jobs"
+            type="number"
+            min={0}
+            value={maxJobs}
+            onChange={(e) => setMaxJobs(Number(e.target.value))}
+          />
+        </div>
       </div>
       <div className="field">
         <label htmlFor="auth-note">备注（可选）</label>
@@ -1006,6 +1436,115 @@ function StartDialog({
   )
 }
 
+function SubmissionsPanel({
+  challengeId,
+  runId,
+  refreshKey,
+}: {
+  challengeId: string
+  runId: string | null
+  refreshKey: number
+}) {
+  const { toast } = useApp()
+  const [items, setItems] = useState<Submission[] | null>(null)
+  const [busy, setBusy] = useState(false)
+
+  const load = useCallback(async () => {
+    try {
+      // 按题聚合所有 Run 的提交；后端题级端点未就绪时回退到当前 Run 级端点
+      const res = await api.get<{ items: Submission[] }>(
+        `/api/v1/challenges/${encodeURIComponent(challengeId)}/submissions`,
+      )
+      setItems(res.items)
+    } catch (err) {
+      if (runId && err instanceof ApiError && err.status === 404) {
+        try {
+          const res = await api.get<{ items: Submission[] }>(`/api/v1/runs/${runId}/submissions`)
+          setItems(res.items)
+          return
+        } catch (fallbackErr) {
+          toast('加载提交记录失败：' + (fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr)))
+          setItems([])
+          return
+        }
+      }
+      toast('加载提交记录失败：' + (err instanceof Error ? err.message : String(err)))
+      setItems([])
+    }
+  }, [challengeId, runId, toast])
+
+  useEffect(() => {
+    void load()
+  }, [load, refreshKey])
+
+  async function poll() {
+    setBusy(true)
+    try {
+      const res = await api.post<{ polled: number; updated: number; still_unknown: number }>(
+        '/api/v1/submissions/poll', runId ? { run_id: runId } : {})
+      toast(`评分轮询：检查 ${res.polled}，新出分 ${res.updated}，等待中 ${res.still_unknown}。`)
+      await load()
+    } catch (err) {
+      toast('轮询失败：' + (err instanceof Error ? err.message : String(err)))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  if (items === null) return <p className="small-text">加载中…</p>
+  return (
+    <div>
+      <div className="actions" style={{ marginBottom: 10 }}>
+        <button type="button" className="btn" disabled={busy} onClick={() => void poll()}>
+          轮询评分
+        </button>
+        <span className="small-text">
+          服务端每 45 秒自动轮询；评分器排队时保持「未知」，不编造分数。实验邮箱提交由大脑 submit 指导自动发起，收割提交在「邮箱与提交」页手动确认。
+        </span>
+      </div>
+      {items.length === 0 ? (
+        <div className="empty">
+          <strong>本题还没有提交</strong>
+          <p>这里聚合本题所有 Run 的提交记录；结果包就绪后大脑会发出 submit 指导自动提交，或在「邮箱与提交」页手动提交现成包。</p>
+        </div>
+      ) : (
+        <ul className="plain-list">
+          {items.map((s) => (
+            <li key={s.id} className="row-item block">
+              <div className="meta-row">
+                <span>
+                  {s.is_harvest ? '收割' : '实验'} · {s.mailbox_email ?? s.mailbox_id}
+                  {s.platform_ref ? ` · 平台 #${s.platform_ref}` : ''}
+                </span>
+                <Badge
+                  tone={
+                    s.status === 'failed'
+                      ? 'danger'
+                      : s.score_status === 'scored'
+                        ? 'green'
+                        : 'amber'
+                  }
+                >
+                  {s.status === 'failed'
+                    ? '提交失败'
+                    : s.score_status === 'scored'
+                      ? `得分 ${s.score}`
+                      : `分数${SCORE_STATUS_LABELS[s.score_status] ?? '未知'}`}
+                </Badge>
+              </div>
+              <div className="small-text">
+                {s.package_path} · 提交于 {formatTime(s.submitted_at ?? s.created_at)}
+                {s.scored_at ? ` · 出分于 ${formatTime(s.scored_at)}` : ''}
+              </div>
+              {s.error && <p className="form-error">{s.error}</p>}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  )
+}
+
 function CheckpointForm({
   runId,
   trials,
@@ -1018,7 +1557,6 @@ function CheckpointForm({
   const { toast } = useApp()
   const [report, setReport] = useState('')
   const [evidence, setEvidence] = useState('')
-  const [trialId, setTrialId] = useState('')
   const [busy, setBusy] = useState(false)
 
   async function submit() {
@@ -1029,8 +1567,8 @@ function CheckpointForm({
     }
     setBusy(true)
     try {
+      // 后端按当前活跃 Trial 绑定身份，请求里的 trial_id 会被忽略，故不传
       await api.post(`/api/v1/runs/${runId}/checkpoints`, {
-        trial_id: trialId || undefined,
         report: report.trim(),
         evidence_refs: evidence
           .split('\n')
@@ -1050,17 +1588,9 @@ function CheckpointForm({
 
   return (
     <div className="checkpoint-form">
-      <div className="field">
-        <label htmlFor="cp-trial">关联 Trial（可选）</label>
-        <select id="cp-trial" value={trialId} onChange={(e) => setTrialId(e.target.value)}>
-          <option value="">不关联</option>
-          {trials.map((t) => (
-            <option key={t.id} value={t.id}>
-              {t.goal || t.id}
-            </option>
-          ))}
-        </select>
-      </div>
+      <p className="small-text">
+        检查点由后端自动关联当前活跃 Trial{trials.length > 0 ? `（当前 ${trials.length} 个）` : ''}。
+      </p>
       <div className="field">
         <label htmlFor="cp-report">检查点内容</label>
         <textarea
@@ -1086,5 +1616,237 @@ function CheckpointForm({
         创建检查点
       </button>
     </div>
+  )
+}
+
+const GATE_LABELS: Record<string, string> = {
+  open: '开放',
+  yielding: '执行器交棒中',
+  waiting_brain: '等待大脑',
+  stopped: '已停止新工作',
+}
+
+const GATE_TONES: Record<string, 'green' | 'amber' | 'danger'> = {
+  open: 'green',
+  yielding: 'amber',
+  waiting_brain: 'amber',
+  stopped: 'danger',
+}
+
+const GUIDANCE_STATUS_LABELS: Record<string, string> = {
+  queued: '排队中',
+  sending: '发送中',
+  sent: '已发送',
+  acknowledged: '已确认',
+  unknown: '未知',
+  rejected: '被拒绝',
+  superseded: '已被取代',
+  invalidated: '已失效',
+}
+
+const GUIDANCE_STATUS_TONES: Record<string, 'green' | 'blue' | 'neutral' | 'danger'> = {
+  queued: 'neutral',
+  sending: 'blue',
+  sent: 'blue',
+  acknowledged: 'green',
+  unknown: 'neutral',
+  rejected: 'danger',
+  superseded: 'neutral',
+  invalidated: 'neutral',
+}
+
+const GUIDANCE_TEXT_LIMIT = 200
+
+function GuidanceItem({ item }: { item: SupervisionGuidance }) {
+  const [expanded, setExpanded] = useState(false)
+  const stale = item.status === 'invalidated' || item.status === 'superseded'
+  const text = item.text_md ?? ''
+  const long = text.length > GUIDANCE_TEXT_LIMIT
+  const shown = long && !expanded ? text.slice(0, GUIDANCE_TEXT_LIMIT) + '…' : text
+  return (
+    <li className="row-item block">
+      <div className="actions" style={{ marginBottom: 4 }}>
+        <Badge tone="purple">{item.kind}</Badge>
+        <Badge tone="neutral">{item.intent}</Badge>
+        <span className={stale ? 'struck' : undefined}>
+          <Badge tone={GUIDANCE_STATUS_TONES[item.status] ?? 'neutral'}>
+            {GUIDANCE_STATUS_LABELS[item.status] ?? item.status}
+          </Badge>
+        </span>
+      </div>
+      <p className={stale ? 'pre-wrap struck' : 'pre-wrap'}>{shown || '（无内容）'}</p>
+      {long && (
+        <button
+          type="button"
+          className="btn small link-btn"
+          onClick={() => setExpanded((v) => !v)}
+          aria-expanded={expanded}
+        >
+          {expanded ? '收起' : '展开'}
+        </button>
+      )}
+      <div className="small-text">
+        {formatTime(item.created_at)}
+        {item.target_trial_id ? ` · 目标 Trial ${item.target_trial_id.slice(0, 8)}…` : ''}
+        {item.ack_disposition ? ` · 确认结论：${item.ack_disposition}` : ''}
+      </div>
+    </li>
+  )
+}
+
+function SupervisionPanel({
+  runId,
+  supervision,
+  runEnded,
+  onChanged,
+  onRefresh,
+}: {
+  runId: string
+  supervision: SupervisionStatus | null
+  runEnded: boolean
+  onChanged: (s: SupervisionStatus) => void
+  onRefresh: () => void
+}) {
+  const { toast } = useApp()
+  const [busy, setBusy] = useState(false)
+
+  const enabled = Boolean(supervision?.enabled)
+
+  async function requestReview() {
+    setBusy(true)
+    try {
+      const res = await api.post<ReviewRequestResult>(`/api/v1/runs/${runId}/review_requests`, {
+        blocking: false,
+      })
+      toast(`已请求大脑审阅（${res.review_id}）。`)
+      onRefresh()
+    } catch (err) {
+      toast('请求审阅失败：' + (err instanceof Error ? err.message : String(err)))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function toggleSupervision() {
+    if (enabled && !window.confirm('关闭只停止被动观察；已发布的指导仍可能有效。确定关闭静默监督吗？')) {
+      return
+    }
+    setBusy(true)
+    try {
+      const res = await api.post<SupervisionStatus>(`/api/v1/runs/${runId}/supervision`, {
+        enabled: !enabled,
+      })
+      onChanged(res)
+      toast(!enabled ? '静默监督已开启。' : '静默监督已关闭；已发布的指导仍可能有效。')
+    } catch (err) {
+      toast('切换静默监督失败：' + (err instanceof Error ? err.message : String(err)))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  let brainBadge: { tone: 'neutral' | 'amber' | 'purple' | 'green'; label: string }
+  if (!enabled) {
+    brainBadge = { tone: 'neutral', label: '未开启监督' }
+  } else if (supervision?.degraded) {
+    brainBadge = { tone: 'amber', label: `降级：${supervision.degrade_reason ?? '原因未知'}` }
+  } else if (supervision?.brain_busy) {
+    brainBadge = { tone: 'purple', label: '审阅中' }
+  } else {
+    brainBadge = { tone: 'green', label: '空闲' }
+  }
+
+  return (
+    <article className="card">
+      <div className="card-head">
+        <h2>协作监督</h2>
+        <Badge tone={enabled ? 'purple' : 'neutral'}>{enabled ? '静默监督开启' : '静默监督关闭'}</Badge>
+      </div>
+      <div className="card-body">
+        <div className="actions" style={{ flexWrap: 'wrap', marginBottom: 10 }}>
+          <Badge tone={brainBadge.tone}>大脑 · {brainBadge.label}</Badge>
+          <Badge tone={supervision?.executor_busy ? 'blue' : 'neutral'}>
+            执行器 · {supervision?.executor_busy ? '执行中' : '空闲'}
+          </Badge>
+          <Badge tone={GATE_TONES[supervision?.gate ?? ''] ?? 'neutral'}>
+            门禁 · {GATE_LABELS[supervision?.gate ?? ''] ?? (supervision?.gate ?? '—')}
+          </Badge>
+        </div>
+        <div className="meta-row">
+          <span>观察覆盖</span>
+          <span>{supervision ? `${supervision.covered_seq} / ${supervision.latest_seq}` : '—'}</span>
+        </div>
+        <div className="meta-row">
+          <span>观察用量</span>
+          <span>{supervision ? `${supervision.reviews_used} / ${supervision.max_reviews}` : '—'}</span>
+        </div>
+        <div className="meta-row">
+          <span>上次审阅</span>
+          <span>{supervision?.last_review_at ? formatTime(supervision.last_review_at) : '尚无'}</span>
+        </div>
+        {supervision && supervision.pending_requests.length > 0 && (
+          <div className="meta-row">
+            <span>待处理审阅请求</span>
+            <span>{supervision.pending_requests.length}</span>
+          </div>
+        )}
+        <div className="actions" style={{ marginTop: 10 }}>
+          <button
+            type="button"
+            className="btn"
+            disabled={busy || !enabled || runEnded}
+            title={runEnded ? 'Run 已结束，不能再请求审阅' : undefined}
+            onClick={() => void requestReview()}
+          >
+            请大脑现在审阅
+          </button>
+          <button
+            type="button"
+            className="btn"
+            disabled={busy || runEnded}
+            title={runEnded ? 'Run 已结束，监督状态不再变更' : undefined}
+            onClick={() => void toggleSupervision()}
+          >
+            {enabled ? '关闭静默监督' : '开启静默监督'}
+          </button>
+        </div>
+
+        <details className="snapshot" style={{ marginTop: 12 }}>
+          <summary>指导记录（{supervision?.guidance.length ?? 0}）</summary>
+          {supervision && supervision.guidance.length > 0 ? (
+            <ul className="plain-list" style={{ marginTop: 8 }}>
+              {supervision.guidance.map((g) => (
+                <GuidanceItem key={g.id} item={g} />
+              ))}
+            </ul>
+          ) : (
+            <p className="small-text">尚无指导。</p>
+          )}
+        </details>
+
+        <details className="snapshot" style={{ marginTop: 8 }}>
+          <summary>大脑研究笔记（仅用户可见，不发送给执行器）</summary>
+          {supervision?.private_note_md ? (
+            <p className="pre-wrap" style={{ marginTop: 8 }}>{supervision.private_note_md}</p>
+          ) : (
+            <p className="small-text" style={{ marginTop: 8 }}>暂无笔记。</p>
+          )}
+          {supervision && supervision.watchlist.length > 0 && (
+            <ul className="plain-list" style={{ marginTop: 8 }}>
+              {supervision.watchlist.map((w) => (
+                <li key={w.id} className="row-item block">
+                  <strong>{w.hypothesis_md}</strong>
+                  <div className="small-text">需要证据：{w.evidence_needed_md}</div>
+                  <div className="small-text">介入条件：{w.intervene_when_md}</div>
+                  {w.evidence_refs.length > 0 && (
+                    <div className="small-text">证据引用：{w.evidence_refs.join('、')}</div>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+        </details>
+      </div>
+    </article>
   )
 }

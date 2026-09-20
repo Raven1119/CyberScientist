@@ -26,3 +26,20 @@ test-results/
 # Keep editable experience in version control; never put secrets in it.
 
 .package-checks/
+
+# Experiment debris and monitoring scratch (not part of the product)
+checks/shots/
+checks/results/
+checks/*.log
+checks/mon*.txt
+checks/monitor*.txt
+checks/*_tail.txt
+checks/wb-*
+checks/brain_*.txt
+checks/stall_detail.txt
+checks/recovery_check.txt
+checks/direction_check.txt
+checks/platform_challenge_now.json
+checks/datasets_resp.txt
+checks/rr_schema.json
+apps/web/*.tsbuildinfo

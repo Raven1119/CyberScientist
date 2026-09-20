@@ -492,6 +492,43 @@ textarea.editor {
   margin: 0;
   white-space: nowrap;
 }
+.skill-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+.skill-bar-label {
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.skill-chips {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.skill-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 6px 3px 9px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 550;
+  background: var(--blue-soft);
+  color: var(--blue);
+}
+.skill-chip-remove {
+  border: none;
+  background: transparent;
+  color: inherit;
+  font-size: 13px;
+  line-height: 1;
+  padding: 0 2px;
+}
 .work-grid {
   display: grid;
   grid-template-columns: minmax(0, 1.7fr) minmax(260px, 1fr);
@@ -509,6 +546,10 @@ textarea.editor {
 }
 .snapshot {
   margin-top: 12px;
+}
+.struck {
+  text-decoration: line-through;
+  opacity: 0.65;
 }
 .snapshot summary {
   cursor: pointer;
@@ -1005,4 +1046,25 @@ textarea.editor {
   .secret-field .secret-row input:first-child {
     max-width: none;
   }
+}
+
+/* 邮箱与提交 */
+.mailbox-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+  gap: 18px;
+  align-items: start;
+}
+
+/* 设置页底部常驻保存栏 */
+.save-bar {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  justify-content: flex-end;
+  padding: 10px 4px;
+  margin-top: 18px;
+  background: var(--bg);
+  border-top: 1px solid var(--line);
+  z-index: 5;
 }

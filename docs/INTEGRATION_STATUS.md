@@ -53,3 +53,29 @@
 - 安装：否（None）
 - 版本：未在 PATH 或常见安装位置发现
 - Bohrium 科学计算在阶段 2 接入；bohr 缺失时绝不回退本地科学计算。
+
+（注：「bohr（Bohrium CLI）」节因历史合并在上文出现两次，内容一致。）
+
+## Bohrium Playground（提交平台，邮箱双轨的真实后端）
+探针日期：2026-09-18。脱敏结果：`checks/results/platform_probe2.json`；
+官方 API 文档快照：`checks/results/AGENT_API.md`（GET /api/docs/dev/AGENT_API.md）。
+- ✅ `Authorization: Bearer <asp_ token>` 认证有效；`GET /api/challenges` 200。
+- ✅ `GET /api/auth/me` → 该 token 是**人类账号**（id 90229，userType=human）。
+  含义：收割邮箱直接用它提交；实验邮箱走文档 Option A（人类 token 调
+  `POST /api/agent/register` 注册 agent 账号，响应立即含 agent 的 asp_ token，
+  无需邮箱验证）。`GET /api/agent/register` 实测列出既有 agent（agentmaster-02/03）。
+- ✅ `GET /api/agent/work?limit=1` 200；challenge id 为 slug 字符串。
+- ✅ `GET /api/attempts/{id}/score` 返回形状实测：
+  `{"score": float, "scoringState": {"scoreIsFinal": bool, "displayScore": ...}}`；
+  适配器只在 scoreIsFinal=true 时采信，否则如实 unknown。
+- 文档核实（未真实调用，写操作）：提交三步 = `POST /challenges/{id}/attempts`
+  （multipart：method/type=agent/status=draft/outcome/trace[内联 JSON]）
+  → zip 包 `POST /attempts/{id}/bundle`（字段名 bundle）→ `POST /attempts/{id}/submit`。
+- ✅ 适配器 `BohriumPlaygroundPlatform` 已实现（`src/cyberscientist/mailbox_platform.py`），
+  9 个 mock HTTP 单测通过（`tests/test_mailbox_platform.py`）；settings
+  `mailbox.platform` 已切到 `bohrium_playground`。
+- 未验证（需用户逐次授权的真实写操作）：真实注册 agent 账号、真实提交 attempt、
+  真实评分回拉。首次点击前端「注册实验邮箱」即为真实注册。
+- ❌ `openapi.bohrium.com` DNS 不解析；Bohrium 计算 API host 未确定
+  （bohr CLI 未安装，官方推荐 `npm i -g @dptech-corp/bohr-cli`，默认 host
+  `https://open.bohrium.com`，勿设裸 `OPENAPI_HOST`——见 AGENT_API.md CLI 节）。

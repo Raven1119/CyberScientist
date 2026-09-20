@@ -3,13 +3,14 @@ import type { ReactNode } from 'react'
 import { api } from './api'
 import type { HealthInfo } from './types'
 
-export type Page = 'research' | 'experience' | 'settings'
+export type Page = 'research' | 'experience' | 'mailbox' | 'settings'
 
 interface AppState {
   page: Page
   setPage: (page: Page) => void
   demoMode: boolean
-  healthTime: string | null
+  /** 后端时间与本地接收时刻，用于在顶栏推算持续走动的后端时钟 */
+  healthTime: { serverTime: string; receivedAt: number } | null
   currentChallengeId: string | null
   setCurrentChallengeId: (id: string | null) => void
   toast: (message: string) => void
@@ -28,7 +29,7 @@ let toastId = 0
 export function AppProvider({ children }: { children: ReactNode }) {
   const [page, setPage] = useState<Page>('research')
   const [demoMode, setDemoMode] = useState(false)
-  const [healthTime, setHealthTime] = useState<string | null>(null)
+  const [healthTime, setHealthTime] = useState<{ serverTime: string; receivedAt: number } | null>(null)
   const [currentChallengeId, setCurrentChallengeId] = useState<string | null>(null)
   const [toasts, setToasts] = useState<{ id: number; text: string }[]>([])
 
@@ -41,15 +42,30 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [])
 
   useEffect(() => {
-    api
-      .get<HealthInfo>('/api/v1/health')
-      .then((h) => {
-        setDemoMode(h.mode === 'demo')
-        setHealthTime(h.time)
-      })
-      .catch(() => {
-        toast('无法连接后端，请确认服务已在 127.0.0.1:8765 运行。')
-      })
+    let cancelled = false
+    let failureNotified = false
+    const check = () => {
+      api
+        .get<HealthInfo>('/api/v1/health')
+        .then((h) => {
+          if (cancelled) return
+          failureNotified = false
+          setDemoMode(h.mode === 'demo')
+          setHealthTime({ serverTime: h.time, receivedAt: Date.now() })
+        })
+        .catch(() => {
+          if (cancelled || failureNotified) return
+          failureNotified = true
+          toast('无法连接后端，请确认服务已在 127.0.0.1:8765 运行。')
+        })
+    }
+    check()
+    // 周期校对后端时间；顶栏时钟按本地时区每秒插值走动
+    const timer = window.setInterval(check, 30_000)
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+    }
   }, [toast])
 
   const state: AppState = {

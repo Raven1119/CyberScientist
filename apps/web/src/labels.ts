@@ -6,6 +6,7 @@ export const PHASE_LABELS: Record<RunPhase, string> = {
   pausing: '正在暂停',
   paused: '已暂停',
   blocked: '已阻塞',
+  recovering: '恢复中',
   finished: '已完成',
   failed: '已失败',
   cancelled: '已终止',
@@ -17,16 +18,20 @@ export const PHASE_TONES: Record<RunPhase, 'green' | 'blue' | 'amber' | 'danger'
   pausing: 'amber',
   paused: 'amber',
   blocked: 'danger',
+  recovering: 'amber',
   finished: 'blue',
   failed: 'danger',
   cancelled: 'neutral',
 }
 
-export const ACTIVE_PHASES: RunPhase[] = ['created', 'running', 'pausing', 'paused', 'blocked']
+export const ACTIVE_PHASES: RunPhase[] = ['created', 'running', 'pausing', 'paused', 'blocked', 'recovering']
+
+export const TERMINAL_PHASES: RunPhase[] = ['finished', 'failed', 'cancelled']
 
 export const SOURCE_LABELS: Record<string, string> = {
   brain: '大脑',
   prime: '执行器',
+  executor: '执行器',
   controller: '控制器',
   user: '用户',
   demo: '演示',
@@ -36,14 +41,23 @@ const EVENT_LABELS: Record<string, string> = {
   'run.started': '研究开始',
   'run.pausing': '正在暂停',
   'run.paused': '已暂停',
+  'run.pause_unknown': '暂停结果未知',
+  'run.pause.unknown': '暂停结果未知',
   'run.finished': '研究完成',
+  'run.terminated': '研究已终止',
   'run.blocked': '研究被阻塞',
+  'run.stop_requested': '已请求停止执行器',
+  'run.stop_confirmed': '执行器停止已确认',
+  'run.finish_deferred': '收尾延迟（先整理本题经验）',
+  'run.budget_updated': '预算已更新',
   'brain.decision': '大脑决策',
   'brain.review_started': '大脑开始判断',
+  'brain.review_done': '大脑审阅完成',
   'brain.raw_output': '大脑原始输出',
   'brain.wait': '大脑等待',
   'brain.error': '大脑出错',
-  'prime.task_accepted': '任务已接受',
+  'prime.task_accepted': '任务已被执行器接受',
+  'prime.task_resumed': '执行器任务已恢复',
   'prime.approval.granted': '工具自动批准',
   'prime.trial.started': 'Trial 开始',
   'prime.execution.progress': '执行进度',
@@ -51,11 +65,29 @@ const EVENT_LABELS: Record<string, string> = {
   'prime.trial.completed': 'Trial 完成',
   'prime.trial.stalled': '执行器挂起已处置',
   'controller.trial.stalled': '执行器挂起已处置',
+  'trial.stalled': '执行器挂起已处置',
+  'prime.aborted': '执行器会话中止',
+  'prime.error': '执行器出错',
+  'prime.late_event_ignored': '暂停期间的迟到事件已忽略',
   'prime.steer': '指导已接收',
   'prime.steer.consumed': '指导已生效',
   'trial.created': 'Trial 创建',
   'trial.done': 'Trial 结束',
+  'trial.reported_complete': 'Trial 报告完成',
+  'trial.skills_enabled': 'Trial 已挂载技能',
   'user.steer.queued': '指导已排队',
+  'guidance.queued': '指导已排队',
+  'guidance.sent': '指导已投递执行器',
+  'guidance.send_deferred': '指导投递暂缓',
+  'guidance.acknowledged': '指导已被执行器确认',
+  'guidance.superseded': '指导已被取代',
+  'guidance.invalidated': '指导已失效',
+  'submission.created': '提交已创建',
+  'submission.submitted': '已提交到平台',
+  'submission.failed': '提交失败',
+  'review.requested': '已请求大脑审阅',
+  'shadow.toggled': '静默监督开关切换',
+  'shadow.degraded': '静默监督降级',
   'experience.proposed': '经验候选',
   'checkpoint.created': '检查点已创建',
 }
@@ -95,10 +127,20 @@ export function eventText(event: {
       return detail ?? summary ?? '执行器推进中。'
     case 'prime.trial.stalled':
     case 'controller.trial.stalled':
+    case 'trial.stalled':
       return reason ?? message ?? detail ?? '执行器挂起已处置。'
     case 'prime.steer':
     case 'prime.steer.consumed':
       return text ?? detail ?? ''
+    case 'guidance.queued':
+    case 'guidance.sent':
+    case 'guidance.acknowledged':
+    case 'guidance.send_deferred':
+      return detail ?? (typeof p.text_excerpt === 'string' ? p.text_excerpt : '') ?? ''
+    case 'submission.created':
+    case 'submission.submitted':
+    case 'submission.failed':
+      return detail ?? message ?? ''
     case 'trial.created':
     case 'prime.trial.started':
       return goal ?? detail ?? ''
@@ -144,6 +186,20 @@ export const KIND_LABELS: Record<string, string> = {
   procedure: '流程',
   failure: '失败模式',
   platform: '平台',
+}
+
+export const SUBMISSION_STATUS_LABELS: Record<string, string> = {
+  unknown: '待提交',
+  created: '已创建',
+  submitted: '已提交',
+  failed: '提交失败',
+}
+
+export const SCORE_STATUS_LABELS: Record<string, string> = {
+  unknown: '未知',
+  pending: '待评分',
+  scored: '已评分',
+  failed: '评分失败',
 }
 
 export function formatTime(iso: string | null | undefined): string {

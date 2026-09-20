@@ -34,7 +34,9 @@ DIRECTION_OPS = {"start_trial", "request_submission", "finish"}
 def validate_semantics(decision: dict[str, Any], *,
                        has_active_trial: bool,
                        current_trial_id: str | None,
-                       allow_formal_submission: bool) -> list[str]:
+                       allow_formal_submission: bool,
+                       stalled_trial_id: str | None = None,
+                       reported_trial_id: str | None = None) -> list[str]:
     errors: list[str] = []
     actions = decision.get("actions", [])
     if sum(1 for a in actions if a["op"] in DIRECTION_OPS) > 1:
@@ -42,10 +44,20 @@ def validate_semantics(decision: dict[str, Any], *,
     for a in actions:
         op = a["op"]
         if op == "steer":
-            if not has_active_trial:
-                errors.append("steer 需要活跃 Trial")
-            elif a.get("trial_id") != current_trial_id:
-                errors.append("steer 的 trial_id 与当前 Trial 不符")
+            # stalled Trial 保留会话与现场，正是需要大脑 steer 裁决的时刻；
+            # reported_complete 等待验收时大脑也可 steer 追问（不改 Trial 状态）
+            steerable = (
+                has_active_trial and a.get("trial_id") == current_trial_id) or (
+                stalled_trial_id is not None
+                and a.get("trial_id") == stalled_trial_id) or (
+                reported_trial_id is not None
+                and a.get("trial_id") == reported_trial_id)
+            if not steerable:
+                if not has_active_trial and stalled_trial_id is None \
+                        and reported_trial_id is None:
+                    errors.append("steer 需要当前 Trial（活跃/待验收/停滞）")
+                else:
+                    errors.append("steer 的 trial_id 与当前 Trial 不符")
         if op == "start_trial" and has_active_trial:
             errors.append("已有活跃 Trial，不能同时 start_trial")
         if op == "request_submission" and not allow_formal_submission:

@@ -36,21 +36,33 @@ class PrimeRuntime(Protocol):
 
 async def with_stall_watchdog(events: AsyncIterator[dict[str, Any]],
                               timeout: float) -> AsyncIterator[dict[str, Any]]:
-    """执行器事件流挂起看门狗：timeout 秒无任何事件则判挂并终止流。
+    """执行器事件流挂起看门狗：timeout 秒无任何事件则上报一次 stalled。
 
     典型场景：模型流式调用无超时悬挂（Prime/DeepSeek 实测 8 分钟死寂）。
-    绝不静默等待——如实上报 trial.stalled，由控制器处置。
+    stalled 只代表需要活性核对（A9）：上报后流保持开放，
+    后续事件仍然透传；不替控制器判失败、不终止会话。
     """
     it = events.__aiter__()
+    pending: asyncio.Task | None = None
+    stalled = False
     while True:
+        if pending is None:
+            pending = asyncio.ensure_future(it.__anext__())
         try:
-            ev = await asyncio.wait_for(it.__anext__(), timeout)
+            # shield：超时不能取消进行中的 __anext__，否则底层
+            # 异步生成器被污染，恢复后的事件会丢失
+            ev = await asyncio.wait_for(asyncio.shield(pending), timeout)
         except StopAsyncIteration:
             return
         except asyncio.TimeoutError:
-            yield {"type": "trial.stalled",
-                   "detail": f"{int(timeout)}s 无执行器事件，判定挂起"}
-            return
+            if not stalled:
+                stalled = True
+                yield {"type": "trial.stalled",
+                       "detail": f"{int(timeout)}s 无执行器事件；"
+                                 f"仅活性告警，流保持开放"}
+            continue
+        pending = None
+        stalled = False
         yield ev
 
 

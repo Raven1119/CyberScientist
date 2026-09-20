@@ -1,0 +1,29 @@
+{
+  "scope": "documentation_and_message_schema_only",
+  "reference_commit": "27609e6afcc4f9987ec8459e87ff365b650d790c",
+  "markdown_files_checked": 8,
+  "local_links_checked": 14,
+  "schema_valid": true,
+  "valid_messages": [
+    "progress_checkpoint",
+    "blocking_checkpoint",
+    "trial_delivery",
+    "silent_review",
+    "observe_intervention",
+    "stop_intervention",
+    "guidance_ack"
+  ],
+  "invalid_messages_rejected": [
+    "silent_cannot_carry_guidance",
+    "intervention_requires_guidance",
+    "agent_cannot_select_run_identity",
+    "watchlist_has_bound",
+    "unknown_control_action_rejected",
+    "ack_is_not_application_or_score"
+  ],
+  "application_tests_run": false,
+  "real_model_calls_made": 0,
+  "scientific_or_competition_results_verified": false,
+  "errors": [],
+  "passed": true
+}

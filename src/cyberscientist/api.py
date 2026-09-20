@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
@@ -14,7 +15,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
-from . import config, db, experiences
+from . import collab, config, db, experiences, mailboxes, skills
 from .brains.codex import CodexBrain
 from .brains.demo import DemoBrain
 from .brains.kimi import KimiBrain
@@ -116,6 +117,27 @@ class ChallengeImport(BaseModel):
 class RunCreate(BaseModel):
     challenge_id: str
     mode: str | None = None
+    shadow_enabled: bool | None = None
+
+
+class ReviewRequestCreate(BaseModel):
+    blocking: bool = False
+
+
+class ShadowToggle(BaseModel):
+    enabled: bool
+
+
+class PollingToggle(BaseModel):
+    enabled: bool
+
+
+class AlwaysOnPut(BaseModel):
+    skill_ids: list[str]
+
+
+class SkillBind(BaseModel):
+    skill_id: str
 
 
 class AuthorizeBody(BaseModel):
@@ -124,7 +146,17 @@ class AuthorizeBody(BaseModel):
     max_model_turns: int = 0
     max_run_minutes: int = 30
     max_submissions: int = 0
+    max_jobs: int = 0
     note: str | None = None
+
+
+class BudgetBody(BaseModel):
+    max_brain_reviews: int | None = None
+    max_trials: int | None = None
+    max_model_turns: int | None = None
+    max_run_minutes: int | None = None
+    max_submissions: int | None = None
+    max_jobs: int | None = None
 
 
 class ControlBody(BaseModel):
@@ -161,9 +193,44 @@ class RestoreBody(BaseModel):
 def create_app(web_dist: Path | None = None) -> FastAPI:
     config.ensure_dirs()
     db.init_db()
-    experiences.check_pending_writes()
+    problems = experiences.check_pending_writes()
+    if problems:
+        # 启动对账发现不一致不再静默丢弃：如实告警（不写日志文件防密钥混入）
+        print(f"[cyberscientist] 经验修订对账异常 {len(problems)} 项: "
+              + "; ".join(str(p)[:120] for p in problems[:5]))
     _sync_prime_models(config.load_settings())  # 启动即对齐 Prime 模型配置
-    app = FastAPI(title="CyberScientist", docs_url=None, openapi_url=None)
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        # 重启对账：无事件循环的非终态 Run 如实标记 recovering（AGENTS 进程可靠性）
+        controller.reconcile_on_startup()
+        # 后台评分轮询：提交后进入评分等待，由这里异步拿回分数。
+        # 评分器可能长时间排队或抽风（409 scoringInProgress / 5xx），
+        # 全部吞掉下一轮再试；轮询失败绝不影响服务本身。
+        stop = asyncio.Event()
+
+        async def _poll_loop() -> None:
+            while not stop.is_set():
+                try:
+                    # 按题目分组轮询，跳过用户在 settings 中中断的题目
+                    await asyncio.to_thread(
+                        mailboxes.poll_pending_by_challenge)
+                except Exception:
+                    pass
+                try:
+                    await asyncio.wait_for(stop.wait(), 45)
+                except asyncio.TimeoutError:
+                    pass
+
+        task = asyncio.create_task(_poll_loop())
+        try:
+            yield
+        finally:
+            stop.set()
+            task.cancel()
+
+    app = FastAPI(title="CyberScientist", docs_url=None, openapi_url=None,
+                  lifespan=lifespan)
     app.state.web_dist = web_dist
 
     @app.exception_handler(ControllerError)
@@ -184,6 +251,24 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
         if exc.details:
             body["details"] = exc.details
         return JSONResponse(status_code=status, content={"detail": body})
+
+    @app.exception_handler(collab.CollabError)
+    async def collab_error(_: Request, exc: collab.CollabError):
+        status = {"NOT_FOUND": 404, "CONFLICT": 409, "RUN_ENDED": 409,
+                  "NOT_DELIVERED": 409}.get(exc.code, 422)
+        return JSONResponse(status_code=status, content={
+            "detail": {"code": exc.code, "message": str(exc),
+                       "recoverable": True, "details_ref": None}})
+
+    @app.exception_handler(mailboxes.MailboxError)
+    async def mailbox_error(_: Request, exc: mailboxes.MailboxError):
+        status = {"NOT_FOUND": 404, "CONFLICT": 409, "INVALID_STATE": 409,
+                  "NEEDS_AUTHORIZATION": 403, "NEEDS_CONFIRM": 400,
+                  "MISSING_CREDENTIAL": 400, "NO_MAILBOX": 400,
+                  "INVALID_MESSAGE": 422}.get(exc.code, 400)
+        return JSONResponse(status_code=status, content={
+            "detail": {"code": exc.code, "message": str(exc),
+                       "recoverable": True, "details_ref": None}})
 
     # ---------------- 健康 ----------------
 
@@ -215,7 +300,9 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
                 "message": "设置已被其他修改更新，请刷新后重试",
                 "current_revision": current["revision"]})
         merged = json.loads(json.dumps(config.DEFAULT_SETTINGS))
-        merged.update(body.settings)
+        incoming = {k: v for k, v in body.settings.items()
+                    if k != "_status"}  # _status 是 GET 响应的瞬态字段，不落盘
+        merged.update(incoming)
         merged["revision"] = current["revision"] + 1
         config.save_settings(merged)
         _sync_prime_models(merged)  # llm_profiles 可能变化，保持 models.json 同步
@@ -250,6 +337,11 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
               )
     async def test_connection(conn_id: str, body: ConnectionTest) -> dict[str, Any]:
         settings = config.load_settings()
+        if conn_id != "brain" and body.kind == "model_roundtrip":
+            raise HTTPException(501, detail={
+                "code": "NOT_IMPLEMENTED",
+                "message": "模型工具调用往返只对大脑开放；执行器/平台请用"
+                           "“检查安装/认证”（零费用）"})
         if conn_id == "brain":
             runtime = settings["brain"]["runtime"] if settings["app"]["mode"] != "demo" else "demo"
             brain = {"demo": DemoBrain(),
@@ -291,18 +383,58 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
         if conn_id == "playground":
             configured = config.secret_configured(
                 settings["playground"]["token_secret_ref"])
+            detail = "Playground Token " + ("已配置" if configured
+                                            else "未配置；题目 URL 导入不可用")
             return {"status": "configured" if configured else "missing",
-                    "detail": "Playground Token " + ("已配置" if configured
-                                                     else "未配置；题目 URL 导入不可用")}
+                    "detail": detail,
+                    "health": {"installed": None, "authenticated": configured,
+                               "detail": detail, "version": None,
+                               "capabilities": {}}}
         if conn_id == "bohrium":
             import os
-            exe = settings["bohrium"]["executable"]
+            import shutil
+            exe = settings["bohrium"]["executable"] or shutil.which("bohr") or ""
             if not exe or not os.path.exists(exe):
                 return {"status": "unavailable",
-                        "detail": "bohr CLI 未安装或未配置；科学计算不可用"}
-            return {"status": "ok", "detail": "bohr 可执行文件存在；版本探针属阶段 2"}
+                        "detail": "bohr CLI 未安装或未配置；科学计算不可用",
+                        "health": {"installed": False, "authenticated": None,
+                                   "detail": "bohr CLI 未安装或未配置；科学计算不可用",
+                                   "version": None, "capabilities": {}}}
+            # 零算力只读探针：--version（本地）+ auth whoami（只读 API）
+            import subprocess
+            def _bohr(args: list[str]) -> subprocess.CompletedProcess:
+                cmd = (["cmd", "/c", exe, *args]
+                       if exe.lower().endswith((".cmd", ".bat"))
+                       else [exe, *args])
+                return subprocess.run(cmd, capture_output=True, text=True,
+                                      timeout=30, shell=False)
+            version: str | None = None
+            authenticated: bool | None = None
+            detail_parts: list[str] = []
+            try:
+                vp = _bohr(["--version"])
+                version = (vp.stdout or vp.stderr).strip() or None
+            except (OSError, subprocess.TimeoutExpired):
+                pass
+            try:
+                wp = _bohr(["auth", "whoami"])
+                if wp.returncode == 0 and '"ok": true' in wp.stdout:
+                    authenticated = True
+                    detail_parts.append("AccessKey 已认证")
+                else:
+                    authenticated = False
+                    detail_parts.append("未认证；请在密钥区保存 Bohrium AccessKey "
+                                        "后执行 bohr auth login --ak")
+            except (OSError, subprocess.TimeoutExpired):
+                detail_parts.append("认证探针超时")
+            detail = "；".join(detail_parts) or "bohr 可用"
+            ok = authenticated is True
+            return {"status": "ok" if ok else "unavailable",
+                    "detail": detail,
+                    "health": {"installed": True, "authenticated": authenticated,
+                               "detail": detail, "version": version,
+                               "capabilities": {}}}
         raise HTTPException(404, detail={"code": "NOT_FOUND", "message": "未知连接"})
-
     # ---------------- 题目 ----------------
 
 
@@ -341,11 +473,53 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
                  hashlib.sha256(body.content.encode()).hexdigest(), db.utcnow()))
             return {"challenge": _challenge_dict(cid)}
         if body.mode == "url":
-            raise HTTPException(502, detail={
-                "code": "MISSING_CREDENTIAL",
-                "message": "URL 导入需要已配置的 Playground Token；当前未配置，"
-                           "或平台契约未核实。请使用手动导入。",
-                "recoverable": True})
+            from . import mailbox_platform
+            slug = mailbox_platform.parse_challenge_slug(body.url or "")
+            if not slug:
+                raise HTTPException(422, detail={
+                    "code": "INVALID_IMPORT",
+                    "message": "无法从输入解析题目 id；请粘贴平台题目 URL 或题目 slug"})
+            existing = db.query_one(
+                "SELECT id FROM challenges WHERE platform_challenge_id=?"
+                " AND is_demo=0", (slug,))
+            if existing:
+                return {"challenge": _challenge_dict(existing["id"])}
+            settings = config.load_settings()
+            pg = settings.get("playground") or {}
+            token_ref = pg.get("token_secret_ref") or ""
+            token = config.resolve_secret(token_ref) if token_ref else None
+            try:
+                data = await asyncio.to_thread(
+                    mailbox_platform.fetch_platform_challenge,
+                    pg.get("base_url") or "https://play.bohrium.com/api",
+                    slug, token)
+            except mailbox_platform.PlatformError as exc:
+                status = 404 if "HTTP 404" in str(exc) else 502
+                raise HTTPException(status, detail={
+                    "code": "PLATFORM_UNREACHABLE",
+                    "message": f"平台题目拉取失败：{exc}",
+                    "recoverable": True}) from exc
+            content = (data.get("content") or "").strip()
+            if not content:
+                raise HTTPException(502, detail={
+                    "code": "PLATFORM_CONTRACT_UNKNOWN",
+                    "message": f"平台题目 {slug} 无题面内容（content 为空），"
+                               "请使用手动导入。",
+                    "recoverable": True})
+            title = (data.get("title_zh") or data.get("title")
+                     or slug).strip()
+            cid = f"local_{uuid.uuid4().hex[:8]}"
+            resources = data.get("resources")
+            db.execute(
+                "INSERT INTO challenges(id, platform_challenge_id, origin, title,"
+                " content, content_hash, contract_status, imported_at, is_demo,"
+                " resources_json)"
+                " VALUES(?,?,?,?,?,?,'unknown',?,0,?)",
+                (cid, slug, body.url, title, content,
+                 hashlib.sha256(content.encode()).hexdigest(), db.utcnow(),
+                 json.dumps(resources, ensure_ascii=False)
+                 if isinstance(resources, list) else None))
+            return {"challenge": _challenge_dict(cid)}
         raise HTTPException(422, detail={"code": "INVALID_IMPORT",
                                          "message": f"未知导入模式: {body.mode}"})
 
@@ -366,12 +540,73 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
     async def get_challenge(cid: str) -> dict[str, Any]:
         return _challenge_dict(cid)
 
+    # ---------------- 技能 ----------------
+
+    def _require_challenge(cid: str) -> None:
+        if not db.query_one("SELECT id FROM challenges WHERE id=?", (cid,)):
+            raise HTTPException(404, detail={"code": "NOT_FOUND",
+                                             "message": "题目不存在"})
+
+    def _require_catalog_skill(skill_id: str,
+                               catalog: list[dict[str, Any]]) -> None:
+        if not any(s["id"] == skill_id for s in catalog):
+            raise HTTPException(404, detail={"code": "NOT_FOUND",
+                                             "message": f"技能不存在于目录: {skill_id}"})
+
+    @app.get("/api/v1/skills")
+    async def list_skills(challenge_id: str | None = None) -> dict[str, Any]:
+        catalog = skills.scan_catalog()
+        settings = config.load_settings()
+        catalog_ids = {s["id"] for s in catalog}
+        always_on = [sid for sid in
+                     (settings.get("skills") or {}).get("always_on", [])
+                     if sid in catalog_ids]
+        bound = db.list_challenge_skills(db.get_db(), challenge_id) \
+            if challenge_id else []
+        bound_set = set(bound)
+        always_set = set(always_on)
+        return {"skills": [s | {"always_on": s["id"] in always_set,
+                                "bound": s["id"] in bound_set}
+                           for s in catalog],
+                "always_on": always_on, "bound": bound}
+
+    @app.put("/api/v1/skills/always_on")
+    async def put_always_on(body: AlwaysOnPut) -> dict[str, Any]:
+        catalog_ids = {s["id"] for s in skills.scan_catalog()}
+        ids: list[str] = []
+        for sid in body.skill_ids:
+            if sid in catalog_ids and sid not in ids:
+                ids.append(sid)
+        settings = config.load_settings()
+        settings.setdefault("skills", {})["always_on"] = ids
+        settings["revision"] = settings["revision"] + 1
+        config.save_settings(settings)
+        return {"always_on": ids, "revision": settings["revision"]}
+
+    @app.post("/api/v1/challenges/{cid}/skills")
+    async def bind_skill(cid: str, body: SkillBind) -> dict[str, Any]:
+        _require_challenge(cid)
+        _require_catalog_skill(body.skill_id, skills.scan_catalog())
+        with db.transaction() as conn:
+            db.bind_challenge_skill(conn, cid, body.skill_id)
+            bound = db.list_challenge_skills(conn, cid)
+        return {"challenge_id": cid, "bound": bound}
+
+    @app.delete("/api/v1/challenges/{cid}/skills/{skill_id}")
+    async def unbind_skill(cid: str, skill_id: str) -> dict[str, Any]:
+        _require_challenge(cid)
+        with db.transaction() as conn:
+            db.unbind_challenge_skill(conn, cid, skill_id)
+            bound = db.list_challenge_skills(conn, cid)
+        return {"challenge_id": cid, "bound": bound}
+
     # ---------------- Run ----------------
 
 
     @app.post("/api/v1/runs")
     async def create_run(body: RunCreate) -> dict[str, Any]:
-        return controller.create_run(body.challenge_id, body.mode)
+        return controller.create_run(body.challenge_id, body.mode,
+                                     body.shadow_enabled)
 
     @app.get("/api/v1/runs")
     async def list_runs() -> dict[str, Any]:
@@ -386,7 +621,16 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
     async def authorize(run_id: str, body: AuthorizeBody) -> dict[str, Any]:
         return controller.authorize(run_id, body.scope, body.allow_model_calls,
                                     body.max_model_turns, body.max_run_minutes,
-                                    body.max_submissions, body.note)
+                                    body.max_submissions, body.note,
+                                    max_jobs=body.max_jobs)
+
+    @app.put("/api/v1/runs/{run_id}/budget")
+    async def update_budget(run_id: str, body: BudgetBody) -> dict[str, Any]:
+        return controller.update_budget(
+            run_id, max_brain_reviews=body.max_brain_reviews,
+            max_trials=body.max_trials, max_model_turns=body.max_model_turns,
+            max_run_minutes=body.max_run_minutes,
+            max_submissions=body.max_submissions, max_jobs=body.max_jobs)
 
     @app.post("/api/v1/runs/{run_id}/start")
     async def start_run(run_id: str) -> dict[str, Any]:
@@ -422,17 +666,61 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
 
     @app.post("/api/v1/runs/{run_id}/checkpoints")
     async def save_checkpoint(run_id: str, body: CheckpointBody) -> dict[str, Any]:
+        """UI 手动检查点：与 MCP 工具共用 collab 服务（去重/原子/唤醒）。"""
         import uuid
-        controller.run_snapshot(run_id)
-        cp_id = f"cp_{uuid.uuid4().hex[:10]}"
-        db.execute(
-            "INSERT INTO checkpoints(id, run_id, trial_id, report, evidence_refs,"
-            " created_at) VALUES(?,?,?,?,?,?)",
-            (cp_id, run_id, body.trial_id, body.report,
-             json.dumps(body.evidence_refs, ensure_ascii=False), db.utcnow()))
-        db.append_event(run_id, "controller", "checkpoint.created",
-                        {"checkpoint_id": cp_id, "trial_id": body.trial_id})
-        return {"checkpoint_id": cp_id}
+        msg = {"schema_version": 1, "message_type": "checkpoint",
+               "checkpoint_key": f"ui-{uuid.uuid4().hex[:8]}",
+               "review": "none", "stage": "progress",
+               "report_md": body.report, "evidence_refs": body.evidence_refs}
+        result = collab.submit_checkpoint(
+            run_id, msg, source="user",
+            notify=controller.notify_run_change)
+        return {"checkpoint_id": result["checkpoint_id"]}
+
+    # ---------------- 协作：静默监督 / 审阅请求 / 指导 ----------------
+
+    @app.get("/api/v1/runs/{run_id}/supervision")
+    async def get_supervision(run_id: str) -> dict[str, Any]:
+        return controller.supervision_status(run_id)
+
+    @app.post("/api/v1/runs/{run_id}/supervision")
+    async def set_supervision(run_id: str, body: ShadowToggle) -> dict[str, Any]:
+        return controller.set_shadow(run_id, body.enabled)
+
+    @app.post("/api/v1/runs/{run_id}/review_requests")
+    async def request_review(run_id: str,
+                             body: ReviewRequestCreate) -> dict[str, Any]:
+        return controller.request_review(run_id, body.blocking)
+
+    # ---------------- 协作工具桥（能力令牌鉴权）----------------
+
+    def _tool_auth(request: Request) -> dict[str, Any]:
+        auth = request.headers.get("authorization", "")
+        token = auth[7:] if auth.startswith("Bearer ") else ""
+        row = collab.validate_token(token)
+        if not row:
+            raise HTTPException(status_code=401, detail={
+                "code": "INVALID_TOKEN",
+                "message": "能力令牌无效/过期/已撤销"})
+        return row
+
+    @app.post("/api/v1/tools/checkpoint")
+    async def tool_checkpoint(request: Request) -> dict[str, Any]:
+        identity = _tool_auth(request)
+        body = await request.json()
+        body["schema_version"] = 1
+        body["message_type"] = "checkpoint"
+        return collab.submit_checkpoint(
+            identity["run_id"], body, source="executor",
+            notify=controller.notify_run_change)
+
+    @app.post("/api/v1/tools/ack")
+    async def tool_ack(request: Request) -> dict[str, Any]:
+        identity = _tool_auth(request)
+        body = await request.json()
+        body["schema_version"] = 1
+        body["message_type"] = "guidance_ack"
+        return collab.ack_guidance(identity["run_id"], body)
 
     @app.get("/api/v1/runs/{run_id}/checkpoints")
     async def list_checkpoints(run_id: str) -> dict[str, Any]:
@@ -441,12 +729,107 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
         return {"items": [dict(r) | {"evidence_refs": json.loads(r["evidence_refs"])}
                           for r in rows]}
 
+    # ---------------- 邮箱与提交 ----------------
+
+    @app.get("/api/v1/mailboxes")
+    async def list_mailboxes() -> dict[str, Any]:
+        return mailboxes.list_mailboxes()
+
+    @app.post("/api/v1/mailboxes/harvest")
+    async def add_harvest(request: Request) -> dict[str, Any]:
+        body = await request.json()
+        return mailboxes.add_harvest(body.get("email", ""),
+                                     body.get("secret", ""))
+
+    @app.post("/api/v1/mailboxes/experiment/register")
+    async def register_experiment(request: Request) -> dict[str, Any]:
+        body = await request.json()
+        return mailboxes.register_experiment(int(body.get("count", 1)))
+
+    @app.delete("/api/v1/mailboxes/{mailbox_id}")
+    async def disable_mailbox(mailbox_id: str) -> dict[str, Any]:
+        return mailboxes.disable_mailbox(mailbox_id)
+
+    @app.get("/api/v1/runs/{run_id}/submissions")
+    async def list_run_submissions(run_id: str) -> dict[str, Any]:
+        return mailboxes.list_submissions(run_id)
+
+    @app.get("/api/v1/challenges/{challenge_id}/submissions")
+    async def list_challenge_submissions(challenge_id: str) -> dict[str, Any]:
+        """题目级提交聚合（前端「提交与评分」tab）：item 形状与
+        /runs/{run_id}/submissions 一致，聚合该题所有 Run，新的在前。"""
+        return mailboxes.list_challenge_submissions(challenge_id)
+
+    @app.post("/api/v1/runs/{run_id}/submissions")
+    async def submit_experiment(run_id: str, request: Request) -> dict[str, Any]:
+        body = await request.json()
+        return mailboxes.submit_experiment(
+            run_id, body.get("trial_id"), body.get("package_path"),
+            body.get("operation_id", ""))
+
+    @app.post("/api/v1/submissions/poll")
+    async def poll_scores(request: Request) -> dict[str, Any]:
+        body = await request.json() if request.headers.get(
+            "content-type", "").startswith("application/json") else {}
+        # 评分平台 HTTP 是同步调用：卸载到线程，不阻塞事件循环
+        return await asyncio.to_thread(mailboxes.poll_scores, body.get("run_id"))
+
+    # ---------------- 评分轮询任务（按题目中断/启用） ----------------
+
+    @app.get("/api/v1/polling")
+    async def polling_tasks() -> dict[str, Any]:
+        return mailboxes.polling_tasks()
+
+    @app.post("/api/v1/polling/{challenge_id}")
+    async def polling_toggle(challenge_id: str,
+                             body: PollingToggle) -> dict[str, Any]:
+        return mailboxes.set_polling_enabled(challenge_id, body.enabled)
+
+    @app.post("/api/v1/polling/{challenge_id}/run")
+    async def polling_run(challenge_id: str) -> dict[str, Any]:
+        return await asyncio.to_thread(
+            mailboxes.poll_scores_now, challenge_id)
+
+    @app.get("/api/v1/harvest/candidates")
+    async def harvest_candidates(challenge_id: str) -> dict[str, Any]:
+        return mailboxes.harvest_candidates(challenge_id)
+
+    @app.post("/api/v1/harvest/submit")
+    async def harvest_submit(request: Request) -> dict[str, Any]:
+        body = await request.json()
+        return mailboxes.harvest_submit(
+            body.get("submission_id", ""), body.get("operation_id", ""),
+            bool(body.get("confirm")))
+
     # ---------------- 经验 ----------------
 
     @app.get("/api/v1/experiences")
     async def list_exp(scope: str | None = None,
                        challenge_id: str | None = None) -> dict[str, Any]:
         return experiences.list_experiences(scope, challenge_id)
+
+    # 具体路径必须先于 {exp_id} 注册，否则被路径参数吞掉
+    @app.post("/api/v1/experiences/curate_global")
+    async def curate_global(request: Request) -> dict[str, Any]:
+        """手动触发全局经验整理（一次性大脑会话，消耗模型调用）。"""
+        body = await request.json()
+        return await controller.curate_global_experience(
+            body.get("challenge_ids") or [])
+
+    @app.get("/api/v1/experiences/curate_global")
+    async def curate_global_status() -> dict[str, Any]:
+        return controller.global_curation_status()
+
+    @app.post("/api/v1/experiences/{exp_id}/approve")
+    async def approve_exp(exp_id: str) -> dict[str, Any]:
+        """用户审批：全局 candidate → active（全局经验唯一晋升通道）。"""
+        return experiences.approve_experience(exp_id)
+
+    @app.post("/api/v1/experiences/{exp_id}/reject")
+    async def reject_exp(exp_id: str, request: Request) -> dict[str, Any]:
+        """用户驳回：保持 candidate 并附批注，大脑下轮整理参考批注。"""
+        body = await request.json()
+        return experiences.reject_experience(exp_id, body.get("note", ""))
 
 
     @app.post("/api/v1/experiences")

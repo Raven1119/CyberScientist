@@ -1,0 +1,250 @@
+{
+  "notice": "全部为合成协议样例，不是实际实验或评分证据。ObservationFrame 形状供投影实现参考；write_messages 由本包 Schema 校验。",
+  "observation_frames": [
+    {
+      "frame_id": "frame-17",
+      "mode": "shadow",
+      "run_id": "run-fixture",
+      "trial_id": "trial-4",
+      "state_version": 7,
+      "evidence_revision": 3,
+      "shadow_epoch": 1,
+      "from_seq": 100,
+      "through_seq": 108,
+      "goal_md": "合成协议测试：判断边界误差的可能来源，不代表真实科学结果。",
+      "trial_summary_md": "两次合成对照，结论未定。",
+      "activity_counts": {
+        "tool_completed": 3,
+        "tool_failed": 0
+      },
+      "checkpoint_summaries": [
+        {
+          "checkpoint_id": "cp-fixture-2",
+          "report_md": "总指标变化，小尺度指标未见改善；仍有其他解释。",
+          "evidence_refs": [
+            "artifact:scale-results-v2"
+          ],
+          "source": "executor_report"
+        }
+      ],
+      "metrics": [
+        {
+          "name": "fixture_score",
+          "value": 82.7,
+          "source": "synthetic",
+          "evidence_ref": "artifact:scale-results-v2"
+        }
+      ],
+      "budget": {
+        "remaining_shadow_reviews": 3,
+        "remaining_control_turns": 8,
+        "known_cost": null
+      },
+      "quality": {
+        "truncated": false,
+        "omitted_count": 0,
+        "unread_refs": [],
+        "unknown_fields": [
+          "official_score",
+          "provider_total_cost"
+        ]
+      },
+      "request": null,
+      "synthetic": true
+    },
+    {
+      "frame_id": "frame-18",
+      "mode": "requested",
+      "run_id": "run-fixture",
+      "trial_id": "trial-4",
+      "state_version": 7,
+      "evidence_revision": 4,
+      "shadow_epoch": 1,
+      "from_seq": 109,
+      "through_seq": 116,
+      "goal_md": "合成协议测试：判断边界误差的可能来源，不代表真实科学结果。",
+      "trial_summary_md": "两次合成对照，结论未定。",
+      "activity_counts": {
+        "tool_completed": 3,
+        "tool_failed": 0
+      },
+      "checkpoint_summaries": [
+        {
+          "checkpoint_id": "cp-fixture-2",
+          "report_md": "总指标变化，小尺度指标未见改善；仍有其他解释。",
+          "evidence_refs": [
+            "artifact:scale-results-v2"
+          ],
+          "source": "executor_report"
+        }
+      ],
+      "metrics": [
+        {
+          "name": "fixture_score",
+          "value": 82.7,
+          "source": "synthetic",
+          "evidence_ref": "artifact:scale-results-v2"
+        }
+      ],
+      "budget": {
+        "remaining_shadow_reviews": 3,
+        "remaining_control_turns": 8,
+        "known_cost": null
+      },
+      "quality": {
+        "truncated": false,
+        "omitted_count": 0,
+        "unread_refs": [],
+        "unknown_fields": [
+          "official_score",
+          "provider_total_cost"
+        ]
+      },
+      "request": {
+        "checkpoint_id": "cp-fixture-3",
+        "blocking": true
+      },
+      "synthetic": true
+    }
+  ],
+  "write_messages": [
+    {
+      "name": "progress_checkpoint",
+      "payload": {
+        "schema_version": 1,
+        "message_type": "checkpoint",
+        "checkpoint_key": "trial-4/report-2",
+        "review": "none",
+        "stage": "progress",
+        "report_md": "## 实测\n已登记两组合成结果。\n## 解释\n尚不能区分噪声与表示能力。\n## 异常\n小尺度指标不变。\n## 下一步\n在当前授权内继续检查。\n## 恢复\n结果已保存。",
+        "evidence_refs": [
+          "artifact:scale-results-v2"
+        ]
+      }
+    },
+    {
+      "name": "blocking_checkpoint",
+      "payload": {
+        "schema_version": 1,
+        "message_type": "checkpoint",
+        "checkpoint_key": "trial-4/report-3",
+        "review": "blocking",
+        "stage": "progress",
+        "report_md": "## 问题\n是否先用已有结果做尺度分组，再扩大搜索？\n## 事实\n当前只有合成测试证据。\n## 恢复\n无新远程任务，等待答复。",
+        "evidence_refs": [
+          "artifact:scale-results-v2"
+        ]
+      }
+    },
+    {
+      "name": "trial_delivery",
+      "payload": {
+        "schema_version": 1,
+        "message_type": "checkpoint",
+        "checkpoint_key": "trial-4/report-final",
+        "review": "blocking",
+        "stage": "trial_complete",
+        "report_md": "已完成本次合成测试的交付，产物已登记。此声明不代表真实评分通过。",
+        "evidence_refs": [
+          "artifact:scale-results-v2"
+        ]
+      }
+    },
+    {
+      "name": "silent_review",
+      "payload": {
+        "schema_version": 1,
+        "message_type": "review_result",
+        "frame_id": "frame-17",
+        "disposition": "silent",
+        "private_note_md": "先等待自然产生的更多证据，目前不改变执行器动作。",
+        "watchlist": [
+          {
+            "id": "watch-scale",
+            "hypothesis_md": "增益可能只发生在大尺度结构。",
+            "evidence_needed_md": "尺度分组的结果。",
+            "intervene_when_md": "准备扩大搜索且该不确定性仍未解决。",
+            "evidence_refs": [
+              "artifact:scale-results-v2"
+            ]
+          }
+        ],
+        "guidance": null
+      }
+    },
+    {
+      "name": "observe_intervention",
+      "payload": {
+        "schema_version": 1,
+        "message_type": "review_result",
+        "frame_id": "frame-18",
+        "disposition": "intervene",
+        "private_note_md": "用一次低成本对照回答当前问题。",
+        "watchlist": [
+          {
+            "id": "watch-scale",
+            "hypothesis_md": "增益可能只发生在大尺度结构。",
+            "evidence_needed_md": "尺度分组的结果。",
+            "intervene_when_md": "准备扩大搜索且该不确定性仍未解决。",
+            "evidence_refs": [
+              "artifact:scale-results-v2"
+            ]
+          }
+        ],
+        "guidance": {
+          "kind": "steer",
+          "intent": "observe",
+          "text_md": "先按目标尺度整理已有结果；不启动新的训练任务。",
+          "reason_md": "现有总体指标不足以判断不同尺度的误差是否有共同来源。",
+          "evidence_refs": [
+            "artifact:scale-results-v2"
+          ],
+          "expected_change_md": "得到可比较的分组结果，判断是否值得修改表示方式。",
+          "revisit_when_md": "分组结果完成，或现有数据不支持这种比较。"
+        }
+      }
+    },
+    {
+      "name": "stop_intervention",
+      "payload": {
+        "schema_version": 1,
+        "message_type": "review_result",
+        "frame_id": "frame-18",
+        "disposition": "intervene",
+        "private_note_md": "用一次低成本对照回答当前问题。",
+        "watchlist": [
+          {
+            "id": "watch-scale",
+            "hypothesis_md": "增益可能只发生在大尺度结构。",
+            "evidence_needed_md": "尺度分组的结果。",
+            "intervene_when_md": "准备扩大搜索且该不确定性仍未解决。",
+            "evidence_refs": [
+              "artifact:scale-results-v2"
+            ]
+          }
+        ],
+        "guidance": {
+          "kind": "stop",
+          "intent": "reframe",
+          "text_md": "停止扩展当前合成测试路线，保留产物并等待重新定义目标。",
+          "reason_md": "这是用于核实原生取消与门禁的测试指令，不是科学结论。",
+          "evidence_refs": [
+            "artifact:scale-results-v2"
+          ],
+          "expected_change_md": "收到明确终态前仍显示暂停中。",
+          "revisit_when_md": "控制器确认执行回合已停止。"
+        }
+      }
+    },
+    {
+      "name": "guidance_ack",
+      "payload": {
+        "schema_version": 1,
+        "message_type": "guidance_ack",
+        "guidance_id": "guidance-fixture-19",
+        "disposition": "accepted",
+        "reason_md": "先整理已有结果，无需追加计算。"
+      }
+    }
+  ]
+}

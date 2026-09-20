@@ -67,10 +67,41 @@ def test_semantics_steer_requires_active_trial():
     errors = d.validate_semantics(dec, has_active_trial=False,
                                   current_trial_id=None,
                                   allow_formal_submission=False)
-    assert any("活跃 Trial" in e for e in errors)
+    assert any("需要当前 Trial" in e for e in errors)
     errors = d.validate_semantics(dec, has_active_trial=True,
                                   current_trial_id="t2",
                                   allow_formal_submission=False)
+    assert any("不符" in e for e in errors)
+
+
+def test_semantics_steer_to_stalled_trial():
+    """stalled Trial 保留会话现场，大脑 steer 裁决必须可达。"""
+    dec = valid_decision(actions=[
+        {"op": "steer", "trial_id": "t1", "message": "m"}])
+    assert d.validate_semantics(dec, has_active_trial=False,
+                                current_trial_id=None,
+                                allow_formal_submission=False,
+                                stalled_trial_id="t1") == []
+    # trial_id 必须正是当前 stalled 的那个
+    errors = d.validate_semantics(dec, has_active_trial=False,
+                                  current_trial_id=None,
+                                  allow_formal_submission=False,
+                                  stalled_trial_id="t2")
+    assert any("不符" in e for e in errors)
+
+
+def test_semantics_steer_to_reported_trial():
+    """reported_complete（等待验收）的 Trial 大脑可 steer 追问侦察报告。"""
+    dec = valid_decision(actions=[
+        {"op": "steer", "trial_id": "t1", "message": "m"}])
+    assert d.validate_semantics(dec, has_active_trial=False,
+                                current_trial_id=None,
+                                allow_formal_submission=False,
+                                reported_trial_id="t1") == []
+    errors = d.validate_semantics(dec, has_active_trial=False,
+                                  current_trial_id=None,
+                                  allow_formal_submission=False,
+                                  reported_trial_id="t2")
     assert any("不符" in e for e in errors)
 
 
