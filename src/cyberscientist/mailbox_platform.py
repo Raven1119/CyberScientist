@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import itertools
 import json
+import math
 import re
 import urllib.error
 import urllib.parse
@@ -27,7 +28,47 @@ from typing import Any, Protocol
 
 
 class PlatformError(Exception):
-    """平台不可用/未配置：message 必须是准确缺项。"""
+    """只有确认未产生远端副作用才允许释放预占。"""
+    def __init__(self, message: str, *, no_side_effect: bool = False):
+        super().__init__(message)
+        self.no_side_effect = no_side_effect
+
+
+def public_feedback(value: Any, *secrets: str | None) -> Any:
+    """Retain platform evidence while removing credentials from response fields."""
+    if isinstance(value, dict):
+        return {str(key): public_feedback(item, *secrets)
+                for key, item in value.items()
+                if not re.search(r"token|password|secret|authorization|cookie|api.?key",
+                                 str(key), re.IGNORECASE)}
+    if isinstance(value, list):
+        return [public_feedback(item, *secrets) for item in value]
+    if isinstance(value, str):
+        for secret in secrets:
+            if secret:
+                value = value.replace(secret, "[redacted]")
+        return re.sub(r"\basp_[A-Za-z0-9_-]+|\bBearer\s+\S+", "[redacted]",
+                      value, flags=re.IGNORECASE)
+    return value
+
+
+def final_score(body: Any) -> float | None:
+    """Only an explicit finality claim and a finite numeric score are usable."""
+    if not isinstance(body, dict):
+        return None
+    state = body.get("scoringState")
+    if not isinstance(state, dict) or state.get("scoreIsFinal") is not True:
+        return None
+    score = state.get("displayScore")
+    if score is None:
+        score = body.get("score")
+    if isinstance(score, bool):
+        return None
+    try:
+        numeric = float(score)
+    except (TypeError, ValueError):
+        return None
+    return numeric if math.isfinite(numeric) else None
 
 
 class MailboxPlatform(Protocol):
@@ -103,10 +144,11 @@ class BohriumPlaygroundPlatform:
     is_demo = False
 
     def __init__(self, base_url: str, operator_token: str | None = None,
-                 timeout: int = 60):
+                 timeout: int = 60, framework: str = "CyberScientist"):
         self.base_url = base_url.rstrip("/")
         self.operator_token = operator_token
         self.timeout = timeout
+        self.framework = framework
 
     # ---------- HTTP ----------
 
@@ -131,7 +173,7 @@ class BohriumPlaygroundPlatform:
         except urllib.error.HTTPError as exc:
             detail = exc.read().decode("utf-8", "replace")[:300]
             raise PlatformError(
-                f"平台接口 {method} {path} 返回 HTTP {exc.code}: {detail}"
+                f"平台接口 {method} {path} 返回 HTTP {exc.code}"
             ) from exc
         except urllib.error.URLError as exc:
             raise PlatformError(
@@ -152,7 +194,7 @@ class BohriumPlaygroundPlatform:
         name = f"cyberscientist-exp-{uuid.uuid4().hex[:6]}"
         resp = self._http("POST", "/agent/register",
                           token=self.operator_token,
-                          json_body={"name": name, "framework": "Kimi Code"})
+                          json_body={"name": name, "framework": self.framework})
         token = resp.get("token") if isinstance(resp, dict) else None
         agent = resp.get("agentUser") if isinstance(resp, dict) else None
         if not token or not isinstance(agent, dict):
@@ -167,23 +209,26 @@ class BohriumPlaygroundPlatform:
                        meta: dict[str, Any] | None = None) -> dict[str, Any]:
         """草稿 attempt → （zip 包）上传 bundle → submit。真实提交动作。"""
         if not secret:
-            raise PlatformError(f"邮箱 {email} 无平台凭据，不能提交")
+            raise PlatformError(f"邮箱 {email} 无平台凭据，不能提交", no_side_effect=True)
         if not challenge_id or challenge_id.startswith("demo://"):
             raise PlatformError(
                 "该题目未关联真实平台 challenge"
                 f"（platform_challenge_id={challenge_id or '空'}），"
-                "无法定位提交目标")
+                "无法定位提交目标", no_side_effect=True)
         meta = meta or {}
         pkg = Path(package_path)
         if not pkg.is_file():
-            raise PlatformError(f"提交包文件不存在: {package_path}")
+            raise PlatformError(f"提交包文件不存在: {package_path}", no_side_effect=True)
+        package_bytes = meta.get("package_bytes")
+        if package_bytes is None:
+            package_bytes = pkg.read_bytes()
         q_cid = urllib.parse.quote(challenge_id, safe="")
 
         trace = meta.get("trace") or [{
             "type": "tool_call",
             "title": "Submit reproduction package",
             "body": f"CyberScientist 提交现成包 {pkg.name}"
-                    f"（{pkg.stat().st_size} 字节）",
+                    f"（{len(package_bytes)} 字节）",
         }]
         fields = {
             "method": meta.get("method") or "CyberScientist reproduction",
@@ -196,37 +241,53 @@ class BohriumPlaygroundPlatform:
         if meta.get("model"):
             fields["model"] = meta["model"]
         # 自报指标：JSON 提交包的内容直接作为 results_json 表单字段
-        # （programmatic_grader 从 attempt.resultsJson 读数，实测 attempt 9413）
+        # （programmatic_grader 从 attempt.resultsJson 读数）
         results = meta.get("results_json")
         if results is None and pkg.suffix.lower() == ".json":
             try:
-                results = json.loads(pkg.read_text(encoding="utf-8"))
-            except (json.JSONDecodeError, OSError) as exc:
+                results = json.loads(package_bytes)
+            except (json.JSONDecodeError, UnicodeDecodeError, OSError) as exc:
                 raise PlatformError(
-                    f"JSON 提交包无法解析: {pkg.name}: {exc}") from exc
+                    f"JSON 提交包无法解析: {pkg.name}", no_side_effect=True) from exc
         if results is not None:
             fields["results_json"] = json.dumps(results, ensure_ascii=False)
+        on_stage = meta.get("on_stage") or (lambda *args: None)
+        on_feedback = meta.get("on_feedback") or (lambda *args: None)
+        on_stage("create_sent")
         attempt = self._http(
             "POST", f"/challenges/{q_cid}/attempts",
             token=secret, form=(fields, []))
         attempt_id = attempt.get("id") if isinstance(attempt, dict) else None
         if attempt_id is None:
             raise PlatformError("创建 attempt 响应缺少 id 字段，提交未完成")
+        on_stage("draft_created", str(attempt_id))
+        on_feedback("create", public_feedback(attempt, secret, self.operator_token))
         q_aid = urllib.parse.quote(str(attempt_id), safe="")
 
         bundle_uploaded = False
         if pkg.suffix.lower() == ".zip":
-            self._http("POST", f"/attempts/{q_aid}/bundle", token=secret,
-                       form=({}, [("bundle", pkg.name, pkg.read_bytes())]))
+            on_stage("upload_sent", str(attempt_id))
+            uploaded = self._http("POST", f"/attempts/{q_aid}/bundle", token=secret,
+                                  form=({}, [("bundle", pkg.name, package_bytes)]))
+            on_feedback("bundle", public_feedback(uploaded, secret, self.operator_token))
             bundle_uploaded = True
+            on_stage("bundle_uploaded", str(attempt_id))
 
-        self._http("POST", f"/attempts/{q_aid}/submit", token=secret)
+        on_stage("submit_sent", str(attempt_id))
+        submitted = self._http("POST", f"/attempts/{q_aid}/submit", token=secret)
+        on_feedback("submit", public_feedback(submitted, secret, self.operator_token))
+        on_stage("submitted", str(attempt_id))
         return {"accepted": True, "receipt": str(attempt_id),
                 "bundle_uploaded": bundle_uploaded}
 
     def fetch_score(self, email: str, secret: str | None,
                     submission_ref: str) -> float | None:
         """GET /attempts/{id}/score；scoringState.scoreIsFinal 才采信。"""
+        return final_score(self.fetch_score_details(email, secret, submission_ref))
+
+    def fetch_score_details(self, email: str, secret: str | None,
+                            submission_ref: str) -> dict[str, Any] | None:
+        """Preserve pending, failed, final and eligibility evidence for the UI."""
         if not submission_ref or submission_ref.startswith("demo-receipt:"):
             return None
         body = self._http(
@@ -234,18 +295,8 @@ class BohriumPlaygroundPlatform:
             f"/attempts/{urllib.parse.quote(str(submission_ref), safe='')}"
             "/score",
             token=secret)
-        if not isinstance(body, dict):
-            return None
-        state = body.get("scoringState") or {}
-        if not state.get("scoreIsFinal"):
-            return None  # 评分未完成：如实 unknown
-        score = state.get("displayScore")
-        if score is None:
-            score = body.get("score")
-        try:
-            return float(score)
-        except (TypeError, ValueError):
-            return None
+        return public_feedback(body, secret, self.operator_token) \
+            if isinstance(body, dict) else None
 
 
 def get_platform(name: str) -> MailboxPlatform:
@@ -255,10 +306,14 @@ def get_platform(name: str) -> MailboxPlatform:
         from . import config
         settings = config.load_settings()
         pg = settings.get("playground") or {}
+        runtime = (settings.get("executor") or {}).get("runtime")
+        framework = {"codex": "Codex", "kimi": "Kimi Code",
+                     "prime": "Prime Agent"}.get(runtime)
         return BohriumPlaygroundPlatform(
             base_url=pg.get("base_url") or "https://play.bohrium.com/api",
             operator_token=config.resolve_secret(
-                pg.get("token_secret_ref") or ""))
+                pg.get("token_secret_ref") or ""),
+            framework=f"CyberScientist ({framework})" if framework else "CyberScientist")
     raise PlatformError(f"未知邮箱平台: {name}（可选: demo, bohrium_playground）")
 
 

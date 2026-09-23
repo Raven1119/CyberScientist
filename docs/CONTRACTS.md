@@ -90,9 +90,11 @@ ReviewPacket 包含 `run_id / state_version / trigger / current_intention / tria
 | `wait` | 等待新的外部事件，不立即再次唤醒自己 |
 | `pause` | 请求安全暂停并给出原因 |
 | `refresh_platform` | 触发只读核对，仍尊重频率限制 |
-| `request_submission` | 建议提交现有已冻结 bundle；须通过契约、授权、预算及去重检查 |
+| `request_submission` | 保留旧 Schema 兼容；当前明确拒绝并记录 `brain.action_rejected`，不执行提交。`bundle_manifest_ref` 尚无冻结包解析契约，不能视作 `package_path` |
 | `promote_experience` | 请求晋升已有候选修订；检查证据与 scope，不改写历史 |
 | `finish` | 结束当前研究 Run，说明停止原因；不代表获得高分 |
+
+当前可用的提交建议入口是 requested/shadow 审阅的 `ReviewResult`（`guidance.kind=submit`）：控制器调用既有实验邮箱提交路径，仍检查 Run 授权、预算与去重。这不扩大正式参赛授权，也不把旧 `request_submission` 自动转换为提交；`policy.allow_formal_submission=false` 对旧动作的拒绝继续保留。
 
 同一 Decision 最多三个动作，只能包含一个改变运行方向的主动作；合法组合由后端做语义校验。Schema 合法不意味着动作被授权。格式错误最多进行一次修复请求，仍失败就 blocked；不执行半解析出的片段。
 
@@ -146,3 +148,12 @@ CyberScientist/
 ```
 
 配置、模型或经验变更不直接覆盖运行目录。历史产物只追加；大体量原始结果可保存远程 URI+hash+访问元信息，禁止把有时效的签名 URL 当永久证据位置。
+
+## 2026-09-23：受控算力与 Run 经验整理
+
+- 能力令牌接口 `POST /api/v1/tools/job`：`action=submit|list|reconcile|stop`；提交/停止需稳定 `operation_id`。submit 附 `spec` 与当前工作目录内绝对 `input_directory`。Run 身份来自令牌，不信任模型传入的 run_id。
+- `GET /api/v1/runs/{id}/jobs` 只读本地账本；`POST .../jobs/reconcile` 查询远端；`POST .../jobs/{operation_id}/stop` 只处理本 Run 已知任务。账本 status 的 accepted、unknown、stop_unknown 与 Finished/Failed/Stopped 分开。
+- `POST /api/v1/runs/{id}/curation {operation_id}` / `GET .../curation`：仅 paused/recovering/终态允许整理，冻结证据、请求幂等、状态持久化。整理是独立模型调用，不恢复 Run。
+- Brain `protocol=experience_curation` 输出 `{"schema_version":1,"message_type":"curation_result","summary":"...","experience_proposals":[]}`；提案形状沿用既有 experience_proposals。该协议不执行 Run actions。
+
+细节与证据边界见 `TBMA_UPGRADE_2026-09-23.md`。

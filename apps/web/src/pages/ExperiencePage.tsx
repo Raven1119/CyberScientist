@@ -72,6 +72,9 @@ export default function ExperiencePage() {
   const [curating, setCurating] = useState(false)
   const [curationResult, setCurationResult] = useState<CurationStatus | null>(null)
   const pollTimer = useRef<number | null>(null)
+  const detailRequest = useRef(0)
+  const selection = useRef({ selectedId, creating })
+  selection.current = { selectedId, creating }
 
   const load = useCallback(async () => {
     try {
@@ -106,12 +109,15 @@ export default function ExperiencePage() {
   }, [load])
 
   useEffect(() => {
-    if (!selectedId && items.length) setSelectedId(items[0].id)
-  }, [items, selectedId])
+    if (!creating && !selectedId && items.length) setSelectedId(items[0].id)
+  }, [items, selectedId, creating])
 
   const loadDetail = useCallback(async (id: string) => {
+    if (selection.current.creating || selection.current.selectedId !== id) return
+    const request = ++detailRequest.current
     try {
       const d = await api.get<ExperienceDetail>(`/api/v1/experiences/${id}`)
+      if (request !== detailRequest.current || selection.current.creating || selection.current.selectedId !== id) return
       setDetail(d)
       setFrontmatter({ ...EMPTY_FRONTMATTER, ...d.frontmatter })
       setBody(d.body_md)
@@ -123,13 +129,15 @@ export default function ExperiencePage() {
   }, [toast])
 
   useEffect(() => {
+    if (creating) return
     if (selectedId) void loadDetail(selectedId)
     else {
       setDetail(null)
       setFrontmatter(EMPTY_FRONTMATTER)
       setBody('')
     }
-  }, [selectedId, loadDetail])
+    return () => { detailRequest.current += 1 }
+  }, [selectedId, creating, loadDetail])
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase()
@@ -145,11 +153,12 @@ export default function ExperiencePage() {
 
   async function approve(exp: ExperienceItem) {
     try {
-      await api.post(`/api/v1/experiences/${exp.id}/approve`)
+      await api.post(`/api/v1/experiences/${exp.id}/approve`, { expected_revision: exp.revision_id })
       toast(`已批准「${exp.title}」，经验已启用。`)
       void load()
     } catch (err) {
       toast('批准失败：' + (err instanceof Error ? err.message : String(err)))
+      void load()
     }
   }
 
@@ -161,7 +170,7 @@ export default function ExperiencePage() {
       return
     }
     try {
-      await api.post(`/api/v1/experiences/${rejectTarget.id}/reject`, { note })
+      await api.post(`/api/v1/experiences/${rejectTarget.id}/reject`, { note, expected_revision: rejectTarget.revision_id })
       toast('已驳回，批注已记录。')
       setRejectTarget(null)
       setRejectNote('')
@@ -261,6 +270,7 @@ export default function ExperiencePage() {
   }
 
   async function create(fmToSave: ExperienceFrontmatter) {
+    const request = detailRequest.current
     setBusy(true)
     try {
       const fm = { ...fmToSave }
@@ -275,8 +285,11 @@ export default function ExperiencePage() {
         reason: reason.trim() || undefined,
       })
       toast('已创建，下一轮实验生效。')
-      setCreating(false)
-      setSelectedId(fm.id.trim())
+      if (request === detailRequest.current && selection.current.creating) {
+        selection.current = { selectedId: fm.id.trim(), creating: false }
+        setCreating(false)
+        setSelectedId(fm.id.trim())
+      }
       void load()
     } catch (err) {
       handleSaveError(err)
@@ -301,7 +314,8 @@ export default function ExperiencePage() {
     setBusy(true)
     try {
       await api.post(`/api/v1/experiences/${detail.id}/restore`, {
-        revision_hash: revision.revision_hash,
+        revision_hash: revision.revision_id,
+        operation_id: crypto.randomUUID(),
         reason: `回滚到 ${shortHash(revision.revision_hash)}`,
       })
       toast('已回滚为新修订，原修订仍保留。')
@@ -316,6 +330,8 @@ export default function ExperiencePage() {
   }
 
   function startCreate() {
+    detailRequest.current += 1
+    selection.current = { selectedId: null, creating: true }
     setCreating(true)
     setSelectedId(null)
     setDetail(null)
@@ -464,6 +480,8 @@ export default function ExperiencePage() {
                 type="button"
                 className={`exp-item ${selectedId === e.id && !creating ? 'selected' : ''}`}
                 onClick={() => {
+                  detailRequest.current += 1
+                  selection.current = { selectedId: e.id, creating: false }
                   setCreating(false)
                   setSelectedId(e.id)
                 }}
@@ -515,6 +533,11 @@ export default function ExperiencePage() {
               {detail && (
                 <Badge tone="neutral">当前 hash {shortHash(detail.current_hash)}</Badge>
               )}
+              {detail && <span className="small-text">草稿 {shortHash(detail.revision_id)} · 可用版 {detail.active_revision_id ? shortHash(detail.active_revision_id) : '未批准'}</span>}
+              {detail?.adoptions && detail.adoptions.length > 0 && <div className="small-text">
+                采用声明（尚未证明因果收益）：{detail.adoptions.map((use) =>
+                  <p key={`${use.run_id}-${use.adopted_seq}`}>{use.run_id} / {use.trial_id ?? '规划'} · 版本 {shortHash(use.revision_id)} · 事件 {use.adopted_seq}</p>)}
+              </div>}
               {detail && (
                 <button type="button" className="btn" onClick={() => setHistoryOpen(true)}>
                   修订历史
@@ -546,6 +569,7 @@ export default function ExperiencePage() {
                 <select
                   id="exp-scope"
                   value={fm.scope}
+                  disabled={!creating}
                   onChange={(e) => setFrontmatter({ ...fm, scope: e.target.value as 'global' | 'challenge' })}
                 >
                   <option value="global">全局</option>
@@ -557,6 +581,7 @@ export default function ExperiencePage() {
                   <label htmlFor="exp-challenge">challenge_id</label>
                   <input
                     id="exp-challenge"
+                    disabled={!creating}
                     value={fm.challenge_id ?? ''}
                     placeholder={currentChallengeId ?? '题目 ID'}
                     onChange={(e) => setFrontmatter({ ...fm, challenge_id: e.target.value || null })}

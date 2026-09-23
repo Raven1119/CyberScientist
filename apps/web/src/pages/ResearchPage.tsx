@@ -1,7 +1,9 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { ApiError, api, bindChallengeSkill, listSkills, unbindChallengeSkill, updateRunBudget } from '../api'
 import { useApp } from '../app-context'
-import { Badge, Modal } from '../components'
+import { Badge, Modal, LoadingState } from '../components'
+import { RunOperations } from './RunOperations'
+import { Observation } from '../design/Observation'
 import {
   ACTIVE_PHASES,
   CONTRACT_LABELS,
@@ -71,7 +73,7 @@ export default function ResearchPage() {
     sentAt: number
     state: 'queued' | 'consumed'
   } | null>(null)
-  const [supervision, setSupervision] = useState<SupervisionStatus | null>(null)
+  const [supervisionSnapshot, setSupervisionSnapshot] = useState<{ runId: string; data: SupervisionStatus } | null>(null)
   const [subRefresh, setSubRefresh] = useState(0)
   const [streamStatus, setStreamStatus] = useState<StreamStatus>('idle')
 
@@ -129,6 +131,11 @@ export default function ResearchPage() {
     return forChallenge[0] ?? null
   }, [runs, challengeId])
 
+  // A delayed response from a previous selection must never animate this Run.
+  const selectedRunId = useRef<string | null>(null)
+  selectedRunId.current = currentRun?.id ?? null
+  const supervision = supervisionSnapshot?.runId === currentRun?.id ? supervisionSnapshot?.data ?? null : null
+
   const active = currentRun ? ACTIVE_PHASES.includes(currentRun.phase) : false
 
   const [runDetail, setRunDetail] = useState<RunDetail | null>(null)
@@ -143,7 +150,7 @@ export default function ResearchPage() {
     setRunDetail(null)
     setEvents([])
     setSteerState(null)
-    setSupervision(null)
+    setSupervisionSnapshot(null)
   }, [currentRun?.id])
 
   const refreshRunDetail = useCallback(async () => {
@@ -182,7 +189,7 @@ export default function ResearchPage() {
     if (!currentRun) return
     try {
       const data = await api.get<SupervisionStatus>(`/api/v1/runs/${currentRun.id}/supervision`)
-      setSupervision(data)
+      if (selectedRunId.current === currentRun.id) setSupervisionSnapshot({ runId: currentRun.id, data })
     } catch {
       // 监督接口失败不打扰用户；下次轮询或事件会重试
     }
@@ -376,6 +383,15 @@ export default function ResearchPage() {
               {challenge.is_demo ? 'DEMO_CHALLENGE · 非真实竞赛题' : (challenge.platform_challenge_id ?? '本地题目')}
             </div>
             <div className="challenge-title">{challenge.title}</div>
+            {challenge.platform_snapshot && (
+              <p className="small-text">
+                平台状态：{challenge.platform_snapshot.status ?? '未知'}
+                {challenge.platform_snapshot.roundEndAt && ` · 截止 ${formatTime(challenge.platform_snapshot.roundEndAt)}`}
+                {challenge.platform_snapshot.scoring && ` · 评分策略 ${challenge.platform_snapshot.scoring.strategy ?? '未知'}`}
+                {challenge.platform_snapshot.scoring?.grader_name === null && ' · 未注册题目专属评分器'}
+                {' · 参赛有效性待平台确认'}
+              </p>
+            )}
           </div>
           <div className="actions">
             <Badge tone={challenge.contract_status === 'verified' ? 'green' : 'neutral'}>
@@ -433,17 +449,65 @@ export default function ResearchPage() {
 
       <div className="work-grid">
         <div className="stack">
-          <article className="card">
+          <article className="card intention-card">
             <div className="card-head">
               <h2>当前研究意图</h2>
-              <Badge tone="green">大脑的判断窗口</Badge>
+              <span className="instrument-label">THINKING SPACE</span>
             </div>
             <div className="card-body">
-              <div className="intent">
-                <p>{runDetail?.intention ?? '尚未开始研究。开始后会显示大脑当前的研究意图。'}</p>
+              <ResearchIntention
+                key={currentRun?.id}
+                text={runDetail?.intention ?? '尚未开始研究。开始后会显示大脑当前的研究意图。'}
+              />
+            </div>
+          </article>
+
+          <article className="card guidance-card">
+            <div className="card-head">
+              <h2>人工指导</h2>
+              <span className="instrument-label">WORKING NOTE</span>
+            </div>
+            <div className="card-body">
+              <p className="sub">告诉大脑或执行器需要区分什么、保留什么。</p>
+              <label htmlFor="steer-text">指导内容</label>
+              <textarea
+                id="steer-text"
+                className="editor"
+                rows={3}
+                value={steerText}
+                onChange={(e) => setSteerText(e.target.value)}
+                placeholder="例如：先区分环境错误和算法局限，再决定是否重跑。"
+                disabled={!active || paused || pausing}
+              />
+              {steerState && !terminal && (
+                <p className="small-text" role="status">
+                  {steerState.state === 'queued'
+                    ? '已排队，等待大脑审阅后投递。'
+                    : '指导已被 Run 消费（转为正式指导或已投递执行器）。'}
+                </p>
+              )}
+              {terminal && (
+                <p className="small-text" role="status">
+                  Run 已结束{phase ? `（${PHASE_LABELS[phase]}）` : ''}，不能再发送指导。
+                </p>
+              )}
+              <button
+                type="button"
+                className="btn primary"
+                style={{ marginTop: 10 }}
+                disabled={!active || paused || pausing || !steerText.trim() || busy}
+                title={terminal ? 'Run 已结束，不能发送指导' : undefined}
+                onClick={() => void sendSteer()}
+              >
+                发送指导
+              </button>
+              <div className="callout" style={{ marginTop: 12 }}>
+                暂停研究不等于取消远程 Job，已有远程任务可能继续运行或计费。
               </div>
             </div>
           </article>
+
+          {currentRun && <RunOperations key={currentRun.id} runId={currentRun.id} phase={phase ?? currentRun.phase} />}
 
           <article className="card">
             <div className="card-head">
@@ -469,7 +533,7 @@ export default function ResearchPage() {
                     恢复研究（后端重启后）
                   </button>
                 )}
-                {(active || recovering) && !paused && (
+                {(active || recovering) && (
                   <button type="button" className="btn danger" onClick={() => setTerminateOpen(true)}>
                     {pausing ? '终止研究（不等暂停确认）' : '终止研究'}
                   </button>
@@ -586,11 +650,14 @@ export default function ResearchPage() {
         </div>
 
         <div className="stack right">
-          <article className="card">
-            <div className="card-head">
-              <h2>运行摘要</h2>
+          <Observation key={currentRun?.id ?? challengeId ?? 'idle'} runId={currentRun?.id}
+            phase={runDetail?.id === currentRun?.id ? runDetail?.phase : currentRun?.phase}
+            connected={streamStatus === 'open'} supervision={supervision} demo={demoMode} />
+          <details className="card runtime-summary">
+            <summary className="card-head">
+              <span className="small-title">运行摘要与预算</span>
               {currentRun && <Badge tone="neutral">模式 {currentRun.mode}</Badge>}
-            </div>
+            </summary>
             <div className="card-body">
               <div className="meta-row">
                 <span>Run</span>
@@ -666,62 +733,19 @@ export default function ResearchPage() {
                 查看连接与授权
               </button>
             </div>
-          </article>
+          </details>
 
           {currentRun && (
             <SupervisionPanel
               runId={currentRun.id}
               supervision={supervision}
               runEnded={terminal}
-              onChanged={(s) => setSupervision(s)}
+              onChanged={(s) => {
+                if (selectedRunId.current === currentRun.id) setSupervisionSnapshot({ runId: currentRun.id, data: s })
+              }}
               onRefresh={() => void refreshSupervision()}
             />
           )}
-
-          <article className="card">
-            <div className="card-head">
-              <h2>人工指导</h2>
-              <Badge tone="blue">保留执行自主权</Badge>
-            </div>
-            <div className="card-body">
-              <p className="sub">告诉大脑或执行器需要区分什么、保留什么。</p>
-              <label htmlFor="steer-text">指导内容</label>
-              <textarea
-                id="steer-text"
-                className="editor"
-                rows={3}
-                value={steerText}
-                onChange={(e) => setSteerText(e.target.value)}
-                placeholder="例如：先区分环境错误和算法局限，再决定是否重跑。"
-                disabled={!active || paused || pausing}
-              />
-              {steerState && !terminal && (
-                <p className="small-text" role="status">
-                  {steerState.state === 'queued'
-                    ? '已排队，等待大脑审阅后投递。'
-                    : '指导已被 Run 消费（转为正式指导或已投递执行器）。'}
-                </p>
-              )}
-              {terminal && (
-                <p className="small-text" role="status">
-                  Run 已结束{phase ? `（${PHASE_LABELS[phase]}）` : ''}，不能再发送指导。
-                </p>
-              )}
-              <button
-                type="button"
-                className="btn primary"
-                style={{ width: '100%', marginTop: 10 }}
-                disabled={!active || paused || pausing || !steerText.trim() || busy}
-                title={terminal ? 'Run 已结束，不能发送指导' : undefined}
-                onClick={() => void sendSteer()}
-              >
-                发送指导
-              </button>
-              <div className="callout" style={{ marginTop: 12 }}>
-                暂停研究不等于取消远程 Job，已有远程任务可能继续运行或计费。
-              </div>
-            </div>
-          </article>
         </div>
       </div>
 
@@ -904,6 +928,45 @@ function lastSourceEvent(events: RunEvent[], ...sources: string[]): string {
   return '尚无事件'
 }
 
+function ResearchIntention({ text }: { text: string }) {
+  const id = useId()
+  const content = useRef<HTMLParagraphElement>(null)
+  const [expanded, setExpanded] = useState(false)
+  const [overflows, setOverflows] = useState(false)
+
+  useEffect(() => setExpanded(false), [text])
+
+  useEffect(() => {
+    const element = content.current
+    if (!element) return
+    const measure = () => {
+      const lineHeight = Number.parseFloat(window.getComputedStyle(element).lineHeight)
+      setOverflows(element.scrollHeight > lineHeight * 6 + 1)
+    }
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(element)
+    return () => observer.disconnect()
+  }, [text])
+
+  return (
+    <div className="intent">
+      <p id={id} ref={content} className={expanded ? '' : 'intent-collapsed'}>{text}</p>
+      {overflows && (
+        <button
+          type="button"
+          className="link-btn intent-toggle"
+          aria-expanded={expanded}
+          aria-controls={id}
+          onClick={() => setExpanded((value) => !value)}
+        >
+          {expanded ? '收起' : '展开全文'}
+        </button>
+      )}
+    </div>
+  )
+}
+
 function ChallengeSkills({ challengeId }: { challengeId: string }) {
   const { toast } = useApp()
   const [data, setData] = useState<SkillCatalogResponse | null>(null)
@@ -932,14 +995,16 @@ function ChallengeSkills({ challengeId }: { challengeId: string }) {
   }
 
   const boundSkills = data?.skills.filter((s) => s.bound) ?? []
+  const alwaysOnCount = data?.skills.filter((s) => s.always_on).length ?? 0
 
   return (
     <div className="skill-bar">
-      <span className="skill-bar-label">本题技能</span>
+      {data && <span className="small-text">常驻技能 {alwaysOnCount} 项</span>}
+      <span className="skill-bar-label">本题额外技能</span>
       {data === null ? (
-        <span className="small-text">加载中…</span>
+        <LoadingState />
       ) : boundSkills.length === 0 ? (
-        <span className="small-text">未绑定技能</span>
+        <span className="small-text">未绑定</span>
       ) : (
         <span className="skill-chips">
           {boundSkills.map((s) => (
@@ -1310,6 +1375,7 @@ function StartDialog({
         max_run_minutes: maxRunMinutes,
         max_submissions: maxSubmissions,
         max_jobs: maxJobs,
+        job_limits: { max_concurrent_jobs: 2, max_cpu: 16, max_memory_gb: 16, max_disk_gb: 10, allow_gpu: false },
         note: note.trim() || undefined,
       })
       await api.post(`/api/v1/runs/${run.id}/start`)
@@ -1417,6 +1483,7 @@ function StartDialog({
           />
         </div>
       </div>
+      <p className="inline-note">算力授权：最多同时 2 个任务，每个最多 16 核 CPU、16 GB 内存、10 GB 磁盘，无 GPU。失败和未知创建计入 Job 总数，每个 Job 必须设置本轮剩余时长内的超时。</p>
       <div className="field">
         <label htmlFor="auth-note">备注（可选）</label>
         <input id="auth-note" value={note} onChange={(e) => setNote(e.target.value)} />
@@ -1491,7 +1558,7 @@ function SubmissionsPanel({
     }
   }
 
-  if (items === null) return <p className="small-text">加载中…</p>
+  if (items === null) return <LoadingState />
   return (
     <div>
       <div className="actions" style={{ marginBottom: 10 }}>

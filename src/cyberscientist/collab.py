@@ -16,7 +16,7 @@ from typing import Any, Callable
 
 import jsonschema
 
-from . import db
+from . import db, experience_context
 
 _CONTRACT_PATH = (Path(__file__).resolve().parent.parent.parent
                   / "docs" / "collaboration" / "contract.schema.json")
@@ -100,45 +100,51 @@ def pending_guidance(conn: sqlite3.Connection, run_id: str) -> list[sqlite3.Row]
         " ORDER BY created_at", (run_id,)).fetchall()
 
 
+def guidance_eligible(conn: sqlite3.Connection, run_id: str, g) -> bool:
+    run = conn.execute("SELECT * FROM runs WHERE id=?",(run_id,)).fetchone()
+    shadow = conn.execute("SELECT enabled,shadow_epoch FROM supervision WHERE run_id=?",(run_id,)).fetchone()
+    status = None
+    if g["target_trial_id"] and g["target_trial_id"] != run["current_trial_id"]:
+        status = "superseded"
+    elif g["source"] == "shadow" and (not shadow or not shadow["enabled"] or shadow["shadow_epoch"] != g["shadow_epoch"]):
+        status = "invalidated"
+    # A result produced from an older Job state must not steer the executor
+    # after a material transition. User-authored guidance has no frame binding.
+    if not status and g['status'] == 'queued' and g['frame_id']:
+        frame = conn.execute('SELECT frame_json FROM review_requests WHERE frame_id=?', (g['frame_id'],)).fetchone()
+        if frame and frame['frame_json']:
+            cutoff = json.loads(frame['frame_json']).get('through_seq', 0)
+            newer = conn.execute("SELECT 1 FROM events WHERE run_id=? AND seq>? AND type IN "
+                                 "('job.reserved','job.accepted','job.unknown','job.observed','job.stop_requested') LIMIT 1",
+                                 (run_id, cutoff)).fetchone()
+            if newer:
+                status = 'superseded'
+    if status:
+        conn.execute("UPDATE guidance SET status=?,updated_at=? WHERE id=? AND status IN ('queued','sent')",
+                     (status,db.utcnow(),g["id"]))
+        db.append_event_tx(conn,run_id,"controller","guidance."+status,{"guidance_id":g["id"]},trial_id=g["target_trial_id"])
+        return False
+    return run["phase"] == "running" and run["gate"] == "open"
+
+
+def eligible_guidance(conn: sqlite3.Connection, run_id: str):
+    return [g for g in pending_guidance(conn,run_id) if guidance_eligible(conn,run_id,g)]
+
+
 def deliver_via_checkpoint_return(conn: sqlite3.Connection, run_id: str,
                                   trial_id: str | None) -> list[dict[str, Any]]:
-    """在检查点工具返回中投递排队指导（选定传输渠道一）。
-
-    同事务把 queued→sending→sent 落定；本函数即实际 RPC 的投递点。
-    失效条件（暂停/换 Trial/shadow_epoch 变化）由调用方在入队前核对，
-    此处再做一次最小核对：目标 Trial 仍需是当前 Trial。
-    """
-    run = conn.execute("SELECT current_trial_id, state_version FROM runs"
-                       " WHERE id=?", (run_id,)).fetchone()
-    delivered: list[dict[str, Any]] = []
-    now = db.utcnow()
-    for g in pending_guidance(conn, run_id):
-        if g["target_trial_id"] and run and \
-                g["target_trial_id"] != run["current_trial_id"]:
-            conn.execute(
-                "UPDATE guidance SET status='superseded', updated_at=?"
-                " WHERE id=?",
-                (now, g["id"]))
-            db.append_event_tx(conn, run_id, "controller",
-                               "guidance.superseded",
-                               {"guidance_id": g["id"],
-                                "reason": "目标 Trial 已更换"},
-                               trial_id=g["target_trial_id"])
+    delivered = []
+    for g in eligible_guidance(conn,run_id):
+        op_id = 'op_' + uuid.uuid4().hex
+        changed = conn.execute("UPDATE guidance SET status='sent',delivery_channel='checkpoint_tool',"
+                               "operation_id=?,updated_at=? WHERE id=? AND status='queued'",
+                               (op_id,db.utcnow(),g['id'])).rowcount
+        if not changed:
             continue
-        op_id = f"op_{uuid.uuid4().hex[:10]}"
-        conn.execute(
-            "UPDATE guidance SET status='sent', delivery_channel=?,"
-            " operation_id=?, updated_at=? WHERE id=? AND status='queued'",
-            ("checkpoint_tool", op_id, now, g["id"]))
-        db.append_event_tx(conn, run_id, "controller", "guidance.sent",
-                           {"guidance_id": g["id"], "kind": g["kind"],
-                            "channel": "checkpoint_tool",
-                            "operation_id": op_id},
-                           trial_id=g["target_trial_id"])
-        d = _guidance_row_to_dict(g)
-        d["status"] = "sent"
-        d["operation_id"] = op_id
-        delivered.append(d)
+        db.append_event_tx(conn,run_id,"controller","guidance.sent",
+                           {"guidance_id":g['id'],"kind":g['kind'],"channel":"checkpoint_tool","operation_id":op_id},
+                           trial_id=g['target_trial_id'])
+        delivered.append(_guidance_row_to_dict(g) | {"status":"sent","operation_id":op_id})
     return delivered
 
 
@@ -150,6 +156,13 @@ def create_guidance(conn: sqlite3.Connection, run_id: str, *,
                     shadow_epoch: int) -> str:
     gid = _rid("guidance")
     now = db.utcnow()
+    row = conn.execute("SELECT content_json FROM experience_contexts WHERE run_id=? AND boundary=?",
+                       (run_id,f"trial:{target_trial_id}")).fetchone()
+    items = json.loads(row["content_json"])["items"] if row else []
+    context = experience_context.freeze_tx(conn,run_id,target_trial_id,f"guidance:{gid}",items)
+    text_md = g["text_md"]
+    if items:
+        text_md += "\n冻结经验（采用时回报包与版本）：\n" + experience_context.encode(context)
     conn.execute(
         "INSERT INTO guidance(id, run_id, review_request_id, frame_id, source,"
         " target_trial_id, kind, intent, text_md, reason_md, evidence_refs,"
@@ -157,7 +170,7 @@ def create_guidance(conn: sqlite3.Connection, run_id: str, *,
         " evidence_revision, shadow_epoch, status, created_at, updated_at)"
         " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'queued',?,?)",
         (gid, run_id, review_request_id, frame_id, source, target_trial_id,
-         g["kind"], g["intent"], g["text_md"], g["reason_md"],
+         g["kind"], g["intent"], text_md, g["reason_md"],
          json.dumps(g.get("evidence_refs", []), ensure_ascii=False),
          g["expected_change_md"], g["revisit_when_md"],
          state_version, evidence_revision, shadow_epoch, now, now))
@@ -186,15 +199,26 @@ def submit_checkpoint(run_id: str, msg: dict[str, Any], *,
     digest = content_hash(msg)
 
     with db.transaction() as conn:
+        run = conn.execute("SELECT * FROM runs WHERE id=?", (run_id,)).fetchone()
+        trial_id = run["current_trial_id"]
         existing = conn.execute(
             "SELECT * FROM checkpoints WHERE run_id=? AND trial_id IS ?"
             " AND checkpoint_key=?",
             (run_id, trial_id, key)).fetchone()
         if existing:
             if existing["content_hash"] == digest:
-                return {"checkpoint_id": existing["id"], "review_id": None,
-                        "next_action": "continue", "deduplicated": True,
-                        "guidance": []}
+                receipt = json.loads(existing["receipt_json"] or "{}")
+                review = conn.execute("SELECT id FROM review_requests WHERE checkpoint_id=?"
+                                      " ORDER BY created_at LIMIT 1", (existing["id"],)).fetchone()
+                next_action = "continue" if run["phase"] == "running" and run["gate"] == "open" else "yield"
+                replay = []
+                for item in receipt.get("guidance", []):
+                    g = conn.execute("SELECT * FROM guidance WHERE id=?", (item["id"],)).fetchone()
+                    if g and g["status"] in ("sent", "acknowledged") and guidance_eligible(conn,run_id,g):
+                        replay.append(item)
+                return {"checkpoint_id": existing["id"], "review_id": receipt.get("review_id") or (review["id"] if review else None),
+                        "next_action": next_action, "deduplicated": True,
+                        "guidance": replay if next_action == "continue" else []}
             raise CollabError(
                 "CONFLICT",
                 f"checkpoint_key={key} 已存在不同内容；请使用新的 key")
@@ -215,6 +239,11 @@ def submit_checkpoint(run_id: str, msg: dict[str, Any], *,
             {"checkpoint_id": cp_id, "checkpoint_key": key,
              "stage": msg["stage"], "review": msg["review"],
              "report_excerpt": msg["report_md"][:300]}, trial_id=trial_id)
+        try:
+            experience_context.adopt_tx(conn,run_id,trial_id,msg.get("experience_uses",[]),
+                                       source,f"checkpoint:{cp_id}")
+        except ValueError as exc:
+            raise CollabError("INVALID_MESSAGE",str(exc)) from exc
         # 检查点是已登记科学证据：提升证据版本
         conn.execute(
             "UPDATE supervision SET evidence_revision=evidence_revision+1,"
@@ -250,6 +279,10 @@ def submit_checkpoint(run_id: str, msg: dict[str, Any], *,
                 next_action = "yield"
         # 检查点工具返回是排队指导的选定投递点之一
         delivered = deliver_via_checkpoint_return(conn, run_id, trial_id)
+        current = conn.execute("SELECT phase,gate FROM runs WHERE id=?", (run_id,)).fetchone()
+        next_action = "continue" if current["phase"] == "running" and current["gate"] == "open" else "yield"
+        conn.execute("UPDATE checkpoints SET receipt_json=? WHERE id=?",
+                     (json.dumps({"review_id":review_id,"guidance":delivered},ensure_ascii=False),cp_id))
 
     if notify:
         notify(run_id)  # 新检查点即使不要求审阅，也要唤醒 shadow 评估

@@ -2,7 +2,7 @@
 
 技能本体物理装在 skills 目录，由 Kimi/Codex CLI 自动发现；
 本模块只提供目录清单（UI 展示）与生效集合计算（controller 拼提示文本）。
-"启用" = start_trial 时把生效技能的名称+一行描述注入执行器任务文本。
+"启用" = 将生效技能的名称、描述及 SKILL.md 绝对路径注入会话任务文本。
 """
 from __future__ import annotations
 
@@ -95,9 +95,14 @@ def effective_for(conn: sqlite3.Connection, settings: dict[str, Any],
 
 
 def prompt_segment(skills_: list[dict[str, Any]]) -> str:
-    """拼进执行器任务文本的技能段落；空列表返回空串。"""
+    """拼进会话任务文本的技能段落；source 保持技能根目录的既有语义。"""
     if not skills_:
         return ""
-    lines = "\n".join(f"- {s['name']}: {s['description']}" for s in skills_)
-    return ("\n\n本 Trial 启用技能（已在环境中安装，按各自 SKILL.md 调用）：\n"
-            + lines)
+    lines = []
+    for skill in skills_:
+        path = (Path(skill["source"]) / skill["id"] / "SKILL.md").resolve()
+        lines.append(f"- {skill['name']}: {skill['description']}\n"
+                     f"  SKILL.md: {path}")
+    return ("\n\n本 Trial 启用技能（使用前必须阅读对应的 SKILL.md，"
+            "再按其中的指令调用；引用的相对路径以该文件所在目录为准）：\n"
+            + "\n".join(lines))

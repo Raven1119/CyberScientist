@@ -127,7 +127,9 @@ CREATE TABLE IF NOT EXISTS experience_revisions (
     evidence_refs TEXT NOT NULL DEFAULT '[]',
     created_at TEXT NOT NULL,
     applied INTEGER NOT NULL DEFAULT 1,
-    UNIQUE(experience_id, revision_hash)
+    parent_revision_id TEXT,
+    operation_id TEXT,
+    activate INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_events_run_seq ON events(run_id, seq);
 CREATE INDEX IF NOT EXISTS idx_rev_exp ON experience_revisions(experience_id, created_at);
@@ -229,6 +231,20 @@ CREATE TABLE IF NOT EXISTS mailboxes (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_mailboxes_harvest_active
     ON mailboxes(role) WHERE role='harvest' AND status<>'disabled';
 -- 提交记录：实验邮箱是提交主体；收割行 is_harvest=1 且引用来源提交
+CREATE TABLE IF NOT EXISTS experience_approvals (
+ id INTEGER PRIMARY KEY, experience_id TEXT NOT NULL, revision_id TEXT NOT NULL,
+ operator TEXT NOT NULL, created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS experience_contexts (
+ id TEXT PRIMARY KEY, run_id TEXT NOT NULL, trial_id TEXT, boundary TEXT NOT NULL,
+ content_json TEXT NOT NULL, created_at TEXT NOT NULL, UNIQUE(run_id,boundary)
+);
+CREATE TABLE IF NOT EXISTS experience_uses (
+ run_id TEXT NOT NULL, trial_id TEXT, context_id TEXT NOT NULL, experience_id TEXT NOT NULL,
+ revision_id TEXT NOT NULL, revision_hash TEXT NOT NULL, declaration_id TEXT NOT NULL,
+ adopted_seq INTEGER NOT NULL, semantics TEXT NOT NULL,
+ PRIMARY KEY(run_id,declaration_id,context_id,experience_id)
+);
 CREATE TABLE IF NOT EXISTS submissions (
     id TEXT PRIMARY KEY,
     run_id TEXT NOT NULL REFERENCES runs(id),
@@ -259,13 +275,47 @@ CREATE TABLE IF NOT EXISTS challenge_skills (
 );
 """
 
+# Persistent cloud operations and independent curation sessions.
+SCHEMA_RELIABILITY = """
+CREATE TABLE IF NOT EXISTS compute_jobs (
+    operation_id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL REFERENCES runs(id),
+    trial_id TEXT NOT NULL,
+    request_hash TEXT NOT NULL,
+    spec_json TEXT NOT NULL,
+    input_directory TEXT NOT NULL,
+    platform_job_id INTEGER UNIQUE,
+    status TEXT NOT NULL,
+    receipt_json TEXT NOT NULL DEFAULT '{}',
+    observed_at TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_compute_run ON compute_jobs(run_id, status);
+CREATE TABLE IF NOT EXISTS curation_requests (
+    id TEXT PRIMARY KEY,
+    operation_id TEXT NOT NULL UNIQUE,
+    run_id TEXT NOT NULL REFERENCES runs(id),
+    status TEXT NOT NULL,
+    packet_json TEXT NOT NULL,
+    result_json TEXT,
+    error TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+"""
+
 # submissions 表 v2 新增列（对既有库做幂等 ALTER）
 SUBMISSION_V2_COLUMNS = {
     "platform_ref": "TEXT",  # 平台侧 attempt id 等回执引用
+    "request_hash": "TEXT",
+    "stage": "TEXT NOT NULL DEFAULT 'legacy'",
+    "reservation_released": "INTEGER NOT NULL DEFAULT 0",
 }
 
 # checkpoints 表 v2 新增列（对既有库做幂等 ALTER）
 CHECKPOINT_V2_COLUMNS = {
+    "receipt_json": "TEXT",
     "checkpoint_key": "TEXT",
     "content_hash": "TEXT",
     "stage": "TEXT",
@@ -282,12 +332,14 @@ RUN_V2_COLUMNS = {
 # authorizations 表 v2 新增列：付费算力（Bohrium Job）有界授权
 AUTHORIZATION_V2_COLUMNS = {
     "max_jobs": "INTEGER NOT NULL DEFAULT 0",
+    "job_limits_json": "TEXT NOT NULL DEFAULT '{}'",
 }
 
 # challenges 表 v2 新增列：平台资源清单（数据集/工具/服务），导入时从
 # 平台详情 JSON 落库，供大脑 run_start 探查与规划
 CHALLENGE_V2_COLUMNS = {
     "resources_json": "TEXT",
+    "platform_snapshot_json": "TEXT",
 }
 
 _db_lock = threading.RLock()
@@ -305,14 +357,71 @@ def _ensure_columns(conn: sqlite3.Connection, table: str,
 def init_db() -> None:
     with _db_lock:
         conn = get_db()
+        legacy_columns = {r["name"] for r in conn.execute("PRAGMA table_info(experience_revisions)")}
+        if legacy_columns and "parent_revision_id" not in legacy_columns:
+            _backup_experience_migration(conn)
         conn.executescript(SCHEMA)
         conn.executescript(SCHEMA_V2_TABLES)
+        conn.executescript(SCHEMA_RELIABILITY)
         _ensure_columns(conn, "checkpoints", CHECKPOINT_V2_COLUMNS)
         _ensure_columns(conn, "runs", RUN_V2_COLUMNS)
         _ensure_columns(conn, "submissions", SUBMISSION_V2_COLUMNS)
         _ensure_columns(conn, "authorizations", AUTHORIZATION_V2_COLUMNS)
         _ensure_columns(conn, "challenges", CHALLENGE_V2_COLUMNS)
+        _migrate_experience_revisions(conn)
         conn.commit()
+
+
+def _backup_experience_migration(conn: sqlite3.Connection) -> None:
+    """Before any DDL, save committed WAL and editable files, never secrets."""
+    import uuid
+    import shutil
+    backup = config.DATA_DIR / 'migrations' / ('experience-v3-' + uuid.uuid4().hex)
+    backup.mkdir(parents=True)
+    conn.commit()
+    with sqlite3.connect(backup / 'database.sqlite') as saved:
+        conn.backup(saved)
+    if config.EXPERIENCE_DIR.exists():
+        shutil.copytree(config.EXPERIENCE_DIR, backup / 'experience', dirs_exist_ok=True)
+
+
+def _migrate_experience_revisions(conn: sqlite3.Connection) -> None:
+    """Offline startup migration. Keep historical IDs; never invent lost operations."""
+    cols = {r['name'] for r in conn.execute('PRAGMA table_info(experience_revisions)')}
+    if 'parent_revision_id' not in cols:
+        conn.execute('BEGIN IMMEDIATE')
+        try:
+            conn.execute('ALTER TABLE experience_revisions RENAME TO experience_revisions_legacy')
+            table = SCHEMA.split('CREATE TABLE IF NOT EXISTS experience_revisions (', 1)[1].split(');', 1)[0]
+            conn.execute('CREATE TABLE experience_revisions (' + table + ')')
+            names = ','.join(r['name'] for r in conn.execute('PRAGMA table_info(experience_revisions_legacy)'))
+            conn.execute(f'INSERT INTO experience_revisions ({names}) SELECT {names} FROM experience_revisions_legacy')
+            conn.execute('DROP TABLE experience_revisions_legacy')
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+    conn.executescript('''
+        CREATE INDEX IF NOT EXISTS idx_rev_exp ON experience_revisions(experience_id, created_at);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_revision_operation
+          ON experience_revisions(experience_id, operation_id) WHERE operation_id IS NOT NULL;
+        CREATE TABLE IF NOT EXISTS experience_heads (
+          experience_id TEXT PRIMARY KEY, file_path TEXT NOT NULL,
+          scope TEXT NOT NULL, challenge_id TEXT,
+          head_revision_id TEXT, active_revision_id TEXT, problem TEXT
+        );
+    ''')
+
+    # Initialize only previously untracked legacy identities. Invalid external edits
+    # cannot erase the last registered approved bytes during the first new startup.
+    for row in conn.execute("SELECT r.* FROM experience_revisions r WHERE applied=1"
+                            " AND rowid=(SELECT MAX(r2.rowid) FROM experience_revisions r2 WHERE r2.experience_id=r.experience_id AND r2.applied=1)"
+                            " AND NOT EXISTS(SELECT 1 FROM experience_heads h WHERE h.experience_id=r.experience_id)").fetchall():
+        import json
+        fm = json.loads(row['frontmatter'])
+        active = row['id'] if fm.get('status') == 'active' else None
+        conn.execute("INSERT INTO experience_heads(experience_id,file_path,scope,challenge_id,head_revision_id,active_revision_id) VALUES(?,?,?,?,?,?)",
+                     (row['experience_id'],row['file_path'],fm['scope'],fm.get('challenge_id'),row['id'],active))
 
 
 @contextlib.contextmanager

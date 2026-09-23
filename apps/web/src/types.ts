@@ -110,6 +110,12 @@ export interface ChallengeSummary {
 
 export interface ChallengeDetail extends ChallengeSummary {
   content?: string
+  platform_snapshot?: {
+    status?: string | null
+    roundEndAt?: string | null
+    scoring?: { grader_name?: string | null; strategy?: string | null } | null
+    fetched_at?: string
+  } | null
 }
 
 export interface SkillInfo {
@@ -208,6 +214,8 @@ export interface ExperienceFrontmatter {
 }
 
 export interface ExperienceItem extends ExperienceFrontmatter {
+  revision_id: string
+  active_revision_id: string | null
   review_note: string | null
   file: string
   current_hash: string
@@ -217,6 +225,7 @@ export interface ExperienceItem extends ExperienceFrontmatter {
 }
 
 export interface ExperienceRevision {
+  revision_id: string
   revision_hash: string
   parent_hash: string | null
   operator: string
@@ -225,12 +234,15 @@ export interface ExperienceRevision {
 }
 
 export interface ExperienceDetail {
+  revision_id: string
+  active_revision_id: string | null
   id: string
   file: string
   frontmatter: ExperienceFrontmatter
   body_md: string
   current_hash: string
   revisions: ExperienceRevision[]
+  adoptions?: { run_id: string; trial_id: string | null; revision_id: string; adopted_seq: number; semantics: string }[]
 }
 
 export interface RevisionConflictDetails {
@@ -340,4 +352,5 @@ export interface Submission {
   created_at: string
   submitted_at: string | null
   scored_at: string | null
+  platform_feedback?: Record<string, { response: unknown; recorded_at: string }>
 }

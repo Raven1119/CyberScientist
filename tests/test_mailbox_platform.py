@@ -62,7 +62,7 @@ def test_register_account_option_a_shape():
     acc = p.register_account()
     call = fake.calls[0]
     assert call["token"] == "op-tok"
-    assert call["json_body"]["framework"] == "Kimi Code"
+    assert call["json_body"]["framework"] == "CyberScientist"
     assert call["json_body"]["name"].startswith("cyberscientist-exp-")
     assert acc["password"] == "asp_new"
     assert acc["platform_account_id"] == "agent-x"
@@ -92,13 +92,13 @@ def test_submit_zip_happy_path(tmp_path):
     with zipfile.ZipFile(pkg, "w") as z:
         z.writestr("results/x.csv", "a,b\n1,2\n")
     p, fake = _platform({
-        ("POST", "/challenges/ch-1/attempts"): {"id": 44507},
-        ("POST", "/attempts/44507/bundle"): {"ok": True},
-        ("POST", "/attempts/44507/submit"): {"ok": True},
+        ("POST", "/challenges/ch-1/attempts"): {"id": 42},
+        ("POST", "/attempts/42/bundle"): {"ok": True},
+        ("POST", "/attempts/42/submit"): {"ok": True},
     })
     r = p.submit_package("agent-x", "asp_x", str(pkg), "ch-1",
                          meta={"outcome": "success", "model": "Kimi K3"})
-    assert r == {"accepted": True, "receipt": "44507", "bundle_uploaded": True}
+    assert r == {"accepted": True, "receipt": "42", "bundle_uploaded": True}
     create = fake.calls[0]
     assert create["method"] == "POST"
     assert create["path"] == "/challenges/ch-1/attempts"
@@ -107,9 +107,9 @@ def test_submit_zip_happy_path(tmp_path):
     assert f["outcome"] == "success" and f["model"] == "Kimi K3"
     trace = json.loads(f["trace"])
     assert trace[0]["type"] in ("tool_call", "thought")
-    assert fake.calls[1]["path"] == "/attempts/44507/bundle"
+    assert fake.calls[1]["path"] == "/attempts/42/bundle"
     assert fake.calls[1]["form_files"][0][0] == "bundle"
-    assert fake.calls[2]["path"] == "/attempts/44507/submit"
+    assert fake.calls[2]["path"] == "/attempts/42/submit"
     assert all(c["token"] == "asp_x" for c in fake.calls)
 
 
@@ -148,6 +148,28 @@ def test_fetch_score_only_final():
 
     assert p3.fetch_score("a", None, "demo-receipt:x") is None
     assert p3.fetch_score("a", None, "") is None
+
+
+def test_score_details_retain_failure_and_eligibility_without_credentials():
+    body = {"status": "scoring_failed", "score": None,
+            "scoringState": {"scoreIsFinal": False, "workerStatus": "error",
+                             "zeroReason": "worker_timeout", "zeroEvidence": {"job": "j1"}},
+            "competitionEligibility": {"eligible": False, "reason": "after_deadline"},
+            "token": "asp_should_not_escape", "error": "request asp_x was rejected"}
+    p, _ = _platform({("GET", "/attempts/9/score"): body})
+    feedback = p.fetch_score_details("a", "asp_x", "9")
+    assert feedback["scoringState"] == body["scoringState"]
+    assert feedback["competitionEligibility"] == body["competitionEligibility"]
+    assert "asp_" not in json.dumps(feedback)
+    assert "token" not in feedback
+    assert p.fetch_score("a", "asp_x", "9") is None
+
+
+@pytest.mark.parametrize("state,score", [("false", 1), (True, "NaN"), (True, True)])
+def test_score_requires_boolean_finality_and_finite_number(state, score):
+    p, _ = _platform({("GET", "/attempts/9/score"): {
+        "score": score, "scoringState": {"scoreIsFinal": state}}})
+    assert p.fetch_score("a", None, "9") is None
 
 
 def test_multipart_encoding():

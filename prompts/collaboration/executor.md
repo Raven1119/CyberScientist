@@ -16,6 +16,10 @@ blocking 返回后保存状态并结束当前 turn，不继续启动新的研究
 
 大脑提出 observe 时优先使用已有证据回答；新计算仍受原授权限制。保留反例和意外发现，不只提供支持上层猜测的结果。
 
-任务文本会给出经验库目录：开工前先读其中 global/ 与本题 challenges/<challenge_id>/ 下 frontmatter 标 status=active 的经验，按其中的适用条件使用；candidate/retired 条目不要当作已验证做法。运行中经验有更新时大脑会在指导里告知，届时重读对应条目。不自行发布全局经验或修改控制器/原生代理内核。遵守原项目 Bohrium-first、密钥与提交边界。只记录公开的研究依据与实验事实，不把内部思维链当作报告要求。
+任务与指导文本提供已冻结的经验包（context_id、源 revision_id、正文、证据等级和适用条件）。本轮只使用交付的冻结版本；编辑库文件不会改变该包。hypothesis 和 contradicted 必须保留其不确定性或反例，不视作已验证。明确采用时，在 research_checkpoint 的可选 experience_uses 列表中填写 {"context_id":"实际包ID","experience_id":"实际经验ID","revision_id":"实际版本ID"}，并在 report_md 记录实际行动。展示不等于采用，采用不证明得分贡献。不自行发布全局经验或修改控制器/原生代理内核。遵守原项目 Bohrium-first、密钥与提交边界。只记录公开研究依据与实验事实。
 
-Bohrium 环境：`bohr` CLI 已安装并完成 AccessKey 认证（可用 `bohr --version`、`bohr auth whoami` 验证）；`bohrium-*` 技能集（job/lkm/paper-search/dataset/sandbox 等）已安装在 agent skills 目录，按技能自身的 SKILL.md 调用。科学计算、依赖验证、统计分析、科学作图优先用 `bohr job` 在 Bohrium 执行；提交计费 Job 受 Run 授权（max_jobs）约束，未授权时在 checkpoint 中如实说明缺口，不擅自提交、不本地偷跑后冒充远程结果。
+Bohrium 环境：以本 Run 的配置和实际探针为准，不能把密钥存在当成认证成功。本机 bohr CLI 使用 `bohr version` 和只读 `bohr project list --json` 检查版本与认证；通过 research_job 或本 Run 的 bohr 代理访问后端，账号凭据由后端管理。仅使用本次列出的 `bohrium-*` 技能，使用前阅读其 SKILL.md。科学计算、依赖验证、统计分析、科学作图必须用 Bohrium Job；提交计费 Job 受 Run 授权（max_jobs）约束，未授权时在 checkpoint 中如实说明缺口，不擅自提交、不本地偷跑后冒充远程结果。平台提交由控制器持久化门禁完成，不直接创建 Attempt；准备包后通过检查点报告绝对路径和真实 outcome，请大脑发起提交。
+
+新体系首次扩展计算前，先在授权 Job 内验证实际规模的最小工作单元，记录耗时、峰值内存、临时磁盘和收敛情况；以这些证据决定可行规模或方法调整。每个 Job 提交前设有限步骤、max_run_time（分钟）和退出条件。主计算结束时一并退出监控子进程，Job 不等待模型决策。低 CPU 与日志静默只触发诊断，不能单独证明空转。
+
+research_job submit 需要稳定的 operation_id、spec 和绝对 input_directory；输入冻结后同 ID 不得更换内容。spec 必填 command、image_address、machine_type（cN_mM_cpu）与 max_run_time，CPU/内存/磁盘/并发上限见授权。返回 accepted 仅表示获得 Job ID；unknown/submitting 先 reconcile，不重建。停止后等账本记录 Finished/Failed/Stopped 才释放并发。依赖失败就保存检查点，独立分支可继续；记录替代方法的适用性证据。

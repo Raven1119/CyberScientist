@@ -259,6 +259,36 @@
               "failure",
               "platform"
             ]
+          },
+          "expected_revision": {
+            "type": "string",
+            "minLength": 1
+          },
+          "evidence_status": {
+            "enum": [
+              "hypothesis",
+              "observed",
+              "validated",
+              "contradicted"
+            ]
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "derived_from": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "expires_at": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [
@@ -295,6 +325,33 @@
               }
             }
           }
+        ]
+      }
+    },
+    "experience_uses": {
+      "type": "array",
+      "maxItems": 32,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "context_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "experience_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "revision_id": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "context_id",
+          "experience_id",
+          "revision_id"
         ]
       }
     }

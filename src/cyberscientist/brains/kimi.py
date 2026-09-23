@@ -97,8 +97,15 @@ class KimiBrain:
 
     async def _spawn(self, extra: list[str],
                      cwd: str | None = None) -> JsonRpcStdio:
-        rpc = JsonRpcStdio(self._argv(extra), cwd=cwd, name="kimi-acp")
-        await asyncio.wait_for(rpc.start(), timeout=30)
+        from ..codex_protocol import NATIVE_BRAIN_SHELL_ENV_KEYS
+        allowed = (*NATIVE_BRAIN_SHELL_ENV_KEYS, 'KIMI_API_KEY', 'MOONSHOT_API_KEY')
+        env = {k: os.environ[k] for k in allowed if k in os.environ}
+        rpc = JsonRpcStdio(self._argv(extra), cwd=cwd, env=env, name="kimi-acp")
+        try:
+            await asyncio.wait_for(rpc.start(), timeout=30)
+        except BaseException:
+            await rpc.stop()
+            raise
         return rpc
 
     async def _initialize(self, rpc: JsonRpcStdio) -> dict[str, Any]:
@@ -254,6 +261,14 @@ class KimiBrain:
                   file=sys.stderr)
         if joined.strip():
             yield BrainEvent("raw", {"text": joined})
+        if packet.get("protocol") == "experience_curation":
+            from ..curation import extract
+            result = extract(joined)
+            if result is None:
+                yield BrainEvent("error", {"message": "最终消息中未找到合法 CurationResult JSON"})
+            else:
+                yield BrainEvent("curation_result", {"result": result})
+            return
         if packet.get("protocol") == "review_result":
             result = extract_review_result(joined)
             if result is None:
@@ -319,6 +334,9 @@ class KimiBrain:
 
     @staticmethod
     def _render_prompt(packet: dict[str, Any]) -> str:
+        if packet.get("protocol") == "experience_curation":
+            from ..curation import prompt
+            return prompt(packet)
         if packet.get("protocol") == "executor_question":
             return _question_prompt(packet)
         if packet.get("protocol") == "review_result":
@@ -336,29 +354,25 @@ class KimiBrain:
                 '{"kind":"nudge|steer|stop|submit","intent":"continue|observe|reframe",'
                 '"text_md":"...","reason_md":"...","evidence_refs":[],'
                 '"expected_change_md":"...","revisit_when_md":"..."}\n'
-                "kind=submit：结果包已可提交时发出，系统自动用实验邮箱提交"
-                "（不投递给执行器、无需用户确认），随后异步等待评分。\n"
+                "kind=submit：结果包已可提交时发出；仅在已有 Run 授权、提交预算"
+                "和去重检查通过后，系统自动用实验邮箱提交（不投递给执行器），"
+                "随后异步等待评分；不扩大正式提交授权。\n"
                 "只输出一个 JSON 代码块，不要输出其他文字，不要使用任何工具。\n\n"
                 f"ObservationFrame:\n```json\n"
                 f"{json.dumps(packet, ensure_ascii=False)}\n```"
             )
         return (
             "你是 CyberScientist 的大脑，负责研究方向的判断，不直接执行工具。\n"
-            "常驻目标（用户设定，优先级高于节省配额）：题目未拿到满分前不得 "
-            "finish；只要预算（审阅/Trial/提交/算力）未耗尽，就应主动提出可检验假设、"
-            "指导执行器做实验迭代提分——花掉已授权的配额正是你的职责，"
-            "「验证一个假设」本身就是可检验实验，不算盲探。"
-            "只有两种情况允许 finish：已确认满分；或所有可行路径都被证据堵死"
-            "（此时 finish 理由必须列明缺什么、用户能补什么）。"
+            "目标与停止条件以本 Run 的用户指导和 authorization.note 为准。"
+            "在授权范围内主动检验假设；用户要求实验闭环时，完成提交、反馈和经验整理即可收尾，"
+            "不擅自增加必须满分的条件。finish 必须说明已完成的目标、证据和未解决项。"
             "pause 只用于必须等用户才能推进的真正抉择点，不得为省配额而 pause。\n"
             + (
-                "本次 trigger=run_start（开局）：先使用可用工具（网页访问等）亲自探查 "
-                "ReviewPacket.challenge.platform_url 的题目页面（概览/完整指南/资源页），"
-                "并对照 challenge.content 与 challenge.resources，核实数据获取路径、"
-                "工具链可得性、评分契约与满分可达性；把任务要素准备齐全后再输出首个 "
-                "Decision（第一个 Trial 应是带着完整计划的行动，不是从零侦察）。"
-                "探查结论写进 summary 与 evidence_refs。不得凭转述下结论："
-                "公开仓库查无 ≠ 不可得，先查平台资源页与文档。\n"
+                "本次 trigger=run_start：先核对输入中的官方题面、资源路径和评分约束。"
+                "需要补证时使用已开放的只读工具；网络失败记录 unknown，"
+                "根据已有证据启动不依赖该缺项的有界 Trial。首个 Trial 写清待检验假设、"
+                "资源试算、产物及停止条件；不以确认满分可达为启动条件。"
+                "每项判断标明已读来源，外部指导单独归因。\n"
                 if packet.get("trigger") == "run_start" else
                 "不要使用任何工具。\n"
             ) +
@@ -374,11 +388,13 @@ class KimiBrain:
             '- {"op":"steer","trial_id":"当前 Trial","message":"..."}\n'
             '- {"op":"wait","reason":"..."}\n'
             '- {"op":"pause","reason":"..."}\n'
-            '- {"op":"refresh_platform","reason":"..."}\n'
-            '- {"op":"request_submission","trial_id":"...","bundle_manifest_ref":"..."}\n'
             '- {"op":"promote_experience","experience_id":"...","revision_hash":"...",'
             '"reason":"...","evidence_refs":["..."]}（仅题内；全局由用户审批，勿用）\n'
             '- {"op":"finish","reason":"..."}\n'
+            "旧 request_submission 会被明确拒绝：bundle_manifest_ref 尚无冻结包解析契约。"
+            "提交建议仅在 requested/shadow 的 ReviewResult 中用 guidance.kind=submit，"
+            "经现有授权、预算和去重检查执行实验邮箱提交；不扩大正式提交授权。"
+            "不要在当前 Decision 中混入 ReviewResult。\n"
             "experience_proposals 每项：scope/challenge_id/title/body_md/applicability/"
             "evidence_refs 必填；可选 target_id（更新已有条目，先读库再决定新建/"
             "更新/不变，同主题勿重复新建）与 kind（仅限 "

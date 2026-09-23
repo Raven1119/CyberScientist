@@ -82,7 +82,7 @@ def main() -> None:
             import webbrowser
             threading.Timer(1.2, lambda: webbrowser.open(url)).start()
         uvicorn.run(app, host="127.0.0.1", port=settings["app"]["port"],
-                    log_level="warning")
+                    log_level="warning", timeout_graceful_shutdown=5)
     else:  # pragma: no cover
         parser.print_help()
         sys.exit(2)

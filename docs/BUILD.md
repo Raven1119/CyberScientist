@@ -1,5 +1,55 @@
 # 实施与验收
 
+## Linux 开发环境
+
+开发环境约定见根目录 `AGENTS.md`。当前工作区位于 WSL2 的 `/home/wmywb/CyberScientist`；依赖在 Linux 内按锁文件安装，已有 Windows 虚拟环境或 `node_modules` 不可直接复用。
+
+后端从 Linux shell 启动，大脑和执行器使用该 Linux 环境中的原生 CLI 与登录态。前端「连接与设置」中的两处可执行文件路径填写 Linux 路径，或留空使用后端 PATH。历史 Windows 探针只作为协议参考，不能视为 Linux 联调通过。
+
+先检查工具是否能被当前 shell 找到。若工具已安装在 `~/.local/bin` 但不在 PATH，只需在当前 shell 加入该目录，无需修改全局 CLI 配置：
+
+```bash
+export PATH="$HOME/.local/bin:$PATH"
+command -v python3 uv node npm codex kimi prime-agent bohr
+```
+
+Python 需满足 `pyproject.toml` 的版本要求；代理 CLI 按实际选用的大脑/执行器准备。开发依赖与前端构建完成后再启动应用：
+
+```bash
+uv sync --locked
+uv run pytest tests/ -q
+cd apps/web
+npm ci
+npm run build
+cd ../..
+uv run cyberscientist serve --port 8765
+```
+
+浏览器打开 `http://127.0.0.1:8765/`。新工作区默认 Demo；依赖安装、构建成功和 Demo 验证分别记录，不能据此认定真实代理、Bohrium Job 或比赛提交已联通。迁移后的 CLI 版本若与历史探针不同，接入前重新核实协议。
+
+## 前端设计与浏览器验收
+
+共享视觉层与动效映射见 [FRONTEND_DESIGN.md](FRONTEND_DESIGN.md)。从仓库根目录构建后启动：
+
+```bash
+export PATH="$HOME/.local/bin:$PATH"
+npm --prefix apps/web run build
+.venv/bin/cyberscientist serve --port 8765
+```
+
+访问 `http://127.0.0.1:8765/`；右上角切换日夜、动效与专注视图。开发时另开终端运行 `npm --prefix apps/web run dev -- --host 127.0.0.1`，Vite 将 `/api` 代理到 8765。
+
+需要隔离演示验收时，用下列 helper **代替**上面的正常后端，避免写入现有研究数据：
+
+```bash
+.venv/bin/python checks/serve_ui_demo.py --port 8765
+# 在另一个终端，使用装有 Playwright 和 Chromium 的 Python：
+python checks/ui_design_smoke.py --url http://127.0.0.1:8765
+python checks/ui_motion_smoke.py --url http://127.0.0.1:8765
+```
+
+Helper 默认创建新的临时工作区，仅使用原生 Demo 适配器。浏览器脚本验证隔离响应头后才写入 Demo 数据；不登录、不调用真实模型、不创建算力任务或比赛 Attempt。最小 Linux 镜像的中文截图需要可用的 Noto CJK 等系统字体。前端单元测试：`npm --prefix apps/web test`。
+
 ## 开工前的小检查
 
 检查目录、Python/Node 环境、已安装 CLI；核实上游协议并记录实际版本。默认采用 Python 3.11+、FastAPI、React + TypeScript + Vite；锁定施工环境中实际验证可用的依赖，而不是逐个追逐最新版。后端 SQLite 单进程，不引入 Redis、Celery、LangGraph、向量服务或新的代理框架。

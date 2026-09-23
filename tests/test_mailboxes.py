@@ -39,6 +39,89 @@ def _set_scored(sub_id: str, score: float) -> None:
                " scored_at=? WHERE id=?", (score, db.utcnow(), sub_id))
 
 
+def test_default_package_prefers_arm_zip_and_explicit_path_still_wins():
+    _seed_challenge()
+    rid = _make_run()
+    relative_json = _make_package(rid)
+    json_path = config.WORKSPACE_DIR / relative_json
+    zip_path = json_path.with_suffix(".zip")
+    zip_path.write_bytes(b"PK synthetic resolver fixture")
+    assert mailboxes._resolve_package(rid, "trial_mb1", None) == zip_path
+    assert mailboxes._resolve_package(rid, "trial_mb1", relative_json) == json_path
+
+
+def test_pending_and_final_score_feedback_survives_polling(monkeypatch):
+    _seed_challenge()
+    rid = _make_run()
+    _make_package(rid)
+    mailboxes.register_experiment(1)
+    sub = mailboxes.submit_experiment(rid, "trial_mb1", None, "feedback-poll")
+    platform = mailboxes._platform()
+    details = {"status": "evaluating", "scoringState": {
+        "scoreIsFinal": False, "workerStatus": "error", "zeroReason": "timeout",
+        "zeroEvidence": {"job_id": "fixture-job"}},
+        "competitionEligibility": {"eligible": False, "reason": "after_deadline"}}
+    monkeypatch.setattr(platform, "fetch_score_details", lambda *a: details, raising=False)
+    monkeypatch.setattr(mailboxes, "_platform", lambda: platform)
+    first = mailboxes.poll_scores(rid)
+    assert first["still_unknown"] == 1 and first["changed_run_ids"] == [rid]
+    item = mailboxes.list_submissions(rid)["items"][0]
+    assert item["score"] is None
+    assert item["platform_feedback"]["score"]["response"] == details
+    assert mailboxes.poll_scores(rid)["changed_run_ids"] == []
+    details["scoringState"].update(scoreIsFinal=True, displayScore=0.0)
+    assert mailboxes.poll_scores(rid)["updated"] == 1
+    item = mailboxes.list_challenge_submissions("MB_CH")["items"][0]
+    assert item["score"] == 0.0 and item["score_status"] == "scored"
+    assert item["platform_feedback"]["score"]["response"]["scoringState"]["zeroReason"] == "timeout"
+    details["scoringState"]["zeroReason"] = "corrected_explanation"
+    corrected = mailboxes.poll_scores(rid)
+    assert corrected["updated"] == 0 and corrected["changed_run_ids"] == [rid]
+
+
+def test_submission_records_stage_feedback_and_frozen_model(monkeypatch):
+    _seed_challenge()
+    rid = _make_run()
+    _make_package(rid)
+    mailboxes.register_experiment(1)
+    snapshot = json.loads(db.query_one("SELECT config_snapshot FROM runs WHERE id=?", (rid,))[0])
+    snapshot["settings"]["executor"].update(runtime="codex", model_id="gpt-6-astra")
+    db.execute("UPDATE runs SET mode='connected',config_snapshot=? WHERE id=?",
+               (json.dumps(snapshot), rid))
+    platform = mailboxes._platform()
+    observed = {}
+    def submit(*args, meta, **kwargs):
+        observed.update(meta)
+        meta["on_stage"]("draft_created", "fixture-attempt")
+        meta["on_feedback"]("bundle", {"status": "needs_review", "validation": {"ready": False}})
+        raise TimeoutError("lost submit response")
+    monkeypatch.setattr(platform, "submit_package", submit)
+    monkeypatch.setattr(mailboxes, "_platform", lambda: platform)
+    sub = mailboxes.submit_experiment(rid, "trial_mb1", None, "metadata")
+    assert sub["status"] == "unknown"
+    assert observed["model"] == "gpt-6-astra"
+    assert observed["harness"] == "CyberScientist (Codex)"
+    item = mailboxes.list_submissions(rid)["items"][0]
+    assert item["platform_feedback"]["bundle"]["response"]["status"] == "needs_review"
+
+
+def test_score_query_error_is_auditable_without_exception_secrets(monkeypatch):
+    _seed_challenge()
+    rid = _make_run()
+    _make_package(rid)
+    mailboxes.register_experiment(1)
+    mailboxes.submit_experiment(rid, "trial_mb1", None, "poll-error")
+    platform = mailboxes._platform()
+    def failure(*args):
+        raise TimeoutError("untrusted secret response")
+    monkeypatch.setattr(platform, "fetch_score", failure)
+    monkeypatch.setattr(mailboxes, "_platform", lambda: platform)
+    assert mailboxes.poll_scores(rid)["errors"] == 1
+    feedback = mailboxes.list_submissions(rid)["items"][0]["platform_feedback"]
+    assert feedback["score_query_error"]["response"] == {
+        "error_type": "TimeoutError", "outcome": "unknown"}
+
+
 def test_harvest_unique_and_replaceable():
     h = mailboxes.add_harvest("me@example.com", "s3cret")
     assert h["role"] == "harvest" and h["secret_configured"]
@@ -78,7 +161,7 @@ def test_submit_experiment_quota_budget_dedup():
 
     r = mailboxes.submit_experiment(rid, "trial_mb1", None, "op-1")
     assert r["status"] == "submitted" and not r["deduplicated"]
-    assert r["package_path"] == pkg
+    assert (config.WORKSPACE_DIR / r["package_path"]).read_bytes() == (config.WORKSPACE_DIR / pkg).read_bytes()
     mb = db.query_one("SELECT * FROM mailboxes WHERE role='experiment'")
     assert mb["submissions_used"] == 1
 
@@ -220,8 +303,8 @@ def test_submit_demo_challenge_rejected_and_quota_released(monkeypatch):
     assert mb["submissions_used"] == 0 and mb["status"] == "active"
 
 
-def test_submit_unexpected_exception_still_releases_quota(monkeypatch):
-    """适配器抛出非 PlatformError 时补偿事务也必须执行。"""
+def test_submit_unexpected_exception_retains_reservation(monkeypatch):
+    """未分类适配器异常不能证明没有远端副作用，保留额度。"""
     _seed_challenge()
     rid = _make_run(max_submissions=5)
     _make_package(rid)
@@ -239,15 +322,15 @@ def test_submit_unexpected_exception_still_releases_quota(monkeypatch):
 
     monkeypatch.setattr(mailboxes, "_platform", lambda: Boom())
     r = mailboxes.submit_experiment(rid, "trial_mb1", None, "op-boom")
-    assert r["status"] == "failed"
+    assert r["status"] == "unknown"
     assert "OSError" in r["error"]
     mb = db.query_one("SELECT submissions_used, status FROM mailboxes"
                       " WHERE role='experiment'")
-    assert mb["submissions_used"] == 0 and mb["status"] == "active"
+    assert mb["submissions_used"] == 1 and mb["status"] == "active"
 
 
 def test_real_platform_skips_demo_mailboxes():
-    """真实平台下提交不得落到 demo 合成账号（实测 401 教训）。"""
+    """非演示平台提交不得落到 demo 合成账号。"""
     _seed_challenge()
     rid = _make_run()
     _make_package(rid)

@@ -12,8 +12,9 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from . import config, db
-from .mailbox_platform import MailboxPlatform, PlatformError, get_platform
+from . import config, db, experience_context
+from .mailbox_platform import (MailboxPlatform, PlatformError, final_score,
+                               get_platform, public_feedback)
 
 
 class MailboxError(Exception):
@@ -31,9 +32,7 @@ def _platform() -> MailboxPlatform:
 
 
 def _store_secret(secret_id: str, value: str) -> str:
-    secrets = config.load_secrets()
-    secrets[secret_id] = value
-    config.save_secrets(secrets)
+    config.update_secret(secret_id, value)
     return f"local:{secret_id}"
 
 
@@ -59,7 +58,7 @@ def list_submissions(run_id: str) -> dict[str, Any]:
         "SELECT s.*, m.email AS mailbox_email, m.role AS mailbox_role"
         " FROM submissions s JOIN mailboxes m ON m.id=s.mailbox_id"
         " WHERE s.run_id=? ORDER BY s.created_at", (run_id,))
-    return {"items": [dict(r) for r in rows]}
+    return {"items": _submission_items(rows)}
 
 
 def list_challenge_submissions(challenge_id: str) -> dict[str, Any]:
@@ -74,7 +73,54 @@ def list_challenge_submissions(challenge_id: str) -> dict[str, Any]:
         " FROM submissions s JOIN mailboxes m ON m.id=s.mailbox_id"
         " JOIN runs r ON r.id=s.run_id"
         " WHERE r.challenge_id=? ORDER BY s.created_at DESC", (challenge_id,))
-    return {"items": [dict(r) for r in rows]}
+    return {"items": _submission_items(rows)}
+
+
+def _submission_items(rows) -> list[dict[str, Any]]:
+    """Project durable feedback events into the existing submission API."""
+    items = {row["id"]: dict(row) | {"platform_feedback": {}} for row in rows}
+    run_ids = sorted({row["run_id"] for row in rows})
+    if not run_ids:
+        return []
+    marks = ",".join("?" for _ in run_ids)
+    events = db.query(
+        f"SELECT payload,recorded_at FROM events WHERE run_id IN ({marks})"
+        " AND type='submission.platform_feedback' ORDER BY seq DESC", run_ids)
+    for event in events:
+        payload = json.loads(event["payload"])
+        item = items.get(payload.get("submission_id"))
+        if item is not None:
+            item["platform_feedback"].setdefault(payload["kind"], {
+                "response": payload["response"], "recorded_at": event["recorded_at"]})
+    return list(items.values())
+
+
+def _record_feedback(conn, row, kind: str, response: dict[str, Any]) -> bool:
+    """Keep changed platform observations, including non-final grader failures."""
+    previous = conn.execute(
+        "SELECT payload FROM events WHERE run_id=?"
+        " AND type='submission.platform_feedback'"
+        " AND json_extract(payload,'$.submission_id')=?"
+        " AND json_extract(payload,'$.kind')=? ORDER BY seq DESC LIMIT 1",
+        (row["run_id"], row["id"], kind)).fetchone()
+    if previous and json.loads(previous["payload"])["response"] == response:
+        return False
+    db.append_event_tx(conn, row["run_id"], "controller", "submission.platform_feedback", {
+        "submission_id": row["id"], "platform_ref": row["platform_ref"],
+        "kind": kind, "response": response}, trial_id=row["trial_id"])
+    return True
+
+
+def _submission_metadata(run_id: str) -> dict[str, Any]:
+    """Model identity follows the frozen Run, not today's connection settings."""
+    run = db.query_one("SELECT mode,config_snapshot FROM runs WHERE id=?", (run_id,))
+    settings = json.loads(run["config_snapshot"]).get("settings", {})
+    executor = settings.get("executor") or {}
+    runtime = "demo" if run["mode"] == "demo" else executor.get("runtime")
+    label = {"codex": "Codex", "kimi": "Kimi Code", "prime": "Prime Agent",
+             "demo": "Demo"}.get(runtime, "unknown")
+    model = "demo" if runtime == "demo" else executor.get("model_id")
+    return {"model": model, "harness": f"CyberScientist ({label})"}
 
 
 # ---------- 邮箱管理 ----------
@@ -109,27 +155,28 @@ def register_experiment(count: int) -> dict[str, Any]:
     if not 1 <= count <= 20:
         raise MailboxError("INVALID_MESSAGE", "单次注册数量须为 1-20")
     platform = _platform()
-    try:
-        accounts = [platform.register_account() for _ in range(count)]
-    except PlatformError as exc:
-        raise MailboxError("MISSING_CREDENTIAL", str(exc)) from exc
     limit = config.load_settings()["mailbox"]["submission_limit"]
-    items = []
-    with db.transaction() as conn:
-        for acc in accounts:
-            mid = _rid("mbox")
-            secret_ref = _store_secret(f"mailbox_{mid}", acc["password"])
+    items, errors = [], []
+    for index in range(count):
+        try:
+            acc = platform.register_account()
+        except Exception as exc:
+            if not items and isinstance(exc, PlatformError):
+                raise MailboxError("MISSING_CREDENTIAL", str(exc)) from exc
+            errors.append({"index": index, "error": type(exc).__name__,
+                           "outcome": "unknown", "retry_safe": False})
+            break
+        mid = _rid("mbox")
+        secret_ref = _store_secret(f"mailbox_{mid}", acc["password"])
+        with db.transaction() as conn:
             conn.execute(
                 "INSERT INTO mailboxes(id, role, email, platform, secret_ref,"
                 " status, submission_limit, is_demo, created_at)"
                 " VALUES(?,?,?,?,?,'active',?,?,?)",
                 (mid, "experiment", acc["email"], platform.name, secret_ref,
                  limit, int(platform.is_demo), db.utcnow()))
-            items.append(mid)
-    rows = db.query(
-        f"SELECT * FROM mailboxes WHERE id IN ({','.join('?' * len(items))})",
-        items)
-    return {"items": [_row(r) for r in rows], "is_demo": platform.is_demo}
+        items.append(_row(db.query_one("SELECT * FROM mailboxes WHERE id=?", (mid,))))
+    return {"items": items, "is_demo": platform.is_demo, "errors": errors}
 
 
 def disable_mailbox(mailbox_id: str) -> dict[str, Any]:
@@ -154,13 +201,14 @@ def _resolve_package(run_id: str, trial_id: str | None,
         candidates.append((root / package_path).resolve())
     if trial_id:
         tdir = root / "runs" / run_id / "trials" / trial_id
-        candidates += [tdir / "result_package.json", tdir / "submission.csv"]
+        candidates += [tdir / "result_package.zip", tdir / "result_package.json",
+                       tdir / "submission.csv"]
     for p in candidates:
         if p.exists() and p.is_file() and root in p.parents:
             return p
     raise MailboxError(
         "NOT_FOUND",
-        "未找到提交包：需要 Trial 目录下的 result_package.json /"
+        "未找到提交包：需要 Trial 目录下的 result_package.zip / result_package.json /"
         " submission.csv，或显式 package_path（工作区相对路径）")
 
 
@@ -175,116 +223,145 @@ def _run_challenge_id(run_id: str) -> str:
     return row["pid"] or ""
 
 
-def _check_budget(run_id: str) -> None:
-    """授权上限的第一个真实消费点：max_submissions=0 即未授权提交。"""
-    run = db.query_one("SELECT authorization_id FROM runs WHERE id=?",
-                       (run_id,))
+def _check_budget(conn, run_id: str) -> None:
+    run = conn.execute("SELECT * FROM runs WHERE id=?", (run_id,)).fetchone()
     if not run:
         raise MailboxError("NOT_FOUND", f"Run 不存在: {run_id}")
-    auth = db.query_one("SELECT max_submissions FROM authorizations"
-                        " WHERE id=?", (run["authorization_id"],)) \
-        if run["authorization_id"] else None
+    if run["phase"] in ("pausing", "paused", "cancelled", "failed", "finished", "recovering"):
+        raise MailboxError("INVALID_STATE", "当前 Run 不允许新增提交")
+    auth = conn.execute("SELECT * FROM authorizations WHERE id=? AND run_id=?",
+                        (run["authorization_id"], run_id)).fetchone()
+    if auth and auth["max_run_minutes"] and run["started_at"]:
+        from datetime import datetime, timezone
+        deadline = datetime.fromisoformat(run["started_at"].replace("Z","+00:00")).timestamp() + auth["max_run_minutes"]*60
+        if datetime.now(timezone.utc).timestamp() >= deadline:
+            raise MailboxError("NEEDS_AUTHORIZATION","本轮授权时长已用尽")
     limit = auth["max_submissions"] if auth else 0
-    used = db.query_one(
-        "SELECT COUNT(*) AS n FROM submissions WHERE run_id=?"
-        " AND is_harvest=0 AND status='submitted'", (run_id,))["n"]
+    used = conn.execute("SELECT COUNT(*) AS n FROM submissions WHERE run_id=?"
+                        " AND is_harvest=0 AND reservation_released=0",
+                        (run_id,)).fetchone()["n"]
     if used >= limit:
-        raise MailboxError(
-            "NEEDS_AUTHORIZATION",
-            f"提交授权已用尽（{used}/{limit}）；请在产品上追加单轮授权")
+        raise MailboxError("NEEDS_AUTHORIZATION", f"提交授权已用尽（{used}/{limit}）")
+
+
+def _request_hash(payload: dict) -> str:
+    return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
+
+
+def _duplicate(conn, operation_id: str, fingerprint: str):
+    row = conn.execute("SELECT * FROM submissions WHERE operation_id=?",
+                       (operation_id,)).fetchone()
+    if row and row["request_hash"] != fingerprint:
+        raise MailboxError("CONFLICT", "幂等键已用于不同请求或历史请求身份无法确认")
+    return dict(row) | {"deduplicated": True} if row else None
+
+
+def _freeze(sid: str, package: Path, content: bytes) -> str:
+    directory = config.WORKSPACE_DIR / "submissions" / sid
+    directory.mkdir(parents=True, exist_ok=True)
+    frozen = directory / ("package" + package.suffix)
+    with frozen.open("xb") as stream:
+        stream.write(content)
+        stream.flush()
+        import os
+        os.fsync(stream.fileno())
+    return frozen.relative_to(config.WORKSPACE_DIR).as_posix()
+
+
+def _perform_submission(sid: str, platform: MailboxPlatform, challenge_id: str) -> dict:
+    row = db.query_one("SELECT s.*, m.email, m.secret_ref, m.platform FROM submissions s"
+                       " JOIN mailboxes m ON m.id=s.mailbox_id WHERE s.id=?", (sid,))
+    def stage(name, attempt_id=None):
+        with db.transaction() as conn:
+            conn.execute("UPDATE submissions SET stage=?,platform_ref=COALESCE(?,platform_ref) WHERE id=?",
+                         (name, str(attempt_id) if attempt_id is not None else None, sid))
+            db.append_event_tx(conn,row["run_id"],"controller","submission.stage",
+                               {"submission_id":sid,"stage":name,"platform_ref":attempt_id},
+                               trial_id=row["trial_id"])
+    def feedback(kind, response):
+        if not isinstance(response, dict):
+            return
+        safe = public_feedback(response, *config.load_secrets().values())
+        with db.transaction() as conn:
+            current = conn.execute("SELECT * FROM submissions WHERE id=?", (sid,)).fetchone()
+            _record_feedback(conn, current, kind, safe)
+    stage("prepared")
+    try:
+        frozen_bytes = (config.WORKSPACE_DIR / row["package_path"]).read_bytes()
+        if hashlib.sha256(frozen_bytes).hexdigest() != row["package_sha256"]:
+            raise PlatformError("冻结提交包哈希不匹配，未发送",no_side_effect=True)
+        receipt = platform.submit_package(
+            row["email"], config.resolve_secret(row["secret_ref"] or ""),
+            str(config.WORKSPACE_DIR / row["package_path"]), challenge_id=challenge_id,
+            meta={"on_stage": stage, "on_feedback": feedback,
+                  "package_bytes": frozen_bytes, **_submission_metadata(row["run_id"])})
+        # Only explicit definitive rejection without a remote side effect releases quota.
+        status = "submitted" if receipt.get("accepted") is True else "unknown"
+        if receipt.get("accepted") is False and receipt.get("no_side_effect") is True:
+            status = "failed"
+        error = None
+        if receipt.get("receipt"):
+            stage("submitted" if status == "submitted" else "unknown", receipt["receipt"])
+    except Exception as exc:
+        status = "failed" if isinstance(exc, PlatformError) and exc.no_side_effect else "unknown"
+        # External response bodies can contain credentials; record only classified errors.
+        error = str(exc) if isinstance(exc, PlatformError) else type(exc).__name__
+    with db.transaction() as conn:
+        current = conn.execute("SELECT * FROM submissions WHERE id=?",(sid,)).fetchone()
+        conn.execute("UPDATE submissions SET status=?,score_status=?,error=?,submitted_at=? WHERE id=?",
+                     (status,"pending" if status == "submitted" else "unknown",error,
+                      db.utcnow() if status == "submitted" else None,sid))
+        if status == "failed" and not current["reservation_released"]:
+            conn.execute("UPDATE submissions SET reservation_released=1 WHERE id=?",(sid,))
+            conn.execute("UPDATE mailboxes SET submissions_used=MAX(0,submissions_used-1),"
+                         " status=CASE WHEN status='exhausted' THEN 'active' ELSE status END WHERE id=?",
+                         (row["mailbox_id"],))
+        db.append_event_tx(conn,row["run_id"],"controller",f"submission.{status}",
+                           {"submission_id":sid,"error":error,"is_demo":platform.is_demo},
+                           trial_id=row["trial_id"])
+    return dict(db.query_one("SELECT * FROM submissions WHERE id=?",(sid,))) | {"deduplicated":False}
 
 
 def submit_experiment(run_id: str, trial_id: str | None,
-                      package_path: str | None,
-                      operation_id: str) -> dict[str, Any]:
-    """实验邮箱提交：配额原子预占 → 适配器调用（事务外）→ 结果落库。"""
+                      package_path: str | None, operation_id: str) -> dict[str, Any]:
     if not operation_id:
         raise MailboxError("INVALID_MESSAGE", "缺少 operation_id（幂等键）")
-    dup = db.query_one("SELECT * FROM submissions WHERE operation_id=?",
-                       (operation_id,))
-    if dup:
-        return dict(dup) | {"deduplicated": True}
-    _check_budget(run_id)
     package = _resolve_package(run_id, trial_id, package_path)
-    challenge_id = _run_challenge_id(run_id)  # 配额预占前解析，失败不占额度
-    digest = hashlib.sha256(package.read_bytes()).hexdigest()
-
-    # 事务 1：原子选一个有余量的实验邮箱并预占配额
-    # 只选与当前平台一致的邮箱（真实平台提交不能落到 demo 合成账号）
+    content = package.read_bytes()
+    digest = hashlib.sha256(content).hexdigest()
     platform = _platform()
+    challenge_id = _run_challenge_id(run_id)
+    fingerprint = _request_hash({"run_id":run_id,"trial_id":trial_id,
+        "package_path":str(package),"hash":digest,"platform":platform.name,"challenge":challenge_id})
     with db.transaction() as conn:
-        mb = conn.execute(
-            "SELECT * FROM mailboxes WHERE role='experiment'"
-            " AND status='active' AND submissions_used < submission_limit"
-            " AND platform=? AND is_demo=?"
-            " ORDER BY submissions_used, created_at LIMIT 1",
-            (platform.name, int(platform.is_demo))).fetchone()
+        dup = _duplicate(conn,operation_id,fingerprint)
+        if dup: return dup
+        _check_budget(conn,run_id)
+        mb = conn.execute("SELECT * FROM mailboxes WHERE role='experiment' AND status='active'"
+                          " AND submissions_used<submission_limit AND platform=? AND is_demo=?"
+                          " ORDER BY submissions_used,created_at LIMIT 1",
+                          (platform.name,int(platform.is_demo))).fetchone()
         if not mb:
-            raise MailboxError(
-                "NO_MAILBOX",
-                f"无可用实验邮箱（平台 {platform.name} 下全部用尽或未注册）；"
-                "请先注册实验邮箱")
-        conn.execute(
-            "UPDATE mailboxes SET submissions_used=submissions_used+1,"
-            " status=CASE WHEN submissions_used+1>=submission_limit"
-            " THEN 'exhausted' ELSE status END WHERE id=?", (mb["id"],))
+            raise MailboxError("NO_MAILBOX",f"无可用实验邮箱（平台 {platform.name}）")
         sid = _rid("sub")
-        conn.execute(
-            "INSERT INTO submissions(id, run_id, trial_id, mailbox_id,"
-            " package_path, package_sha256, status, operation_id, created_at)"
-            " VALUES(?,?,?,?,?,?,'unknown',?,?)",
-            (sid, run_id, trial_id, mb["id"],
-             str(package.relative_to(
-                 config.WORKSPACE_DIR.resolve()).as_posix()),
-             digest, operation_id, db.utcnow()))
-        db.append_event_tx(conn, run_id, "controller", "submission.created", {
-            "submission_id": sid, "mailbox": mb["email"],
-            "package_sha256": digest}, trial_id=trial_id)
-
-    # 适配器调用在事务外
-    secret = config.resolve_secret(
-        db.query_one("SELECT secret_ref FROM mailboxes WHERE id=?",
-                     (mb["id"],))["secret_ref"] or "")
-    try:
-        receipt = platform.submit_package(
-            mb["email"], secret, str(package), challenge_id=challenge_id)
-        ok, error = bool(receipt.get("accepted")), None
-        platform_ref = str(receipt.get("receipt") or "") or None
-    except PlatformError as exc:
-        ok, error, platform_ref = False, str(exc), None
-    except Exception as exc:  # 兜底：补偿事务必须执行以释放配额
-        ok, error, platform_ref = False, \
-            f"平台调用未预期失败: {type(exc).__name__}: {exc}", None
-
-    # 事务 2：结果落库；失败则释放邮箱配额
-    with db.transaction() as conn:
-        conn.execute(
-            "UPDATE submissions SET status=?, score_status=?, error=?,"
-            " platform_ref=?, submitted_at=? WHERE id=?",
-            ("submitted" if ok else "failed",
-             "pending" if ok else "unknown", error, platform_ref,
-             db.utcnow() if ok else None, sid))
-        if not ok:
-            conn.execute(
-                "UPDATE mailboxes SET submissions_used=submissions_used-1,"
-                " status='active' WHERE id=?", (mb["id"],))
-        db.append_event_tx(
-            conn, run_id, "controller",
-            "submission.submitted" if ok else "submission.failed",
-            {"submission_id": sid, "mailbox": mb["email"],
-             "error": error, "is_demo": platform.is_demo},
-            trial_id=trial_id)
-    return dict(db.query_one("SELECT * FROM submissions WHERE id=?",
-                             (sid,))) | {"deduplicated": False}
+        frozen = _freeze(sid,package,content)
+        conn.execute("UPDATE mailboxes SET submissions_used=submissions_used+1,"
+                     " status=CASE WHEN submissions_used+1>=submission_limit THEN 'exhausted' ELSE status END WHERE id=?",(mb["id"],))
+        conn.execute("INSERT INTO submissions(id,run_id,trial_id,mailbox_id,package_path,package_sha256,"
+                     " status,operation_id,created_at,request_hash,stage) VALUES(?,?,?,?,?,?,'unknown',?,?,?,'reserved')",
+                     (sid,run_id,trial_id,mb["id"],frozen,digest,operation_id,db.utcnow(),fingerprint))
+        db.append_event_tx(conn,run_id,"controller","submission.created",
+                           {"submission_id":sid,"package_sha256":digest},trial_id=trial_id)
+    return _perform_submission(sid,platform,challenge_id)
 
 
 def poll_scores(run_id: str | None = None,
                 challenge_id: str | None = None) -> dict[str, Any]:
     """经平台 API 拉回得分；拉不到保持 unknown，不编造。"""
-    sql = ("SELECT s.*, m.email, m.secret_ref FROM submissions s"
+    sql = ("SELECT s.*, m.email, m.secret_ref, m.platform FROM submissions s"
            " JOIN mailboxes m ON m.id=s.mailbox_id"
            " JOIN runs r ON r.id=s.run_id"
-           " WHERE s.status='submitted' AND s.score_status IN ('unknown','pending')")
+           " WHERE s.status IN ('submitted','unknown')")
     params: list[Any] = []
     if run_id:
         sql += " AND s.run_id=?"
@@ -295,36 +372,65 @@ def poll_scores(run_id: str | None = None,
     rows = db.query(sql, params)
     platform = _platform()
     updated, still_unknown, errors = 0, 0, 0
+    changed_runs = set()
     for r in rows:
         ref = r["platform_ref"]
         if not ref:
             still_unknown += 1  # 无平台回执引用：没有可查的对象，保持 unknown
             continue
         try:
-            score = platform.fetch_score(
-                r["email"], config.resolve_secret(r["secret_ref"] or ""), ref)
-        except PlatformError:
+            row_platform = platform if r["platform"] == platform.name else get_platform(r["platform"])
+            secret = config.resolve_secret(r["secret_ref"] or "")
+            detail_query = getattr(row_platform, "fetch_score_details", None)
+            details = None
+            if callable(detail_query):
+                details = detail_query(r["email"], secret, ref)
+                details = public_feedback(details, secret, *config.load_secrets().values())
+                score = final_score(details)
+            else:
+                score = row_platform.fetch_score(r["email"], secret, ref)
+        except Exception as exc:
             errors += 1
+            with db.transaction() as conn:
+                if _record_feedback(conn, r, "score_query_error", {
+                        "error_type": type(exc).__name__, "outcome": "unknown"}):
+                    changed_runs.add(r["run_id"])
             continue
+        if isinstance(details, dict):
+            with db.transaction() as conn:
+                if _record_feedback(conn, r, "score", details):
+                    changed_runs.add(r["run_id"])
         if score is None:
             still_unknown += 1
             continue
+        import math
+        if not math.isfinite(score):
+            still_unknown += 1
+            continue
         with db.transaction() as conn:
-            # 并发轮询（手动+后台）幂等：只有 pending/unknown→scored 的真实
-            # 状态迁移才落库并记事件；被并发方抢先迁移则本次不重复记
-            cur = conn.execute(
-                "UPDATE submissions SET score=?, score_status='scored',"
-                " scored_at=? WHERE id=?"
-                " AND score_status IN ('unknown','pending')",
-                (score, db.utcnow(), r["id"]))
-            if cur.rowcount != 1:
+            current = conn.execute("SELECT * FROM submissions WHERE id=?",(r["id"],)).fetchone()
+            # Compare-and-swap: a response requested before another update cannot overwrite it.
+            if (current["score_status"],current["score"],current["scored_at"]) != (r["score_status"],r["score"],r["scored_at"]):
                 continue
-            db.append_event_tx(conn, r["run_id"], "controller",
-                               "submission.scored",
-                               {"submission_id": r["id"], "score": score})
+            if current["score_status"] == "scored" and current["score"] == score:
+                continue
+            correction = current["score_status"] == "scored"
+            conn.execute("UPDATE submissions SET score=?,score_status='scored',status='submitted',"
+                         " scored_at=?,stage='scored' WHERE id=?",(score,db.utcnow(),r["id"]))
+            event = db.append_event_tx(conn,r["run_id"],"controller",
+                "submission.score_corrected" if correction else "submission.scored",{
+                    "submission_id":r["id"],"trial_id":r["trial_id"],
+                    "package_sha256":r["package_sha256"],"score":score,
+                    "previous_score":current["score"] if correction else None,
+                    "score_status":"scored","is_final":True,
+                    "finality_basis":"platform.fetch_score requires scoringState.scoreIsFinal",
+                    "platform_ref":r["platform_ref"],
+                    "platform_feedback":details},trial_id=r["trial_id"])
+            experience_context.link_result_tx(conn,r,score,event["seq"])
         updated += 1
-    return {"polled": len(rows), "updated": updated,
-            "still_unknown": still_unknown, "errors": errors}
+        changed_runs.add(r["run_id"])
+    return {"polled":len(rows),"updated":updated,"still_unknown":still_unknown,
+            "errors":errors,"changed_run_ids":sorted(changed_runs)}
 
 
 # ---------- 评分轮询任务（按题目管理，可中断/启用） ----------
@@ -344,7 +450,7 @@ def pollable_challenges(disabled: set[str] | None = None) -> list[dict[str, Any]
     rows = db.query(
         "SELECT DISTINCT r.challenge_id AS challenge_id FROM submissions s"
         " JOIN runs r ON r.id=s.run_id"
-        " WHERE s.status='submitted' AND s.score_status IN ('unknown','pending')")
+        " WHERE s.status IN ('submitted','unknown')")
     return [{"challenge_id": r["challenge_id"]} for r in rows
             if r["challenge_id"] not in skip]
 
@@ -361,7 +467,7 @@ def poll_pending_by_challenge() -> dict[str, Any]:
     results = {}
     for ch in pollable_challenges():
         results[ch["challenge_id"]] = _poll_challenge(ch["challenge_id"])
-    return {"challenges": results}
+    return {"challenges": results,"changed_run_ids":sorted({rid for r in results.values() for rid in r.get("changed_run_ids",[])})}
 
 
 def _task_row(row: sqlite3.Row, disabled: set[str]) -> dict[str, Any]:
@@ -387,6 +493,7 @@ def polling_tasks() -> dict[str, Any]:
     return {"tasks": [_task_row(r, disabled) for r in rows]}
 
 
+@config.serialized_mutation
 def set_polling_enabled(challenge_id: str, enabled: bool) -> dict[str, Any]:
     """中断/启用某题的自动评分轮询（写 settings.polling.disabled_challenges）。"""
     ch = db.query_one("SELECT id, title FROM challenges WHERE id=?",
@@ -439,10 +546,10 @@ def harvest_submit(submission_id: str, operation_id: str,
         raise MailboxError("NEEDS_CONFIRM", "收割提交需要用户手动确认")
     if not operation_id:
         raise MailboxError("INVALID_MESSAGE", "缺少 operation_id（幂等键）")
-    dup = db.query_one("SELECT * FROM submissions WHERE operation_id=?",
-                       (operation_id,))
-    if dup:
-        return dict(dup) | {"deduplicated": True}
+    fingerprint = _request_hash({"harvest_source": submission_id})
+    with db.transaction() as conn:
+        dup = _duplicate(conn, operation_id, fingerprint)
+        if dup: return dup
     src = db.query_one(
         "SELECT s.*, m.role AS mailbox_role, m.email AS src_email"
         " FROM submissions s JOIN mailboxes m ON m.id=s.mailbox_id"
@@ -484,43 +591,25 @@ def harvest_submit(submission_id: str, operation_id: str,
                            "请重新经实验邮箱验证")
 
     platform = _platform()
-    secret = config.resolve_secret(harvest["secret_ref"] or "")
     challenge_id = _run_challenge_id(src["run_id"])
-    try:
-        receipt = platform.submit_package(
-            harvest["email"], secret, str(package), challenge_id=challenge_id,
-            meta={"method": "CyberScientist harvest: best verified package"})
-        ok, error = bool(receipt.get("accepted")), None
-        platform_ref = str(receipt.get("receipt") or "") or None
-    except PlatformError as exc:
-        ok, error, platform_ref = False, str(exc), None
-    except Exception as exc:  # 兜底：失败行必须落库而非悬挂
-        ok, error, platform_ref = False, \
-            f"平台调用未预期失败: {type(exc).__name__}: {exc}", None
-
     with db.transaction() as conn:
+        dup = _duplicate(conn,operation_id,fingerprint)
+        if dup: return dup
+        harvest = conn.execute("SELECT * FROM mailboxes WHERE id=? AND status='active'"
+                               " AND submissions_used<submission_limit AND platform=? AND is_demo=?",
+                               (harvest["id"],platform.name,int(platform.is_demo))).fetchone()
+        if not harvest:
+            raise MailboxError("NO_MAILBOX", "收割邮箱无余量或平台不匹配")
+        content = package.read_bytes()
+        if hashlib.sha256(content).hexdigest() != src["package_sha256"]:
+            raise MailboxError("CONFLICT", "来源包哈希不匹配")
         sid = _rid("sub")
-        conn.execute(
-            "INSERT INTO submissions(id, run_id, trial_id, mailbox_id,"
-            " package_path, package_sha256, status, score_status, is_harvest,"
-            " source_submission_id, operation_id, error, platform_ref,"
-            " created_at, submitted_at)"
-            " VALUES(?,?,?,?,?,?,?,?,1,?,?,?,?,?,?)",
-            (sid, src["run_id"], src["trial_id"], harvest["id"],
-             src["package_path"], src["package_sha256"],
-             "submitted" if ok else "failed",
-             "pending" if ok else "unknown",
-             submission_id, operation_id, error, platform_ref, db.utcnow(),
-             db.utcnow() if ok else None))
-        conn.execute(
-            "UPDATE mailboxes SET submissions_used=submissions_used+1"
-            " WHERE id=?", (harvest["id"],))
-        db.append_event_tx(
-            conn, src["run_id"], "user",
-            "submission.harvested" if ok else "submission.harvest_failed",
-            {"submission_id": sid, "source_submission_id": submission_id,
-             "mailbox": harvest["email"], "source_score": src["score"],
-             "error": error, "is_demo": platform.is_demo},
-            trial_id=src["trial_id"])
-    return dict(db.query_one("SELECT * FROM submissions WHERE id=?",
-                             (sid,))) | {"deduplicated": False}
+        frozen = _freeze(sid,package,content)
+        conn.execute("INSERT INTO submissions(id,run_id,trial_id,mailbox_id,package_path,package_sha256,"
+                     " status,is_harvest,source_submission_id,operation_id,created_at,request_hash,stage)"
+                     " VALUES(?,?,?,?,?,?,'unknown',1,?,?,?,?,'reserved')",
+                     (sid,src["run_id"],src["trial_id"],harvest["id"],frozen,src["package_sha256"],
+                      submission_id,operation_id,db.utcnow(),fingerprint))
+        conn.execute("UPDATE mailboxes SET submissions_used=submissions_used+1,"
+                     " status=CASE WHEN submissions_used+1>=submission_limit THEN 'exhausted' ELSE status END WHERE id=?",(harvest["id"],))
+    return _perform_submission(sid,platform,challenge_id)

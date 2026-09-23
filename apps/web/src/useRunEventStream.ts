@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 import type { RunEvent } from './types'
 import { useStableCallback } from './app-context'
 
@@ -25,6 +25,8 @@ export function useRunEventStream(
   const handleEvent = useStableCallback(onEvent)
   const reportStatus = useStableCallback(options?.onStatus ?? (() => undefined))
   const terminal = options?.terminal ?? false
+  const terminalRef = useRef(terminal)
+  useEffect(() => { terminalRef.current = terminal }, [terminal])
 
   useEffect(() => {
     if (!runId) {
@@ -39,23 +41,30 @@ export function useRunEventStream(
     const abort = new AbortController()
 
     async function connect(): Promise<void> {
+      if (cancelled) return
       reportStatus(everConnected ? 'reconnecting' : 'connecting')
       let endedCleanly = false
+      let reader: ReadableStreamDefaultReader<Uint8Array> | undefined
       try {
         const res = await fetch(`/api/v1/runs/${runId}/events?after=${maxSeq}`, {
           signal: abort.signal,
         })
+        if (cancelled) {
+          await res.body?.cancel()
+          return
+        }
         if (!res.ok || !res.body) {
           throw new Error(`events HTTP ${res.status}`)
         }
         retryDelay = 1000
         everConnected = true
         reportStatus('open')
-        const reader = res.body.getReader()
+        reader = res.body.getReader()
         const decoder = new TextDecoder()
         let buffer = ''
         for (;;) {
           const { done, value } = await reader.read()
+          if (cancelled) return
           if (done) {
             endedCleanly = true
             break
@@ -65,6 +74,7 @@ export function useRunEventStream(
           buffer = chunks.pop() ?? ''
           for (const chunk of chunks) {
             for (const line of chunk.split('\n')) {
+              if (cancelled) return
               if (!line.startsWith('data:')) continue
               try {
                 const event = JSON.parse(line.slice(5).trim()) as RunEvent
@@ -80,15 +90,23 @@ export function useRunEventStream(
         }
       } catch {
         // 网络中断或读取失败，进入重连
+      } finally {
+        reader?.releaseLock()
       }
       if (cancelled) return
-      if (endedCleanly && terminal) {
+      if (endedCleanly && terminalRef.current) {
         // 终态 Run 的历史回放已结束，不再重连，标记为已归档
         reportStatus('closed')
         return
       }
       reportStatus('reconnecting')
       retryTimer = window.setTimeout(() => {
+        // run.finished 的详情刷新可能晚于 SSE EOF；已确认终态后不再请求历史。
+        if (cancelled) return
+        if (endedCleanly && terminalRef.current) {
+          reportStatus('closed')
+          return
+        }
         void connect()
       }, retryDelay)
       retryDelay = Math.min(retryDelay * 2, MAX_RETRY_DELAY_MS)
@@ -100,5 +118,6 @@ export function useRunEventStream(
       window.clearTimeout(retryTimer)
       abort.abort()
     }
-  }, [runId, handleEvent, reportStatus, terminal])
+  // 终态是同一次订阅的归档条件，不是重建游标的理由。
+  }, [runId, handleEvent, reportStatus])
 }

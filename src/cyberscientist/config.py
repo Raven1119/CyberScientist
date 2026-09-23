@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import json
+import functools
 import os
 import stat
 import threading
@@ -22,6 +23,25 @@ LOCK_PATH = DATA_DIR / "controller.lock"
 
 _lock_file = None
 _lock_guard = threading.Lock()
+mutation_lock = threading.RLock()
+
+
+def serialized_mutation(fn):
+    @functools.wraps(fn)
+    def wrapped(*args, **kwargs):
+        with mutation_lock:
+            return fn(*args, **kwargs)
+    return wrapped
+
+
+def update_secret(secret_id: str, value: str | None) -> None:
+    with mutation_lock:
+        secrets = load_secrets()
+        if value is None:
+            secrets.pop(secret_id, None)
+        else:
+            secrets[secret_id] = value
+        save_secrets(secrets)
 
 DEFAULT_SETTINGS: dict[str, Any] = {
     "schema_version": 1,
@@ -73,21 +93,31 @@ def acquire_workspace_lock() -> None:
     global _lock_file
     with _lock_guard:
         ensure_dirs()
-        _lock_file = open(LOCK_PATH, "w")
+        candidate = open(LOCK_PATH, "a+")
+        candidate.seek(0)
         try:
-            import msvcrt  # Windows
-            msvcrt.locking(_lock_file.fileno(), msvcrt.LK_NBLCK, 1)
-        except ImportError:
-            import fcntl
-            fcntl.flock(_lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            try:
+                import msvcrt  # Windows
+            except ImportError:
+                import fcntl
+                fcntl.flock(candidate.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            else:
+                msvcrt.locking(candidate.fileno(), msvcrt.LK_NBLCK, 1)
         except OSError as exc:
+            candidate.close()
             raise RuntimeError(
                 "另一个 CyberScientist 控制器已占用此工作区（controller.lock）"
             ) from exc
+        # Only the owner may replace the PID. A failed second startup must not
+        # truncate the live controller's recovery/diagnostic identity.
+        _lock_file = candidate
+        _lock_file.seek(0)
+        _lock_file.truncate()
         _lock_file.write(str(os.getpid()))
         _lock_file.flush()
 
 
+@serialized_mutation
 def load_settings() -> dict[str, Any]:
     ensure_dirs()
     if not SETTINGS_PATH.exists():
@@ -102,6 +132,7 @@ def load_settings() -> dict[str, Any]:
     return merged
 
 
+@serialized_mutation
 def save_settings(settings: dict[str, Any]) -> None:
     ensure_dirs()
     tmp = SETTINGS_PATH.with_suffix(".tmp")
@@ -110,6 +141,7 @@ def save_settings(settings: dict[str, Any]) -> None:
     os.replace(tmp, SETTINGS_PATH)
 
 
+@serialized_mutation
 def load_secrets() -> dict[str, str]:
     ensure_dirs()
     if not SECRETS_PATH.exists():
@@ -117,6 +149,7 @@ def load_secrets() -> dict[str, str]:
     return json.loads(SECRETS_PATH.read_text(encoding="utf-8"))
 
 
+@serialized_mutation
 def save_secrets(secrets: dict[str, str]) -> None:
     ensure_dirs()
     tmp = SECRETS_PATH.with_suffix(".tmp")

@@ -26,6 +26,12 @@ test-results/
 # Keep editable experience in version control; never put secrets in it.
 
 .package-checks/
+.incoming/
+
+# Locally supplied source archives and Windows download metadata.
+/CyberScientist_Experience_Kit_v1.zip
+/research-interface-language-v1.0.0.zip
+*:Zone.Identifier
 
 # Experiment debris and monitoring scratch (not part of the product)
 checks/shots/

@@ -215,7 +215,7 @@ async def test_steer_to_stalled_trial_recovers():
         "INSERT INTO trials(id, run_id, parent_trial_id, goal, success_check,"
         " status, created_at) VALUES(?,?,NULL,?,?,'stalled',?)",
         (tid, rid, "探索", "判据", db.utcnow()))
-    db.execute("UPDATE runs SET current_trial_id=? WHERE id=?", (tid, rid))
+    db.execute("UPDATE runs SET current_trial_id=?,phase='running' WHERE id=?", (tid, rid))
     v = c.run_snapshot(rid)["state_version"]
     dec = {"schema_version": 1, "decision_id": "dec_steer_stalled",
            "run_id": rid, "observed_state_version": v, "summary": "停滞收束",

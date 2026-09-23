@@ -104,7 +104,28 @@ def test_prompt_segment():
         {"id": "tdd", "name": "tdd", "description": "测试驱动", "source": "/x"}])
     assert seg.startswith("\n\n本 Trial 启用技能")
     assert "- tdd: 测试驱动" in seg
+    assert "SKILL.md: /x/tdd/SKILL.md" in seg
+    assert "使用前必须阅读对应的 SKILL.md" in seg
     assert skills.prompt_segment([]) == ""
+
+
+def test_prompt_segment_resolves_installed_file_not_display_name(tmp_path, monkeypatch):
+    """CLI 会话工作目录不同；路径必须绝对定位到实际安装文件。"""
+    monkeypatch.chdir(tmp_path)
+    root = tmp_path / "installed skills"
+    installed = _make_skill(root, "bohrium-job",
+                            "---\nname: Bohrium Jobs\ndescription: 远程任务\n---\n")
+    alias = tmp_path / "skills-alias"
+    alias.symlink_to(root, target_is_directory=True)
+    catalog = skills.scan_catalog(skill_dirs=[Path("skills-alias")])
+
+    segment = skills.prompt_segment(catalog)
+
+    assert "- Bohrium Jobs: 远程任务" in segment
+    assert f"SKILL.md: {installed / 'SKILL.md'}" in segment
+    assert "相对路径以该文件所在目录为准" in segment
+    # source 仍是传入的目录根，不改变已有 API 消费方的字段约定。
+    assert catalog[0]["source"] == "skills-alias"
 
 
 def test_mcp_bridge_post_retries_transient_hang(monkeypatch):

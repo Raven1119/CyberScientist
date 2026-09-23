@@ -421,7 +421,7 @@ export default function MailboxPage() {
                     id="pkg-path"
                     type="text"
                     style={{ flex: 1 }}
-                    placeholder="工作区相对路径，留空则取 Trial 目录下 result_package.json"
+                    placeholder="工作区相对路径，留空优先取 Trial 目录下 result_package.zip"
                     value={pkgPath}
                     onChange={(e) => setPkgPath(e.target.value)}
                   />
@@ -434,7 +434,7 @@ export default function MailboxPage() {
                 {!pkgPath.trim() && (
                   <p className="small-text">
                     {currentTrialId
-                      ? `留空将提交当前 Trial（${currentTrialId}）目录下的 result_package.json`
+                      ? `留空优先提交当前 Trial（${currentTrialId}）目录下的 result_package.zip，兼容 JSON/CSV`
                       : '当前 Run 无活跃 Trial；请填写提交包的工作区相对路径'}
                   </p>
                 )}
@@ -454,6 +454,15 @@ export default function MailboxPage() {
                     <span>
                       {SUBMISSION_STATUS_LABELS[s.status] ?? s.status} · 分数 {scoreText(s)}
                       {s.error ? ` · ${s.error.slice(0, 60)}` : ''}
+                      {s.platform_ref && <div className="small-text">Attempt {s.platform_ref}</div>}
+                      {s.platform_feedback && Object.keys(s.platform_feedback).length > 0 && (
+                        <details>
+                          <summary>平台回执与评分详情</summary>
+                          <pre style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', maxWidth: '70ch' }}>
+                            {JSON.stringify(s.platform_feedback, null, 2)}
+                          </pre>
+                        </details>
+                      )}
                     </span>
                   </li>
                 ))}

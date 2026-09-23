@@ -1,0 +1,34 @@
+/* Original application-shell styles. No vendor animation implementation.
+   Requires tokens.css; every class is namespaced. No global reset. */
+.ril-scope{color:var(--ril-ink);font:var(--ril-text-ui)/var(--ril-line-ui) var(--ril-font-ui);background:var(--ril-bg);-webkit-font-smoothing:antialiased}
+.ril-scope *{box-sizing:border-box}
+.ril-scope a{color:inherit;text-underline-offset:4px}
+.ril-scope button,.ril-scope input,.ril-scope textarea{font:inherit}
+.ril-scope :is(button,a,input,textarea,summary):focus-visible{outline:2px solid var(--ril-accent);outline-offset:4px}
+.ril-scope ::selection{background:var(--ril-ink);color:var(--ril-paper)}
+.ril-topbar{display:flex;gap:24px;align-items:center;justify-content:space-between;min-height:73px;padding:18px 32px;border-bottom:1px solid var(--ril-hard)}
+.ril-brand,.ril-micro{font-family:var(--ril-font-mono);letter-spacing:1.6px;font-size:10px}
+.ril-brand{font-size:11px;color:var(--ril-ink);text-decoration:none}
+.ril-micro{color:var(--ril-sub)}
+.ril-actions{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+.ril-button{color:var(--ril-ink);background:transparent;border:1px solid var(--ril-hard);padding:8px 15px;min-height:38px;font-size:12px;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:12px;text-decoration:none!important;border-radius:0}
+.ril-button:hover{background:var(--ril-panel)}
+.ril-button.primary{background:var(--ril-ink);color:var(--ril-on);border-color:var(--ril-ink)}
+.ril-button.primary:hover{opacity:.9}
+.ril-button:disabled{opacity:.5;cursor:not-allowed}
+.ril-main{max-width:1320px;margin:auto;padding:48px 40px 64px}
+.ril-heading{font-family:var(--ril-font-heading);font-size:31px;font-weight:500;line-height:1.55;letter-spacing:.025em;margin:15px 0 12px}
+.ril-lead{color:var(--ril-sub);font-size:15px;max-width:64ch;margin:0 0 32px}
+.ril-divider{border:0;border-top:1px solid var(--ril-hard);margin:28px 0}
+.ril-grid{display:grid;grid-template-columns:minmax(0,1fr) 310px;gap:30px;align-items:start}
+.ril-sheet{background:var(--ril-paper);border:1px solid var(--ril-rule);border-top:2px solid var(--ril-ink);padding:28px 32px 22px;box-shadow:0 3px 0 var(--ril-bg),0 4px 0 var(--ril-rule)}
+.ril-aside{border-top:1px solid var(--ril-hard);padding:20px 0;color:var(--ril-sub);font-size:13px}
+.ril-aside h2{font-size:15px;color:var(--ril-ink);font-weight:500;margin:0 0 14px}
+.ril-label{display:block;font-size:12px;color:var(--ril-sub);margin:20px 0 10px}
+.ril-question{display:block;width:100%;padding:8px 0 18px!important;resize:vertical;color:var(--ril-ink);font-size:21px!important;line-height:1.65;background:transparent;border:0;border-bottom:1px solid var(--ril-rule);border-radius:0}
+.ril-note{display:block;width:100%;min-height:270px;resize:vertical;color:var(--ril-ink);font-size:16px!important;line-height:1.95!important;padding:0;background:transparent;border:0;border-radius:0}
+.ril-note::placeholder{color:var(--ril-sub);opacity:1}
+.ril-foot{border-top:1px solid var(--ril-rule);margin-top:24px;padding-top:17px;display:flex;justify-content:space-between;gap:16px;align-items:center;font-size:12px;color:var(--ril-sub)}
+.ril-code{font:12px/1.8 var(--ril-font-mono);background:var(--ril-panel);padding:16px 18px;border-left:2px solid var(--ril-hard);overflow-wrap:anywhere;white-space:pre-wrap;color:var(--ril-ink)}
+@media(max-width:800px){.ril-grid{grid-template-columns:1fr}.ril-main{padding:30px 20px 48px}.ril-topbar{padding:16px 20px}.ril-sheet{padding:22px}.ril-heading{font-size:26px}.ril-note{min-height:230px}.ril-foot{flex-wrap:wrap}}
+@media(prefers-reduced-motion:reduce){.ril-scope{scroll-behavior:auto}}

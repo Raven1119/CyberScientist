@@ -81,3 +81,36 @@ async def test_lf_framing_multibyte(tmp_path):
         assert r["echo"]["text"] == text
     finally:
         await rpc.stop()
+
+
+async def test_large_json_line_is_not_truncated():
+    rpc = await _start()
+    try:
+        payload = '科研证据' * 25000
+        result = await rpc.request('ping', {'text': payload})
+        assert result['echo']['text'] == payload
+    finally:
+        await rpc.stop()
+
+
+async def test_eof_wakes_stream_consumers():
+    rpc = await _start()
+    try:
+        pending = asyncio.create_task(rpc.notifications().__anext__())
+        with pytest.raises(ProtocolError):
+            await rpc.request('boom', {}, timeout=1)
+        with pytest.raises(ProtocolError):
+            await asyncio.wait_for(pending, 1)
+    finally:
+        await rpc.stop()
+
+
+async def test_timed_out_request_does_not_leak_pending():
+    rpc = await _start()
+    try:
+        with pytest.raises(asyncio.TimeoutError):
+            await rpc.request('notify_me', {}, timeout=0.01)
+        assert rpc._pending == {}
+        assert (await rpc.request('ping', {'alive': True}))['echo']['alive']
+    finally:
+        await rpc.stop()

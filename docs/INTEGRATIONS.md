@@ -69,3 +69,9 @@ JobSpec 由用户允许的项目、镜像、机型、资源、时限、脚本和
 写入 `docs/INTEGRATION_STATUS.md`（施工时创建），每种连接记录实际版本/commit、探针命令、日期、脱敏响应位置、已证实能力、未知项和复现方法。外部文档可以变动，必须将实测版本保存在运行 manifest。
 
 没有凭据时允许使用**显式手写测试 fixture**来开发状态机；这种 fixture 必须标记 synthetic，不能放进“真实协议回归录制”目录。获得一次授权真实响应后再追加真实脱敏 fixture，校验适配器的假设。
+
+## 2026-09-23：Bohrium 受控适配边界
+
+`compute.py` 复用本仓库 Linux bohr 1.1.0 实测命令：`job submit -i <json> -p <dir>`、`job list -n 100 --json`、`job terminate <id>`；列表匹配字段来自现有真实审计快照 `id/jobName/status`。不猜测 describe 的状态字段或不存在的创建幂等接口。创建幂等由本地持久占位提供；外部请求结果未知时查询，不重发。
+
+本 Run 的 `bohr` 是无账号凭据的 HTTP 代理，后端调用原生 CLI 并对双流脱敏。任意 CLI 参数不能直接透传；仅开放受控创建/查询/下载/停止及有限只读探针。有效 capability 只代表 Run 身份，创建还需阶段、门禁、授权和资源校验。限制与本次验证范围见 `TBMA_UPGRADE_2026-09-23.md`。

@@ -10,7 +10,7 @@ import json
 import re
 from typing import Any
 
-from . import db, experiences
+from . import db, experience_context
 
 # 有界投影的尺寸上限（字符）
 _MAX_GOAL = 1500
@@ -34,7 +34,7 @@ _NOTABLE = (
     "run.resumed", "run.time_limit", "brain.decision",
     "brain.decision_rejected", "guidance.sent", "guidance.acknowledged",
     "guidance.superseded", "prime.error", "prime.approval.rejected",
-    "checkpoint.created",
+    "checkpoint.created", "submission.scored", "submission.score_corrected",
 )
 
 _SECRET_TOKEN_RE = re.compile(
@@ -49,7 +49,10 @@ def strip_secrets(text: str) -> str:
     必须吞掉标记后的整个令牌主体；只遮前缀等于没遮。
     """
     text = _SECRET_BLOCK_RE.sub("[已遮蔽：密钥块]", text)
-    return _SECRET_TOKEN_RE.sub(r"\1***", text)
+    from .bohr_proxy import redact
+    from . import config
+    secrets = [value for value in config.load_secrets().values() if isinstance(value, str)]
+    return redact(_SECRET_TOKEN_RE.sub(r"\1***", text), secrets)
 
 
 def _clip(text: str | None, limit: int) -> tuple[str, bool]:
@@ -82,8 +85,18 @@ def executor_digest(events: list[dict[str, Any]], *,
     for e in events:
         detail = _substantive_detail(e)
         if detail:
-            items.append({"seq": e["seq"],
-                          "excerpt": strip_secrets(detail)[:_MAX_DIGEST_EACH]})
+            payload = e['payload']
+            item = {"seq": e["seq"], "excerpt": strip_secrets(detail)[:_MAX_DIGEST_EACH]}
+            for source, dest in (('item_id', 'operation_id'), ('status', 'status'), ('exit_code', 'exit_code')):
+                if source in payload:
+                    item[dest] = payload[source]
+            output = payload.get('output') or payload.get('content') or payload.get('result')
+            if output:
+                item['output_excerpt'] = strip_secrets(output if isinstance(output, str) else json.dumps(output, ensure_ascii=False))[:2000]
+            # A completed receipt replaces its earlier started activity.
+            if item.get('operation_id'):
+                items = [old for old in items if old.get('operation_id') != item['operation_id']]
+            items.append(item)
     if len(items) > limit:
         return items[-limit:], len(items) - limit
     return items, 0
@@ -113,27 +126,45 @@ def _supervision(run_id: str) -> dict[str, Any]:
 
 
 def _selected_experiences(challenge_id: str | None) -> tuple[list[dict], bool]:
-    """大脑注入选定 active 修订的正文（不只是标题/hash），全局+本题有界。"""
-    out: list[dict[str, Any]] = []
-    truncated = False
-    listing = experiences.list_experiences(scope=None,
-                                           challenge_id=challenge_id)
-    for item in listing["items"]:
-        if item["status"] != "active":
-            continue
-        if len(out) >= _MAX_EXPERIENCES:
-            truncated = True
+    items = experience_context.select(challenge_id)
+    return items, any(it.get("body_truncated") for it in items)
+
+
+def events_through(run_id, from_seq, through_seq):
+    events = []
+    through_seq = through_seq or 0
+    cursor = from_seq - 1
+    while cursor < through_seq:
+        batch = db.events_after(run_id, cursor, limit=400)
+        batch = [e for e in batch if e["seq"] <= through_seq]
+        if not batch:
             break
-        try:
-            full = experiences.get_experience(item["id"])
-        except Exception:  # noqa: BLE001
+        events.extend(batch)
+        cursor = batch[-1]["seq"]
+    return events
+
+
+def score_deltas(events):
+    return [{**e["payload"],"source_seq":e["seq"],"source_time":e["recorded_at"]}
+            for e in events if e["type"] in ("submission.scored","submission.score_corrected")]
+
+
+def job_states(run_id: str, through_seq: int) -> list[dict]:
+    """State at the frame cutoff, reconstructed from durable public events."""
+    states = {}
+    for e in events_through(run_id, 1, through_seq):
+        p = e['payload']
+        if not e['type'].startswith('job.') or not p.get('operation_id'):
             continue
-        body, clip = _clip(full.get("body_md", ""), _MAX_EXPERIENCE_EACH)
-        truncated = truncated or clip
-        out.append({"id": item["id"], "revision_hash": item["revision_hash"],
-                    "scope": item["scope"], "title": item["title"],
-                    "body_md": body})
-    return out, truncated
+        op = p['operation_id']
+        state = states.setdefault(op, {'operation_id': op})
+        statuses = {'job.reserved': 'submitting', 'job.accepted': 'accepted',
+                    'job.unknown': 'unknown', 'job.not_started': 'not_started',
+                    'job.stop_requested': 'stopping', 'job.stop_receipt': 'stop_unknown'}
+        state['status'] = p.get('status') or statuses.get(e['type'], state.get('status', 'unknown'))
+        state['platform_job_id'] = p.get('platform_job_id') or state.get('platform_job_id')
+        state['evidence_ref'] = f"event:{run_id}:{e['seq']}"
+    return list(states.values())[-30:]
 
 
 def build_frame(run_id: str, *, mode: str, frame_id: str,
@@ -169,9 +200,10 @@ def build_frame(run_id: str, *, mode: str, frame_id: str,
 
     # 检查点摘要：执行器已写下的报告，带来源标注
     cps = db.query(
-        "SELECT id, trial_id, report, evidence_refs, stage, source"
-        " FROM checkpoints WHERE run_id=? ORDER BY created_at DESC LIMIT ?",
-        (run_id, _MAX_CHECKPOINTS))
+        "SELECT c.* FROM checkpoints c JOIN events e ON e.run_id=c.run_id"
+        " AND e.type='checkpoint.created' AND json_extract(e.payload,'$.checkpoint_id')=c.id"
+        " WHERE c.run_id=? AND e.seq<=? ORDER BY e.seq DESC LIMIT ?",
+        (run_id, through_seq, _MAX_CHECKPOINTS))
     total_cps = db.query_one(
         "SELECT COUNT(*) AS n FROM checkpoints WHERE run_id=?", (run_id,))
     checkpoint_summaries = []
@@ -187,8 +219,7 @@ def build_frame(run_id: str, *, mode: str, frame_id: str,
     omitted = max(0, (total_cps["n"] if total_cps else 0) - len(cps))
 
     # 覆盖范围内事件：值得注意的事件摘要 + 工具活动计数；不含原始推理流
-    events = db.events_after(run_id, from_seq - 1, limit=400)
-    events = [e for e in events if e["seq"] <= through_seq]
+    events = events_through(run_id, from_seq, through_seq)
     activity: dict[str, int] = {}
     notable: list[dict[str, Any]] = []
     for e in events:
@@ -211,11 +242,17 @@ def build_frame(run_id: str, *, mode: str, frame_id: str,
     omitted += digest_omitted
     truncated = truncated or digest_omitted > 0
 
-    exps, clip = _selected_experiences(run["challenge_id"])
-    truncated |= clip
+    context = experience_context.for_trial(run_id, run["current_trial_id"])
+    if context is None:
+        context = experience_context.freeze(run_id,run["current_trial_id"],f"frame:{frame_id}")
+    exps = context["items"]
+    truncated |= any(it.get("body_truncated") for it in exps)
     note, clip = _clip(sup["private_note_md"], _MAX_NOTE)
     truncated |= clip
 
+    known_scores = {}
+    for value in score_deltas(events_through(run_id,1,through_seq)):
+        known_scores[value["submission_id"]] = value
     defaults = run_defaults or {}
     auth = db.query_one("SELECT * FROM authorizations WHERE id=?",
                         (run["authorization_id"],)) \
@@ -232,14 +269,18 @@ def build_frame(run_id: str, *, mode: str, frame_id: str,
         "shadow_epoch": sup["shadow_epoch"],
         "from_seq": from_seq,
         "through_seq": through_seq,
+        "processed_through_seq": events[-1]["seq"] if events else from_seq-1,
         "goal_md": goal_md,
         "current_intention": run["intention"],
         "trial_summary_md": trial_summary,
         "checkpoint_summaries": checkpoint_summaries,
         "notable_events": notable,
         "executor_digest": digest,
+        "compute_jobs": job_states(run_id, through_seq),
         "activity_counts": activity,
-        "metrics": [],
+        "metrics": score_deltas(events),
+        "known_scores":list(known_scores.values()),
+        "experience_context_id": context["id"],
         "brain_private_note_md": note,
         "watchlist": sup["watchlist"][:3],
         "experiences": exps,
@@ -257,7 +298,7 @@ def build_frame(run_id: str, *, mode: str, frame_id: str,
             "truncated": truncated,
             "omitted_count": omitted,
             "unread_refs": [],
-            "unknown_fields": ["official_score", "provider_total_cost"],
+            "unknown_fields": (["official_score"] if not known_scores else []) + ["provider_total_cost"],
         },
         "request": request,
     }

@@ -1,6 +1,6 @@
 """协作与静默监督验收测试（docs/collaboration/ACCEPTANCE.md T1-T11）。
 
-真实控制器 + 临时 SQLite；大脑/执行器为可控假协议实现。
+实际控制器 + 临时 SQLite；大脑/执行器为可控假协议实现。
 T12（浏览器路径）在交付时单独用 webbridge 验证。
 """
 from __future__ import annotations
@@ -649,11 +649,11 @@ def test_t10b_executor_digest_reaches_frame():
 
 
 def test_t10c_question_parsing_from_real_fixture():
-    """AskUserQuestion 线协议解析（2026-09-19 探针实测帧形状）。"""
+    """AskUserQuestion 线协议帧形状解析。"""
     from cyberscientist.prime.kimi_acp import (
         _is_question_options, _permission_pick, _question_from_elicitation,
         _question_from_permission)
-    # elicitation/create 真实帧（kimi-acp-askuser-probe.jsonl）
+    # elicitation/create 协议帧
     eli = {"sessionId": "s", "toolCallId": "t", "mode": "form",
            "message": "冒烟测试用哪个 GPU？",
            "requestedSchema": {"type": "object", "properties": {
@@ -664,7 +664,7 @@ def test_t10c_question_parsing_from_real_fixture():
     assert q["message"] == "冒烟测试用哪个 GPU？"
     assert q["questions"][0]["required"] is True
     assert q["questions"][0]["options"][1]["const"] == "L20"
-    # request_permission 回退形态（真实帧）
+    # request_permission 回退协议帧
     opts = [{"optionId": "q0_opt_0", "name": "A100（推荐）", "kind": "allow_once"},
             {"optionId": "q0_opt_1", "name": "L20", "kind": "allow_once"},
             {"optionId": "q0_skip", "name": "Skip", "kind": "reject_once"}]
@@ -766,7 +766,7 @@ def test_t11_experience_revision_reaches_frame_body():
     assert len(revs) == 2
 
 
-# ---------- 工具端点（能力令牌真实 HTTP 路径）----------
+# ---------- 工具端点（能力令牌 HTTP 路径）----------
 
 async def test_tools_endpoints_token_auth():
     from httpx import ASGITransport, AsyncClient
@@ -780,6 +780,7 @@ async def test_tools_endpoints_token_auth():
                " VALUES(?,0,?)", (rid, db.utcnow()))
     with db.transaction() as conn:
         token = collab.issue_token(conn, rid, "executor", "sess-1", 1)
+    db.execute("UPDATE runs SET phase='running' WHERE id=?", (rid,))
     app = create_app()
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://t") as cli:
@@ -830,7 +831,7 @@ async def test_b1_inflight_shadow_result_expires_after_disable():
 
 
 async def test_s1_review_completion_does_not_deliver_when_paused():
-    """审阅完成时 Run 已暂停：指导留在 queued，不得唤醒执行器。"""
+    """审阅完成时 Run 已暂停：过期审阅标 obsolete，不得唤醒执行器。"""
     _seed_challenge()
     c, brain, ex = _rig(shadow=False)
     rid = c.create_run("COLLAB_CH", shadow_enabled=False)["id"]
@@ -850,11 +851,9 @@ async def test_s1_review_completion_does_not_deliver_when_paused():
         frame["frame_id"], disposition="intervene",
         guidance=_guidance(text="暂停期间不得投递"))})
     ok = await _wait(lambda: db.query_one(
-        "SELECT status FROM guidance WHERE run_id=?", (rid,)) is not None)
+        "SELECT 1 FROM review_requests WHERE run_id=? AND status='obsolete'", (rid,)) is not None)
     assert ok
-    await asyncio.sleep(0.3)
-    g = db.query_one("SELECT * FROM guidance WHERE run_id=?", (rid,))
-    assert g["status"] == "queued", "暂停期间指导不得投递"
+    assert db.query_one("SELECT * FROM guidance WHERE run_id=?",(rid,)) is None
     assert len(ex.prompts) == prompts0, "暂停期间不得唤醒执行器"
     await c.control(rid, "terminate", None, "op-term-s1")
 
@@ -1264,7 +1263,7 @@ async def _steer_decision(c, brain, rid, dec, calls_before):
 
 
 async def test_experience_challenge_proposal_lands_active():
-    """题内提议直接落 active（无审查门槛）；执行器任务文本带经验库目录。"""
+    """题内提议直接落 active（无审查门槛）；执行器任务文本带冻结经验正文。"""
     _seed_challenge()
     c, brain, ex = _rig(shadow=False)
     rid = c.create_run("COLLAB_CH", shadow_enabled=False)["id"]
@@ -1283,8 +1282,8 @@ async def test_experience_challenge_proposal_lands_active():
     assert len(listing["items"]) == 1
     item = listing["items"][0]
     assert item["status"] == "active" and item["kind"] == "failure"
-    assert item["evidence_status"] == "observed"
-    assert any("经验库目录" in text for _, text in ex.prompts)
+    assert item["evidence_status"] == "hypothesis"
+    assert any("冻结经验" in text and item["revision_id"] in text for _, text in ex.prompts)
     await c.control(rid, "terminate", None, "op-term-exp1")
 
 
@@ -1303,11 +1302,11 @@ async def test_experience_global_proposal_waits_user_approval():
     item = experiences.list_experiences(scope="global")["items"][0]
     assert item["status"] == "candidate"
     # 驳回 → 保持 candidate + 批注；批准 → active
-    experiences.reject_experience(item["id"], "证据不足，补独立复现")
+    experiences.reject_experience(item["id"], "证据不足，补独立复现", expected_revision=item["revision_id"])
     item = experiences.list_experiences(scope="global")["items"][0]
     assert item["status"] == "candidate"
     assert item["review_note"] == "证据不足，补独立复现"
-    experiences.approve_experience(item["id"])
+    experiences.approve_experience(item["id"], expected_revision=item["revision_id"])
     item = experiences.list_experiences(scope="global")["items"][0]
     assert item["status"] == "active" and item["review_note"] is None
     await c.control(rid, "terminate", None, "op-term-exp2")
@@ -1423,7 +1422,7 @@ async def test_curate_global_experience_runless_session():
 
 async def test_global_curation_failure_terminal_and_persisted():
     """全局整理任何一步失败（含大脑装配/会话建立之前）都必须终态化 failed
-    并落盘：不永卡 running，重启（新控制器）后读到真实状态，可重试。"""
+    并落盘：不永卡 running，重启（新控制器）后读到持久化状态，可重试。"""
     _seed_challenge()
     c, brain, ex = _rig(shadow=False)
 
@@ -1671,8 +1670,7 @@ async def test_steer_to_reported_complete_trial_accepted():
 
 async def test_decision_salvage_drops_only_invalid_proposals():
     """非法经验提议（如自创 kind）只剔除该提议并留痕，finish/wait 等
-    主决定与合法提议不再陪葬（事故复现：dec_295c4db710_003 的 finish
-    因 kind='finding' 被整单拒收）。"""
+    主决定与合法提议不再陪葬（复现：非法经验提议不应导致主决定被整单拒收）。"""
     _seed_challenge()
     c, brain, ex = _rig(shadow=False)
     rid = c.create_run("COLLAB_CH", shadow_enabled=False)["id"]
@@ -1705,8 +1703,7 @@ async def test_decision_salvage_drops_only_invalid_proposals():
 
 async def test_time_limit_pauses_once_without_hot_loop():
     """时长上限触发：置 paused + 记一条事件后循环必须停泊等待信号；
-    不得重复置 paused + continue 空转（2026-09-19 实测事件循环被
-    同步 DB 写堵死、health 超时、垃圾事件 12 万+）。"""
+    不得重复置 paused + continue 空转，避免事件循环被同步写入堵塞。"""
     _seed_challenge()
     c, brain, ex = _rig(shadow=False)
     rid = c.create_run("COLLAB_CH", shadow_enabled=False)["id"]
@@ -1731,7 +1728,7 @@ async def test_time_limit_pauses_once_without_hot_loop():
 async def test_blocking_review_answered_by_decision_opens_gate():
     """blocking 审阅收到 Decision 答复 = 有效答复：先开门再应用，
     答复里的 start_trial 不得被自己正在解除的门禁拒绝
-    （事故复现：run_295c4db710 seq 868 循环死锁）。"""
+    （事故复现：已结束的会话重复处理出站结果导致循环死锁）。"""
     _seed_challenge()
     c, brain, ex = _rig(shadow=False)
     rid = c.create_run("COLLAB_CH", shadow_enabled=False)["id"]

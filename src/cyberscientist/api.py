@@ -15,7 +15,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
-from . import collab, config, db, experiences, mailboxes, skills
+from . import collab, config, db, experiences, mailboxes, skills, compute
 from .brains.codex import CodexBrain
 from .brains.demo import DemoBrain
 from .brains.kimi import KimiBrain
@@ -147,6 +147,7 @@ class AuthorizeBody(BaseModel):
     max_run_minutes: int = 30
     max_submissions: int = 0
     max_jobs: int = 0
+    job_limits: dict | None = None
     note: str | None = None
 
 
@@ -169,6 +170,7 @@ class CheckpointBody(BaseModel):
     trial_id: str | None = None
     report: str
     evidence_refs: list[str] = []
+    experience_uses: list[dict[str, str]] = []
 
 
 class ExperienceCreate(BaseModel):
@@ -188,6 +190,12 @@ class ExperiencePut(BaseModel):
 class RestoreBody(BaseModel):
     revision_hash: str
     reason: str | None = None
+    operation_id: str | None = None
+
+
+class ExperienceReview(BaseModel):
+    expected_revision: str
+    note: str = ""
 
 
 def create_app(web_dist: Path | None = None) -> FastAPI:
@@ -204,6 +212,10 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
     async def lifespan(_app: FastAPI):
         # 重启对账：无事件循环的非终态 Run 如实标记 recovering（AGENTS 进程可靠性）
         controller.reconcile_on_startup()
+        compute.recover_pending()
+        db.execute("UPDATE curation_requests SET status='failed',error='后端重启，整理中断；不会自动重复调用模型',updated_at=? WHERE status='running'", (db.utcnow(),))
+        for row in db.query("SELECT DISTINCT run_id FROM compute_jobs WHERE status NOT IN ('Finished','Failed','Stopped','not_started')"):
+            await asyncio.to_thread(compute.reconcile, row['run_id'])
         # 后台评分轮询：提交后进入评分等待，由这里异步拿回分数。
         # 评分器可能长时间排队或抽风（409 scoringInProgress / 5xx），
         # 全部吞掉下一轮再试；轮询失败绝不影响服务本身。
@@ -213,8 +225,11 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
             while not stop.is_set():
                 try:
                     # 按题目分组轮询，跳过用户在 settings 中中断的题目
-                    await asyncio.to_thread(
-                        mailboxes.poll_pending_by_challenge)
+                    result = await asyncio.to_thread(mailboxes.poll_pending_by_challenge)
+                    _notify_scores(result)
+                    for row in db.query("SELECT DISTINCT run_id FROM compute_jobs WHERE status NOT IN ('Finished','Failed','Stopped','not_started')"):
+                        await asyncio.to_thread(compute.reconcile, row['run_id'])
+                        controller.notify_run_change(row['run_id'])
                 except Exception:
                     pass
                 try:
@@ -228,6 +243,7 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
         finally:
             stop.set()
             task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
 
     app = FastAPI(title="CyberScientist", docs_url=None, openapi_url=None,
                   lifespan=lifespan)
@@ -293,18 +309,19 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
 
     @app.put("/api/v1/settings")
     async def put_settings(body: SettingsPut) -> dict[str, Any]:
-        current = config.load_settings()
-        if body.base_revision != current["revision"]:
-            raise HTTPException(409, detail={
-                "code": "REVISION_CONFLICT",
-                "message": "设置已被其他修改更新，请刷新后重试",
-                "current_revision": current["revision"]})
-        merged = json.loads(json.dumps(config.DEFAULT_SETTINGS))
-        incoming = {k: v for k, v in body.settings.items()
-                    if k != "_status"}  # _status 是 GET 响应的瞬态字段，不落盘
-        merged.update(incoming)
-        merged["revision"] = current["revision"] + 1
-        config.save_settings(merged)
+        with config.mutation_lock:
+            current = config.load_settings()
+            if body.base_revision != current["revision"]:
+                raise HTTPException(409, detail={
+                    "code": "REVISION_CONFLICT",
+                    "message": "设置已被其他修改更新，请刷新后重试",
+                    "current_revision": current["revision"]})
+            merged = json.loads(json.dumps(config.DEFAULT_SETTINGS))
+            incoming = {k: v for k, v in body.settings.items()
+                        if k != "_status"}  # _status 是 GET 响应的瞬态字段，不落盘
+            merged.update(incoming)
+            merged["revision"] = current["revision"] + 1
+            config.save_settings(merged)
         _sync_prime_models(merged)  # llm_profiles 可能变化，保持 models.json 同步
         return merged
 
@@ -314,18 +331,14 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
         if not body.secret_id or any(c in body.secret_id for c in "/\\: \t"):
             raise HTTPException(422, detail={"code": "INVALID_SECRET_ID",
                                              "message": "secret_id 含非法字符"})
-        secrets_store = config.load_secrets()
-        secrets_store[body.secret_id] = body.value
-        config.save_secrets(secrets_store)
+        config.update_secret(body.secret_id, body.value)
         synced = _sync_prime_models(config.load_settings())
         return {"secret_ref": f"local:{body.secret_id}", "configured": True,
                 "prime_models_synced": synced}
 
     @app.delete("/api/v1/secrets/{secret_id}")
     async def delete_secret(secret_id: str) -> dict[str, Any]:
-        secrets_store = config.load_secrets()
-        secrets_store.pop(secret_id, None)
-        config.save_secrets(secrets_store)
+        config.update_secret(secret_id, None)
         synced = _sync_prime_models(config.load_settings())
         return {"secret_ref": f"local:{secret_id}", "configured": False,
                 "prime_models_synced": synced}
@@ -392,41 +405,71 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
                                "capabilities": {}}}
         if conn_id == "bohrium":
             import os
+            import re
             import shutil
-            exe = settings["bohrium"]["executable"] or shutil.which("bohr") or ""
+            import subprocess
+
+            bohrium = settings["bohrium"]
+            configured_exe = bohrium["executable"]
+            exe = (shutil.which(configured_exe) if configured_exe
+                   else shutil.which("bohr")) or configured_exe
             if not exe or not os.path.exists(exe):
                 return {"status": "unavailable",
                         "detail": "bohr CLI 未安装或未配置；科学计算不可用",
                         "health": {"installed": False, "authenticated": None,
                                    "detail": "bohr CLI 未安装或未配置；科学计算不可用",
                                    "version": None, "capabilities": {}}}
-            # 零算力只读探针：--version（本地）+ auth whoami（只读 API）
-            import subprocess
+            # bohr 1.1.0 使用 version / project list，无 auth whoami。
+            # 密钥只传给后端子进程；兼容旧 CLI 的 ACCESS_KEY 名称。
+            env = os.environ.copy()
+            access_key = config.resolve_secret(bohrium.get("access_key_secret_ref", ""))
+            access_key = access_key or env.get("BOHR_ACCESS_KEY") or env.get("ACCESS_KEY")
+            if access_key:
+                env["BOHR_ACCESS_KEY"] = env["ACCESS_KEY"] = access_key
+            for name in ("OPENAPI_HOST", "TIEFBLUE_HOST"):
+                value = (bohrium.get("host_overrides") or {}).get(name)
+                if value:
+                    env[name] = value
+
             def _bohr(args: list[str]) -> subprocess.CompletedProcess:
                 cmd = (["cmd", "/c", exe, *args]
                        if exe.lower().endswith((".cmd", ".bat"))
                        else [exe, *args])
                 return subprocess.run(cmd, capture_output=True, text=True,
-                                      timeout=30, shell=False)
+                                      timeout=30, shell=False, env=env)
             version: str | None = None
             authenticated: bool | None = None
             detail_parts: list[str] = []
             try:
-                vp = _bohr(["--version"])
-                version = (vp.stdout or vp.stderr).strip() or None
+                vp = await asyncio.to_thread(_bohr, ["version"])
+                # CLI 联网错误可能带 accessKey URL；只返回版本号，不回显原文。
+                for line in vp.stdout.splitlines():
+                    if re.fullmatch(r"v?\d+(?:\.\d+){1,3}(?:[-+][A-Za-z0-9._-]+)?",
+                                    line.strip()):
+                        version = line.strip()
+                        break
             except (OSError, subprocess.TimeoutExpired):
                 pass
             try:
-                wp = _bohr(["auth", "whoami"])
-                if wp.returncode == 0 and '"ok": true' in wp.stdout:
+                wp = await asyncio.to_thread(_bohr, ["project", "list", "--json"])
+                projects = json.loads(wp.stdout) if wp.returncode == 0 else None
+                if isinstance(projects, list) and all(
+                    isinstance(project, dict) and "projectId" in project
+                    for project in projects
+                ):
                     authenticated = True
-                    detail_parts.append("AccessKey 已认证")
+                    detail_parts.append("AccessKey 已认证（只读项目列表成功）")
+                    project_id = bohrium.get("project_id")
+                    if project_id is not None and not any(
+                        str(project["projectId"]) == str(project_id) for project in projects
+                    ):
+                        detail_parts.append("配置的项目不在可访问列表中；请检查项目 ID")
                 else:
-                    authenticated = False
-                    detail_parts.append("未认证；请在密钥区保存 Bohrium AccessKey "
-                                        "后执行 bohr auth login --ak")
+                    detail_parts.append("项目列表读取失败；认证状态未知，请检查 AccessKey 与网络")
+            except (ValueError, TypeError):
+                detail_parts.append("项目列表响应格式未知；无法确认认证")
             except (OSError, subprocess.TimeoutExpired):
-                detail_parts.append("认证探针超时")
+                detail_parts.append("认证探针不可用或超时；认证状态未知")
             detail = "；".join(detail_parts) or "bohr 可用"
             ok = authenticated is True
             return {"status": "ok" if ok else "unavailable",
@@ -510,15 +553,19 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
                      or slug).strip()
             cid = f"local_{uuid.uuid4().hex[:8]}"
             resources = data.get("resources")
+            platform_snapshot = {key: data.get(key) for key in (
+                "status", "roundStartAt", "roundEndAt", "scoring")}
+            platform_snapshot["fetched_at"] = db.utcnow()
             db.execute(
                 "INSERT INTO challenges(id, platform_challenge_id, origin, title,"
                 " content, content_hash, contract_status, imported_at, is_demo,"
-                " resources_json)"
-                " VALUES(?,?,?,?,?,?,'unknown',?,0,?)",
+                " resources_json, platform_snapshot_json)"
+                " VALUES(?,?,?,?,?,?,'unknown',?,0,?,?)",
                 (cid, slug, body.url, title, content,
                  hashlib.sha256(content.encode()).hexdigest(), db.utcnow(),
                  json.dumps(resources, ensure_ascii=False)
-                 if isinstance(resources, list) else None))
+                 if isinstance(resources, list) else None,
+                 json.dumps(platform_snapshot, ensure_ascii=False)))
             return {"challenge": _challenge_dict(cid)}
         raise HTTPException(422, detail={"code": "INVALID_IMPORT",
                                          "message": f"未知导入模式: {body.mode}"})
@@ -527,7 +574,9 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
         row = db.query_one("SELECT * FROM challenges WHERE id=?", (cid,))
         if not row:
             raise HTTPException(404, detail={"code": "NOT_FOUND", "message": "题目不存在"})
-        return dict(row)
+        result = dict(row)
+        result["platform_snapshot"] = json.loads(result.pop("platform_snapshot_json") or "null")
+        return result
 
     @app.get("/api/v1/challenges")
     async def list_challenges() -> dict[str, Any]:
@@ -577,10 +626,11 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
         for sid in body.skill_ids:
             if sid in catalog_ids and sid not in ids:
                 ids.append(sid)
-        settings = config.load_settings()
-        settings.setdefault("skills", {})["always_on"] = ids
-        settings["revision"] = settings["revision"] + 1
-        config.save_settings(settings)
+        with config.mutation_lock:
+            settings = config.load_settings()
+            settings.setdefault("skills", {})["always_on"] = ids
+            settings["revision"] = settings["revision"] + 1
+            config.save_settings(settings)
         return {"always_on": ids, "revision": settings["revision"]}
 
     @app.post("/api/v1/challenges/{cid}/skills")
@@ -622,7 +672,7 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
         return controller.authorize(run_id, body.scope, body.allow_model_calls,
                                     body.max_model_turns, body.max_run_minutes,
                                     body.max_submissions, body.note,
-                                    max_jobs=body.max_jobs)
+                                    max_jobs=body.max_jobs, job_limits=body.job_limits)
 
     @app.put("/api/v1/runs/{run_id}/budget")
     async def update_budget(run_id: str, body: BudgetBody) -> dict[str, Any]:
@@ -671,7 +721,8 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
         msg = {"schema_version": 1, "message_type": "checkpoint",
                "checkpoint_key": f"ui-{uuid.uuid4().hex[:8]}",
                "review": "none", "stage": "progress",
-               "report_md": body.report, "evidence_refs": body.evidence_refs}
+               "report_md": body.report, "evidence_refs": body.evidence_refs,
+               "experience_uses":body.experience_uses}
         result = collab.submit_checkpoint(
             run_id, msg, source="user",
             notify=controller.notify_run_change)
@@ -703,6 +754,59 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
                 "code": "INVALID_TOKEN",
                 "message": "能力令牌无效/过期/已撤销"})
         return row
+
+    @app.exception_handler(compute.ComputeError)
+    async def compute_error(_: Request, exc: compute.ComputeError):
+        return JSONResponse(status_code=409, content={"detail": {"code": exc.code, "message": str(exc)}})
+
+    @app.post("/api/v1/tools/bohr")
+    async def tool_bohr(request: Request) -> dict:
+        identity = _tool_auth(request)
+        body = await request.json()
+        result = await asyncio.to_thread(compute.cli, identity["run_id"], body.get("args"), body.get("cwd", ""))
+        controller.notify_run_change(identity["run_id"])
+        return result
+
+    @app.post("/api/v1/tools/job")
+    async def tool_job(request: Request) -> dict:
+        identity = _tool_auth(request)
+        body = await request.json()
+        rid = identity["run_id"]
+        action = body.get("action")
+        if action == "submit":
+            result = await asyncio.to_thread(compute.submit, rid, body.get("operation_id"),
+                                             body.get("spec"), body.get("input_directory", ""))
+        elif action == "reconcile":
+            result = await asyncio.to_thread(compute.reconcile, rid)
+        elif action == "stop":
+            result = await asyncio.to_thread(compute.stop, rid, body.get("operation_id"))
+        elif action == "list":
+            result = compute.list_jobs(rid)
+        else:
+            raise compute.ComputeError("INVALID_ACTION", "支持 submit/list/reconcile/stop")
+        controller.notify_run_change(rid)
+        return result
+
+    @app.get("/api/v1/runs/{run_id}/jobs")
+    async def run_jobs(run_id: str) -> dict:
+        return compute.list_jobs(run_id)
+
+    @app.post("/api/v1/runs/{run_id}/jobs/reconcile")
+    async def reconcile_jobs(run_id: str) -> dict:
+        return await asyncio.to_thread(compute.reconcile, run_id)
+
+    @app.post("/api/v1/runs/{run_id}/jobs/{operation_id}/stop")
+    async def stop_job(run_id: str, operation_id: str) -> dict:
+        return await asyncio.to_thread(compute.stop, run_id, operation_id)
+
+    @app.post("/api/v1/runs/{run_id}/curation")
+    async def curate_run(run_id: str, request: Request) -> dict:
+        body = await request.json()
+        return await controller.curate_run_experience(run_id, body.get("operation_id", ""))
+
+    @app.get("/api/v1/runs/{run_id}/curation")
+    async def run_curation(run_id: str) -> dict:
+        return controller.run_curation_status(run_id)
 
     @app.post("/api/v1/tools/checkpoint")
     async def tool_checkpoint(request: Request) -> dict[str, Any]:
@@ -744,7 +848,7 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
     @app.post("/api/v1/mailboxes/experiment/register")
     async def register_experiment(request: Request) -> dict[str, Any]:
         body = await request.json()
-        return mailboxes.register_experiment(int(body.get("count", 1)))
+        return await asyncio.to_thread(mailboxes.register_experiment, int(body.get("count", 1)))
 
     @app.delete("/api/v1/mailboxes/{mailbox_id}")
     async def disable_mailbox(mailbox_id: str) -> dict[str, Any]:
@@ -763,7 +867,7 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
     @app.post("/api/v1/runs/{run_id}/submissions")
     async def submit_experiment(run_id: str, request: Request) -> dict[str, Any]:
         body = await request.json()
-        return mailboxes.submit_experiment(
+        return await asyncio.to_thread(mailboxes.submit_experiment,
             run_id, body.get("trial_id"), body.get("package_path"),
             body.get("operation_id", ""))
 
@@ -772,9 +876,17 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
         body = await request.json() if request.headers.get(
             "content-type", "").startswith("application/json") else {}
         # 评分平台 HTTP 是同步调用：卸载到线程，不阻塞事件循环
-        return await asyncio.to_thread(mailboxes.poll_scores, body.get("run_id"))
+        result = await asyncio.to_thread(mailboxes.poll_scores, body.get("run_id"))
+        _notify_scores(result)
+        return result
 
     # ---------------- 评分轮询任务（按题目中断/启用） ----------------
+
+    def _notify_scores(result):
+        for rid in result.get("changed_run_ids",[]):
+            run = db.query_one("SELECT phase FROM runs WHERE id=?",(rid,))
+            if run and run["phase"] == "running":
+                controller.notify_run_change(rid)
 
     @app.get("/api/v1/polling")
     async def polling_tasks() -> dict[str, Any]:
@@ -787,8 +899,9 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
 
     @app.post("/api/v1/polling/{challenge_id}/run")
     async def polling_run(challenge_id: str) -> dict[str, Any]:
-        return await asyncio.to_thread(
-            mailboxes.poll_scores_now, challenge_id)
+        result = await asyncio.to_thread(mailboxes.poll_scores_now, challenge_id)
+        _notify_scores(result)
+        return result
 
     @app.get("/api/v1/harvest/candidates")
     async def harvest_candidates(challenge_id: str) -> dict[str, Any]:
@@ -797,7 +910,7 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
     @app.post("/api/v1/harvest/submit")
     async def harvest_submit(request: Request) -> dict[str, Any]:
         body = await request.json()
-        return mailboxes.harvest_submit(
+        return await asyncio.to_thread(mailboxes.harvest_submit,
             body.get("submission_id", ""), body.get("operation_id", ""),
             bool(body.get("confirm")))
 
@@ -821,15 +934,14 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
         return controller.global_curation_status()
 
     @app.post("/api/v1/experiences/{exp_id}/approve")
-    async def approve_exp(exp_id: str) -> dict[str, Any]:
+    async def approve_exp(exp_id: str, body: ExperienceReview) -> dict[str, Any]:
         """用户审批：全局 candidate → active（全局经验唯一晋升通道）。"""
-        return experiences.approve_experience(exp_id)
+        return experiences.approve_experience(exp_id, expected_revision=body.expected_revision)
 
     @app.post("/api/v1/experiences/{exp_id}/reject")
-    async def reject_exp(exp_id: str, request: Request) -> dict[str, Any]:
+    async def reject_exp(exp_id: str, body: ExperienceReview) -> dict[str, Any]:
         """用户驳回：保持 candidate 并附批注，大脑下轮整理参考批注。"""
-        body = await request.json()
-        return experiences.reject_experience(exp_id, body.get("note", ""))
+        return experiences.reject_experience(exp_id, body.note, expected_revision=body.expected_revision)
 
 
     @app.post("/api/v1/experiences")
@@ -860,7 +972,7 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
               )
     async def restore_exp(exp_id: str, body: RestoreBody) -> dict[str, Any]:
         return experiences.restore_revision(exp_id, body.revision_hash, "user",
-                                            body.reason)
+                                            body.reason, operation_id=body.operation_id)
 
     # ---------------- 产物 ----------------
 

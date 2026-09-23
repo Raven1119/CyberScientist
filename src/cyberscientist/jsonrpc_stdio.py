@@ -33,7 +33,7 @@ class JsonRpcStdio:
         self.proc = await asyncio.create_subprocess_exec(
             *self.argv, stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-            env=self.env, cwd=self.cwd)
+            env=self.env, cwd=self.cwd, limit=8 * 1024 * 1024)
         self._reader_task = asyncio.create_task(self._read_loop())
         # A8：stderr 必须持续消费，否则管道写满会阻塞子进程
         self._stderr_task = asyncio.create_task(self._drain_stderr())
@@ -54,21 +54,29 @@ class JsonRpcStdio:
 
     async def _read_loop(self) -> None:
         assert self.proc and self.proc.stdout
-        while True:
-            line = await self.proc.stdout.readline()
-            if not line:
-                break
-            try:
-                msg = json.loads(line.decode("utf-8"))
-            except (UnicodeDecodeError, json.JSONDecodeError):
-                log.warning("%s: 无法解析的帧，已忽略: %.120r", self.name, line)
-                continue
-            await self._dispatch(msg)
-        # 进程退出：唤醒所有等待者
-        for fut in self._pending.values():
-            if not fut.done():
-                fut.set_exception(ProtocolError(f"{self.name} 进程已退出"))
-        self._pending.clear()
+        failure = ProtocolError(f"{self.name} 协议连接已关闭")
+        try:
+            while True:
+                line = await self.proc.stdout.readline()
+                if not line:
+                    break
+                try:
+                    msg = json.loads(line.decode("utf-8"))
+                except (UnicodeDecodeError, json.JSONDecodeError):
+                    log.warning("%s: 无法解析的帧，已忽略", self.name)
+                    continue
+                if isinstance(msg, dict):
+                    await self._dispatch(msg)
+        except (OSError, ValueError) as exc:
+            failure = ProtocolError(f"{self.name} 读取协议失败: {type(exc).__name__}")
+        finally:
+            # EOF must wake stream consumers too, not only pending requests.
+            for fut in self._pending.values():
+                if not fut.done():
+                    fut.set_exception(failure)
+            self._pending.clear()
+            self._notifications.put_nowait(failure)
+            self._server_requests.put_nowait(failure)
 
     async def _dispatch(self, msg: dict[str, Any]) -> None:
         if "id" in msg and ("result" in msg or "error" in msg):
@@ -94,9 +102,12 @@ class JsonRpcStdio:
         self._pending[rid] = fut
         frame = json.dumps({"jsonrpc": "2.0", "id": rid, "method": method,
                             "params": params or {}}, ensure_ascii=False) + "\n"
-        self.proc.stdin.write(frame.encode("utf-8"))
-        await self.proc.stdin.drain()
-        return await asyncio.wait_for(fut, timeout)
+        try:
+            self.proc.stdin.write(frame.encode("utf-8"))
+            await self.proc.stdin.drain()
+            return await asyncio.wait_for(fut, timeout)
+        finally:
+            self._pending.pop(rid, None)
 
     async def notify(self, method: str, params: dict[str, Any] | None = None) -> None:
         if not self.proc or self.proc.stdin is None:
@@ -114,7 +125,10 @@ class JsonRpcStdio:
 
     async def next_server_request(self, timeout: float = 0.5) -> dict[str, Any] | None:
         try:
-            return await asyncio.wait_for(self._server_requests.get(), timeout)
+            item = await asyncio.wait_for(self._server_requests.get(), timeout)
+            if isinstance(item, Exception):
+                raise item
+            return item
         except asyncio.TimeoutError:
             return None
 
@@ -136,18 +150,35 @@ class JsonRpcStdio:
         await self.proc.stdin.drain()
 
     async def stop(self) -> None:
-        if self._reader_task:
-            self._reader_task.cancel()
-        if self._stderr_task:
-            self._stderr_task.cancel()
-        if self.proc:
+        tasks = [t for t in (self._reader_task, self._stderr_task)
+                 if t and t is not asyncio.current_task()]
+        for task in tasks:
+            task.cancel()
+        for pending in self._pending.values():
+            if not pending.done():
+                pending.set_exception(ProtocolError(f"{self.name} 已停止"))
+        self._pending.clear()
+        proc, self.proc = self.proc, None
+        if proc and proc.returncode is None:
             try:
-                self.proc.terminate()
-                await asyncio.wait_for(self.proc.wait(), 5)
-            except (ProcessLookupError, asyncio.TimeoutError):
-                self.proc.kill()
+                proc.terminate()
+                await asyncio.wait_for(proc.wait(), 5)
+            except ProcessLookupError:
+                pass
+            except asyncio.TimeoutError:
+                try:
+                    proc.kill()
+                except ProcessLookupError:
+                    pass
+                await proc.wait()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        self._reader_task = self._stderr_task = None
 
 
 async def _queue_iter(q: asyncio.Queue) -> AsyncIterator[Any]:
     while True:
-        yield await q.get()
+        item = await q.get()
+        if isinstance(item, Exception):
+            raise item
+        yield item

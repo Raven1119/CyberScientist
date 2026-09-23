@@ -57,7 +57,7 @@ def test_external_edit_detected():
     assert r.get("unchanged") is not True
 
 
-def test_restore_is_idempotent_content_addressed():
+def test_restore_preserves_content_and_records_a_new_operation():
     r1 = experiences.save_experience("exp_e", fm(), "v1", "user", "创建", None)
     experiences.save_experience("exp_e", fm(), "v2", "user", "改", r1["current_hash"])
     r = experiences.restore_revision("exp_e", r1["revision_hash"], "user")
@@ -65,7 +65,7 @@ def test_restore_is_idempotent_content_addressed():
     e = experiences.get_experience("exp_e")
     assert "v1" in e["body_md"]
     revs = experiences.get_revisions("exp_e")
-    assert len(revs) == 2  # 两种唯一内容，历史不丢
+    assert len(revs) == 3  # 回滚是独立操作，内容 hash 可以重复
 
 
 def test_invalid_frontmatter_rejected():

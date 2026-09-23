@@ -1,5 +1,10 @@
 import { useEffect, useRef } from 'react'
 import type { ReactNode } from 'react'
+import { enter } from './design/motion'
+
+export function LoadingState({ children = '正在加载…' }: { children?: ReactNode }) {
+  return <div className="loading-state" role="status"><span className="loading-mark" aria-hidden="true">···</span>{children}</div>
+}
 
 export function Badge({
   tone = 'neutral',
@@ -37,7 +42,10 @@ export function Modal({
   useEffect(() => {
     const dialog = ref.current
     if (!dialog) return
-    if (open && !dialog.open) dialog.showModal()
+    if (open && !dialog.open) {
+      dialog.showModal()
+      return enter(dialog, 16)
+    }
     if (!open && dialog.open) dialog.close()
   }, [open])
 

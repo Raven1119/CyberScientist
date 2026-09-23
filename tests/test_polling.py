@@ -67,7 +67,7 @@ def test_poll_scores_challenge_and_run_combined(monkeypatch):
     _make_submission("CH_B", "op-cb")
     _fake_platform(monkeypatch, 0.5)
     res = mailboxes.poll_scores(run_id=sub_a["run_id"], challenge_id="CH_B")
-    assert res == {"polled": 0, "updated": 0, "still_unknown": 0, "errors": 0}
+    assert res == {"polled": 0, "updated": 0, "still_unknown": 0, "errors": 0, "changed_run_ids": []}
 
 
 def test_poll_pending_by_challenge_skips_disabled(monkeypatch):

@@ -1,0 +1,29 @@
+{
+  "mode": "in-memory",
+  "passed": [
+    "Frozen reference application initializes",
+    "Scene renders: dots",
+    "Dot-grid interaction changes rendered frames",
+    "Exact cool-graphite night CSS tokens",
+    "Focus mode enter/exit",
+    "Pixel cover -> one swap -> reveal/cleanup",
+    "Ten scene replacements retain one canvas and one live scene",
+    "Writing stops scene frame updates",
+    "Record submission retains editor text",
+    "390px viewport: no horizontal overflow",
+    "Actual three-step wizard creates a task",
+    "Reduced-motion preference skips pixel motion but commits state",
+    "Standalone starter: editor, save feedback and theme toggle",
+    "No uncaught page JavaScript exceptions in executed paths"
+  ],
+  "unsupported": [
+    "WebGL scene unavailable in this browser: dithering",
+    "WebGL scene unavailable in this browser: metaballs",
+    "WebGL scene unavailable in this browser: threads",
+    "WebGL scene unavailable in this browser: particles",
+    "WebGL scene unavailable in this browser: interactive",
+    "Persistent localStorage unavailable at the test origin; fallback only tested"
+  ],
+  "errors": [],
+  "browser": "144.0.7559.96"
+}

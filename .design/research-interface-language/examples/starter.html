@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="paper">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Research Interface · 最小起步页</title><link rel="stylesheet" href="../assets/tokens.css"><link rel="stylesheet" href="../assets/primitives.css"></head>
+<body class="ril-scope" style="margin:0">
+<header class="ril-topbar"><a href="../START.html" class="ril-brand">RESEARCH / SYSTEMS</a><div class="ril-actions"><a href="../assets/reference.html" class="ril-button">完整动效参考 ↗</a><button class="ril-button" id="theme" aria-pressed="false">夜间</button></div></header>
+<main class="ril-main"><div class="ril-micro">APPLICATION SHELL / 01 · LOCAL EXAMPLE</div><h1 class="ril-heading">从一个清楚的问题开始。</h1><p class="ril-lead">这是可直接复用的最小视觉外壳。接入实际项目时替换业务，不要把这里的本地样例当成后端运行结果。</p>
+<div class="ril-grid"><section class="ril-sheet" aria-labelledby="note-title"><span class="ril-micro" id="note-title">WORKING NOTE / 本地示例</span><label class="ril-label" for="question">当前问题</label><textarea class="ril-question" id="question" rows="2">这个页面中，使用者最需要完成什么？</textarea><label class="ril-label" for="note">推演与依据</label><textarea class="ril-note" id="note" placeholder="写下一条观察。\n\n把尚未整理好的判断留在这里。"></textarea><footer class="ril-foot"><span id="status" role="status">草稿只存在本机，不会上传。</span><button class="ril-button primary" id="save">保存草稿 ↗</button></footer></section><aside class="ril-aside"><h2>接入位置</h2><p>基础配色与尺寸来自 <code>tokens.css</code>，控件外壳来自 <code>primitives.css</code>。二者使用 <code>ril-</code> 命名空间。</p><p>本页不预载第三方动效。需要观测窗、像素切换或目标角标时，按动效索引迁移到当前应用。</p><div class="ril-code">assets/motion-map.json
+references/IMPLEMENTATION.md</div><p>输入后自动暂存；保存按钮不会清空正文。</p></aside></div></main>
+<script>
+/* Starter-only behavior. Change the key for each real application. No fake backend. */
+(()=>{'use strict';const $=id=>document.getElementById(id),key='ril-starter-example-v1';let storage=true;
+try{const s=JSON.parse(localStorage.getItem(key)||'null');if(s){$('question').value=s.question||'';$('note').value=s.note||'';document.documentElement.dataset.theme=s.theme==='night'?'night':'paper';}}catch{storage=false;}
+$('note').placeholder='写下一条观察。\n\n把尚未整理好的判断留在这里。';
+function sync(){const night=document.documentElement.dataset.theme==='night';$('theme').textContent=night?'纸面':'夜间';$('theme').setAttribute('aria-pressed',String(night));}
+function save(){try{localStorage.setItem(key,JSON.stringify({question:$('question').value,note:$('note').value,theme:document.documentElement.dataset.theme}));storage=true;$('status').textContent='草稿已在本机保存。';}catch{storage=false;$('status').textContent='浏览器未允许本地保存；请保留页面或复制文本。';}}
+$('theme').addEventListener('click',()=>{document.documentElement.dataset.theme=document.documentElement.dataset.theme==='night'?'paper':'night';sync();save();});['question','note'].forEach(id=>$(id).addEventListener('input',save));$('save').addEventListener('click',save);sync();if(!storage)$('status').textContent='本地存储暂不可用；输入仍可继续。';})();
+</script></body></html>

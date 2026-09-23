@@ -97,6 +97,7 @@ def map_update(u: dict[str, Any]) -> dict[str, Any] | None:
     kind = u.get("sessionUpdate")
     if kind == "tool_call":
         return {"type": "execution.progress",
+                "item_id": u.get('toolCallId'), "status": u.get('status', 'pending'),
                 "detail": f"工具调用: {u.get('title', '?')}"
                           f"（{u.get('kind', '?')}）"}
     if kind == "tool_call_update" and u.get("status") in ("completed", "failed"):
@@ -108,6 +109,7 @@ def map_update(u: dict[str, Any]) -> dict[str, Any] | None:
                 text = inner.get("text", "")
         label = "工具完成" if u.get("status") == "completed" else "工具失败"
         return {"type": "execution.progress",
+                "item_id": u.get('toolCallId'), "status": u.get('status'), "output": text[:12000],
                 "detail": f"{label}({u.get('title') or ''}): {text[:200]}"}
     return None
 
@@ -146,19 +148,23 @@ class KimiExecutor:
             return ["cmd", "/c", exe, "acp"]
         return [exe, "acp"]
 
-    async def _spawn(self, cwd: str | None) -> JsonRpcStdio:
-        rpc = JsonRpcStdio(self._argv(), cwd=cwd, name="kimi-exec-acp")
-        await asyncio.wait_for(rpc.start(), timeout=30)
-        await rpc.request(
-            "initialize",
-            {"protocolVersion": ACP_PROTOCOL_VERSION,
-             "clientCapabilities": {"fs": {"readTextFile": False,
-                                           "writeTextFile": False},
-                                    "terminal": False,
-                                    # 声明 form 能力：AskUserQuestion 走
-                                    # elicitation/create（回退路径实测无效）
-                                    "elicitation": {"form": {}}}},
-            timeout=30)
+    async def _spawn(self, cwd: str | None, env: dict | None = None) -> JsonRpcStdio:
+        rpc = JsonRpcStdio(self._argv(), cwd=cwd, env=env, name="kimi-exec-acp")
+        try:
+            await asyncio.wait_for(rpc.start(), timeout=30)
+            await rpc.request(
+                "initialize",
+                {"protocolVersion": ACP_PROTOCOL_VERSION,
+                 "clientCapabilities": {"fs": {"readTextFile": False,
+                                               "writeTextFile": False},
+                                        "terminal": False,
+                                        # 声明 form 能力：AskUserQuestion 走
+                                        # elicitation/create（回退路径实测无效）
+                                        "elicitation": {"form": {}}}},
+                timeout=30)
+        except BaseException:
+            await rpc.stop()
+            raise
         return rpc
 
     async def _set_option(self, rpc: JsonRpcStdio, sid: str,
@@ -209,7 +215,7 @@ class KimiExecutor:
     # ---------- PrimeRuntime ----------
     async def start(self, spec: dict[str, Any]) -> str:
         cwd = spec.get("working_directory") or os.getcwd()
-        rpc = await self._spawn(cwd)
+        rpc = await self._spawn(cwd, spec.get("env"))
         try:
             result = await rpc.request(
                 "session/new",
@@ -226,7 +232,7 @@ class KimiExecutor:
                                        _EFFORT_MAP.get(self.effort, self.effort))
             if self.model:
                 await self._set_option(rpc, sid, "model", self.model)
-        except Exception:
+        except BaseException:
             await rpc.stop()
             raise
         sess = _Session(rpc=rpc, session_id=sid)

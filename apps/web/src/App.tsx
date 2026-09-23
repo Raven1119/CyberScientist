@@ -1,10 +1,13 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { AppProvider, useApp } from './app-context'
 import type { Page } from './app-context'
 import ResearchPage from './pages/ResearchPage'
 import ExperiencePage from './pages/ExperiencePage'
 import MailboxPage from './pages/MailboxPage'
 import SettingsPage from './pages/SettingsPage'
+import { PresentationProvider, usePresentation } from './design/presentation'
+import { TargetCursor } from './design/TargetCursor'
+import { enter } from './design/motion'
 
 const NAV_ITEMS: { page: Page; num: string; label: string }[] = [
   { page: 'research', num: '01', label: '研究工作台' },
@@ -22,33 +25,36 @@ const CRUMBS: Record<Page, string> = {
 
 export default function App() {
   return (
-    <AppProvider>
-      <Shell />
-    </AppProvider>
+    <PresentationProvider><AppProvider><Shell /></AppProvider></PresentationProvider>
   )
 }
 
 function Shell() {
   const { page, setPage, demoMode } = useApp()
+  const { theme, motion, reduced, focus, setPreference } = usePresentation()
+  const view = useRef<HTMLDivElement>(null)
 
   // SPA 切页不保留上一页的滚动位置
   useEffect(() => {
     window.scrollTo(0, 0)
+    if (view.current) return enter(view.current, 20)
   }, [page])
 
   return (
-    <div className="app">
-      <aside className="side">
+    <div className={`app${focus ? ' focus-view' : ''}`}>
+      <a className="skip-link" href="#workspace">跳到工作区</a>
+      <aside className="side" aria-label="工作区导航">
         <div className="brand">
           <div className="mark" aria-hidden="true">
-            CS
+            <svg viewBox="0 0 36 36" fill="none" stroke="currentColor" strokeWidth="1.2"><path d="M7 4h13M7 4v28h22V12M7 23L29 4M14 11v21M7 17h22M24 4h5v5" /><path d="M26 4h3v3" className="mark-accent" /></svg>
           </div>
           <div>
-            <div className="brand-name">CyberScientist</div>
-            <div className="brand-sub">RESEARCH WORKSPACE</div>
+            <div className="brand-sub">RESEARCH<br /> SYSTEMS</div>
           </div>
         </div>
-        <div className="nav-label">WORKSPACE</div>
+        <div className="workspace-name">CYBER<br />SCIENTIST<span>.</span></div>
+        <p className="workspace-description">科学研究工作台</p>
+        <div className="nav-label">WORKSPACE / 工作区</div>
         <nav className="nav" aria-label="主导航">
           {NAV_ITEMS.map((item) => (
             <button
@@ -77,23 +83,38 @@ function Shell() {
             CyberScientist <b>/ {CRUMBS[page]}</b>
           </div>
           <div className="topbar-right">
-            <BackendClock />
             {demoMode && (
               <span className="badge demo">
                 <span className="dot" aria-hidden="true" />
                 演示模式
               </span>
             )}
+            <div className="presentation-controls" role="group" aria-label="显示偏好">
+              <button type="button" className="btn small" aria-pressed={motion && !reduced} disabled={reduced}
+                title={reduced ? '跟随系统减少动态设置' : '开启或关闭界面动效'}
+                onClick={() => setPreference('motion', !motion)}>{reduced ? '静态' : motion ? '动效 开' : '动效 关'}</button>
+              <button type="button" className="btn small" aria-pressed={focus} title="收起导航以专注阅读；Esc 退出"
+                onClick={() => setPreference('focus', !focus)}>{focus ? '退出专注' : '专注'}</button>
+              <button type="button" className="btn icon-btn" aria-label={theme === 'paper' ? '切换夜间主题' : '切换日间主题'}
+                title={theme === 'paper' ? '夜间 · 冷石墨' : '日间 · 纸色'} onClick={() => setPreference('theme', theme === 'paper' ? 'night' : 'paper')}>
+                {theme === 'paper' ? <svg viewBox="0 0 20 20" fill="none" stroke="currentColor"><path d="M16 12A7 7 0 0 1 8 3a7 7 0 1 0 8 9Z" /></svg>
+                  : <svg viewBox="0 0 20 20" fill="none" stroke="currentColor"><circle cx="10" cy="10" r="3.5" /><path d="M10 1v3m0 12v3M1 10h3m12 0h3M3.5 3.5l2 2m9 9l2 2m0-13-2 2m-9 9-2 2" /></svg>}
+              </button>
+            </div>
           </div>
         </header>
-        <div className="content">
+        <div className="content" id="workspace" tabIndex={-1}>
+          <div ref={view} className="page-view">
           {page === 'research' && <ResearchPage />}
           {page === 'experience' && <ExperiencePage />}
           {page === 'mailbox' && <MailboxPage />}
           {page === 'settings' && <SettingsPage />}
-          <footer className="footer">CyberScientist · 生产前端 · 数据来自本地后端 API</footer>
+          </div>
+          <footer className="footer"><span>CyberScientist · {demoMode ? '演示工作区' : '研究工作区'}</span><BackendClock />
+            <a href="/legal/research-interface-notices.txt" target="_blank" rel="noreferrer">界面来源与许可 ↗</a></footer>
         </div>
       </main>
+      <TargetCursor />
     </div>
   )
 }

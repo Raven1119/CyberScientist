@@ -25,6 +25,7 @@ _TOOLS = [
             "type": "object",
             "additionalProperties": False,
             "properties": {
+                "experience_uses": {'type': 'array', 'maxItems': 32, 'items': {'type': 'object', 'additionalProperties': False, 'properties': {'context_id': {'type': 'string', 'minLength': 1}, 'experience_id': {'type': 'string', 'minLength': 1}, 'revision_id': {'type': 'string', 'minLength': 1}}, 'required': ['context_id', 'experience_id', 'revision_id']}},
                 "checkpoint_key": {"type": "string", "maxLength": 128},
                 "review": {"enum": ["none", "async", "blocking"]},
                 "stage": {"enum": ["progress", "blocked", "trial_complete"]},
@@ -53,6 +54,15 @@ _TOOLS = [
         },
     },
 ]
+
+_TOOLS.append({
+    "name": "research_job",
+    "description": "本 Run 的受控 Bohrium Job：创建前原子预留额度；相同 operation_id 幂等，unknown 先 reconcile 不重建。暂停后只读/停止，禁止新增计算。",
+    "inputSchema": {"type": "object", "additionalProperties": False,
+        "properties": {"action": {"enum": ["submit", "list", "reconcile", "stop"]},
+                       "operation_id": {"type": "string", "maxLength": 100},
+                       "spec": {"type": "object"}, "input_directory": {"type": "string"}},
+        "required": ["action"]}})
 
 
 def _post(path: str, payload: dict) -> dict:
@@ -83,7 +93,7 @@ def _post(path: str, payload: dict) -> dict:
 
 
 def _tool_result(payload: dict) -> dict:
-    is_error = "error" in payload
+    is_error = "error" in payload or payload.get("ok") is False or payload.get("status") in ("unknown", "not_started")
     return {"content": [{"type": "text",
                          "text": json.dumps(payload, ensure_ascii=False)}],
             "isError": is_error}
@@ -110,6 +120,11 @@ def _handle(msg: dict) -> dict | None:
         args = params.get("arguments") or {}
         if name == "research_checkpoint":
             out = _post("/api/v1/tools/checkpoint", args)
+        elif name == "research_job":
+            if args.get("action") in ("submit", "stop") and not args.get("operation_id"):
+                out = {"error": "submit/stop 需要稳定的 operation_id"}
+            else:
+                out = _post("/api/v1/tools/job", args)
         elif name == "ack_guidance":
             out = _post("/api/v1/tools/ack", args)
         else:

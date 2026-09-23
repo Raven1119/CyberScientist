@@ -1,0 +1,70 @@
+/* Research Interface Language 1.0.0. Extracted from the frozen V9 cool-night application. */
+/* Namespaced tokens only: importing this file does not reset host application styles. */
+:root, [data-theme="paper"] {
+  --ril-bg: #e6e3d7;
+  --ril-paper: #f5f1e6;
+  --ril-panel: #dcded0;
+  --ril-ink: #303a31;
+  --ril-sub: #64705e;
+  --ril-muted: #76816f;
+  --ril-rule: #bec3ad;
+  --ril-hard: #7c8972;
+  --ril-accent: #a34d30;
+  --ril-on: #f2efdf;
+  --ril-window: #15251e;
+  --ril-field-ink: #c7d0a6;
+}
+[data-theme="night"] {
+  --ril-bg: #17191A;
+  --ril-paper: #202223;
+  --ril-panel: #1D2021;
+  --ril-ink: #D8D4C7;
+  --ril-sub: #9D9A90;
+  --ril-muted: #696B67;
+  --ril-rule: #353938;
+  --ril-hard: #555954;
+  --ril-accent: #C9BDA4;
+  --ril-on: #17191A;
+  --ril-window: #111314;
+  --ril-field-ink: #A9B3AC;
+}
+:root {
+  --ril-font-ui: "Inter","Segoe UI","Noto Sans CJK SC","Microsoft YaHei",sans-serif;
+  --ril-font-mono: "IBM Plex Mono","SFMono-Regular",Consolas,monospace;
+  --ril-font-heading: "Noto Serif CJK SC","Source Han Serif SC","Songti SC","SimSun",serif;
+  --ril-text-ui: 14px;
+  --ril-text-body: 16px;
+  --ril-text-body-large: 18px;
+  --ril-text-question: 21px;
+  --ril-text-title: 31px;
+  --ril-text-caption: 12px;
+  --ril-text-code: 11px;
+  --ril-text-micro: 9px;
+  --ril-line-ui: 1.7;
+  --ril-line-body: 1.95;
+  --ril-line-heading: 1.55;
+  --ril-space-1: 4px;
+  --ril-space-2: 8px;
+  --ril-space-3: 12px;
+  --ril-space-4: 16px;
+  --ril-space-5: 24px;
+  --ril-space-6: 32px;
+  --ril-space-7: 48px;
+  --ril-radius: 0px;
+  --ril-border: 1px;
+  --ril-border-heading: 2px;
+  --ril-sidebar: 216px;
+  --ril-topbar: 73px;
+  --ril-observation: 354px;
+  --ril-workspace-gap: 30px;
+  --ril-pixel-phase: 300ms;
+  --ril-target-capture: 200ms;
+  --ril-target-return: 300ms;
+  --ril-content-enter: 600ms;
+  --ril-split-duration: 650ms;
+  --ril-split-stagger: 30ms;
+  --ril-decrypt-step: 40ms;
+  --ril-typing-step: 25ms;
+  --ril-elastic-return: 440ms;
+  --ril-ease-out: cubic-bezier(.215,.61,.355,1);
+}

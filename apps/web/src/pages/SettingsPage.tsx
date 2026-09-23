@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api, listSkills, putAlwaysOnSkills } from '../api'
 import { useApp } from '../app-context'
-import { Badge } from '../components'
+import { Badge, LoadingState } from '../components'
 import { formatTime } from '../labels'
 import type {
   ConnectionTestResult,
@@ -171,7 +171,7 @@ export default function SettingsPage() {
     return (
       <section aria-label="连接与设置">
         <div className="empty">
-          <strong>正在加载设置…</strong>
+          <LoadingState>正在加载设置…</LoadingState>
           <p>如果长时间没有响应，请确认后端已启动。</p>
         </div>
       </section>
@@ -764,7 +764,7 @@ function SkillsCard() {
       <div className="card-body">
         <p className="sub">
           常驻技能对所有 Trial 生效；随题目启用的技能在研究工作台按题绑定。
-          启用 = 启动 Trial 时把技能名称与描述注入执行器任务文本。
+          启用后，大脑和执行器会收到技能说明与 SKILL.md 路径，并在使用前阅读。
         </p>
         {skills !== null && skills.length > 0 && (
           <div className="field" style={{ marginBottom: 10 }}>
@@ -779,7 +779,7 @@ function SkillsCard() {
           </div>
         )}
         {skills === null ? (
-          <p className="small-text">正在加载技能目录…</p>
+          <LoadingState>正在加载技能目录…</LoadingState>
         ) : skills.length === 0 ? (
           <p className="small-text">
             未在 ~/.kimi-code/skills、~/.agents/skills、~/.codex/skills 发现技能（含 SKILL.md 的子目录）。
