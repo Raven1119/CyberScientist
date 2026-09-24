@@ -1851,6 +1851,12 @@ function SupervisionPanel({
           <span>上次审阅</span>
           <span>{supervision?.last_review_at ? formatTime(supervision.last_review_at) : '尚无'}</span>
         </div>
+        <div className="meta-row">
+          <span>最近唤醒原因</span>
+          <span>{supervision?.last_wake
+            ? `${supervision.last_wake.trigger} · ${formatTime(supervision.last_wake.created_at)}`
+            : '尚无'}</span>
+        </div>
         {supervision && supervision.pending_requests.length > 0 && (
           <div className="meta-row">
             <span>待处理审阅请求</span>
@@ -1877,6 +1883,34 @@ function SupervisionPanel({
             {enabled ? '关闭静默监督' : '开启静默监督'}
           </button>
         </div>
+
+        <details className="snapshot" style={{ marginTop: 12 }}>
+          <summary>研究回答（{supervision?.research_answers?.length ?? 0}）</summary>
+          {supervision?.research_answers?.map((answer) => (
+            <div key={answer.id} className="row-item block" style={{ marginTop: 8 }}>
+              <strong>{answer.id}</strong>
+              <div className="small-text">审阅：{answer.status} · 原生表单：{answer.native_form}
+                {' · '}正文：{answer.delivery_status ?? '尚未投递'}
+                {answer.delivery_channel ? `（${answer.delivery_channel}）` : ''}
+                {answer.ack_disposition ? ` · ACK ${answer.ack_disposition}` : ''}</div>
+              {answer.answer_md ? <p className="pre-wrap">{answer.answer_md}</p>
+                : <p className="small-text">{answer.error ?? '等待大脑判断'}</p>}
+              {answer.evidence_refs.length > 0 &&
+                <div className="small-text">引用：{answer.evidence_refs.join('、')}</div>}
+            </div>
+          ))}
+        </details>
+
+        <details className="snapshot" style={{ marginTop: 8 }}>
+          <summary>大脑实际读取（{supervision?.trace_reads?.length ?? 0}）</summary>
+          {supervision?.trace_reads?.map((read) => (
+            <div key={read.seq} className="small-text">
+              {formatTime(read.recorded_at)} · {read.action}
+              {read.ref ? ` · ${read.ref}` : ''}
+              {read.source_seq != null ? ` · 来源序号 ${read.source_seq}` : ''}
+            </div>
+          ))}
+        </details>
 
         <details className="snapshot" style={{ marginTop: 12 }}>
           <summary>指导记录（{supervision?.guidance.length ?? 0}）</summary>

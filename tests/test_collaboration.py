@@ -683,14 +683,18 @@ def test_t10d_extract_question_answer():
     good = ('```json\n{"schema_version":1,"answers":{"q0":"L20"},'
             '"reason_md":"只有 L20 配额"}\n```')
     ans = extract_question_answer(good)
-    assert ans and ans["answers"] == {"q0": "L20"}
+    assert ans and ans["native_answers"] == {"q0": "L20"}
+    assert ans["answer_md"] == "只有 L20 配额"
+    free = extract_question_answer('{"schema_version":1,"message_type":"research_answer",'
+                                   '"request_id":"r","answer_md":"第三路线",'
+                                   '"evidence_refs":[],"native_answers":null}')
+    assert free and free["native_answers"] is None
     assert extract_question_answer('{"schema_version":1,"answers":{}}') is None
     assert extract_question_answer("没有任何 JSON") is None
 
 
 async def test_t10e_executor_question_routed_to_brain():
-    """执行器 AskUserQuestion → 大脑回答：入队 executor_question 审阅，
-    回答经选项校验后返回；自创选项的回答必须拒收（None→适配层 decline）。"""
+    """Native questions keep an open judgment and legal form mapping separate."""
     _seed_challenge()
     c, brain, ex = _rig()
     rid = c.create_run("COLLAB_CH", shadow_enabled=False)["id"]
@@ -716,18 +720,20 @@ async def test_t10e_executor_question_routed_to_brain():
     await brain.results.put({"question_answer": {
         "answers": {"q0": "L20"}, "reason_md": "配额只有 L20"}})
     answer = await asyncio.wait_for(task, 5)
-    assert answer and answer["answers"] == {"q0": "L20"}
+    assert answer and answer["native_answers"] == {"q0": "L20"}
+    assert answer["answer_md"] == "配额只有 L20"
     rows = db.query("SELECT type FROM events WHERE run_id=?"
                     " AND type='brain.question_answered'", (rid,))
     assert len(rows) == 1, "大脑回答必须留痕"
-    # 自创选项的回答必须拒收
+    # 选项外判断保留完整正文，表单只能 decline。
     task2 = asyncio.create_task(ask())
     assert await _wait(lambda: len([p for p in brain.calls if p.get(
         "protocol") == "executor_question"]) >= 2)
     await brain.results.put({"question_answer": {
         "answers": {"q0": "H100"}, "reason_md": "自创选项"}})
     answer2 = await asyncio.wait_for(task2, 5)
-    assert answer2 is None, "值不在选项内的回答必须拒收"
+    assert answer2 and answer2["answer_md"] == "自创选项"
+    assert answer2["native_answers"] is None
     await c.control(rid, "terminate", None, "op-term-t10e")
 
 def test_t11_experience_revision_reaches_frame_body():
@@ -1214,10 +1220,15 @@ async def test_reconcile_and_resume_after_restart():
 
 
 async def test_periodic_shadow_wakes_brain_when_executor_silent():
-    """时间兜底：只有心跳/进度事件时，到 max_interval 也唤起大脑看一眼。"""
+    """Old Run snapshots retain their periodic supervision semantics."""
     _seed_challenge()
     c, brain, ex = _rig(shadow=True, max_interval=0.2)
     rid = c.create_run("COLLAB_CH", shadow_enabled=True)["id"]
+    old = json.loads(db.query_one("SELECT config_snapshot FROM runs WHERE id=?",
+                                  (rid,))["config_snapshot"])
+    old.pop("sparse_brain_version")
+    db.execute("UPDATE runs SET config_snapshot=? WHERE id=?",
+               (json.dumps(old), rid))
     await _start(c, brain, rid)
     n0 = len(brain.calls)
     # 只来心跳（非触发词表），等时间兜底
@@ -1238,6 +1249,251 @@ async def test_periodic_shadow_wakes_brain_when_executor_silent():
     await asyncio.sleep(0.6)
     assert len(brain.calls) == n, "无新事件时 periodic 自激"
     await c.control(rid, "terminate", None, "op-term-periodic")
+
+
+async def test_sparse_brain_normal_progress_does_not_periodically_review():
+    _seed_challenge()
+    c, brain, ex = _rig(shadow=True, max_interval=0.2)
+    rid = c.create_run("COLLAB_CH", shadow_enabled=True)["id"]
+    trial_id = await _start(c, brain, rid)
+    db.execute("INSERT INTO compute_jobs(operation_id,run_id,trial_id,request_hash,"
+               "spec_json,input_directory,status,created_at,updated_at)"
+               " VALUES(?,?,?,?,?,?,?,?,?)",
+               ("op-long", rid, trial_id, "hash", "{}", "/tmp/fake",
+                "Running", db.utcnow(), db.utcnow()))
+    count = len(brain.calls)
+    await ex.emit({"type": "execution.progress", "detail": "正常长任务仍在进行"})
+    await ex.emit({"type": "trial.stalled", "detail": "执行器在等待 Job"})
+    await asyncio.sleep(0.6)
+    assert len(brain.calls) == count
+    assert db.query_one("SELECT status FROM trials WHERE id=?",
+                        (trial_id,))["status"] == "active"
+    assert db.query_one("SELECT 1 FROM review_requests WHERE run_id=?"
+                        " AND trigger='periodic'", (rid,)) is None
+    collab.submit_checkpoint(rid, _cp_msg("milestone", review="none"),
+                             source="executor", notify=c.notify_run_change)
+    assert await _wait(lambda: len(brain.calls) > count)
+    await brain.results.put({"review_result": _review_result(
+        brain.calls[-1]["frame_id"])})
+    await c.control(rid, "terminate", None, "op-term-sparse-periodic")
+
+
+async def test_sparse_brain_open_answer_optional_read_and_delivery():
+    """Actual controller + MCP HTTP + fake native sessions + outbox."""
+    from httpx import ASGITransport, AsyncClient
+    from cyberscientist.api import create_app
+
+    class SelectiveBrain(ScriptableBrain):
+        def __init__(self):
+            super().__init__()
+            self.question_count = 0
+            self.reads = []
+            self.target_ref = ""
+
+        def review(self, session, packet):
+            if packet.get("protocol") != "executor_question":
+                return super().review(session, packet)
+
+            async def gen():
+                self.calls.append(packet)
+                self.question_count += 1
+                refs = []
+                if self.question_count == 2:
+                    token = self.open_spec["env"]["CS_TOOL_TOKEN"]
+                    headers = {"Authorization": f"Bearer {token}"}
+                    async with AsyncClient(transport=ASGITransport(app=create_app()),
+                                           base_url="http://test") as cli:
+                        listing = await cli.post("/api/v1/tools/trace",
+                                                 json={"action": "list", "keyword": "失败回执"},
+                                                 headers=headers)
+                        assert listing.status_code == 200, listing.text
+                        assert any(x["ref"] == self.target_ref
+                                   for x in listing.json()["items"])
+                        reading = await cli.post("/api/v1/tools/trace",
+                                                 json={"action": "read", "ref": self.target_ref},
+                                                 headers=headers)
+                        assert reading.status_code == 200, reading.text
+                        self.reads.append(reading.json())
+                    refs = [self.target_ref]
+                body = (("需要先保留成功几何，再核实频率失败阶段；独立产物可以继续。" * 20)
+                        if self.question_count == 1 else
+                        "回执显示失败；先确认实际失败阶段，再决定资源变化。")
+                yield BrainEvent("question_answer", {
+                    "schema_version": 1, "message_type": "research_answer",
+                    "request_id": packet["request_id"], "answer_md": body,
+                    "evidence_refs": refs, "native_answers": None})
+            return gen()
+
+    _seed_challenge()
+    c, _, ex = _rig(shadow=False)
+    brain = SelectiveBrain()
+    c._make_brain = lambda settings: brain
+    rid = c.create_run("COLLAB_CH", shadow_enabled=False)["id"]
+    await _start(c, brain, rid)
+    token = brain.open_spec["env"]["CS_TOOL_TOKEN"]
+    assert collab.validate_token(token)["role"] == "brain"
+    assert brain.open_spec["instructions"].find("research_trace") >= 0
+    assert "enabled_skills" not in brain.open_spec["instructions"]
+
+    question = {"message": "频率失败，是否直接把内存加倍？",
+                "questions": [{"id": "q0", "required": True,
+                               "options": [{"const": "是"}, {"const": "否"}]}]}
+    first = _cp_msg("research-one", review="async", report="执行器建议加倍")
+    first["research_question"] = question
+    receipt = collab.submit_checkpoint(rid, first, source="executor",
+                                       notify=c.notify_run_change)
+    assert receipt["review_id"] and receipt["next_action"] == "continue"
+    assert await _wait(lambda: db.query_one(
+        "SELECT status FROM review_requests WHERE id=?",
+        (receipt["review_id"],))["status"] == "done")
+    assert db.query_one("SELECT COUNT(*) AS n FROM events WHERE run_id=?"
+                        " AND type='brain.trace_read'", (rid,))["n"] == 0
+    first_answer = json.loads(db.query_one(
+        "SELECT result_json FROM review_requests WHERE id=?",
+        (receipt["review_id"],))["result_json"])
+    assert len(first_answer["answer_md"]) > 500
+    assert first_answer["native_answers"] is None
+    assert collab.submit_checkpoint(rid, first, source="executor",
+                                    notify=c.notify_run_change)["deduplicated"]
+    await ex.turn_done()
+    assert await _wait(lambda: any(first_answer["answer_md"] in p[1]
+                                   for p in ex.prompts))
+    guides = db.query("SELECT id FROM guidance WHERE review_request_id=?",
+                      (receipt["review_id"],))
+    assert len(guides) == 1
+    assert collab.ack_guidance(rid, {"schema_version": 1,
+                                     "message_type": "guidance_ack",
+                                     "guidance_id": guides[0]["id"],
+                                     "disposition": "accepted",
+                                     "reason_md": "将核查失败阶段"})["status"] == "acknowledged"
+    assert collab.validate_token(token), "执行器会话签发不可撤销大脑令牌"
+
+    other = db.append_event(rid, "executor", "prime.execution.progress",
+                            {"detail": "失败回执", "status": "failed",
+                             "output": "失败回执：频率阶段退出"})
+    brain.target_ref = f"event:{rid}:{other['seq']}"
+    second = _cp_msg("research-two", review="async", report="再次建议加倍")
+    second["research_question"] = question
+    next_receipt = collab.submit_checkpoint(rid, second, source="executor",
+                                            notify=c.notify_run_change)
+    assert await _wait(lambda: db.query_one(
+        "SELECT status FROM review_requests WHERE id=?",
+        (next_receipt["review_id"],))["status"] == "done")
+    assert brain.reads and brain.reads[0]["source_seq"] == other["seq"]
+    assert "failed" in brain.reads[0]["content"]
+    await ex.turn_done()
+    second_answer = json.loads(db.query_one(
+        "SELECT result_json FROM review_requests WHERE id=?",
+        (next_receipt["review_id"],))["result_json"])
+    assert await _wait(lambda: any(second_answer["answer_md"] in p[1]
+                                   for p in ex.prompts))
+    status = c.supervision_status(rid)
+    assert {a["id"]: a["delivery_status"]
+            for a in status["research_answers"]}[receipt["review_id"]] == "acknowledged"
+    assert {read["action"] for read in status["trace_reads"]} == {"list", "read"}
+    assert len([p for p in brain.calls if p.get("protocol") == "executor_question"]) == 2
+    await c.control(rid, "terminate", None, "op-term-sparse-e2e")
+
+
+async def test_sparse_trace_scope_and_role_restrictions():
+    from httpx import ASGITransport, AsyncClient
+    from cyberscientist.api import create_app
+
+    _seed_challenge()
+    c = RunController()
+    rid = c.create_run("COLLAB_CH", shadow_enabled=False)["id"]
+    db.execute("UPDATE runs SET phase='running' WHERE id=?", (rid,))
+    db.execute("INSERT INTO supervision(run_id,enabled,updated_at) VALUES(?,0,?)",
+               (rid, db.utcnow()))
+    before = db.append_event(rid, "executor", "job.unknown",
+                             {"operation_id": "op-a", "detail": "sk-secretvalue"})
+    with db.transaction() as conn:
+        brain_token = collab.issue_token(conn, rid, "brain", "b", 1)
+        executor_token = collab.issue_token(conn, rid, "executor", "e", 1)
+        rev = collab._enqueue_request_tx(conn, rid, source="executor",
+                                        blocking=False, trigger="research_question")
+        conn.execute("UPDATE review_requests SET status='running',through_seq=?"
+                     " WHERE id=?", (before["seq"], rev))
+        collab.revoke_role_tokens(conn, rid, "executor")
+    assert collab.validate_token(brain_token)
+    future = db.append_event(rid, "executor", "job.observed", {"operation_id": "op-a"})
+    headers = {"Authorization": f"Bearer {brain_token}"}
+    async with AsyncClient(transport=ASGITransport(app=create_app()),
+                           base_url="http://test") as cli:
+        denied_write = await cli.post("/api/v1/tools/checkpoint", json=_cp_msg("x"),
+                                      headers=headers)
+        assert denied_write.status_code == 403
+        denied_job = await cli.post("/api/v1/tools/job", json={"action": "list"},
+                                    headers=headers)
+        assert denied_job.status_code == 403
+        assert (await cli.post("/api/v1/tools/trace", json={"action": "list"},
+                               headers={"Authorization": f"Bearer {executor_token}"})).status_code == 401
+        good = await cli.post("/api/v1/tools/trace", json={
+            "action": "read", "ref": f"event:{rid}:{before['seq']}"}, headers=headers)
+        assert good.status_code == 200
+        assert "sk-secretvalue" not in good.json()["content"]
+        for ref in (f"event:{rid}:{future['seq']}", f"event:other-run:{before['seq']}"):
+            assert (await cli.post("/api/v1/tools/trace", json={
+                "action": "read", "ref": ref}, headers=headers)).status_code == 409
+        db.execute("UPDATE review_requests SET status='done' WHERE id=?", (rev,))
+        assert (await cli.post("/api/v1/tools/trace", json={
+            "action": "list"}, headers=headers)).status_code == 409
+
+
+def test_sparse_trace_frozen_manifest_requires_matching_saved_version():
+    from cyberscientist import research_trace
+
+    _seed_challenge()
+    c = RunController()
+    rid = c.create_run("COLLAB_CH", shadow_enabled=False)["id"]
+    db.execute("UPDATE runs SET phase='running' WHERE id=?", (rid,))
+    event = db.append_event(rid, "controller", "job.accepted",
+                            {"operation_id": "op-frozen"})
+    db.execute("INSERT INTO compute_jobs(operation_id,run_id,trial_id,request_hash,"
+               "spec_json,input_directory,status,created_at,updated_at)"
+               " VALUES(?,?,?,?,?,?,?,?,?)",
+               ("op-frozen", rid, "trial-frozen", "hash-v1", "{}", "/tmp/fake", "reserved",
+                db.utcnow(), db.utcnow()))
+    path = config.DATA_DIR / "job-inputs" / "op-frozen" / "manifest.json"
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps({"request_hash": "hash-v1", "files": []}),
+                    encoding="utf-8")
+    rev = collab._enqueue_request_tx(db.get_db(), rid, source="executor",
+                                    blocking=False, trigger="research_question")
+    db.execute("UPDATE review_requests SET status='running',through_seq=?"
+               " WHERE id=?", (event["seq"], rev))
+    result = research_trace.access(rid, {"action": "read", "ref": "manifest:op-frozen"})
+    assert result["source_seq"] == event["seq"]
+    assert result["version"].startswith("saved-manifest-sha256:")
+    path.write_text(json.dumps({"request_hash": "different", "files": []}),
+                    encoding="utf-8")
+    with pytest.raises(research_trace.TraceError):
+        research_trace.access(rid, {"action": "read", "ref": "manifest:op-frozen"})
+
+
+def test_sparse_native_form_decline_and_valid_accept():
+    from cyberscientist.prime.kimi_acp import (
+        _is_research_elicitation, _native_question_response)
+    params = {"requestedSchema": {"type": "object", "properties": {
+        "q0": {"type": "string", "enum": ["是", "否"]}}, "required": ["q0"]}}
+    free = {"answer_md": "先查失败阶段", "native_answers": None}
+    assert _native_question_response("elicitation/create", params, free) == (
+        {"action": "decline"}, "declined")
+    assert _native_question_response("elicitation/create", params, {
+        "native_answers": {"q0": "是"}}) == (
+        {"action": "accept", "content": {"q0": "是"}}, "mapped")
+    assert _native_question_response("elicitation/create", params, {
+        "native_answers": {"q0": "第三路线"}}) == (
+        {"action": "decline"}, "declined")
+    form = {"mode": "form", "toolCallId": "tool-1", "requestedSchema": {
+        "properties": {"q0": {"oneOf": [{"const": "是"}, {"const": "否"}]}}}}
+    assert _is_research_elicitation(form, {"tool-1": "AskUserQuestion"})
+    assert not _is_research_elicitation(form, {"tool-1": "LocalPermission"})
+    assert not _is_research_elicitation(form, {})
+    assert not _is_research_elicitation({"mode": "form", "toolCallId": "tool-1",
+        "requestedSchema": {"properties": {
+            "local_permission": {"oneOf": [{"const": "允许"}]}}}},
+        {"tool-1": "AskUserQuestion"})
 
 
 # ---------- 经验闭环（自进化：直接生效/审批/整理/回联）----------

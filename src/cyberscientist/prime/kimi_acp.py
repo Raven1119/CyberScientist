@@ -40,6 +40,19 @@ def _is_question_options(options: list[dict[str, Any]]) -> bool:
                for o in options)
 
 
+def _is_research_elicitation(params: dict[str, Any],
+                             tool_titles: dict[str, str]) -> bool:
+    """Only the observed AskUserQuestion qN form enters the research session."""
+    if (params.get("mode", "form") != "form" or
+            tool_titles.get(str(params.get("toolCallId", ""))) != "AskUserQuestion"):
+        return False
+    props = (params.get("requestedSchema") or {}).get("properties")
+    return isinstance(props, dict) and bool(props) and all(
+        re.fullmatch(r"q\d+", str(qid)) and isinstance(spec, dict)
+        and isinstance(spec.get("oneOf"), list) and spec["oneOf"]
+        for qid, spec in props.items())
+
+
 def _question_from_elicitation(params: dict[str, Any]) -> dict[str, Any]:
     """elicitation/create（form 模式）→ 统一问题载荷。"""
     schema = params.get("requestedSchema") or {}
@@ -87,6 +100,26 @@ def _permission_pick(params: dict[str, Any],
             if str(o["const"]) == wanted.get(q["id"]):
                 return o["option_id"]
     return None
+
+
+def _native_question_response(method: str, params: dict[str, Any],
+                              answer: dict[str, Any] | None) -> tuple[dict, str]:
+    """Map only a genuinely representable answer to the native form."""
+    native = answer.get("native_answers") if answer else None
+    if native is None and answer:  # old Run compatibility
+        native = answer.get("answers")
+    if method == "elicitation/create":
+        if isinstance(native, dict) and native:
+            try:
+                import jsonschema
+                jsonschema.validate(native, params["requestedSchema"])
+            except (KeyError, TypeError, jsonschema.ValidationError, jsonschema.SchemaError):
+                native = None
+        return (({"action": "accept", "content": native}, "mapped")
+                if native else ({"action": "decline"}, "declined"))
+    picked = _permission_pick(params, native) if isinstance(native, dict) else None
+    return (({"outcome": {"outcome": "selected", "optionId": picked}}, "mapped")
+            if picked else ({"outcome": {"outcome": "cancelled"}}, "declined"))
 
 
 def map_update(u: dict[str, Any]) -> dict[str, Any] | None:
@@ -345,6 +378,7 @@ class KimiExecutor:
     async def _pump(self, sess: _Session) -> None:
         rpc = sess.rpc
         thought_buf: list[str] = []
+        tool_titles: dict[str, str] = {}
 
         async def flush_thought() -> None:
             if thought_buf:
@@ -369,6 +403,10 @@ class KimiExecutor:
                         if sum(len(t) for t in thought_buf) > 400:
                             await flush_thought()
                 elif kind in ("tool_call", "tool_call_update"):
+                    if kind == "tool_call" and u.get("toolCallId"):
+                        tool_titles[str(u["toolCallId"])] = str(u.get("title", ""))
+                        if len(tool_titles) > 256:
+                            tool_titles.pop(next(iter(tool_titles)))
                     mapped = map_update(u)
                     if mapped:
                         await flush_thought()
@@ -400,32 +438,14 @@ class KimiExecutor:
                 except Exception:  # noqa: BLE001
                     answer = None
             try:
-                if answer and answer.get("answers"):
-                    if req.get("method") == "elicitation/create":
-                        await rpc.respond(req["id"], result={
-                            "action": "accept", "content": answer["answers"]})
-                    else:
-                        picked = _permission_pick(params, answer["answers"])
-                        if picked:
-                            await rpc.respond(req["id"], result={
-                                "outcome": {"outcome": "selected",
-                                            "optionId": picked}})
-                        else:
-                            await rpc.respond(req["id"], result={
-                                "outcome": {"outcome": "cancelled"}})
-                    await sess.queue.put({
-                        "type": "execution.progress",
-                        "detail": "大脑回答: " + json.dumps(
-                            answer["answers"], ensure_ascii=False)[:150]})
-                else:
-                    if req.get("method") == "elicitation/create":
-                        await rpc.respond(req["id"], result={"action": "decline"})
-                    else:
-                        await rpc.respond(req["id"], result={
-                            "outcome": {"outcome": "cancelled"}})
-                    await sess.queue.put({
-                        "type": "execution.progress",
-                        "detail": "提问未获大脑回答（超时/额度/错误），已如实拒绝"})
+                native_result, mapped = _native_question_response(
+                    req.get("method", ""), params, answer)
+                await rpc.respond(req["id"], result=native_result)
+                await sess.queue.put({
+                    "type": "execution.progress",
+                    "detail": ("研究回答已保存；原生表单" +
+                               ("已合法映射" if mapped == "mapped" else "已拒绝；正文待自然边界投递"))
+                              if answer else "提问未获大脑回答（超时/额度/错误），已拒绝"})
             except ProtocolError:
                 pass
 
@@ -434,12 +454,22 @@ class KimiExecutor:
             # AskUserQuestion 的提问（elicitation/create 或 q*_opt_* 权限形状）
             # 路由给大脑回答。
             async for req in rpc.server_requests():
-                if req.get("method") == "elicitation/create":
+                if req.get("method") == "elicitation/create" and \
+                        _is_research_elicitation(req.get("params", {}), tool_titles):
                     await answer_question_request(req)
+                    continue
+                if req.get("method") == "elicitation/create":
+                    # An arbitrary native form is not research advice. The
+                    # executor cannot sign unknown user input or authorization.
+                    try:
+                        await rpc.respond(req["id"], result={"action": "decline"})
+                    except ProtocolError:
+                        pass
                     continue
                 if req.get("method") == "session/request_permission":
                     options = req.get("params", {}).get("options", [])
-                    if _is_question_options(options):
+                    if (_is_question_options(options) and
+                            (req.get("params", {}).get("toolCall") or {}).get("title") == "AskUserQuestion"):
                         await answer_question_request(req)
                         continue
                     allow = next((o for o in options

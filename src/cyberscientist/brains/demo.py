@@ -24,6 +24,13 @@ class DemoBrain:
 
     async def review(self, session: SessionRef,
                      packet: dict[str, Any]) -> AsyncIterator[BrainEvent]:
+        if packet.get("protocol") == "executor_question":
+            yield BrainEvent("question_answer", {
+                "schema_version": 1, "message_type": "research_answer",
+                "request_id": packet.get("request_id"),
+                "answer_md": "演示回答：先核对已保存证据，再决定后续研究方向。",
+                "evidence_refs": [], "native_answers": None})
+            return
         if packet.get("protocol") == "experience_curation":
             yield BrainEvent("curation_result", {"result": {
                 "schema_version": 1, "message_type": "curation_result",

@@ -8,6 +8,7 @@ import sys
 import pytest
 
 from cyberscientist.brains.codex import CodexBrain
+from cyberscientist.brains.kimi import KimiBrain
 from cyberscientist.codex_protocol import native_brain_environment, thread_params
 
 
@@ -64,7 +65,7 @@ def test_filtered_child_process_does_not_inherit_parent_business_keys(monkeypatc
     assert not set(BUSINESS_ENV) & child_names
 
 
-@pytest.mark.parametrize("entrypoint", ["open", "inspect"])
+@pytest.mark.parametrize("entrypoint", ["open", "open_mcp", "inspect"])
 @pytest.mark.parametrize("parent_env", [{}, {**NATIVE_ENV, **BUSINESS_ENV}])
 async def test_both_brain_entrypoints_supply_explicit_filtered_environment(
     monkeypatch, tmp_path, entrypoint, parent_env,
@@ -103,13 +104,26 @@ async def test_both_brain_entrypoints_supply_explicit_filtered_environment(
     if entrypoint == "inspect":
         health = await brain.inspect()
         assert health.installed and health.version == "0.155.1"
+    elif entrypoint == "open_mcp":
+        session = await brain.open({"working_directory": str(tmp_path),
+                                    "env": {**BUSINESS_ENV, "CS_TOOL_ROLE": "brain",
+                                            "CS_API_URL": "http://127.0.0.1:8765"},
+                                    "mcp_servers": [{"name": "cyberscientist",
+                                                     "command": sys.executable,
+                                                     "args": ["-m", "cyberscientist.mcp_bridge"]}]})
+        await brain.close(session)
     else:
         # A caller's executor environment must not widen a brain's environment.
         session = await brain.open({"working_directory": str(tmp_path),
                                     "env": BUSINESS_ENV})
         await brain.close(session)
     assert len(captured) == 1
-    assert captured[0].kwargs["env"] == (NATIVE_ENV if parent_env else {})
+    expected = NATIVE_ENV.copy() if parent_env else {}
+    if entrypoint == "open_mcp":
+        expected.update({"CS_TOOL_TOKEN": "fixture-capability",
+                         "CS_TOOL_ROLE": "brain",
+                         "CS_API_URL": "http://127.0.0.1:8765"})
+    assert captured[0].kwargs["env"] == expected
     assert all(value not in repr(captured[0].argv) for value in BUSINESS_ENV.values())
 
 
@@ -129,3 +143,39 @@ def test_brain_native_shell_policy_excludes_auth_and_keeps_read_only_sandbox():
     assert "sandbox_workspace_write.network_access" not in cfg
     assert "sandbox_workspace_write.writable_roots" not in cfg
     assert not any(value in json.dumps(params) for value in BUSINESS_ENV.values())
+
+
+async def test_kimi_brain_passes_only_run_mcp_capability_to_native_session(
+        monkeypatch, tmp_path):
+    captured = []
+
+    class CaptureRpc:
+        def __init__(self, argv, **kwargs):
+            self.kwargs = kwargs
+            self.calls = []
+            captured.append(self)
+
+        async def start(self):
+            pass
+
+        async def stop(self):
+            pass
+
+        async def request(self, method, params=None, **kwargs):
+            self.calls.append((method, params))
+            return {"sessionId": "fixture-session"} if method == "session/new" else {}
+
+    monkeypatch.setattr(os, "environ", {**NATIVE_ENV, **BUSINESS_ENV})
+    monkeypatch.setattr("cyberscientist.brains.kimi.JsonRpcStdio", CaptureRpc)
+    server = {"name": "cyberscientist", "command": sys.executable,
+              "args": ["-m", "cyberscientist.mcp_bridge"]}
+    brain = KimiBrain(sys.executable)
+    session = await brain.open({"working_directory": str(tmp_path),
+                                "env": {**BUSINESS_ENV, "CS_TOOL_ROLE": "brain",
+                                        "CS_API_URL": "http://127.0.0.1:8765"},
+                                "mcp_servers": [server]})
+    assert captured[0].kwargs["env"]["CS_TOOL_TOKEN"] == "fixture-capability"
+    assert captured[0].kwargs["env"]["CS_TOOL_ROLE"] == "brain"
+    assert not {"BOHR_ACCESS_KEY", "CS_BACKEND_SECRET"} & set(captured[0].kwargs["env"])
+    assert ("session/new", {"cwd": str(tmp_path), "mcpServers": [server]}) in captured[0].calls
+    await brain.close(session)

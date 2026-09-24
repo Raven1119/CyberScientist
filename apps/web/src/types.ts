@@ -308,6 +308,17 @@ export interface SupervisionStatus {
   executor_busy: boolean
   pending_requests: SupervisionPendingRequest[]
   guidance: SupervisionGuidance[]
+  research_answers?: {
+    id: string; status: string; trigger: string; answer_md: string | null
+    native_form: string; guidance_id: string | null; delivery_status: string | null
+    delivery_channel: string | null; ack_disposition: string | null
+    evidence_refs: string[]; error: string | null; created_at: string
+  }[]
+  trace_reads?: {
+    seq: number; review_id: string; action: string; ref?: string | null
+    source_seq?: number | null; through_seq: number; recorded_at: string
+  }[]
+  last_wake?: { trigger: string; source: string; created_at: string } | null
   latest_seq: number
 }
 

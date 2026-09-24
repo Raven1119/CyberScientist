@@ -11,9 +11,26 @@
     },
     {
       "$ref": "#/$defs/GuidanceAck"
+    },
+    {
+      "$ref": "#/$defs/ResearchAnswer"
     }
   ],
   "$defs": {
+    "ResearchAnswer": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "schema_version": {"const": 1},
+        "message_type": {"const": "research_answer"},
+        "request_id": {"type": "string", "minLength": 1},
+        "answer_md": {"type": "string", "minLength": 1, "maxLength": 12000},
+        "evidence_refs": {"type": "array", "maxItems": 32,
+          "items": {"type": "string", "minLength": 1, "maxLength": 256}},
+        "native_answers": {"type": ["object", "null"]}
+      },
+      "required": ["schema_version", "message_type", "request_id",
+                    "answer_md", "evidence_refs", "native_answers"]
+    },
     "Checkpoint": {
       "type": "object",
       "additionalProperties": false,
@@ -47,6 +64,15 @@
           "type": "string",
           "minLength": 1,
           "maxLength": 12000
+        },
+        "research_question": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "message": {"type": "string", "minLength": 1, "maxLength": 4000},
+            "questions": {"type": "array", "maxItems": 8, "items": {"type": "object"}}
+          },
+          "required": ["message"]
         },
         "evidence_refs": {
           "type": "array",

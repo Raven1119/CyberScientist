@@ -171,7 +171,8 @@ def build_frame(run_id: str, *, mode: str, frame_id: str,
                 from_seq: int, through_seq: int,
                 shadow_cfg: dict[str, Any],
                 request: dict[str, Any] | None = None,
-                run_defaults: dict[str, Any] | None = None) -> dict[str, Any]:
+                run_defaults: dict[str, Any] | None = None,
+                sparse: bool = False) -> dict[str, Any]:
     """只读投影；frame 落库后即为审阅的不可变输入。"""
     run = db.query_one("SELECT * FROM runs WHERE id=?", (run_id,))
     if not run:
@@ -208,7 +209,8 @@ def build_frame(run_id: str, *, mode: str, frame_id: str,
         "SELECT COUNT(*) AS n FROM checkpoints WHERE run_id=?", (run_id,))
     checkpoint_summaries = []
     for cp in reversed(cps):
-        report, clip = _clip(strip_secrets(cp["report"]), _MAX_CHECKPOINT_EACH)
+        report, clip = _clip(strip_secrets(cp["report"]),
+                             320 if sparse else _MAX_CHECKPOINT_EACH)
         truncated |= clip
         checkpoint_summaries.append({
             "checkpoint_id": cp["id"], "stage": cp["stage"],
@@ -227,7 +229,10 @@ def build_frame(run_id: str, *, mode: str, frame_id: str,
             detail = str(e["payload"].get("detail", ""))
             key = "tool_failed" if "失败" in detail else "tool_activity"
             activity[key] = activity.get(key, 0) + 1
-        if e["type"] in _NOTABLE:
+        if e["type"] in _NOTABLE and (not sparse or e["type"] in (
+                "trial.stalled", "trial.done", "trial.reported_complete",
+                "checkpoint.created", "submission.scored",
+                "submission.score_corrected", "run.blocked")):
             notable.append({"seq": e["seq"], "source": e["source"],
                             "type": e["type"],
                             "excerpt": strip_secrets(json.dumps(
@@ -238,7 +243,7 @@ def build_frame(run_id: str, *, mode: str, frame_id: str,
         truncated = True
 
     # 执行器实质进展摘要：关键状态变化不能只存在于执行器思考流里
-    digest, digest_omitted = executor_digest(events)
+    digest, digest_omitted = ([], 0) if sparse else executor_digest(events)
     omitted += digest_omitted
     truncated = truncated or digest_omitted > 0
 
@@ -258,6 +263,16 @@ def build_frame(run_id: str, *, mode: str, frame_id: str,
                         (run["authorization_id"],)) \
         if run["authorization_id"] else None
 
+    if sparse:
+        # Research context carries coarse milestones and receipts. Full tool
+        # output is available only through an explicit research_trace read.
+        notable = [e for e in notable if e["type"] in (
+            "trial.stalled", "trial.done", "trial.reported_complete",
+            "checkpoint.created", "submission.scored",
+            "submission.score_corrected", "run.blocked")]
+        for item in notable:
+            item["excerpt"] = item["excerpt"][:120]
+
     return {
         "frame_id": frame_id,
         "mode": mode,
@@ -276,6 +291,8 @@ def build_frame(run_id: str, *, mode: str, frame_id: str,
         "checkpoint_summaries": checkpoint_summaries,
         "notable_events": notable,
         "executor_digest": digest,
+        "trace_access": ({"tool": "research_trace", "optional": True,
+                          "through_seq": through_seq} if sparse else None),
         "compute_jobs": job_states(run_id, through_seq),
         "activity_counts": activity,
         "metrics": score_deltas(events),

@@ -12,6 +12,7 @@ from .jsonrpc_stdio import JsonRpcStdio
 
 CLIENT_INFO = {"name": "cyberscientist", "version": "0.1.0"}
 COLLAB_TOOLS = ("research_checkpoint", "ack_guidance", "research_job")
+BRAIN_TOOLS = ("research_trace",)
 
 
 # Native authentication stays in Codex's own HOME/CODEX_HOME. This allowlist
@@ -91,10 +92,11 @@ def thread_params(spec: dict[str, Any], model: str | None,
         if server["name"] == "cyberscientist":
             # Only the controller's capability-scoped bridge is pre-authorized.
             # New/future tools stay unavailable until explicitly integrated.
+            allowed_tools = COLLAB_TOOLS if writable else BRAIN_TOOLS
             cfg["mcp_servers"][server["name"]].update({
-                "enabled_tools": list(COLLAB_TOOLS),
+                "enabled_tools": list(allowed_tools),
                 "tools": {name: {"approval_mode": "approve"}
-                          for name in COLLAB_TOOLS},
+                          for name in allowed_tools},
             })
     if cfg:
         params["config"] = cfg

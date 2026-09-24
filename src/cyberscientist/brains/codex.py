@@ -100,8 +100,12 @@ class CodexBrain:
     async def open(self, spec: dict[str, Any]) -> SessionRef:
         if not self.executable:
             raise RuntimeError("codex 未安装或未配置")
+        env = native_brain_environment()
+        if spec.get("mcp_servers"):
+            env.update({k: v for k, v in (spec.get("env") or {}).items()
+                        if k in ("CS_TOOL_TOKEN", "CS_TOOL_ROLE", "CS_API_URL")})
         self.rpc = JsonRpcStdio([self.executable, "app-server"],
-                                env=native_brain_environment(),
+                                env=env,
                                 cwd=spec.get("working_directory"),
                                 name="codex-app-server")
         try:
@@ -230,6 +234,7 @@ class CodexBrain:
 
     @staticmethod
     def _render_prompt(packet: dict[str, Any]) -> str:
+        optional_read = packet.get("sparse_brain_version") == 1
         if packet.get("protocol") == "experience_curation":
             from ..curation import prompt
             return prompt(packet)
@@ -255,24 +260,28 @@ class CodexBrain:
                 "kind=submit：结果包已可提交时发出；仅在已有 Run 授权、提交预算"
                 "和去重检查通过后，系统自动用实验邮箱提交（不投递给执行器），"
                 "随后异步等待评分；不扩大正式提交授权。\n"
-                "只输出一个 JSON 代码块，不要输出其他文字。\n\n"
-                f"ObservationFrame:\n```json\n"
+                + ("只输出一个 JSON 代码块；可按需使用 research_trace，零读取可直接判断。\n\n"
+                 if optional_read else "只输出一个 JSON 代码块，不使用工具。\n\n")
+                + f"ObservationFrame:\n```json\n"
                 f"{json.dumps(packet, ensure_ascii=False)}\n```"
             )
         return (
-            "你是 CyberScientist 的大脑，负责研究方向的判断，不直接执行工具。\n"
+            "你是 CyberScientist 的大脑，负责研究方向的判断。\n"
             "以当前用户目标、Run 意图与授权为准。持续提出可检验假设并用真实证据迭代，"
             "不把满分或耗尽预算设为默认停止前提。若用户目标是观察系统闭环，"
             "在真实提交、评分反馈与经验提取完成且观察充分后可以 finish，"
             "明确停止依据和仍未知的事项。pause 用于必须等用户才能推进的抉择。\n"
             + (
                 "本次 trigger=run_start：先核对输入中的官方题面、资源路径和评分约束。"
-                "需要补证时使用已开放的只读工具；网络失败记录 unknown，"
-                "根据已有证据启动不依赖该缺项的有界 Trial。首个 Trial 写清待检验假设、"
+                + ("需要补证时可按需读取已登记的公开轨迹；缺项记录 unknown，"
+                 if optional_read else
+                 "需要补证时使用已开放的只读工具；网络失败记录 unknown，")
+                + "根据已有证据启动不依赖该缺项的有界 Trial。首个 Trial 写清待检验假设、"
                 "资源试算、产物及停止条件；不以确认满分可达为启动条件。"
                 "每项判断标明已读来源，外部指导单独归因。\n"
                 if packet.get("trigger") == "run_start" else
-                "不要使用任何工具。\n"
+                ("必要时仅使用 research_trace 按需读取；不要求先读后答。\n"
+                 if optional_read else "不要使用任何工具。\n")
             ) +
             "根据下面的 ReviewPacket 做出一次判断。只输出一个 JSON 代码块，不要输出其他文字。\n\n"
             "Decision 结构（必须严格遵守，不得增删顶层字段）：\n"

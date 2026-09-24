@@ -44,10 +44,28 @@ def extract_review_result(text: str) -> dict[str, Any] | None:
 
 
 def extract_question_answer(text: str) -> dict[str, Any] | None:
-    """执行器提问的大脑回答：{"answers": {"q0": "..."}, "reason_md": "..."}。"""
+    """研究正文是主答案；旧 choices 输出仅作为可读的历史兼容。"""
     obj = _extract_json(text)
-    if obj is None or not isinstance(obj.get("answers"), dict) \
-            or not obj["answers"]:
+    if obj is None:
         return None
-    return {"answers": obj["answers"],
-            "reason_md": str(obj.get("reason_md", ""))[:500]}
+    if obj.get("message_type") == "research_answer":
+        body = obj.get("answer_md")
+        native = obj.get("native_answers")
+        if not isinstance(body, str) or not body.strip() or len(body) > 12000:
+            return None
+        if native is not None and not isinstance(native, dict):
+            return None
+        refs = obj.get("evidence_refs", [])
+        if not isinstance(refs, list) or any(not isinstance(ref, str) for ref in refs):
+            return None
+        return {"schema_version": 1, "message_type": "research_answer",
+                "request_id": obj.get("request_id"), "answer_md": body,
+                "evidence_refs": refs, "native_answers": native}
+    answers = obj.get("answers")
+    if not isinstance(answers, dict) or not answers:
+        return None
+    reason = str(obj.get("reason_md", ""))
+    return {"schema_version": 1, "message_type": "research_answer",
+            "request_id": None, "answer_md": reason or json.dumps(answers, ensure_ascii=False),
+            "evidence_refs": [], "native_answers": answers,
+            "answers": answers, "reason_md": reason}

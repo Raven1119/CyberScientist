@@ -86,6 +86,11 @@ def revoke_run_tokens(conn: sqlite3.Connection, run_id: str) -> None:
                  (run_id,))
 
 
+def revoke_role_tokens(conn: sqlite3.Connection, run_id: str, role: str) -> None:
+    conn.execute("UPDATE capability_tokens SET revoked=1 WHERE run_id=? AND role=?",
+                 (run_id, role))
+
+
 # ---------- 指导 outbox ----------
 
 def _guidance_row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
@@ -189,6 +194,12 @@ def submit_checkpoint(run_id: str, msg: dict[str, Any], *,
     同 key 同内容幂等返回原收据；同 key 不同内容返回冲突。
     """
     _validate(msg, "Checkpoint")
+    if msg.get("research_question") and (msg["review"] == "none" or
+                                         msg["stage"] == "trial_complete"):
+        raise CollabError("INVALID_MESSAGE", "研究问题需 async/blocking 审阅，不能与 trial_complete 合并")
+    if msg.get("research_question") and len(json.dumps(
+            msg["research_question"], ensure_ascii=False)) > 12000:
+        raise CollabError("INVALID_MESSAGE", "研究问题过长")
     run = db.query_one("SELECT * FROM runs WHERE id=?", (run_id,))
     if not run:
         raise CollabError("NOT_FOUND", f"Run 不存在: {run_id}")
@@ -272,7 +283,15 @@ def submit_checkpoint(run_id: str, msg: dict[str, Any], *,
             blocking = msg["review"] == "blocking"
             review_id = _enqueue_request_tx(
                 conn, run_id, source="executor", blocking=blocking,
-                trigger=f"checkpoint:{msg['review']}", checkpoint_id=cp_id)
+                trigger=("research_question" if msg.get("research_question")
+                         else f"checkpoint:{msg['review']}"), checkpoint_id=cp_id)
+            if msg.get("research_question"):
+                from . import observation
+                safe_question = json.loads(observation.strip_secrets(
+                    json.dumps(msg["research_question"], ensure_ascii=False)))
+                conn.execute("UPDATE review_requests SET frame_json=? WHERE id=?",
+                             (json.dumps({"question": safe_question},
+                                         ensure_ascii=False), review_id))
             if blocking:
                 conn.execute("UPDATE runs SET gate='yielding' WHERE id=?",
                              (run_id,))

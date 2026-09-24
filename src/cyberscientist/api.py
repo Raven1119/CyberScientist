@@ -745,7 +745,7 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
 
     # ---------------- 协作工具桥（能力令牌鉴权）----------------
 
-    def _tool_auth(request: Request) -> dict[str, Any]:
+    def _tool_auth(request: Request, role: str = "executor") -> dict[str, Any]:
         auth = request.headers.get("authorization", "")
         token = auth[7:] if auth.startswith("Bearer ") else ""
         row = collab.validate_token(token)
@@ -753,6 +753,9 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
             raise HTTPException(status_code=401, detail={
                 "code": "INVALID_TOKEN",
                 "message": "能力令牌无效/过期/已撤销"})
+        if row["role"] != role:
+            raise HTTPException(status_code=403, detail={
+                "code": "WRONG_ROLE", "message": "此能力令牌不能调用该工具"})
         return row
 
     @app.exception_handler(compute.ComputeError)
@@ -825,6 +828,16 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
         body["schema_version"] = 1
         body["message_type"] = "guidance_ack"
         return collab.ack_guidance(identity["run_id"], body)
+
+    @app.post("/api/v1/tools/trace")
+    async def tool_trace(request: Request) -> dict[str, Any]:
+        identity = _tool_auth(request, role="brain")
+        from . import research_trace
+        try:
+            return research_trace.access(identity["run_id"], await request.json())
+        except research_trace.TraceError as exc:
+            raise HTTPException(status_code=409, detail={
+                "code": "TRACE_UNAVAILABLE", "message": str(exc)}) from exc
 
     @app.get("/api/v1/runs/{run_id}/checkpoints")
     async def list_checkpoints(run_id: str) -> dict[str, Any]:

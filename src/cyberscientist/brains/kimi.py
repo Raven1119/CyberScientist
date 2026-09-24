@@ -39,18 +39,27 @@ def _brain_instruction() -> str:
 
 
 def _question_prompt(packet: dict[str, Any]) -> str:
-    """执行器提问（AskUserQuestion）的大脑回答提示词：系统里没有人类用户，
-    大脑就是提问对象。Codex/Kimi 两个大脑共用。"""
+    """Codex/Kimi share the same open research-answer contract."""
+    if packet.get("sparse_brain_version") != 1:
+        return (
+            "你是 CyberScientist 大脑；从下列原生问题选项中回答。"
+            "只输出 JSON："
+            '{"schema_version":1,"answers":{"<问题id>":"<选项 const>"},'
+            '"reason_md":"完整理由"}\n'
+            f"上下文与问题:\n```json\n{json.dumps(packet, ensure_ascii=False)}\n```")
     return (
-        "你是 CyberScientist 的大脑。执行器（正在干活的代理）通过 "
-        "AskUserQuestion 向你提问——本系统是全自动科研系统，没有人类用户在线，"
-        "你就是提问的对象。基于下面的 Run 上下文与你对研究方向的判断直接回答，"
-        "不要反问、不要等待人类。\n"
-        "只输出一个 JSON 代码块，不要输出其他文字，不要使用任何工具：\n"
-        '{"schema_version":1,"answers":{"<问题id>":"<所选选项的 const 值>"},'
-        '"reason_md":"一句话理由"}\n'
-        "answers 必须覆盖 question.questions 中的每个 id；每个 value 必须取自"
-        "该题 options 中某一项的 const（不得自创）。\n\n"
+        _brain_instruction() + "\n\n"
+        "执行器提出了一个研究问题。它给出的选项仅供参考，你可以同意、否定前提、"
+        "给出第三条路线或保留未知。保持独立研究判断，无须刻意反对。"
+        "已有高层研究状态与用户约束在输入中。确有需要时可自行调用 research_trace"
+        " 查看本次审阅范围内的公开记录；零读取也可以直接回答。"
+        "只允许该只读工具，不运行 Shell。\n"
+        "只输出一个 JSON 代码块，不要输出其他文字：\n"
+        '{"schema_version":1,"message_type":"research_answer",'
+        '"request_id":"与输入相同","answer_md":"完整研究判断",'
+        '"evidence_refs":[],"native_answers":null}\n'
+        "如确实选择了原表单选项，可将原题 id 到合法值放入 native_answers；"
+        "无法无损表示时保持 null。完整判断始终写入 answer_md。\n\n"
         f"上下文与问题:\n```json\n{json.dumps(packet, ensure_ascii=False)}\n```"
     )
 
@@ -96,10 +105,14 @@ class KimiBrain:
         return argv + (extra or [])
 
     async def _spawn(self, extra: list[str],
-                     cwd: str | None = None) -> JsonRpcStdio:
+                     cwd: str | None = None,
+                     spec_env: dict[str, str] | None = None) -> JsonRpcStdio:
         from ..codex_protocol import NATIVE_BRAIN_SHELL_ENV_KEYS
         allowed = (*NATIVE_BRAIN_SHELL_ENV_KEYS, 'KIMI_API_KEY', 'MOONSHOT_API_KEY')
         env = {k: os.environ[k] for k in allowed if k in os.environ}
+        if spec_env:
+            env.update({k: v for k, v in spec_env.items()
+                        if k in ("CS_TOOL_TOKEN", "CS_TOOL_ROLE", "CS_API_URL")})
         rpc = JsonRpcStdio(self._argv(extra), cwd=cwd, env=env, name="kimi-acp")
         try:
             await asyncio.wait_for(rpc.start(), timeout=30)
@@ -165,13 +178,14 @@ class KimiBrain:
     async def open(self, spec: dict[str, Any]) -> SessionRef:
         if not self.executable:
             raise RuntimeError("kimi 未安装或未配置")
-        self.rpc = await self._spawn(["acp"], cwd=spec.get("working_directory"))
+        self.rpc = await self._spawn(["acp"], cwd=spec.get("working_directory"),
+                                     spec_env=spec.get("env"))
         try:
             await self._initialize(self.rpc)
             result = await self.rpc.request(
                 "session/new",
                 {"cwd": spec.get("working_directory") or os.getcwd(),
-                 "mcpServers": []},
+                 "mcpServers": spec.get("mcp_servers") or []},
                 timeout=30)
             self.session_id = result.get("sessionId")
             if not self.session_id:
@@ -357,12 +371,14 @@ class KimiBrain:
                 "kind=submit：结果包已可提交时发出；仅在已有 Run 授权、提交预算"
                 "和去重检查通过后，系统自动用实验邮箱提交（不投递给执行器），"
                 "随后异步等待评分；不扩大正式提交授权。\n"
-                "只输出一个 JSON 代码块，不要输出其他文字，不要使用任何工具。\n\n"
-                f"ObservationFrame:\n```json\n"
+                + ("只输出一个 JSON 代码块；可按需使用 research_trace，零读取可直接判断。\n\n"
+                 if packet.get("sparse_brain_version") == 1 else
+                 "只输出一个 JSON 代码块，不使用工具。\n\n")
+                + f"ObservationFrame:\n```json\n"
                 f"{json.dumps(packet, ensure_ascii=False)}\n```"
             )
         return (
-            "你是 CyberScientist 的大脑，负责研究方向的判断，不直接执行工具。\n"
+            "你是 CyberScientist 的大脑，负责研究方向的判断。\n"
             "目标与停止条件以本 Run 的用户指导和 authorization.note 为准。"
             "在授权范围内主动检验假设；用户要求实验闭环时，完成提交、反馈和经验整理即可收尾，"
             "不擅自增加必须满分的条件。finish 必须说明已完成的目标、证据和未解决项。"

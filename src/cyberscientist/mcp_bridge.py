@@ -30,6 +30,7 @@ _TOOLS = [
                 "review": {"enum": ["none", "async", "blocking"]},
                 "stage": {"enum": ["progress", "blocked", "trial_complete"]},
                 "report_md": {"type": "string", "maxLength": 12000},
+                "research_question": {"type": "object", "description": "可选研究问题；选项仅供参考，审阅异步进行"},
                 "evidence_refs": {"type": "array",
                                   "items": {"type": "string", "maxLength": 256},
                                   "maxItems": 32},
@@ -63,6 +64,19 @@ _TOOLS.append({
                        "operation_id": {"type": "string", "maxLength": 100},
                        "spec": {"type": "object"}, "input_directory": {"type": "string"}},
         "required": ["action"]}})
+
+_TRACE_TOOL = {
+    "name": "research_trace",
+    "description": "仅大脑可用：按需 list/read 当前审阅截止前的公开研究记录；不会自动读取。",
+    "inputSchema": {"type": "object", "additionalProperties": False,
+        "properties": {"action": {"enum": ["list", "read"]},
+                       "ref": {"type": "string", "maxLength": 256},
+                       "cursor": {"type": "integer", "minimum": 0},
+                       "limit": {"type": "integer", "minimum": 1, "maximum": 50},
+                       "offset": {"type": "integer", "minimum": 0},
+                       "keyword": {"type": "string", "maxLength": 100},
+                       "event_type": {"type": "string", "maxLength": 100}},
+        "required": ["action"]}}
 
 
 def _post(path: str, payload: dict) -> dict:
@@ -113,7 +127,9 @@ def _handle(msg: dict) -> dict | None:
     if method == "ping":
         return {"jsonrpc": "2.0", "id": mid, "result": {}}
     if method == "tools/list":
-        return {"jsonrpc": "2.0", "id": mid, "result": {"tools": _TOOLS}}
+        role = os.environ.get("CS_TOOL_ROLE", "executor")
+        return {"jsonrpc": "2.0", "id": mid, "result": {
+            "tools": [_TRACE_TOOL] if role == "brain" else _TOOLS}}
     if method == "tools/call":
         params = msg.get("params", {})
         name = params.get("name")
@@ -127,6 +143,8 @@ def _handle(msg: dict) -> dict | None:
                 out = _post("/api/v1/tools/job", args)
         elif name == "ack_guidance":
             out = _post("/api/v1/tools/ack", args)
+        elif name == "research_trace":
+            out = _post("/api/v1/tools/trace", args)
         else:
             return {"jsonrpc": "2.0", "id": mid, "error": {
                 "code": -32602, "message": f"unknown tool: {name}"}}

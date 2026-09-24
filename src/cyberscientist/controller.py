@@ -207,6 +207,37 @@ class RunController:
         settings["run_defaults"] = config.load_settings()["run_defaults"]
         return settings
 
+    @staticmethod
+    def _sparse_brain(run: Any) -> bool:
+        return json.loads(run["config_snapshot"]).get("sparse_brain_version") == 1
+
+    def _brain_spec(self, run_id: str, settings: dict[str, Any],
+                    brain_dir: Path) -> dict[str, Any]:
+        """New Runs get a brain-only read capability; old Runs keep their snapshot."""
+        run = self._require_run(run_id)
+        if not self._sparse_brain(run):
+            enabled = skills_mod.effective_for(db.get_db(), settings, run["challenge_id"])
+            return {"working_directory": str(brain_dir),
+                    "instructions": skills_mod.prompt_segment(enabled)}
+        import sys as _sys
+        from .codex_protocol import native_brain_environment
+        with db.transaction() as conn:
+            collab.revoke_role_tokens(conn, run_id, "brain")
+            gen = conn.execute("SELECT COUNT(*) AS n FROM capability_tokens"
+                               " WHERE run_id=? AND role='brain'", (run_id,)).fetchone()["n"] + 1
+            token = collab.issue_token(conn, run_id, "brain", "brain-session", gen)
+        app_cfg = settings["app"]
+        variables = {"CS_TOOL_TOKEN": token, "CS_TOOL_ROLE": "brain",
+                     "CS_API_URL": f"http://{app_cfg['host']}:{app_cfg['port']}"}
+        return {"working_directory": str(brain_dir),
+                "env": native_brain_environment() | variables,
+                "mcp_servers": [{"name": "cyberscientist", "command": _sys.executable,
+                                 "args": ["-m", "cyberscientist.mcp_bridge"],
+                                 "env": [{"name": k, "value": v}
+                                         for k, v in variables.items()]}],
+                "instructions": "长期研究会话。仅 research_trace 可按需读取已登记公开记录；"
+                                "没有读取必要时直接判断。不要使用通用 Shell、写文件或网络工具。"}
+
     def _require_model_authorization(self, run_id: str) -> None:
         run = self._require_run(run_id)
         if run["mode"] not in ("demo","connected"):
@@ -287,7 +318,7 @@ class RunController:
             with db.transaction() as conn:
                 # 新会话签发前撤销本 Run 旧令牌：旧会话身份随之失效，
                 #  ACK/检查点的会话绑定在令牌鉴权层成立
-                collab.revoke_run_tokens(conn, run_id)
+                collab.revoke_role_tokens(conn, run_id, "executor")
                 gen = conn.execute(
                     "SELECT COUNT(*) AS n FROM capability_tokens"
                     " WHERE run_id=?", (run_id,)).fetchone()["n"] + 1
@@ -300,6 +331,7 @@ class RunController:
                 "args": ["-m", "cyberscientist.mcp_bridge"],
                 "env": [
                     {"name": "CS_TOOL_TOKEN", "value": token},
+                    {"name": "CS_TOOL_ROLE", "value": "executor"},
                     {"name": "CS_API_URL",
                      "value": f"http://{app_cfg['host']}:{app_cfg['port']}"},
                 ],
@@ -324,6 +356,7 @@ class RunController:
             env["PATH"] = str(proxy.parent) + os.pathsep + env.get("PATH", "")
             env["CS_API_URL"] = f"http://{settings['app']['host']}:{settings['app']['port']}"
             env["CS_TOOL_TOKEN"] = token
+            env["CS_TOOL_ROLE"] = "executor"
             spec["instructions"] = (
                 f"所有 Bohrium 操作必须使用受控入口 {proxy} 或 research_job 工具。"
                 "不要调用全局 bohr 绕过准入；创建返回 unknown/submitting 时先对账，禁止重复创建。"
@@ -339,6 +372,7 @@ class RunController:
             proxy = install_proxy(config.WORKSPACE_DIR / "runs" / run_id / "bin")
             spec['env']['PATH'] = str(proxy.parent) + os.pathsep + spec['env'].get('PATH', '')
             spec['env']['CS_TOOL_TOKEN'] = token
+            spec['env']['CS_TOOL_ROLE'] = "executor"
             spec['env']['CS_API_URL'] = f"http://{settings['app']['host']}:{settings['app']['port']}"
         return spec
 
@@ -365,7 +399,8 @@ class RunController:
             shadow_cfg["enabled"] = bool(shadow_enabled)
         snapshot = {"settings": self._redacted_settings(settings),
                     "shadow": shadow_cfg,
-                    "challenge_id": challenge_id, "mode": mode, "compute_policy_version": 1}
+                    "challenge_id": challenge_id, "mode": mode,
+                    "compute_policy_version": 1, "sparse_brain_version": 1}
         db.execute(
             "INSERT INTO runs(id, challenge_id, mode, phase, state_version, intention,"
             " config_snapshot, created_at) VALUES(?,?,?,?,0,NULL,?,?)",
@@ -783,12 +818,14 @@ class RunController:
                 trigger="executor_question")
             conn.execute(
                 "UPDATE review_requests SET frame_json=? WHERE id=?",
-                (json.dumps({"question": question}, ensure_ascii=False), rid))
+                (observation.strip_secrets(json.dumps(
+                    {"question": question}, ensure_ascii=False)), rid))
         self._question_waiters[rid] = fut
         self._wake(run_id)
         try:
             await asyncio.wait_for(fut, timeout=140)
         except asyncio.TimeoutError:
+            self._obsolete_request(rid, "原生问题等待超时；迟到答案不得投递")
             return None
         finally:
             self._question_waiters.pop(rid, None)
@@ -804,19 +841,16 @@ class RunController:
 
     async def _run_question_review(self, run_id: str, req: Any,
                                    brain: BrainRuntime, b_session: Any) -> None:
-        """执行器提问的审阅：小上下文 + 结构化回答。消耗大脑判断额度；
-        失败如实标记，不影响 Run 相位。"""
+        """One research judgment; full text is saved before native transport."""
         run = self._require_run(run_id)
         defaults = config.load_settings()["run_defaults"]
-        db.execute("UPDATE review_requests SET status='running', updated_at=?"
-                   " WHERE id=? AND status='pending'", (db.utcnow(), req["id"]))
         if run["brain_reviews_used"] >= defaults["max_brain_reviews"]:
             self._finish_request(
                 req["id"], "error",
                 error=f"大脑判断额度用尽 {defaults['max_brain_reviews']} 次")
+            if req["blocking"]:
+                self._blocking_dead_end(run_id, req["id"], "研究问题超出大脑判断额度")
             return
-        db.execute("UPDATE runs SET brain_reviews_used=? WHERE id=?",
-                   (run["brain_reviews_used"] + 1, run_id))
         try:
             question = json.loads(req["frame_json"]).get("question", {}) \
                 if req["frame_json"] else {}
@@ -827,8 +861,18 @@ class RunController:
             trial = db.query_one(
                 "SELECT id, goal, status FROM trials WHERE id=?",
                 (run["current_trial_id"],))
+        sparse = self._sparse_brain(run)
+        cutoff = self._last_seq(run_id)
+        sup = db.query_one("SELECT * FROM supervision WHERE run_id=?", (run_id,))
+        overview = observation.build_frame(
+            run_id, mode="requested", frame_id=_rid("frame"),
+            from_seq=(sup["covered_seq"] + 1 if sup else 1),
+            through_seq=cutoff, shadow_cfg=self._shadow_cfg(run),
+            run_defaults=defaults, sparse=True) if sparse else None
         packet = {
             "protocol": "executor_question",
+            "sparse_brain_version": 1 if sparse else 0,
+            "request_id": req["id"],
             "run_id": run_id,
             "current_intention": run["intention"],
             "trial_summary": {"trial_id": trial["id"], "goal": trial["goal"],
@@ -838,6 +882,38 @@ class RunController:
                 - run["brain_reviews_used"] - 1},
             "question": question,
         }
+        if sparse:
+            auth = db.query_one(
+                "SELECT note,max_jobs,max_submissions,max_run_minutes"
+                " FROM authorizations WHERE id=?", (run["authorization_id"],)) \
+                if run["authorization_id"] else None
+            packet["research_state"] = {
+                "goal_md": overview["goal_md"],
+                "checkpoints": overview["checkpoint_summaries"],
+                "compute_jobs": overview["compute_jobs"],
+                "known_scores": overview["known_scores"],
+                "research_note_md": overview["brain_private_note_md"],
+                "watchlist": overview["watchlist"],
+                "budget": overview["budget"],
+                "authorization": dict(auth) if auth else None,
+                "unknown_fields": overview["quality"]["unknown_fields"]}
+            packet["trace_access"] = {"tool": "research_trace", "optional": True,
+                                      "through_seq": cutoff}
+        with db.transaction() as conn:
+            conn.execute("UPDATE review_requests SET status='running',"
+                         " frame_json=?, frame_id=?, from_seq=?, through_seq=?,"
+                         " state_version=?, evidence_revision=?, shadow_epoch=?,"
+                         " updated_at=? WHERE id=? AND status='pending'",
+                         (json.dumps({"question": question, "packet": packet},
+                                     ensure_ascii=False),
+                          overview["frame_id"] if overview else _rid("frame"),
+                          overview["from_seq"] if overview else 1, cutoff,
+                          run["state_version"],
+                          sup["evidence_revision"] if sup else 0,
+                          sup["shadow_epoch"] if sup else 0,
+                          db.utcnow(), req["id"]))
+            conn.execute("UPDATE runs SET brain_reviews_used=brain_reviews_used+1"
+                         " WHERE id=?", (run_id,))
         db.append_event(run_id, "brain", "brain.question_started", {
             "review_id": req["id"],
             "message": str(question.get("message", ""))[:200]})
@@ -852,18 +928,117 @@ class RunController:
         except Exception as exc:  # noqa: BLE001
             error_msg = f"{exc.__class__.__name__}: {str(exc)[:300]}"
         if answer:
-            valid, why = _validate_question_answer(question, answer["answers"])
-            if valid:
-                self._finish_request(req["id"], "done", result=answer)
-                db.append_event(run_id, "brain", "brain.question_answered", {
-                    "review_id": req["id"],
-                    "answers": {k: str(v)[:80]
-                                for k, v in answer["answers"].items()},
-                    "reason_md": answer.get("reason_md", "")[:300]})
-                return
-            error_msg = f"大脑回答未通过选项校验: {why}"
+            if ("answer_md" not in answer and isinstance(answer.get("answers"), dict)
+                    and answer["answers"]):
+                answer = {**answer,
+                          "answer_md": answer.get("reason_md") or json.dumps(
+                              answer["answers"], ensure_ascii=False),
+                          "native_answers": answer["answers"]}
+            if not sparse:
+                old_answers = answer.get("answers") or answer.get("native_answers")
+                valid, why = _validate_question_answer(question, old_answers or {})
+                if valid and old_answers:
+                    self._finish_request(req["id"], "done", result={
+                        "answers": old_answers,
+                        "reason_md": answer.get("reason_md", answer.get("answer_md", ""))})
+                    db.append_event(run_id, "brain", "brain.question_answered", {
+                        "review_id": req["id"], "answers": old_answers})
+                    return
+                error_msg = f"大脑回答未通过选项校验: {why}"
+            else:
+                from . import research_trace
+                body = answer.get("answer_md")
+                refs = answer.get("evidence_refs", [])
+                native = answer.get("native_answers")
+                if (not isinstance(body, str) or not body.strip() or
+                        len(body) > 12000 or not isinstance(refs, list) or
+                        len(refs) > 32 or any(not isinstance(x, str) or
+                        not research_trace.ref_exists(run_id, x, cutoff) for x in refs) or
+                        (answer.get("request_id") not in (None, req["id"]))):
+                    error_msg = "研究回答正文、请求 ID 或证据引用无效"
+                else:
+                    if not isinstance(native, dict) or not _validate_question_answer(
+                            question, native)[0]:
+                        native = None  # 自由正文不能强行映射到选项。
+                    normalized = {"schema_version": 1, "message_type": "research_answer",
+                                  "request_id": req["id"],
+                                  "answer_md": observation.strip_secrets(body),
+                                  "evidence_refs": refs, "native_answers": native}
+                    try:
+                        collab._validate(normalized, "ResearchAnswer")
+                    except collab.CollabError as exc:
+                        self._finish_request(req["id"], "error", error=str(exc))
+                        return
+                    current = self._require_run(run_id)
+                    request_now = db.query_one("SELECT status FROM review_requests WHERE id=?",
+                                               (req["id"],))
+                    if (not request_now or request_now["status"] != "running" or
+                            current["phase"] != "running" or
+                            current["current_trial_id"] != run["current_trial_id"] or
+                            current["state_version"] != run["state_version"]):
+                        self._obsolete_request(req["id"], "研究问题已过期；正文未投递")
+                        return
+                    with db.transaction() as conn:
+                        locked_run = conn.execute(
+                            "SELECT phase,current_trial_id,state_version FROM runs WHERE id=?",
+                            (run_id,)).fetchone()
+                        locked_req = conn.execute(
+                            "SELECT status FROM review_requests WHERE id=?",
+                            (req["id"],)).fetchone()
+                        if (not locked_run or locked_run["phase"] != "running" or
+                                locked_run["current_trial_id"] != run["current_trial_id"] or
+                                locked_run["state_version"] != run["state_version"] or
+                                not locked_req or locked_req["status"] != "running"):
+                            conn.execute("UPDATE review_requests SET status='obsolete',"
+                                         " error=?, updated_at=? WHERE id=?",
+                                         ("研究问题已过期；正文未投递", db.utcnow(), req["id"]))
+                            fut = self._question_waiters.get(req["id"])
+                            if fut is not None and not fut.done():
+                                fut.set_result(None)
+                            return
+                        g = {"kind": "nudge", "intent": "continue",
+                             "text_md": f"【研究回答 {req['id']}】\n{normalized['answer_md']}",
+                             "reason_md": "执行器研究问题的大脑独立判断",
+                             "evidence_refs": refs,
+                             "expected_change_md": "据此继续研究或说明异议",
+                             "revisit_when_md": "出现新的研究证据时"}
+                        gid = collab.create_guidance(
+                            conn, run_id, source="requested", g=g,
+                            target_trial_id=run["current_trial_id"],
+                            review_request_id=req["id"], frame_id=None,
+                            state_version=run["state_version"],
+                            evidence_revision=sup["evidence_revision"] if sup else 0,
+                            shadow_epoch=sup["shadow_epoch"] if sup else 0)
+                        normalized["guidance_id"] = gid
+                        conn.execute("UPDATE review_requests SET status='done',"
+                                     " result_json=?, updated_at=? WHERE id=? AND status='running'",
+                                     (json.dumps(normalized, ensure_ascii=False),
+                                      db.utcnow(), req["id"]))
+                        if req["blocking"]:
+                            conn.execute("UPDATE runs SET gate='open' WHERE id=?"
+                                         " AND gate IN ('yielding','waiting_brain')", (run_id,))
+                            db.append_event_tx(conn, run_id, "controller",
+                                               "run.gate_opened", {"review_id": req["id"],
+                                                                  "by": "research_answer"})
+                        db.append_event_tx(conn, run_id, "brain", "brain.question_answered",
+                                           {"review_id": req["id"], "guidance_id": gid,
+                                            "native_form": "mapped" if native else "decline",
+                                            "answer_md": normalized["answer_md"],
+                                            "evidence_refs": refs}, trial_id=run["current_trial_id"])
+                        db.append_event_tx(conn, run_id, "brain", "guidance.queued",
+                                           {"guidance_id": gid, "kind": "nudge",
+                                            "request_id": req["id"]},
+                                           trial_id=run["current_trial_id"])
+                    fut = self._question_waiters.get(req["id"])
+                    if fut is not None and not fut.done():
+                        fut.set_result(None)
+                    if not self._executor_busy.get(run_id):
+                        await self._deliver_queued_guidance(run_id)
+                    return
         self._finish_request(req["id"], "error",
                              error=(error_msg or "大脑未给出有效回答")[:300])
+        if req["blocking"]:
+            self._blocking_dead_end(run_id, req["id"], "研究问题无有效答复")
 
     def notify_run_change(self, run_id: str) -> None:
         """collab 服务的内存唤醒提示（DB 已先行提交，丢失可由扫描恢复）。"""
@@ -885,14 +1060,15 @@ class RunController:
             brain_dir = config.WORKSPACE_DIR / "runs" / run_id / "brain_view"
             brain_dir.mkdir(parents=True,exist_ok=True)
             run = self._require_run(run_id)
-            enabled_skills = skills_mod.effective_for(db.get_db(), settings, run["challenge_id"])
-            b_session = await brain.open({
-                "working_directory": str(brain_dir),
-                "instructions": skills_mod.prompt_segment(enabled_skills),
-            })
-            db.append_event(run_id, "controller", "brain.skills_enabled", {
-                "skills": [s["id"] for s in enabled_skills],
-            })
+            b_session = await brain.open(self._brain_spec(run_id, settings, brain_dir))
+            if self._sparse_brain(run):
+                db.append_event(run_id, "controller", "brain.research_session_opened",
+                                {"trace": "optional", "skills_injected": False})
+            else:
+                db.append_event(run_id, "controller", "brain.skills_enabled", {
+                    "skills": [s["id"] for s in skills_mod.effective_for(
+                        db.get_db(), settings, run["challenge_id"])],
+                })
             self._brain_sessions[run_id] = b_session
             prime_sid = await prime.start(self._prime_spec(run_id,settings))
             self._prime_sessions[run_id] = prime_sid
@@ -1048,6 +1224,11 @@ class RunController:
                 or not self._executor_busy.get(run_id, False)
             ):
                 return  # 原生会话开局待命/回合间空闲不代表研究停滞。
+            if etype == "trial.stalled" and self._sparse_brain(run) and db.query_one(
+                    "SELECT 1 FROM compute_jobs WHERE run_id=?"
+                    " AND status IN ('accepted','Running','Pending','Scheduling')"
+                    " LIMIT 1", (run_id,)):
+                return  # 有已知活跃远端计算时，事件流安静不等于研究停滞。
             public = _runtime_event_payload(ev)
             public.setdefault("detail", "")
             db.append_event(run_id, "prime", f"prime.{etype}",
@@ -1278,6 +1459,10 @@ class RunController:
         cfg = self._shadow_cfg(run)
         if sup["reviews_used"] >= cfg["max_reviews"]:
             return
+        if self._sparse_brain(run) and db.query_one(
+                "SELECT 1 FROM review_requests WHERE run_id=?"
+                " AND status IN ('pending','running') LIMIT 1", (run_id,)):
+            return  # 研究变化由已排队的判断合并；审阅完再检查后续变化。
         pending = db.query_one(
             "SELECT id FROM review_requests WHERE run_id=?"
             " AND source='shadow' AND status IN ('pending','running')",
@@ -1308,6 +1493,8 @@ class RunController:
         run = self._require_run(run_id)
         if run["phase"] != "running":
             return
+        if self._sparse_brain(run):
+            return  # 定时器只检查健康；新 Run 只由研究级变化唤醒。
         sup = db.query_one("SELECT * FROM supervision WHERE run_id=?",
                            (run_id,))
         if not sup or not sup["enabled"] or sup["degraded"]:
@@ -1383,6 +1570,13 @@ class RunController:
                         pass
                     continue  # 重新按优先级取（可能有更紧急请求到达）
             await self._run_one_review(run_id, req, brain, b_session)
+            if self._sparse_brain(self._require_run(run_id)):
+                completed = db.query_one(
+                    "SELECT status,through_seq FROM review_requests WHERE id=?", (req["id"],))
+                if completed and completed["status"] == "done" and completed["through_seq"] is not None:
+                    db.execute("UPDATE supervision SET covered_seq=MAX(covered_seq,?)"
+                               " WHERE run_id=?", (completed["through_seq"], run_id))
+                self._maybe_shadow(run_id)
 
     def _next_request(self, run_id: str) -> Any | None:
         """优先级：显式 blocking → 生命周期 → 用户 → 执行器 async → shadow。"""
@@ -1469,7 +1663,7 @@ class RunController:
             if queue is not None:
                 queue.put_nowait({"type":"pause"})
             return
-        if req["trigger"] == "executor_question":
+        if req["trigger"] in ("executor_question", "research_question"):
             # 执行器提问：独立小协议，不走 ObservationFrame/Decision
             await self._run_question_review(run_id, req, brain, b_session)
             return
@@ -1510,7 +1704,8 @@ class RunController:
                 extra = json.loads(req["frame_json"]) if req["frame_json"] else {}
                 packet = self._lifecycle_packet(
                     run, req["trigger"] or "lifecycle",
-                    user_guidance=extra.get("user_guidance"))
+                    user_guidance=extra.get("user_guidance"),
+                    sparse=self._sparse_brain(run))
             else:
                 packet = observation.build_frame(
                     run_id, mode=mode, frame_id=frame_id,
@@ -1518,8 +1713,10 @@ class RunController:
                     shadow_cfg=cfg, run_defaults=defaults,
                     request={"review_id": req["id"],
                              "checkpoint_id": req["checkpoint_id"],
-                             "blocking": bool(req["blocking"])})
+                             "blocking": bool(req["blocking"])},
+                    sparse=self._sparse_brain(run))
                 packet["protocol"] = "review_result"
+                packet["sparse_brain_version"] = 1 if self._sparse_brain(run) else 0
                 authorization = db.query_one(
                     "SELECT note,max_jobs,max_submissions,max_run_minutes FROM authorizations WHERE id=?",
                     (run["authorization_id"],))
@@ -1557,8 +1754,19 @@ class RunController:
         raw_parts: list[str] = []
         result: dict[str, Any] | None = None
         error_msg: str | None = None
+        maintenance_brain: BrainRuntime | None = None
+        maintenance_session: Any = None
         try:
-            async for ev in brain.review(b_session, packet):
+            if req["trigger"] == "curation" and self._sparse_brain(run):
+                # Curation uses its own native conversation and evidence packet.
+                maintenance_brain = self._make_brain(self._runtime_settings(run_id))
+                work = config.WORKSPACE_DIR / "runs" / run_id / "curation" / req["id"]
+                work.mkdir(parents=True, exist_ok=True)
+                maintenance_session = await maintenance_brain.open({
+                    "working_directory": str(work)})
+            active_brain = maintenance_brain or brain
+            active_session = maintenance_session or b_session
+            async for ev in active_brain.review(active_session, packet):
                 if ev.type == "decision" and mode == "lifecycle":
                     result = {"kind": "decision", "decision": ev.payload["decision"]}
                 elif ev.type == "review_result" and mode != "lifecycle":
@@ -1579,6 +1787,12 @@ class RunController:
                     raw_parts.append(str(ev.payload.get("text", "")))
         except Exception as exc:  # noqa: BLE001
             error_msg = f"{exc.__class__.__name__}: {str(exc)[:300]}"
+        finally:
+            if maintenance_brain is not None and maintenance_session is not None:
+                try:
+                    await maintenance_brain.close(maintenance_session)
+                except Exception as exc:  # noqa: BLE001
+                    error_msg = error_msg or f"维护会话关闭失败: {str(exc)[:200]}"
         if raw_parts:
             db.append_event(run_id, "brain", "brain.raw_output",
                             _runtime_event_payload({"text": "".join(raw_parts)}))
@@ -1884,7 +2098,7 @@ class RunController:
                         error: str | None = None) -> None:
         db.execute(
             "UPDATE review_requests SET status=?, result_json=?, error=?,"
-            " updated_at=? WHERE id=?",
+            " updated_at=? WHERE id=? AND status IN ('pending','running')",
             (status, json.dumps(result, ensure_ascii=False) if result else None,
              error, db.utcnow(), request_id))
         fut = self._question_waiters.get(request_id)
@@ -1895,7 +2109,8 @@ class RunController:
 
     # ---------- 生命周期 Decision（旧协议，同一 worker 入口）----------
     def _lifecycle_packet(self, run: Any, trigger: str,
-                          user_guidance: str | None = None) -> dict[str, Any]:
+                          user_guidance: str | None = None,
+                          sparse: bool = False) -> dict[str, Any]:
         run_id = run["id"]
         settings = self._runtime_settings(run_id)
         auth = db.query_one("SELECT * FROM authorizations WHERE id=?",
@@ -1910,6 +2125,7 @@ class RunController:
                                  " ORDER BY rowid DESC LIMIT 1", (run_id,))
         recent = db.events_after(run_id, max(0, self._last_seq(run_id) - 20))
         packet = {
+            "sparse_brain_version": 1 if sparse else 0,
             "run_id": run_id,
             "state_version": run["state_version"],
             "trigger": trigger,
@@ -1922,12 +2138,15 @@ class RunController:
                                         (run_id,))),
             "challenge_id": run["challenge_id"],
             "user_guidance": user_guidance,
-            "enabled_skills": skills_mod.prompt_segment(
-                skills_mod.effective_for(db.get_db(), settings, run["challenge_id"])),
+            "enabled_skills": (None if sparse else skills_mod.prompt_segment(
+                skills_mod.effective_for(db.get_db(), settings, run["challenge_id"]))),
             "new_events_since_last_review": [
                 {"seq": e["seq"], "source": e["source"], "type": e["type"],
-                 **observation.event_excerpt(e)}
-                for e in recent][-20:],
+                 **({} if sparse else observation.event_excerpt(e))}
+                for e in recent if not sparse or e["type"] in (
+                    "checkpoint.created", "job.observed", "job.unknown",
+                    "trial.stalled", "trial.done", "submission.scored",
+                    "submission.score_corrected")][-20:],
             "budget_remaining": {
                 "brain_reviews": defaults["max_brain_reviews"]
                 - run["brain_reviews_used"],
@@ -1971,7 +2190,8 @@ class RunController:
         sup = observation._supervision(run_id)
         feedback = observation.build_frame(run_id,mode="lifecycle",frame_id=_rid("frame"),
             from_seq=sup["covered_seq"]+1,through_seq=self._last_seq(run_id),
-            shadow_cfg=self._shadow_cfg(run),run_defaults=defaults)
+            shadow_cfg=self._shadow_cfg(run),run_defaults=defaults,
+            sparse=sparse)
         packet["feedback"] = feedback
         packet["experience_manifest"] = feedback["experiences"]
         packet["experience_context_id"] = feedback["experience_context_id"]
@@ -2713,6 +2933,32 @@ class RunController:
         d["executor_busy"] = self._executor_busy.get(run_id, False)
         d["pending_requests"] = [dict(r) for r in pending_reqs]
         d["guidance"] = [dict(g) for g in guidance_rows]
+        answers = db.query(
+            "SELECT r.id,r.status,r.trigger,r.result_json,r.error,r.created_at,"
+            " g.id AS guidance_id,g.status AS delivery_status,"
+            " g.delivery_channel,g.ack_disposition"
+            " FROM review_requests r LEFT JOIN guidance g"
+            " ON g.review_request_id=r.id AND g.run_id=r.run_id"
+            " WHERE r.run_id=? AND r.trigger IN ('executor_question','research_question')"
+            " ORDER BY r.rowid DESC LIMIT 10", (run_id,))
+        d["research_answers"] = []
+        for row in answers:
+            item = dict(row)
+            result = json.loads(item.pop("result_json") or "{}")
+            item["answer_md"] = result.get("answer_md")
+            item["native_form"] = ("mapped" if result.get("native_answers")
+                                   else "declined") if item["status"] == "done" else "pending"
+            item["evidence_refs"] = result.get("evidence_refs") or []
+            d["research_answers"].append(item)
+        reads = db.query(
+            "SELECT seq,payload,recorded_at FROM events WHERE run_id=?"
+            " AND type='brain.trace_read' ORDER BY seq DESC LIMIT 20", (run_id,))
+        d["trace_reads"] = [{"seq": row["seq"], "recorded_at": row["recorded_at"],
+                              **json.loads(row["payload"])} for row in reads]
+        recent_review = db.query_one(
+            "SELECT trigger,source,created_at FROM review_requests"
+            " WHERE run_id=? ORDER BY rowid DESC LIMIT 1", (run_id,))
+        d["last_wake"] = dict(recent_review) if recent_review else None
         d["latest_seq"] = self._last_seq(run_id)
         return d
 
