@@ -979,7 +979,7 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
         body = await request.json() if request.headers.get(
             "content-type", "").startswith("application/json") else {}
         # 评分平台 HTTP 是同步调用：卸载到线程，不阻塞事件循环
-        result = await asyncio.to_thread(mailboxes.poll_scores, body.get("run_id"))
+        result = await asyncio.to_thread(mailboxes.poll_scores, body.get("run_id"), manual=True)
         _notify_scores(result)
         return result
 

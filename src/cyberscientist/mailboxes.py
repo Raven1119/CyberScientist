@@ -7,9 +7,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import sqlite3
 import uuid
 import zipfile
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -85,6 +87,101 @@ def _used_for(conn: sqlite3.Connection, mailbox_id: str, challenge_key: str) -> 
         " WHERE s.mailbox_id=? AND s.reservation_released=0"
         " AND COALESCE(NULLIF(c.platform_challenge_id,''),'local:'||c.id)=?",
         (mailbox_id, challenge_key)).fetchone()["n"]
+
+
+def _instant(value: str | None) -> datetime | None:
+    try:
+        parsed = datetime.fromisoformat(value.replace('Z', '+00:00')) if value else None
+        return parsed.replace(tzinfo=timezone.utc) if parsed and parsed.tzinfo is None else parsed
+    except ValueError:
+        return None
+
+
+def _round_end(snapshot: str | None) -> datetime | None:
+    try:
+        value = json.loads(snapshot or '{}')
+    except (ValueError, TypeError):
+        return None
+    def find(node):
+        if isinstance(node, dict):
+            if 'roundEndAt' in node:
+                return _instant(node['roundEndAt'])
+            for child in node.values():
+                found = find(child)
+                if found: return found
+        elif isinstance(node, list):
+            for child in node:
+                found = find(child)
+                if found: return found
+        return None
+    return find(value)
+
+
+def _poll_deadline(row) -> datetime | None:
+    round_end = _round_end(row['platform_snapshot_json'])
+    if round_end:
+        return round_end + timedelta(hours=72)
+    submitted = _instant(row['submitted_at'] or row['created_at'])
+    return submitted + timedelta(days=7) if submitted else None
+
+
+def _score_anomaly(details: dict[str, Any] | None) -> str | None:
+    if not isinstance(details, dict):
+        return 'score details unavailable'
+    state = details.get('scoringState')
+    if not isinstance(state, dict):
+        return 'scoringState unavailable'
+    reasons = []
+    if state.get('zeroReason') not in (None, ''):
+        reasons.append('zeroReason')
+    if state.get('provisionalScore') not in (None, ''):
+        reasons.append('provisionalScore')
+    def has_error(node):
+        if isinstance(node, dict):
+            return any((key.lower() in ('error', 'errorinfo', 'errors', 'errormessage')
+                        and value not in (None, '', [], {})) or has_error(value)
+                       for key, value in node.items())
+        if isinstance(node, list):
+            return any(has_error(value) for value in node)
+        return False
+    if has_error(details):
+        reasons.append('scoring error')
+    worker = state.get('workerStatus')
+    if worker is not None:
+        if str(worker).lower() not in ('completed', 'complete', 'finished', 'success', 'succeeded', 'done', 'ok'):
+            reasons.append('workerStatus=' + str(worker)[:40])
+    elif state.get('state') != 'final' and state.get('scoreIsFinal') is not True:
+        reasons.append('worker status unknown')
+    if 'displayScore' not in state:
+        reasons.append('displayScore unavailable')
+    return '; '.join(dict.fromkeys(reasons)) or None
+
+
+def _score_components(details: dict[str, Any] | None) -> tuple[float | None, float | None]:
+    if not isinstance(details, dict):
+        return None, None
+    def find(node, key):
+        if isinstance(node, dict):
+            if key in node: return node[key]
+            for child in node.values():
+                found = find(child, key)
+                if found is not None: return found
+        elif isinstance(node, list):
+            for child in node:
+                found = find(child, key)
+                if found is not None: return found
+        return None
+    def finite(value):
+        return float(value) if type(value) in (int, float) and math.isfinite(value) else None
+    return finite(find(details, 'harbor_score')), finite(find(details, 'trace_score'))
+
+
+def _scorecard_consistency(details: dict[str, Any] | None, display: float) -> int | None:
+    harbor, trace = _score_components(details)
+    if harbor is None or trace is None:
+        return None
+    expected = harbor * max(0.0, min(1.0, (trace - 30.0) / 40.0))
+    return int(abs(display - expected) <= 0.5)
 
 
 def list_submissions(run_id: str) -> dict[str, Any]:
@@ -517,11 +614,12 @@ def submit_experiment(run_id: str, trial_id: str | None,
 
 
 def poll_scores(run_id: str | None = None,
-                challenge_id: str | None = None) -> dict[str, Any]:
+                challenge_id: str | None = None, *, manual: bool = False) -> dict[str, Any]:
     """经平台 API 拉回得分；拉不到保持 unknown，不编造。"""
-    sql = ("SELECT s.*, m.email, m.secret_ref, m.platform FROM submissions s"
+    sql = ("SELECT s.*, m.email, m.secret_ref, m.platform,c.platform_snapshot_json FROM submissions s"
            " JOIN mailboxes m ON m.id=s.mailbox_id"
            " JOIN runs r ON r.id=s.run_id"
+           " JOIN challenges c ON c.id=r.challenge_id"
            " WHERE s.status IN ('submitted','unknown')")
     params: list[Any] = []
     if run_id:
@@ -533,12 +631,29 @@ def poll_scores(run_id: str | None = None,
     rows = db.query(sql, params)
     platform = _platform()
     updated, still_unknown, errors = 0, 0, 0
+    polled = 0
     changed_runs = set()
+    polling_settings = config.load_settings().get('polling') or {}
+    confirmation_seconds = max(0, int(polling_settings.get('score_confirmation_seconds', 600)))
+    confirmed_interval = max(1, int(polling_settings.get('confirmed_interval_seconds', 3600)))
     for r in rows:
+        now = db.utcnow()
+        when = _instant(now)
+        deadline = _poll_deadline(r)
+        if not manual and (r['polling_stopped_at'] or (deadline and when >= deadline)):
+            if not r['polling_stopped_at']:
+                with db.transaction() as conn:
+                    conn.execute('UPDATE submissions SET polling_stopped_at=? WHERE id=?', (now,r['id']))
+            continue
+        if (not manual and r['score_confidence'] == 'confirmed'
+                and r['score_last_polled_at'] and _instant(r['score_last_polled_at'])
+                and (when - _instant(r['score_last_polled_at'])).total_seconds() < confirmed_interval):
+            continue
         ref = r["platform_ref"]
         if not ref:
             still_unknown += 1  # 无平台回执引用：没有可查的对象，保持 unknown
             continue
+        polled += 1
         try:
             row_platform = platform if r["platform"] == platform.name else get_platform(r["platform"])
             secret = config.resolve_secret(r["secret_ref"] or "")
@@ -553,6 +668,7 @@ def poll_scores(run_id: str | None = None,
         except Exception as exc:
             errors += 1
             with db.transaction() as conn:
+                conn.execute('UPDATE submissions SET score_last_polled_at=? WHERE id=?', (now,r['id']))
                 if _record_feedback(conn, r, "score_query_error", {
                         "error_type": type(exc).__name__, "outcome": "unknown"}):
                     changed_runs.add(r["run_id"])
@@ -563,34 +679,59 @@ def poll_scores(run_id: str | None = None,
                     changed_runs.add(r["run_id"])
         if score is None:
             still_unknown += 1
+            db.execute('UPDATE submissions SET score_last_polled_at=? WHERE id=?', (now,r['id']))
             continue
-        import math
         if not math.isfinite(score):
             still_unknown += 1
             continue
+        anomaly = _score_anomaly(details)
+        consistent = _scorecard_consistency(details, score)
         with db.transaction() as conn:
             current = conn.execute("SELECT * FROM submissions WHERE id=?",(r["id"],)).fetchone()
             # Compare-and-swap: a response requested before another update cannot overwrite it.
-            if (current["score_status"],current["score"],current["scored_at"]) != (r["score_status"],r["score"],r["scored_at"]):
+            if (current['score_status'],current['score'],current['score_confidence'],
+                    current['score_last_polled_at']) != (r['score_status'],r['score'],
+                    r['score_confidence'],r['score_last_polled_at']):
                 continue
-            if current["score_status"] == "scored" and current["score"] == score:
-                continue
-            correction = current["score_status"] == "scored"
+            prior_scored = current['score_status'] == 'scored'
+            changed_score = not prior_scored or current['score'] != score
+            correction = prior_scored and current['score'] != score
+            first_seen = now if changed_score or not current['score_first_seen_at'] else current['score_first_seen_at']
+            last_changed = now if changed_score else current['score_last_changed_at']
+            observed_twice = (not changed_score and current['score_last_polled_at'] is not None
+                and _instant(first_seen) and (when - _instant(first_seen)).total_seconds() >= confirmation_seconds)
+            confidence = ('confirmed' if not anomaly and observed_twice
+                          else 'provisional')
+            if current['score_confidence'] == 'confirmed' and not changed_score and not anomaly:
+                confidence = 'confirmed'
+            meaningful = (changed_score or confidence != current['score_confidence']
+                or anomaly != current['score_anomaly'] or consistent != current['scorecard_consistent'])
             conn.execute("UPDATE submissions SET score=?,score_status='scored',status='submitted',"
-                         " scored_at=?,stage='scored' WHERE id=?",(score,db.utcnow(),r["id"]))
-            event = db.append_event_tx(conn,r["run_id"],"controller",
-                "submission.score_corrected" if correction else "submission.scored",{
-                    "submission_id":r["id"],"trial_id":r["trial_id"],
-                    "package_sha256":r["package_sha256"],"score":score,
-                    "previous_score":current["score"] if correction else None,
-                    "score_status":"scored","is_final":True,
-                    "finality_basis":"platform.fetch_score requires scoringState.scoreIsFinal",
-                    "platform_ref":r["platform_ref"],
-                    "platform_feedback":details},trial_id=r["trial_id"])
-            experience_context.link_result_tx(conn,r,score,event["seq"])
-        updated += 1
-        changed_runs.add(r["run_id"])
-    return {"polled":len(rows),"updated":updated,"still_unknown":still_unknown,
+                         " scored_at=COALESCE(scored_at,?),stage='scored',score_confidence=?,"
+                         " score_first_seen_at=?,score_last_changed_at=?,score_anomaly=?,"
+                         " scorecard_consistent=?,score_last_polled_at=? WHERE id=?",
+                         (score,now,confidence,first_seen,last_changed,anomaly,consistent,now,r['id']))
+            if current['score_confidence'] == 'confirmed' and confidence != 'confirmed':
+                experience_context.retract_result_tx(conn, r, 'post_confirmation_revision' if correction else 'score_anomaly')
+            if meaningful:
+                reason = ('post_confirmation_revision' if correction and current['score_confidence'] == 'confirmed'
+                          else 'score_revision' if correction else 'score_confirmation'
+                          if confidence == 'confirmed' else 'score_observed')
+                event = db.append_event_tx(conn,r['run_id'],'controller',
+                    'submission.score_corrected' if correction else 'submission.scored',{
+                        'submission_id':r['id'],'trial_id':r['trial_id'],
+                        'package_sha256':r['package_sha256'],'score':score,
+                        'previous_score':current['score'] if correction else None,
+                        'score_status':'scored','score_confidence':confidence,
+                        'score_anomaly':anomaly,'scorecard_consistent':consistent,
+                        'reason':reason,'is_final':True,'platform_ref':r['platform_ref'],
+                        'platform_feedback':details},trial_id=r['trial_id'])
+                if confidence == 'confirmed' and current['score_confidence'] != 'confirmed' and not anomaly:
+                    experience_context.link_result_tx(conn,r,score,event['seq'])
+        if meaningful:
+            updated += 1
+            changed_runs.add(r['run_id'])
+    return {"polled":polled,"updated":updated,"still_unknown":still_unknown,
             "errors":errors,"changed_run_ids":sorted(changed_runs)}
 
 
@@ -611,13 +752,13 @@ def pollable_challenges(disabled: set[str] | None = None) -> list[dict[str, Any]
     rows = db.query(
         "SELECT DISTINCT r.challenge_id AS challenge_id FROM submissions s"
         " JOIN runs r ON r.id=s.run_id"
-        " WHERE s.status IN ('submitted','unknown')")
+        " WHERE s.status IN ('submitted','unknown') AND s.polling_stopped_at IS NULL")
     return [{"challenge_id": r["challenge_id"]} for r in rows
             if r["challenge_id"] not in skip]
 
 
-def _poll_challenge(challenge_id: str) -> dict[str, Any]:
-    result = poll_scores(challenge_id=challenge_id)
+def _poll_challenge(challenge_id: str, *, manual: bool = False) -> dict[str, Any]:
+    result = poll_scores(challenge_id=challenge_id, manual=manual)
     POLL_STATE[challenge_id] = {"last_poll_at": db.utcnow(),
                                 "last_result": result}
     return result
@@ -646,7 +787,8 @@ def polling_tasks() -> dict[str, Any]:
     rows = db.query(
         "SELECT r.challenge_id AS challenge_id, c.title AS title,"
         " SUM(CASE WHEN s.status='submitted'"
-        "     AND s.score_status IN ('unknown','pending') THEN 1 ELSE 0 END)"
+        "     AND (s.score_status IN ('unknown','pending') OR s.score_confidence='provisional')"
+        "     AND s.polling_stopped_at IS NULL THEN 1 ELSE 0 END)"
         " AS pending"
         " FROM submissions s JOIN runs r ON r.id=s.run_id"
         " JOIN challenges c ON c.id=r.challenge_id"
@@ -683,7 +825,7 @@ def poll_scores_now(challenge_id: str) -> dict[str, Any]:
     if not db.query_one("SELECT id FROM challenges WHERE id=?",
                         (challenge_id,)):
         raise MailboxError("NOT_FOUND", f"题目不存在: {challenge_id}")
-    return _poll_challenge(challenge_id)
+    return _poll_challenge(challenge_id, manual=True)
 
 
 # ---------- 收割 ----------

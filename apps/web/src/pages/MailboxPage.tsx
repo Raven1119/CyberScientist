@@ -484,6 +484,10 @@ export default function MailboxPage() {
                     </span>
                     <span>
                       {SUBMISSION_STATUS_LABELS[s.status] ?? s.status} · 分数 {scoreText(s)}
+                      {s.score_status === 'scored' && ` · ${s.score_confidence === 'confirmed' ? '已确认' : '暂定'}`}
+                      {s.score_anomaly && ` · 异常 ${s.score_anomaly}`}
+                      {s.scorecard_consistent === 0 && ' · 分项不一致'}
+                      {s.scorecard_consistent === 1 && ' · 分项一致'}
                       {s.error ? ` · ${s.error.slice(0, 60)}` : ''}
                       {s.platform_ref && <div className="small-text">Attempt {s.platform_ref}</div>}
                       {s.platform_feedback && Object.keys(s.platform_feedback).length > 0 && (

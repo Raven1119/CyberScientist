@@ -115,6 +115,13 @@ def link_result_tx(conn, submission, score, score_seq):
             trial_id=submission['trial_id'])
 
 
+def retract_result_tx(conn, submission, reason):
+    """Append a revision marker; old score links remain auditable."""
+    db.append_event_tx(conn,submission['run_id'],'controller','experience.result_retracted',{
+        'submission_id':submission['id'],'reason':reason,
+        'semantics':'supersedes_previous_confirmed_links'},trial_id=submission['trial_id'])
+
+
 def rebuild_uses(run_id):
     """Adoption projection can be reconstructed solely from append-only events."""
     with db.transaction() as conn:

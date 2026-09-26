@@ -341,6 +341,13 @@ SUBMISSION_V2_COLUMNS = {
     "reservation_released": "INTEGER NOT NULL DEFAULT 0",
     "source_package_sha256": "TEXT",
     "admission_json": "TEXT",
+    "score_confidence": "TEXT",
+    "score_first_seen_at": "TEXT",
+    "score_last_changed_at": "TEXT",
+    "score_anomaly": "TEXT",
+    "scorecard_consistent": "INTEGER",
+    "polling_stopped_at": "TEXT",
+    "score_last_polled_at": "TEXT",
 }
 
 # checkpoints 表 v2 新增列（对既有库做幂等 ALTER）

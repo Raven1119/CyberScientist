@@ -1733,6 +1733,10 @@ function SubmissionsPanel({
               <div className="small-text">
                 {s.package_path} · 提交于 {formatTime(s.submitted_at ?? s.created_at)}
                 {s.scored_at ? ` · 出分于 ${formatTime(s.scored_at)}` : ''}
+                {s.score_status === 'scored' && ` · ${s.score_confidence === 'confirmed' ? '已确认' : '暂定'}`}
+                {s.score_anomaly && ` · 评分异常：${s.score_anomaly}`}
+                {s.scorecard_consistent === 0 && ' · 分项不一致'}
+                {s.scorecard_consistent === 1 && ' · 分项一致'}
               </div>
               {s.error && <p className="form-error">{s.error}</p>}
             </li>

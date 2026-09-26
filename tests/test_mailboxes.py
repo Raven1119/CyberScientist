@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -36,7 +37,7 @@ def _make_package(rid: str, tid: str = "trial_mb1",
 
 def _set_scored(sub_id: str, score: float) -> None:
     """模拟平台已出分（真实拉回属平台适配器，测试直接落定）。"""
-    db.execute("UPDATE submissions SET score=?, score_status='scored',"
+    db.execute("UPDATE submissions SET score=?, score_status='scored',score_confidence='confirmed',"
                " scored_at=? WHERE id=?", (score, db.utcnow(), sub_id))
 
 
@@ -130,6 +131,111 @@ def test_exhausted_legacy_mailbox_migrates_without_changing_submissions():
     db.init_db()
     assert db.query_one('SELECT status FROM mailboxes WHERE id=?', (mailbox['id'],))['status'] == 'active'
     assert dict(db.query_one('SELECT * FROM submissions WHERE id=?', (submission['id'],))) == before
+
+
+def test_score_anomaly_then_confirmation_and_post_confirmation_revision(monkeypatch):
+    _seed_challenge()
+    rid = _make_run()
+    _make_package(rid)
+    mailboxes.register_experiment(1)
+    sub = mailboxes.submit_experiment(rid, 'trial_mb1', None, 'score-timeline')
+    platform = mailboxes._platform()
+    detail = {'scoringState': {'scoreIsFinal': True, 'displayScore': 0,
+                              'state': 'final', 'zeroReason': 'worker_timeout'}}
+    monkeypatch.setattr(platform, 'fetch_score_details', lambda *a: detail, raising=False)
+    monkeypatch.setattr(mailboxes, '_platform', lambda: platform)
+    linked = []
+    monkeypatch.setattr(mailboxes.experience_context, 'link_result_tx',
+                        lambda conn, submission, score, seq: linked.append(score))
+    base = datetime.now(timezone.utc).replace(microsecond=0)
+    def at(seconds):
+        monkeypatch.setattr(db, 'utcnow', lambda: (base + timedelta(seconds=seconds)).isoformat())
+    at(0)
+    assert mailboxes.poll_scores(rid, manual=True)['updated'] == 1
+    row = db.query_one('SELECT * FROM submissions WHERE id=?', (sub['id'],))
+    assert row['score'] == 0 and row['score_confidence'] == 'provisional'
+    assert row['score_anomaly'] == 'zeroReason' and linked == []
+    detail['scoringState'].update(displayScore=85, zeroReason=None)
+    at(30)
+    mailboxes.poll_scores(rid, manual=True)
+    at(60)
+    mailboxes.poll_scores(rid, manual=True)
+    assert db.query_one('SELECT score_confidence FROM submissions WHERE id=?',
+                        (sub['id'],))['score_confidence'] == 'provisional'
+    at(660)
+    mailboxes.poll_scores(rid, manual=True)
+    assert db.query_one('SELECT score_confidence FROM submissions WHERE id=?',
+                        (sub['id'],))['score_confidence'] == 'confirmed'
+    assert linked == [85]
+    detail['scoringState']['displayScore'] = 84
+    at(700)
+    mailboxes.poll_scores(rid, manual=True)
+    row = db.query_one('SELECT * FROM submissions WHERE id=?', (sub['id'],))
+    assert row['score'] == 84 and row['score_confidence'] == 'provisional'
+    events = db.query("SELECT type,payload FROM events WHERE run_id=?"
+                      " AND type IN ('submission.scored','submission.score_corrected','experience.result_retracted')"
+                      " ORDER BY seq", (rid,))
+    corrections = [json.loads(event['payload']) for event in events
+                   if event['type'] == 'submission.score_corrected']
+    assert corrections[-1]['reason'] == 'post_confirmation_revision'
+    assert corrections[-1]['score_confidence'] == 'provisional'
+    assert any(event['type'] == 'experience.result_retracted' for event in events)
+
+
+@pytest.mark.parametrize('trace,display,expected', [(70.525, 80, 0), (71.9, 100, 1)])
+def test_scorecard_consistency_uses_display_score(trace, display, expected):
+    detail = {'scorecard': {'harbor_score': 100, 'trace_score': trace}}
+    assert mailboxes._scorecard_consistency(detail, display) == expected
+
+
+def test_round_end_stops_automatic_poll_but_manual_still_reads(monkeypatch):
+    _seed_challenge()
+    rid = _make_run()
+    _make_package(rid)
+    mailboxes.register_experiment(1)
+    sub = mailboxes.submit_experiment(rid, 'trial_mb1', None, 'score-stop')
+    base = datetime.now(timezone.utc).replace(microsecond=0)
+    round_end = base - timedelta(hours=73)
+    db.execute('UPDATE challenges SET platform_snapshot_json=? WHERE id=?',
+               (json.dumps({'round': {'roundEndAt': round_end.isoformat()}}), 'MB_CH'))
+    platform = mailboxes._platform()
+    calls = []
+    def fetch(*args):
+        calls.append(1)
+        return {'scoringState': {'scoreIsFinal': True, 'displayScore': 85, 'state': 'final'}}
+    monkeypatch.setattr(platform, 'fetch_score_details', fetch, raising=False)
+    monkeypatch.setattr(mailboxes, '_platform', lambda: platform)
+    monkeypatch.setattr(db, 'utcnow', lambda: base.isoformat())
+    assert mailboxes.poll_scores(rid)['polled'] == 0 and calls == []
+    assert db.query_one('SELECT polling_stopped_at FROM submissions WHERE id=?',
+                        (sub['id'],))['polling_stopped_at'] is not None
+    assert mailboxes.poll_scores_now('MB_CH')['polled'] == 1 and calls == [1]
+
+
+def test_missing_round_end_uses_seven_day_deadline(monkeypatch):
+    _seed_challenge()
+    rid = _make_run()
+    _make_package(rid)
+    mailboxes.register_experiment(1)
+    sub = mailboxes.submit_experiment(rid, 'trial_mb1', None, 'seven-day')
+    submitted = datetime.now(timezone.utc).replace(microsecond=0) - timedelta(days=8)
+    db.execute('UPDATE submissions SET submitted_at=? WHERE id=?', (submitted.isoformat(), sub['id']))
+    platform = mailboxes._platform()
+    calls = []
+    monkeypatch.setattr(platform, 'fetch_score', lambda *a: calls.append(1) or 85)
+    monkeypatch.setattr(mailboxes, '_platform', lambda: platform)
+    assert mailboxes.poll_scores(rid)['polled'] == 0 and calls == []
+    assert db.query_one('SELECT polling_stopped_at FROM submissions WHERE id=?',
+                        (sub['id'],))['polling_stopped_at']
+    assert mailboxes.poll_scores(rid, manual=True)['polled'] == 1 and calls == [1]
+
+
+@pytest.mark.parametrize('state,expected', [
+    ({'scoreIsFinal': True, 'displayScore': 85, 'state': 'final', 'workerStatus': 'running'}, 'workerStatus=running'),
+    ({'scoreIsFinal': True, 'displayScore': 85, 'state': 'final', 'provisionalScore': 70}, 'provisionalScore'),
+])
+def test_scoring_state_anomalies_remain_provisional(state, expected):
+    assert expected in mailboxes._score_anomaly({'scoringState': state})
 
 
 def test_default_package_prefers_arm_zip_and_explicit_path_still_wins():

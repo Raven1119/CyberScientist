@@ -376,6 +376,9 @@ export interface Submission {
   status: string
   score: number | null
   score_status: 'unknown' | 'pending' | 'scored' | 'failed'
+  score_confidence?: 'provisional' | 'confirmed' | null
+  score_anomaly?: string | null
+  scorecard_consistent?: 0 | 1 | null
   is_harvest: number
   platform_ref: string | null
   error: string | null

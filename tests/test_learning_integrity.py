@@ -105,8 +105,12 @@ def test_adoption_links_only_subsequent_submission_and_rebuilds(monkeypatch):
         context.adopt_tx(conn,rid,'trial_mb1',[declaration],'executor','checkpoint:reported')
     later=mailboxes.submit_experiment(rid,'trial_mb1',path,'after-adoption')
     platform=mailboxes._platform()
-    monkeypatch.setattr(platform,'fetch_score',lambda *a:0.9)
+    detail={'scoringState': {'scoreIsFinal': True, 'displayScore': 0.9, 'state': 'final'}}
+    monkeypatch.setattr(platform,'fetch_score_details',lambda *a: detail, raising=False)
     monkeypatch.setattr(mailboxes,'_platform',lambda:platform)
+    monkeypatch.setattr(db,'utcnow',lambda:'2026-09-27T00:00:00+00:00')
+    mailboxes.poll_scores(rid)
+    monkeypatch.setattr(db,'utcnow',lambda:'2026-09-27T00:11:00+00:00')
     mailboxes.poll_scores(rid)
     links=[e for e in db.events_after(rid,0) if e['type']=='experience.result_linked']
     assert len(links)==1 and links[0]['payload']['submission_id']==later['id']
@@ -114,5 +118,15 @@ def test_adoption_links_only_subsequent_submission_and_rebuilds(monkeypatch):
     assert links[0]['payload']['submission_id'] != early['id']
     usage=RunController()._experience_usage('MB_CH')['used']
     assert usage[0]['results'][0]['submission_id']==later['id']
+    assert usage[0]['results'][0]['active'] is True
+    detail['scoringState']['displayScore']=0.8
+    monkeypatch.setattr(db,'utcnow',lambda:'2026-09-27T00:12:00+00:00')
+    mailboxes.poll_scores(rid,manual=True)
+    assert any(e['type']=='experience.result_retracted' for e in db.events_after(rid,0))
+    assert RunController()._experience_usage('MB_CH')['used'][0]['results'][0]['active'] is False
+    monkeypatch.setattr(db,'utcnow',lambda:'2026-09-27T00:23:00+00:00')
+    mailboxes.poll_scores(rid,manual=True)
+    results=RunController()._experience_usage('MB_CH')['used'][0]['results']
+    assert [item['active'] for item in results]==[False,True]
     context.rebuild_uses(rid)
     assert len(db.query('SELECT * FROM experience_uses WHERE run_id=?',(rid,)))==1

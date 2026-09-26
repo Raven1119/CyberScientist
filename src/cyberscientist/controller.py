@@ -2897,7 +2897,8 @@ class RunController:
                 continue
             best = db.query_one(
                 "SELECT MAX(score) AS s FROM submissions"
-                " WHERE run_id=? AND score_status='scored'", (r["id"],))
+                " WHERE run_id=? AND score_status='scored'"
+                " AND score_confidence='confirmed' AND score_anomaly IS NULL", (r["id"],))
             seen = {it.get("id") for part in ("at_start", "at_end")
                     for it in ((snap.get(part) or {}).get("items") or [])}
             for exp_id in seen:
@@ -2907,12 +2908,27 @@ class RunController:
                          "semantics":"availability_only",
                          "run_background_best_score": best["s"] if best else None})
         for row in db.query("SELECT u.* FROM experience_uses u JOIN runs r ON r.id=u.run_id WHERE r.challenge_id=?",(challenge_id,)):
-            results = db.query("SELECT payload FROM events WHERE run_id=? AND type='experience.result_linked'"
+            results = db.query("SELECT seq,payload FROM events WHERE run_id=? AND type='experience.result_linked'"
                                " AND json_extract(payload,'$.experience_id')=?"
                                " AND json_extract(payload,'$.adopted_seq')=? ORDER BY seq",
                                (row["run_id"],row["experience_id"],row["adopted_seq"]))
+            revisions = db.query("SELECT seq,payload FROM events WHERE run_id=?"
+                                 " AND type='experience.result_retracted'",(row['run_id'],))
+            retracted_after = {}
+            for revision in revisions:
+                key = json.loads(revision['payload']).get('submission_id')
+                retracted_after[key] = max(retracted_after.get(key, 0), revision['seq'])
+            projected = []
+            for result in results:
+                payload = json.loads(result['payload'])
+                current = db.query_one('SELECT score,score_confidence,score_anomaly FROM submissions WHERE id=?',
+                                       (payload['submission_id'],))
+                payload['active'] = bool(current and current['score_confidence'] == 'confirmed'
+                    and not current['score_anomaly'] and current['score'] == payload['score']
+                    and retracted_after.get(payload['submission_id'], 0) < result['seq'])
+                projected.append(payload)
             usage.setdefault(row["experience_id"],[]).append(
-                dict(row) | {"results":[json.loads(result["payload"]) for result in results]})
+                dict(row) | {"results":projected})
         return usage
 
     @staticmethod
