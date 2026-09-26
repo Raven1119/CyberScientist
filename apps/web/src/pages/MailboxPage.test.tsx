@@ -68,3 +68,20 @@ it('lets the user select a lower candidate and requires warning acknowledgment',
   await waitFor(() => expect(post).toHaveBeenCalledWith('/api/v1/harvest/submit',
     expect.objectContaining({ submission_id: 'low', acknowledge_warnings: true })))
 })
+
+it('requires and sends a prediction for a new Run manual experiment', async () => {
+  mockData()
+  const originalGet = get.getMockImplementation()!
+  get.mockImplementation((path: string) => path === '/api/v1/runs/run-a'
+    ? Promise.resolve({ current_trial_id: 'trial-a', config_snapshot: { submission_prediction_version: 1 } })
+    : originalGet(path))
+  render(<MailboxPage />)
+  await screen.findByText('提交前预测（必填）')
+  fireEvent.click(screen.getByRole('button', { name: /^提交$/ }))
+  expect(post).not.toHaveBeenCalledWith('/api/v1/runs/run-a/submissions', expect.anything())
+  fireEvent.change(screen.getByLabelText('提交前预测（必填）'),
+    { target: { value: '调整参数，预计 harbor_score 上升' } })
+  fireEvent.click(screen.getByRole('button', { name: /^提交$/ }))
+  await waitFor(() => expect(post).toHaveBeenCalledWith('/api/v1/runs/run-a/submissions',
+    expect.objectContaining({ prediction_md: '调整参数，预计 harbor_score 上升' })))
+})

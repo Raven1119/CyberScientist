@@ -340,7 +340,7 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
         status = {"NOT_FOUND": 404, "CONFLICT": 409, "INVALID_STATE": 409,
                   "NEEDS_AUTHORIZATION": 403, "NEEDS_CONFIRM": 400,
                   "MISSING_CREDENTIAL": 400, "NO_MAILBOX": 400,
-                  "INVALID_MESSAGE": 422}.get(exc.code, 400)
+                  "INVALID_MESSAGE": 422, "PREDICTION_REQUIRED": 422}.get(exc.code, 400)
         return JSONResponse(status_code=status, content={
             "detail": {"code": exc.code, "message": str(exc),
                        "recoverable": True, "details_ref": None,
@@ -1126,7 +1126,8 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
             run_id, body.get("trial_id"), body.get("package_path"),
             body.get("operation_id", ""),
             body.get("allow_proxy_evidence", False),
-            body.get("allow_indeterminate_admission", False))
+            body.get("allow_indeterminate_admission", False),
+            body.get("prediction_md"))
 
     @app.post("/api/v1/runs/{run_id}/submissions/preflight")
     async def preflight_submission(run_id: str, request: Request) -> dict[str, Any]:

@@ -11,6 +11,11 @@ interface RunSummary {
   phase: string
 }
 
+interface RunDetail {
+  current_trial_id: string | null
+  config_snapshot: { submission_prediction_version?: number }
+}
+
 interface PollResult {
   polled: number
   updated: number
@@ -46,6 +51,8 @@ export default function MailboxPage() {
   const [candidates, setCandidates] = useState<Submission[]>([])
   const [currentRun, setCurrentRun] = useState<RunSummary | null>(null)
   const [currentTrialId, setCurrentTrialId] = useState<string | null>(null)
+  const [predictionRequired, setPredictionRequired] = useState(false)
+  const [prediction, setPrediction] = useState('')
   const [busy, setBusy] = useState(false)
   const [harvestEmail, setHarvestEmail] = useState('')
   const [harvestSecret, setHarvestSecret] = useState('')
@@ -77,9 +84,10 @@ export default function MailboxPage() {
       const run = runs.items[0] ?? null
       setCurrentRun(run)
       if (run) {
-        const detail = await api.get<{ current_trial_id: string | null }>(
+        const detail = await api.get<RunDetail>(
           `/api/v1/runs/${run.id}`)
         setCurrentTrialId(detail.current_trial_id)
+        setPredictionRequired(detail.config_snapshot?.submission_prediction_version === 1)
         const subs = await api.get<{ items: Submission[] }>(
           `/api/v1/runs/${run.id}/submissions`)
         setSubmissions(subs.items)
@@ -88,6 +96,7 @@ export default function MailboxPage() {
         setCandidates(cand.items)
       } else {
         setCurrentTrialId(null)
+        setPredictionRequired(false)
         setSubmissions([])
         setCandidates([])
       }
@@ -220,6 +229,10 @@ export default function MailboxPage() {
 
   const submitExperiment = async () => {
     if (!currentRun) return
+    if (predictionRequired && !prediction.trim()) {
+      toast('请先写下本次改动及预计哪个得分分量如何变化。')
+      return
+    }
     setBusy(true)
     try {
       // 留空包路径时带当前 Trial：后端在该 Trial 目录找 result_package.json
@@ -229,8 +242,10 @@ export default function MailboxPage() {
         operation_id: `sub-${crypto.randomUUID()}`,
         allow_proxy_evidence: allowProxyEvidence,
         allow_indeterminate_admission: allowIndeterminateAdmission,
+        prediction_md: prediction.trim() || undefined,
       })
       toast('实验提交已受理。')
+      setPrediction('')
       await refresh()
     } catch (err) {
       toast('实验提交失败：' + (err instanceof Error ? err.message : String(err)))
@@ -477,6 +492,13 @@ export default function MailboxPage() {
                     提交
                   </button>
                 </div>
+                <label htmlFor="submission-prediction">
+                  提交前预测{predictionRequired ? '（必填）' : '（可选，旧 Run）'}
+                </label>
+                <textarea id="submission-prediction" value={prediction}
+                  maxLength={4000}
+                  placeholder="我改了什么；预计 harbor_score / trace_score / 总分哪个分量如何变化"
+                  onChange={(e) => setPrediction(e.target.value)} />
                 <div className="field checkbox">
                   <input id="allow-proxy-evidence" type="checkbox" checked={allowProxyEvidence}
                     onChange={(e) => setAllowProxyEvidence(e.target.checked)} />

@@ -3,7 +3,7 @@
 ## 已实现
 
 - CS-UP-02 W7：大脑专用 `platform_scores` MCP 工具通过无凭据公开 GET 分页聚合本题尝试总数、作者数、displayScore 分档、harbor/trace 分位数、前 10 成绩和本机已确认最佳分数；10 分钟缓存，分页不完整或请求失败返回 unknown。后端拒绝执行器令牌，原始作者和提交内容不进入工具输出。
-- CS-UP-02 W6：新 Run 的 submit 指导要求预测并持久化到指导与提交；收割继承预测。已确认评分在下一审阅帧与预测配对，提供可得的 displayScore、harbor_score、trace_score 和相对前次确认成绩的变化；大脑可记录 confirmed/refuted/unclear 判定，评分修订时当前判定失效。前端提交列表展示预测与判定，整理输入包含配对。旧 Run 不受预测准入限制。
+- CS-UP-02 W6：新 Run 的 submit 指导和手动实验提交均要求预测并持久化到指导与提交；收割继承预测。已确认评分在下一审阅帧与预测配对，提供可得的 displayScore、harbor_score、trace_score 和相对前次确认成绩的变化；大脑可记录 confirmed/refuted/unclear 判定，评分修订时当前判定失效。前端手动提交表单要求填写预测，提交列表展示预测与判定，整理输入包含配对。旧 Run 不受预测准入限制。
 - CS-UP-02 W5：经验受众 `brain/executor/both` 进入提议协议、版本化 Markdown、前端编辑和两种冻结投递；旧条目缺省 both。控制器依据受控回执事件生成全局环境事实，内容变化保留修订，七天未刷新则转待复核候选并停止注入；环境条目在代理协议、后端写入和前端编辑处均不可手工创建或修改。
 - CS-UP-02 W4：Run 级沙箱授权增加同时数量、累计分钟及独立 GPU 开关；隔离 bohr 2.x 网关提供创建、按 request ID 对账、执行、文件读写、删除、只读查询，Run 专用 bohr 代理与 `research_sandbox` MCP 共用校验。创建前预留、跨 Run 禁止操作、当前 Trial/题目路径约束、脱敏截断回执及文件哈希入账；执行事件成对映射至 ARM 工具轨迹。Run 终止/结束与到期清理沙箱，启动时只删除本系统已登记且所属 Run 已终态的沙箱，未知归属只报告。前端显示沙箱、镜像、状态、到期和累计分钟，提供手动删除；两个项目技能默认给执行器。
 - CS-UP-02 W3：评分轮询把 Attempt 回执的分项与评分回执分别脱敏、去重入账；科学分和轨迹分写入提交账本并进入收割候选与审阅帧，缺失时保持 unknown。旧 Job 与新 Wenyon/沙箱客户端的主机覆盖可分别配置，兼容旧平铺配置并保护旧客户端不被误导到新主机。
@@ -25,6 +25,7 @@
 
 ## 已实际验证
 
+- CS-UP-02 W6 后续验收修正：临时数据库与 fake 平台覆盖新 Run 的手动提交空预测被拒且不预留、有效预测经 API 保存、旧 Run 可继续空预测；前端覆盖必填提示和预测传递。定向 `.venv/bin/pytest -q tests/test_mailboxes.py tests/test_submission_integrity.py tests/test_learning_integrity.py tests/test_ev_upgrade.py tests/test_polling.py` 为 125 passed；全量 `.venv/bin/pytest -q` 为 438 passed、1 skipped（既有回环监听限制）；`npm --prefix apps/web test -- --run` 为 18 passed；`npm --prefix apps/web run build`、`.venv/bin/python -m compileall -q src tests` 和 `git diff --check` 通过。前端首次构建发现测试断言使用了不支持的 `exact` 参数，改为锚定正则后重跑通过。所有验证均未调用真实模型、创建 Job 或提交 Attempt。
 - CS-UP-02 W7：本机保存的官方 API 文档列出尝试列表 `page`、`limit`、`sort` 参数，历史公开回执示例含 `attempts`、`total`、`scorecard` 和 `scoringState`。fake 分页测试覆盖分档、分位数、匿名、缓存、平台失败与执行器拒绝；`.venv/bin/pytest -q` 为 436 passed、1 skipped（既有回环监听限制），前端 17 passed、构建通过，`compileall` 与 `git diff --check` 通过。
 - CS-UP-02 W6：迁移前本机 SQLite 备份 14,213,120 字节至忽略目录 `.package-checks/cs-up-02-w6-20260926T215854Z/`；连续两次 `db.init_db()` 后提交三列、指导一列存在，题目 4、Run 7、提交 2、Job 28 行保持不变。fake 测试覆盖新旧 Run 提交指导、预测冻结/收割继承、已确认分项变化、判定入账、评分修订失效和整理输入。最终 `.venv/bin/pytest -q` 为 432 passed、1 skipped（既有回环监听限制），前端 17 passed、构建通过，`compileall` 与 `git diff --check` 通过。
 - CS-UP-02 W5：临时 SQLite + synthetic 回执测试覆盖角色注入、环境事实创建/冲突修订/到期、代理与用户拒写；`.venv/bin/pytest -q` 为 429 passed、1 skipped（既有回环监听限制），`npm --prefix apps/web test -- --run` 为 17 passed，`npm --prefix apps/web run build`、`compileall`、`git diff --check` 通过。未据 synthetic 回执推断真实平台环境。

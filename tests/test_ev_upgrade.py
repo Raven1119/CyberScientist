@@ -171,7 +171,8 @@ def test_invalid_arm_manifest_reports_invalid_package_event(manifest):
         if manifest is not None:
             archive.writestr('arm_manifest.json', manifest)
     with pytest.raises(mailboxes.MailboxError) as exc:
-        mailboxes.submit_experiment(rid, None, package.relative_to(config.WORKSPACE_DIR).as_posix(), 'invalid-arm')
+        mailboxes.submit_experiment(rid, None, package.relative_to(config.WORKSPACE_DIR).as_posix(),
+                                    'invalid-arm', prediction_md='修改包结构，预计总分上升')
     assert exc.value.code == 'INVALID_PACKAGE'
     event = db.query_one("SELECT payload FROM events WHERE run_id=? AND type='submission.preflight_failed' ORDER BY seq DESC", (rid,))
     assert event and json.loads(event['payload'])['code'] == 'INVALID_PACKAGE'
@@ -261,7 +262,8 @@ def test_missing_protocol_is_indeterminate_and_proxy_blocks_without_reservation(
     check = mailboxes.preflight_submission(rid, trial, None)
     assert check['error_code'] == 'PROXY_EVIDENCE'
     with pytest.raises(mailboxes.MailboxError) as exc:
-        mailboxes.submit_experiment(rid, trial, None, 'ev-submit')
+        mailboxes.submit_experiment(rid, trial, None, 'ev-submit',
+                                    prediction_md='修改输入数据，预计总分上升')
     assert exc.value.code == 'PROXY_EVIDENCE'
     assert db.query_one('SELECT COUNT(*) AS n FROM submissions')['n'] == 0
     assert mailboxes.preflight_submission(rid, trial, None,
@@ -283,7 +285,8 @@ def test_blocked_trace_never_reserves_submission():
     assert report['admission']['verdict'] == 'blocked'
     assert report['error_code'] == 'TRACE_ADMISSION_BLOCKED'
     with pytest.raises(mailboxes.MailboxError) as exc:
-        mailboxes.submit_experiment(rid, trial, None, 'blocked-submit')
+        mailboxes.submit_experiment(rid, trial, None, 'blocked-submit',
+                                    prediction_md='修改轨迹，预计总分上升')
     assert exc.value.code == 'TRACE_ADMISSION_BLOCKED'
     assert db.query_one('SELECT COUNT(*) AS n FROM submissions')['n'] == 0
 
@@ -810,13 +813,15 @@ def test_nonzip_proxy_gate_precedes_submission_reservation(monkeypatch, filename
     assert mailboxes.preflight_submission(rid, trial, None)['admission']['verdict'] == 'not_applicable'
     assert mailboxes.preflight_submission(rid, trial, None)['error_code'] == 'PROXY_EVIDENCE'
     with pytest.raises(mailboxes.MailboxError) as error:
-        mailboxes.submit_experiment(rid, trial, None, 'blocked-'+filename)
+        mailboxes.submit_experiment(rid, trial, None, 'blocked-'+filename,
+                                    prediction_md='修改输入数据，预计总分上升')
     assert error.value.code == 'PROXY_EVIDENCE'
     assert db.query_one('SELECT COUNT(*) AS n FROM submissions')['n'] == 0
     assert db.query_one("SELECT submissions_used FROM mailboxes WHERE id='proxy_mb'")[0] == 0
     assert platform_calls == []
     mailboxes.submit_experiment(rid, trial, None, 'allowed-'+filename,
-                                allow_proxy_evidence=True)
+                                allow_proxy_evidence=True,
+                                prediction_md='修改输入数据，预计总分上升')
     event = db.query_one("SELECT payload FROM events WHERE run_id=? AND type='submission.created' ORDER BY seq DESC LIMIT 1", (rid,))
     assert json.loads(event['payload'])['allow_proxy_evidence'] is True
     assert db.query_one('SELECT COUNT(*) AS n FROM submissions')['n'] == 1

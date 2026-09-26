@@ -31,7 +31,8 @@ def _make_submission(cid: str, op: str) -> dict:
     d = config.WORKSPACE_DIR / "runs" / rid / "trials" / "trial_p1"
     d.mkdir(parents=True, exist_ok=True)
     (d / "result_package.json").write_text('{"result": 1}', encoding="utf-8")
-    return mailboxes.submit_experiment(rid, "trial_p1", None, op)
+    return mailboxes.submit_experiment(rid, "trial_p1", None, op,
+                                       prediction_md='预计本次提交的总分高于上一版')
 
 
 def _fake_platform(monkeypatch, score: float | None = 0.5):

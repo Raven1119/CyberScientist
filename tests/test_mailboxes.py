@@ -20,9 +20,20 @@ def _seed_challenge():
         "'unknown',?,1)", (db.utcnow(),))
 
 
-def _make_run(max_submissions=5):
+def _legacy_prediction_run(rid: str) -> None:
+    """Older mailbox tests exercise Runs created before prediction admission."""
+    snapshot = json.loads(db.query_one(
+        'SELECT config_snapshot FROM runs WHERE id=?', (rid,))['config_snapshot'])
+    snapshot.pop('submission_prediction_version', None)
+    db.execute('UPDATE runs SET config_snapshot=? WHERE id=?',
+               (json.dumps(snapshot), rid))
+
+
+def _make_run(max_submissions=5, *, prediction_required=False):
     c = RunController()
     rid = c.create_run("MB_CH", shadow_enabled=False)["id"]
+    if not prediction_required:
+        _legacy_prediction_run(rid)
     c.authorize(rid, "demo", True, 10, 30, max_submissions, None)
     return rid
 
@@ -51,6 +62,7 @@ def _extra_run(index: int, *, max_submissions: int = 20) -> str:
                (cid, f'platform-{index}', f'demo://{index}', db.utcnow()))
     controller = RunController()
     rid = controller.create_run(cid, shadow_enabled=False)['id']
+    _legacy_prediction_run(rid)
     controller.authorize(rid, 'demo', True, 10, 30, max_submissions, None)
     _make_package(rid)
     return rid
@@ -60,7 +72,7 @@ def test_submission_prediction_is_frozen_and_inherited_by_harvest():
     _seed_challenge()
     mailboxes.register_experiment(1)
     mailboxes.add_harvest('harvest-pred@example.com','fixture-secret')
-    rid=_make_run()
+    rid=_make_run(prediction_required=True)
     _make_package(rid)
     text='调整正则化；预计 harbor_score 增加 5，trace_score 不变'
     source=mailboxes.submit_experiment(rid,'trial_mb1',None,'prediction-source',prediction_md=text)
@@ -68,6 +80,46 @@ def test_submission_prediction_is_frozen_and_inherited_by_harvest():
     _set_scored(source['id'],80)
     harvest=mailboxes.harvest_submit(source['id'],'prediction-harvest',True)
     assert db.query_one('SELECT prediction_md FROM submissions WHERE id=?',(harvest['id'],))['prediction_md']==text
+
+
+def test_new_run_manual_experiment_requires_prediction_before_reserving():
+    _seed_challenge()
+    rid = _make_run(prediction_required=True)
+    _make_package(rid)
+    mailboxes.register_experiment(1)
+    with pytest.raises(mailboxes.MailboxError) as exc:
+        mailboxes.submit_experiment(rid, 'trial_mb1', None, 'missing-prediction')
+    assert exc.value.code == 'PREDICTION_REQUIRED'
+    assert db.query_one('SELECT COUNT(*) AS n FROM submissions WHERE run_id=?', (rid,))['n'] == 0
+    text = '调整正则化；预计 harbor_score 增加'
+    sub = mailboxes.submit_experiment(rid, 'trial_mb1', None, 'with-prediction',
+                                      prediction_md=text)
+    assert db.query_one('SELECT prediction_md FROM submissions WHERE id=?',
+                        (sub['id'],))['prediction_md'] == text
+
+
+async def test_new_run_submission_api_forwards_prediction():
+    from httpx import ASGITransport, AsyncClient
+    from cyberscientist.api import create_app
+
+    _seed_challenge()
+    rid = _make_run(prediction_required=True)
+    _make_package(rid)
+    mailboxes.register_experiment(1)
+    app = create_app()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url='http://t') as cli:
+        url = f'/api/v1/runs/{rid}/submissions'
+        missing = await cli.post(url, json={'trial_id': 'trial_mb1',
+                                            'operation_id': 'api-missing'})
+        assert missing.status_code == 422
+        assert missing.json()['detail']['code'] == 'PREDICTION_REQUIRED'
+        submitted = await cli.post(url, json={'trial_id': 'trial_mb1',
+                                              'operation_id': 'api-predicted',
+                                              'prediction_md': '调整参数，预计总分上升'})
+        assert submitted.status_code == 200, submitted.text
+        row = db.query_one('SELECT prediction_md FROM submissions WHERE id=?',
+                           (submitted.json()['id'],))
+        assert row['prediction_md'] == '调整参数，预计总分上升'
 
 
 def test_quota_is_per_platform_challenge_for_both_mailbox_roles():
@@ -617,7 +669,8 @@ def test_submit_demo_challenge_rejected_and_quota_released(monkeypatch):
     monkeypatch.setattr(
         mailboxes, "_platform",
         lambda: BohriumPlaygroundPlatform("https://x.test/api"))
-    r = mailboxes.submit_experiment(rid, "trial_mb1", None, "op-demo-guard")
+    r = mailboxes.submit_experiment(rid, "trial_mb1", None, "op-demo-guard",
+                                    prediction_md='调整参数，预计总分上升')
     assert r["status"] == "failed"
     assert "未关联真实平台" in r["error"]
     mb = db.query_one("SELECT status FROM mailboxes WHERE id='mbox_t1'")

@@ -575,6 +575,13 @@ def submit_experiment(run_id: str, trial_id: str | None,
     if prediction_md is not None:
         from .observation import strip_secrets
         prediction_md=strip_secrets(prediction_md)
+        if not prediction_md.strip():
+            raise MailboxError('INVALID_MESSAGE','prediction_md 不能只包含密钥')
+    run = db.query_one("SELECT config_snapshot FROM runs WHERE id=?", (run_id,))
+    if run and json.loads(run["config_snapshot"]).get("submission_prediction_version") == 1 \
+            and prediction_md is None:
+        raise MailboxError('PREDICTION_REQUIRED',
+                           '本 Run 的实验提交必须填写 prediction_md：说明改了什么及预计哪个分量如何变化')
     package = _resolve_package(run_id, trial_id, package_path)
     source_content = package.read_bytes()
     source_digest = hashlib.sha256(source_content).hexdigest()
