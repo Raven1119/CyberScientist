@@ -1,12 +1,13 @@
 """Synthetic CLI receipts only; never call a model or Bohrium."""
 import json
 import subprocess
+import zipfile
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from threading import Event
 
 import pytest
-from cyberscientist import compute, config, db, observation
+from cyberscientist import compute, config, db, observation, trace_projection
 from cyberscientist.controller import RunController
 from test_collaboration import _seed_challenge
 
@@ -61,15 +62,65 @@ def test_download_records_real_files_or_failure(run, monkeypatch, mode):
     expected = 'retrieved' if mode == 'file' else 'failed'
     assert job['retrieval_status'] == expected
     if mode == 'file':
-        assert job['receipt']['retrieval']['files'] == [{
+        assert job['receipt']['retrieval']['download']['files'] == [{
             'path': 'output.txt', 'bytes': len(b'verified fixture'),
             'sha256': __import__('hashlib').sha256(b'verified fixture').hexdigest()}]
     else:
-        assert job['receipt']['retrieval']['files'] == []
+        assert job['receipt']['retrieval']['download']['files'] == []
     events = db.query('SELECT type,payload FROM events WHERE run_id=? AND type IN (?,?)',
                       (rid, 'job.retrieved', 'job.retrieval_failed'))
     assert len(events) == 1 and events[0]['type'] == ('job.retrieved' if mode == 'file' else 'job.retrieval_failed')
     assert 'accessKey' not in events[0]['payload']
+
+
+@pytest.mark.parametrize('steps,expected', [
+    ([('download', True), ('log', False)], 'retrieved'),
+    ([('log', False)], 'failed'),
+    ([('log', False), ('download', True)], 'retrieved'),
+    ([('download', True), ('download', False)], 'retrieved'),
+    ([('log', True), ('log', False)], 'failed'),
+    ([('download', False), ('log', True)], 'retrieved'),
+])
+def test_retrieval_summary_keeps_successful_download(run, monkeypatch, steps, expected):
+    rid, source = run
+    settings = config.load_settings()
+    settings['bohrium']['access_key_secret_ref'] = 'local:fixture-key'
+    config.save_settings(settings)
+    config.update_secret('fixture-key', 'secret-value-for-test')
+    monkeypatch.setattr(compute, '_native', lambda *a, **k: receipt('JobId: 123'))
+    compute.submit(rid, 'retrieval-sequence', spec(), str(source))
+    db.append_event(rid, 'controller', 'job.observed',
+                    {'operation_id': 'retrieval-sequence', 'platform_job_id': 123,
+                     'status': 'Finished'})
+    for index, (operation, succeeds) in enumerate(steps):
+        destination = source.parent / f'out-{index}'
+        def native(args, **kwargs):
+            if succeeds:
+                Path(args[args.index('-o') + 1], 'secret-value-for-test.txt').write_bytes(b'fixture result')
+                return receipt('download completed')
+            return {'ok': False, 'exit_code': 0, 'stdout': 'Error: fixture',
+                    'stderr': 'accessKey=secret-value-for-test'}
+        monkeypatch.setattr(compute, '_native', native)
+        compute.cli(rid, ['job', operation, '-j', '123', '-o', str(destination)],
+                    str(source.parent))
+    job = compute.list_jobs(rid)['items'][0]
+    assert job['retrieval_status'] == expected
+    retrieval = job['receipt']['retrieval']
+    for operation, succeeds in dict(steps).items():
+        assert retrieval[operation]['status'] == ('retrieved' if succeeds else 'failed')
+    assert retrieval['download_ever_retrieved'] is any(
+        operation == 'download' and succeeds for operation, succeeds in steps)
+    events = db.query("SELECT type,payload FROM events WHERE run_id=? AND type IN ('job.retrieved','job.retrieval_failed') ORDER BY seq", (rid,))
+    assert [row['type'] for row in events] == [
+        'job.retrieved' if succeeds else 'job.retrieval_failed' for _, succeeds in steps]
+    assert [json.loads(row['payload'])['operation'] for row in events] == [op for op, _ in steps]
+    assert 'secret-value-for-test' not in json.dumps(job['receipt'])
+    assert all('secret-value-for-test' not in row['payload'] for row in events)
+    cutoff = db.query_one('SELECT MAX(seq) AS n FROM events WHERE run_id=?', (rid,))['n']
+    assert observation.job_states(rid, cutoff)[0]['retrieval_status'] == expected
+    projected = trace_projection.project(rid, None, cutoff, {})
+    terminal = next(step for step in projected if step.get('title') == 'Bohrium Job terminal state')
+    assert f'结果取回：{expected}' in terminal['tool_output']
 
 
 def test_native_zero_exit_unmarshal_error_is_failed_and_redacted(monkeypatch):
@@ -84,6 +135,61 @@ def test_native_zero_exit_unmarshal_error_is_failed_and_redacted(monkeypatch):
     result = compute._native(['job', 'download', '-j', '123', '-o', '/tmp/fixture'])
     assert result['exit_code'] == 0 and result['ok'] is False
     assert 'secret-value-for-test' not in json.dumps(result)
+
+
+def test_job_client_uses_legacy_api_host_without_changing_wenyon(monkeypatch):
+    settings = config.load_settings()
+    settings['bohrium']['host_overrides'] = {}
+    config.save_settings(settings)
+    hosts = []
+    def native(cmd, **kwargs):
+        hosts.append((cmd[1:], kwargs['env']['OPENAPI_HOST']))
+        return subprocess.CompletedProcess(cmd, 0, '', '')
+    monkeypatch.setattr(compute.subprocess, 'run', native)
+    compute._native(['job', 'list'])
+    compute._native(['wenyon', 'dataset', 'download', '--help'])
+    assert hosts == [(['job', 'list'], 'https://openapi.dp.tech'),
+                     (['wenyon', 'dataset', 'download', '--help'], 'https://open.bohrium.com')]
+
+
+def test_legacy_single_retrieval_receipt_preserves_download_evidence(run, monkeypatch):
+    rid, source = run
+    monkeypatch.setattr(compute, '_native', lambda *a, **k: receipt('JobId: 123'))
+    compute.submit(rid, 'legacy-retrieval', spec(), str(source))
+    old = {'retrieval': {'operation': 'download', 'status': 'retrieved',
+                         'files': [{'path': 'old.txt', 'sha256': 'a' * 64, 'bytes': 1}],
+                         'exit_code': 0}}
+    db.execute("UPDATE compute_jobs SET retrieval_status='retrieved',receipt_json=?"
+               " WHERE operation_id='legacy-retrieval'", (json.dumps(old),))
+    monkeypatch.setattr(compute, '_native', lambda *a, **k: receipt('Error: fixture', False))
+    compute.cli(rid, ['job', 'log', '-j', '123', '-o', str(source.parent / 'log-failure')],
+                str(source.parent))
+    item = compute.list_jobs(rid)['items'][0]
+    assert item['retrieval_status'] == 'retrieved'
+    assert item['receipt']['retrieval']['download']['status'] == 'retrieved'
+    assert item['receipt']['retrieval']['log']['status'] == 'failed'
+
+
+def test_probe_facts_are_read_from_legacy_job_archive(run, monkeypatch):
+    rid, source = run
+    monkeypatch.setattr(compute, '_native', lambda *a, **k: receipt('JobId: 123'))
+    compute.submit(rid, 'archive-probe', spec(), str(source), {'purpose': 'probe'})
+    facts = {'packages': {'scipy': {'version': '1.10.1'}}}
+    def native(args, **kwargs):
+        archive = Path(args[args.index('-o') + 1]) / '123' / 'out.zip'
+        archive.parent.mkdir(parents=True)
+        with zipfile.ZipFile(archive, 'w') as out:
+            out.writestr('results/facts.json', json.dumps(facts))
+            out.writestr('results/data-proof.json', '{}')
+        return receipt('Downloading outfile')
+    monkeypatch.setattr(compute, '_native', native)
+    destination = source.parent / 'probe-results'
+    compute.cli(rid, ['job', 'download', '-j', '123', '-o', str(destination)],
+                str(source.parent))
+    assert compute.list_jobs(rid)['items'][0]['retrieval_status'] == 'retrieved'
+    observed = db.query_one("SELECT facts_json FROM image_facts WHERE source_operation_id='archive-probe'")
+    assert observed and json.loads(observed['facts_json']) == facts
+    assert db.query_one("SELECT COUNT(*) AS n FROM events WHERE run_id=? AND type='image_facts.observed'", (rid,))['n'] == 1
 
 
 def test_retrieval_column_migration_is_idempotent():

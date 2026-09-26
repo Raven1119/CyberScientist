@@ -12,12 +12,14 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import zipfile
 from datetime import datetime, timezone
 
 from . import config, db
 from .bohr_proxy import redact
 
 TERMINAL = {'Finished', 'Failed', 'Stopped'}
+LEGACY_JOB_OPENAPI_HOST = 'https://openapi.dp.tech'
 DEFAULT_LIMITS = {'max_concurrent_jobs': 2, 'max_cpu': 16, 'max_memory_gb': 16,
                   'max_disk_gb': 10, 'allow_gpu': False}
 _PROJECT_PARSE_ERROR = ('failed to parse config file: json: cannot unmarshal '
@@ -109,7 +111,11 @@ def _native(args: list[str], *, timeout: int = 90) -> dict:
             env[name] = str(directory)
     env.update(BOHR_ACCESS_KEY=key, ACCESS_KEY=key,
                PROJECT_ID=str(settings.get('project_id', '')),
-               OPENAPI_HOST='https://open.bohrium.com', TIEFBLUE_HOST='https://tiefblue.dp.tech')
+               # bohr 1.1.0's /openapi/v1/job/{id} route still exists here;
+               # open.bohrium.com returns a new 404 object envelope it cannot parse.
+               OPENAPI_HOST=('https://open.bohrium.com' if wenyon
+                             else LEGACY_JOB_OPENAPI_HOST),
+               TIEFBLUE_HOST='https://tiefblue.dp.tech')
     env.update(settings.get('host_overrides') or {})
     try:
         result = subprocess.run([executable, *args], env=env, capture_output=True,
@@ -495,12 +501,25 @@ def cli(run_id: str, args: list[str], cwd: str) -> dict:
             retrieved = bool(receipt.get('ok') and files)
             status = 'retrieved' if retrieved else 'failed'
             stored = json.loads(row['receipt_json'] or '{}')
-            stored['retrieval'] = {'operation': args[1], 'status': status,
-                                   'files': files if retrieved else [],
-                                   'exit_code': receipt.get('exit_code')}
+            retrieval = stored.get('retrieval') or {}
+            # CS-EV-01a stored only the last operation. Preserve it when moving
+            # to per-operation receipts, including evidence of a past download.
+            if 'operation' in retrieval:
+                old = retrieval
+                retrieval = {old['operation']: {key: old.get(key) for key in
+                             ('status', 'files', 'exit_code')}}
+                if old['operation'] == 'download' and old.get('status') == 'retrieved':
+                    retrieval['download_ever_retrieved'] = True
+            retrieval['download_ever_retrieved'] = bool(
+                retrieval.get('download_ever_retrieved') or
+                (args[1] == 'download' and retrieved))
+            retrieval[args[1]] = {'status': status, 'files': files if retrieved else [],
+                                  'exit_code': receipt.get('exit_code')}
+            stored['retrieval'] = retrieval
+            summary = 'retrieved' if retrieval['download_ever_retrieved'] else status
             with db.transaction() as conn:
                 conn.execute('UPDATE compute_jobs SET retrieval_status=?,receipt_json=?,updated_at=?'
-                             ' WHERE operation_id=?', (status, _json(stored), db.utcnow(), row['operation_id']))
+                             ' WHERE operation_id=?', (summary, _json(stored), db.utcnow(), row['operation_id']))
                 db.append_event_tx(conn, run_id, 'controller',
                                    'job.retrieved' if retrieved else 'job.retrieval_failed',
                                    {'operation_id': row['operation_id'], 'platform_job_id': jid,
@@ -510,10 +529,20 @@ def cli(run_id: str, args: list[str], cwd: str) -> dict:
                                                 'ok': receipt.get('ok'),
                                                 'stderr': redact(receipt.get('stderr', '')[:1000], [key])}},
                                    trial_id=row['trial_id'])
-        if args[1] == 'download' and row['purpose'] == 'probe' and receipt.get('ok') and opts.output:
+        if args[1] == 'download' and row['purpose'] == 'probe' and retrieved:
             facts_path = dest / 'results' / 'facts.json'
             try:
-                facts = json.loads(facts_path.read_text())
+                if facts_path.is_file():
+                    facts = json.loads(facts_path.read_text())
+                else:
+                    # bohr 1.1.0 downloads <job_id>/out.zip; inspect the
+                    # declared member without extracting any archive paths.
+                    with zipfile.ZipFile(dest / str(jid) / 'out.zip') as archive:
+                        matches = [item for item in archive.infolist()
+                                   if item.filename == 'results/facts.json']
+                        if len(matches) != 1 or matches[0].file_size > 2_000_000:
+                            raise ValueError('facts.json 缺失、重复或过大')
+                        facts = json.loads(archive.read(matches[0]))
                 if not isinstance(facts.get('packages'), dict):
                     raise ValueError('packages 缺失')
                 digest = hashlib.sha256(_json(facts).encode()).hexdigest()
@@ -522,7 +551,7 @@ def cli(run_id: str, args: list[str], cwd: str) -> dict:
                                                   _json(facts), row['operation_id'], db.utcnow()))
                 db.append_event(run_id, 'controller', 'image_facts.observed',
                                 {'operation_id': row['operation_id'], 'facts_sha256': digest})
-            except (OSError, ValueError, KeyError, TypeError):
+            except (OSError, ValueError, KeyError, TypeError, zipfile.BadZipFile):
                 db.append_event(run_id, 'controller', 'image_facts.unknown',
                                 {'operation_id': row['operation_id'], 'reason': 'facts.json 解析失败'})
         return receipt

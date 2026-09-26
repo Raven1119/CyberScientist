@@ -74,6 +74,23 @@ async def test_bohrium_probe_failure_never_echoes_cli_credentials(tmp_path, monk
     assert "login" not in response.text
 
 
+async def test_bohrium_connection_probe_defaults_to_legacy_job_host(tmp_path, monkeypatch):
+    configure(tmp_path)
+    settings = config.load_settings()
+    settings['bohrium']['host_overrides'] = {}
+    config.save_settings(settings)
+    hosts = []
+    def run(cmd, **kwargs):
+        hosts.append(kwargs['env']['OPENAPI_HOST'])
+        output = '1.1.0\n' if cmd[1:] == ['version'] else '[]'
+        return subprocess.CompletedProcess(cmd, 0, output, '')
+    monkeypatch.setattr(subprocess, 'run', run)
+    async with AsyncClient(transport=ASGITransport(app=create_app()), base_url='http://t') as client:
+        response = await client.post('/api/v1/connections/bohrium/test', json={})
+    assert response.status_code == 200
+    assert hosts and all(host == 'https://openapi.dp.tech' for host in hosts)
+
+
 async def test_bohrium_probe_does_not_block_frontend_requests(tmp_path, monkeypatch):
     configure(tmp_path)
     started = threading.Event()

@@ -22,11 +22,16 @@ def project(run_id: str, trial_id: str | None, through_seq: int,
     rows = db.query("SELECT seq,recorded_at,type,payload,trial_id FROM events"
                     " WHERE run_id=? AND seq<=? ORDER BY seq", (run_id, through_seq))
     retrieval_by_op = {}
+    downloaded_ops = set()
     for event in rows:
         if event["type"] in ("job.retrieved", "job.retrieval_failed"):
             value = json.loads(event["payload"])
-            if value.get("operation_id"):
-                retrieval_by_op[value["operation_id"]] = value.get("retrieval_status", "unknown")
+            op = value.get("operation_id")
+            if op:
+                status = "retrieved" if event["type"] == "job.retrieved" else "failed"
+                if value.get("operation") == "download" and status == "retrieved":
+                    downloaded_ops.add(op)
+                retrieval_by_op[op] = "retrieved" if op in downloaded_ops else status
     calls: set[str] = set()
     results: set[str] = set()
     steps: list[dict[str, Any]] = []

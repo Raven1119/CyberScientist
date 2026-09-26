@@ -163,12 +163,15 @@ def job_states(run_id: str, through_seq: int) -> list[dict]:
                     'job.stop_requested': 'stopping', 'job.stop_receipt': 'stop_unknown'}
         state['status'] = p.get('status') or statuses.get(e['type'], state.get('status', 'unknown'))
         state['platform_job_id'] = p.get('platform_job_id') or state.get('platform_job_id')
-        if e['type'] == 'job.retrieval_failed':
-            state['retrieval_status'] = 'failed'
-        elif e['type'] == 'job.retrieved':
-            state['retrieval_status'] = 'retrieved'
+        if e['type'] in ('job.retrieval_failed', 'job.retrieved'):
+            operation_status = 'retrieved' if e['type'] == 'job.retrieved' else 'failed'
+            if p.get('operation') == 'download' and operation_status == 'retrieved':
+                state['_download_ever_retrieved'] = True
+            state['retrieval_status'] = ('retrieved' if state.get('_download_ever_retrieved')
+                                         else operation_status)
         state['evidence_ref'] = f"event:{run_id}:{e['seq']}"
     for state in states.values():
+        state.pop('_download_ever_retrieved', None)
         state.setdefault('retrieval_status', 'not_attempted')
     return list(states.values())[-30:]
 
