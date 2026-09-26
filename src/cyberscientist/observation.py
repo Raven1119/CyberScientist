@@ -10,7 +10,7 @@ import json
 import re
 from typing import Any
 
-from . import db, experience_context
+from . import datasets, db, experience_context
 
 # 有界投影的尺寸上限（字符）
 _MAX_GOAL = 1500
@@ -199,7 +199,7 @@ def build_frame(run_id: str, *, mode: str, frame_id: str,
         if trial else "", _MAX_TRIAL)
     truncated |= clip
 
-    # 检查点摘要：执行器已写下的报告，带来源标注
+    # 稀疏帧只带显式研究摘要；完整报告由 research_trace 按需读取。
     cps = db.query(
         "SELECT c.* FROM checkpoints c JOIN events e ON e.run_id=c.run_id"
         " AND e.type='checkpoint.created' AND json_extract(e.payload,'$.checkpoint_id')=c.id"
@@ -209,15 +209,22 @@ def build_frame(run_id: str, *, mode: str, frame_id: str,
         "SELECT COUNT(*) AS n FROM checkpoints WHERE run_id=?", (run_id,))
     checkpoint_summaries = []
     for cp in reversed(cps):
-        report, clip = _clip(strip_secrets(cp["report"]),
-                             320 if sparse else _MAX_CHECKPOINT_EACH)
-        truncated |= clip
-        checkpoint_summaries.append({
+        item = {
             "checkpoint_id": cp["id"], "stage": cp["stage"],
-            "report_md": report,
             "evidence_refs": json.loads(cp["evidence_refs"] or "[]"),
             "source": "executor_report"
-                      if cp["source"] == "executor" else "user_report"})
+                      if cp["source"] == "executor" else "user_report"}
+        if sparse:
+            summary = cp["research_summary_md"]
+            item["research_summary_available"] = bool(summary)
+            if summary:
+                item["research_summary_md"] = strip_secrets(summary)
+        else:
+            report, clip = _clip(strip_secrets(cp["report"]),
+                                 _MAX_CHECKPOINT_EACH)
+            truncated |= clip
+            item["report_md"] = report
+        checkpoint_summaries.append(item)
     omitted = max(0, (total_cps["n"] if total_cps else 0) - len(cps))
 
     # 覆盖范围内事件：值得注意的事件摘要 + 工具活动计数；不含原始推理流
@@ -231,7 +238,7 @@ def build_frame(run_id: str, *, mode: str, frame_id: str,
             activity[key] = activity.get(key, 0) + 1
         if e["type"] in _NOTABLE and (not sparse or e["type"] in (
                 "trial.stalled", "trial.done", "trial.reported_complete",
-                "checkpoint.created", "submission.scored",
+                "submission.scored",
                 "submission.score_corrected", "run.blocked")):
             notable.append({"seq": e["seq"], "source": e["source"],
                             "type": e["type"],
@@ -268,7 +275,7 @@ def build_frame(run_id: str, *, mode: str, frame_id: str,
         # output is available only through an explicit research_trace read.
         notable = [e for e in notable if e["type"] in (
             "trial.stalled", "trial.done", "trial.reported_complete",
-            "checkpoint.created", "submission.scored",
+            "submission.scored",
             "submission.score_corrected", "run.blocked")]
         for item in notable:
             item["excerpt"] = item["excerpt"][:120]
@@ -286,7 +293,11 @@ def build_frame(run_id: str, *, mode: str, frame_id: str,
         "through_seq": through_seq,
         "processed_through_seq": events[-1]["seq"] if events else from_seq-1,
         "goal_md": goal_md,
-        "current_intention": run["intention"],
+        **({"lifecycle_version": 2, "run_objective": run["objective_md"],
+            "current_trial_goal": trial["goal"] if trial else None,
+            "pending_intent": json.loads(run["pending_action_json"]) if run["pending_action_json"] else None}
+           if json.loads(run["config_snapshot"]).get("lifecycle_version") == 2
+           else {"current_intention": run["intention"]}),
         "trial_summary_md": trial_summary,
         "checkpoint_summaries": checkpoint_summaries,
         "notable_events": notable,
@@ -294,6 +305,7 @@ def build_frame(run_id: str, *, mode: str, frame_id: str,
         "trace_access": ({"tool": "research_trace", "optional": True,
                           "through_seq": through_seq} if sparse else None),
         "compute_jobs": job_states(run_id, through_seq),
+        "data_status": datasets.status(run["challenge_id"])["items"],
         "activity_counts": activity,
         "metrics": score_deltas(events),
         "known_scores":list(known_scores.values()),

@@ -233,3 +233,31 @@
 | 响应帧缺 "jsonrpc":"2.0"，ACP elicitation 路径严格校验判为 RPC 失败 → 回退 request_permission；该回退对提问在当前 CLI 版本无效（选中仍 dismissed） | jsonrpc_stdio 请求/响应补 jsonrpc 字段；声明 elicitation.form 走正道 | 探针 v3：修复后无回退，工具结果含所选答案且代理确认 |
 | 全自动系统没有人类在线，执行器提问需要回答者 | 问题路由大脑：executor_question 审阅（小上下文、选项校验、额度记账、140s 超时如实 decline） | test_t10e_executor_question_routed_to_brain |
 | 「所有工具请求都应该批准」 | Kimi 执行器 mode=yolo（引擎内全批准）+ 兜底自动批准已在位，无需改动 | 既有探针/生产事件 |
+## CS-EV-01 证据入口与准入（2026-09-26）
+
+- PR-1 已获单次授权并完成：`GET https://play.bohrium.com/api/protocol` 返回 HTTP 200，原文 21194 字节，SHA-256 `7042a86210915ad516521b052be3c62278c28696716909ca43cb08ea375c8cf4`。`contracts/arm_protocol.json` 保存该公开协议及抓取时间、来源哈希；本地完整度仍只叫 `local_estimate`，不冒充平台评分。协议规定七种 typed step 与六个准入信号，至少满足一个。
+- PR-2 已获单次授权并完成：本机只读导出 USCT 接续 Run 的事件 3122、3138；脱敏摘录只保留准入与评分字段，不保留操作者身份、原始 manifest 或账号字段，也不进入本次提交。真实 bundle 回执的状态路径为 `bundleStatus=needs_review`，准入路径为 `validation.trace_admission.admitted=false`，规则路径为 `violations[].rule=trace_admission_blocked`。所以上传后必须先拦 `/submit`，保留远端 draft 与本地额度。
+- PR-3 已获单次授权并尝试一次：本机配置的 Linux `bohr` 对固定命令 `wenyon dataset download paper2arm-task-reproduce-nonlocal-solitar-243cf090 --version 1 --output-dir ... --output json` 报 `unknown command "wenyon"`，没有文件落地。退出码为 0 但 `_native` 按错误文本判为失败。回执 JSON 形状、目录布局以及 `public_manifest_sha256` 的计算对象**仍未知**；Wenyon 物化即使由 fake CLI 成功也最多标为 `unverified`，`hash_semantics=unknown`。不得用这个失败探针推断账号权限或服务不可用。
+- PR-4 未授权、未执行：镜像事实探针 Job 只提供模板与普通受控 Job 路径，真实镜像 API 和结果下载链路未验证。Wenyon 到 `dataset_path` 的映射同样未验证，大于 1 GiB 的输入明确拒绝。
+- 数据物化的请求授权绑定发起 Run；即使同题另一条 Run 曾获授权或留下相同 operation_id 的回执，也不能借用其许可。逐文件哈希采用流式计算，避免为最多 1 GiB 的输入加载整份文件。
+- 大脑上下文改造只测量，暂不改变审阅行为。后续若 `tokens_last_total` 中位数超过 120000，或 p90 延迟超过 60 秒且静默观察后 20 个事件内方向改变率低于 5%，再单独立项核查事件合并或按研究阶段传递证据。阈值是本地立项条件，不是模型质量结论。
+- 回退边界：本次迁移只增加表和列，旧版代码看不到新字段。若新 Run 已处于 `awaiting_budget`，回退前须先提高预算/放弃待处理意图/结束 Run，不能让旧版控制器误以为研究门禁仍开放。
+
+## CS-EV-01 工具链阻塞修复（2026-09-26）
+
+- PR-3 的 `unknown command "wenyon"` 是本机 `bohr 1.1.0` 的命令缺失，不能推断服务、账号或数据集状态。项目忽略目录里已有来自 `@dptech-corp/bohr-cli-linux-amd64@2.7.8` 的二进制，缓存 npm 归档 integrity 与解包二进制一致；Wenyon 1.36.0 扩展二进制 SHA-256 与本地 manifest 一致。复制到 `.cyberscientist/tools/wenyon-local/` 后，隔离 HOME 下 `extension list` 返回 `status=ok`，`wenyon dataset download --help` 返回 0。只为数据入口配置该客户端，保留原 Job 客户端，避免新版 Job 标志/回执协议未经验证就切换。
+- 旧版 bohr 的本机错误输出可能把 AccessKey 放进 URL 参数；诊断命令须经后端 `_native` 脱敏或在输出前脱敏，不能直接保存原始 stderr。Wenyon 的新版客户端仍不代表账号服务访问成功，真实下载与哈希语义要等待另一次有界授权验证。
+- 第二次获授权的 PR-3 固定命令已到达 Wenyon，返回退出码 3 和 `401 Not authenticated`，无文件。专用 HOME 下新版 bohr 的本地 `auth status` 报 `ak_present=true`/`auth_method=access_key`，Wenyon 的本地 `auth whoami` 报 `not logged in (no state)`。这支持“Wenyon 缺少自身可用的 Vouch 登录态”的诊断，但不能据此推断 AccessKey 是否有效或数据集权限。后端既有 `AUTH_REQUIRED` 分类经真实脱敏回执回归测试覆盖；前端展示同一隔离 HOME 的登录检查提示。开发期间不自动登录、不追加下载尝试，真实数据和 `public_manifest_sha256` 语义仍为未知。
+
+## CS-EV-01 PR-3 认证与清单核实（2026-09-26）
+
+- 用户再次明确授权项目隔离 HOME 内的原生登录，以及登录态通过后的单次同数据集下载。新版 bohr 2.7.8 的 `auth login --ak` 退出码 0；Wenyon 1.36.0 的本地 `auth whoami` 随后通过。子进程的 HOME 与 XDG 配置、状态、缓存、运行目录均指向项目忽略目录，未改用户全局 CLI 配置。登录回执仅保存退出码和输出哈希，不记录账号标识或令牌。
+- 唯一一次下载 `paper2arm-task-reproduce-nonlocal-solitar-243cf090@1` 返回退出码 0、`downloaded=2`、`failed=0`、`bytes=1148`；落地 `public-manifest.json`（467 字节）和 `resources/README.md`（681 字节）。本机第四季列表快照登记的 `public_manifest_sha256=0d3e9c45f69a43e78ec263e15f5e9f61b8bf5f479e744ee51541c3cc42d55a64`，恰等于 `public-manifest.json` **原文字节**的 SHA-256，而不等于对解析 JSON 重新序列化后的哈希或下载文件列表哈希。清单中的 README 哈希及大小、题目登记总字节数也完全匹配。完整回执、脱敏摘录、文件及其哈希清单保留本机；本次仅提交文字结论，不提交实验文件。
+- 因此 Wenyon 物化仅在有 `public_manifest_sha256`、原始清单哈希匹配、清单为已识别的 `playground-wenyon-public-manifest/v1` 且全部声明文件和总字节数匹配时标 `verified`/`manifest_sha256`；未知清单格式仍 `unverified`，任何可核对的不匹配标 `HASH_MISMATCH`。Run 内物化的 `receipt_json` 保留 CLI 退出码、脱敏 stdout 哈希及非敏感下载计数，供后续审计。本次只是授权探针，不将数据冒充已进入真实 Run/Job；Run 内物化、Job 输入关联和其他数据集格式仍待真实验证。
+- 原始 pytest 挂起的最小复现是 `asyncio.run(asyncio.to_thread(lambda: 1))` 在线程返回后不能退出。根因是当前沙箱拒绝 socketpair 的 `send(2)`（EPERM），但允许同一描述符的 `write(2)`；并非已证明的 Python 3.12 缺陷。`tests/conftest.py` 仅在探测到该限制时改用等价的 `os.write` 跨线程唤醒，不改产品运行时。回环监听被沙箱禁止时，真实 CLI SIGTERM 测试明确跳过；在允许回环监听的环境仍执行。
+
+## CS-EV-01 真实 Run 与 PR-4 Job 验收（2026-09-26）
+
+- 本次明确获授权继续真实运行验收和单个 PR-4 Job。Run 限 20 分钟、1 Job、同时 1 个、2 核/2 GB/10 GB、无 GPU，`max_submissions=0`。首次开局 Codex 大脑实际产出合法的 v2 Decision，但 `decision_extraction._extract_json` 只接受 v1，造成误暂停；修复为同时接受 v1/v2，使用同一 Run 的 recovery 控制恢复。实际原始最终消息经修复后提取并通过结构校验，回归测试覆盖 fenced v2 Decision；未改原生代理或授权边界。
+- PR-4 模板原写 `c1_m1_cpu`，本次真实只读机器目录没有该规格，最小 CPU 为 `c2_m2_cpu`，故模板及断言按实际目录修正。唯一 Job 经普通网关提交，`purpose=probe`，其冻结输入和数据引用均指向本轮核验过的物化记录；逐文件哈希和远端创建回执均有本机审计记录。列表对账观察到 `Finished`，但描述和结果下载的旧 CLI 回执均为解析错误；新版 CLI 对该旧协议 Job 返回 404。故运行脚本是否成功、镜像事实和远端数据读取一律为 unknown。未创建第二 Job 或 Attempt。
+- 审计根目录为本机忽略的 `.package-checks/real-acceptance-20260926T073421Z/`，其中保留数据库迁移前备份、授权/启动/物化/Job 回执、输入哈希清单及下载失败回执。执行器检查点和交付包保留在 `workspace/runs/`。可提交的实验结果概述见 `docs/CS_EV_01_REAL_RUN_ACCEPTANCE_2026-09-26.md`；本次不提交原始回执、下载数据、工作区包或经验产物。此处真实失败反馈只说明当前服务/客户端路径不可用于读取旧 Job 产物，不推广为所有 Bohrium Job 的结论。

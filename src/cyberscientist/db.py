@@ -292,6 +292,34 @@ CREATE TABLE IF NOT EXISTS compute_jobs (
     updated_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_compute_run ON compute_jobs(run_id, status);
+CREATE TABLE IF NOT EXISTS data_materializations (
+    id TEXT PRIMARY KEY,
+    operation_id TEXT NOT NULL UNIQUE,
+    challenge_id TEXT NOT NULL REFERENCES challenges(id),
+    resource_key TEXT NOT NULL,
+    source_kind TEXT NOT NULL,
+    retrieval_ref TEXT,
+    expected_hash TEXT,
+    hash_semantics TEXT NOT NULL DEFAULT 'unknown',
+    status TEXT NOT NULL,
+    store_path TEXT,
+    files_json TEXT NOT NULL DEFAULT '[]',
+    total_bytes INTEGER,
+    error_code TEXT,
+    receipt_json TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_data_materializations_challenge
+ ON data_materializations(challenge_id, resource_key);
+CREATE TABLE IF NOT EXISTS image_facts (
+    image_address TEXT NOT NULL,
+    facts_sha256 TEXT NOT NULL,
+    facts_json TEXT NOT NULL,
+    source_operation_id TEXT NOT NULL,
+    observed_at TEXT NOT NULL,
+    PRIMARY KEY(image_address, facts_sha256)
+);
 CREATE TABLE IF NOT EXISTS curation_requests (
     id TEXT PRIMARY KEY,
     operation_id TEXT NOT NULL UNIQUE,
@@ -311,6 +339,8 @@ SUBMISSION_V2_COLUMNS = {
     "request_hash": "TEXT",
     "stage": "TEXT NOT NULL DEFAULT 'legacy'",
     "reservation_released": "INTEGER NOT NULL DEFAULT 0",
+    "source_package_sha256": "TEXT",
+    "admission_json": "TEXT",
 }
 
 # checkpoints 表 v2 新增列（对既有库做幂等 ALTER）
@@ -321,18 +351,30 @@ CHECKPOINT_V2_COLUMNS = {
     "stage": "TEXT",
     "review": "TEXT",
     "source": "TEXT NOT NULL DEFAULT 'user'",
+    "research_summary_md": "TEXT",
 }
 
 # runs 表 v2 新增列：研究门禁（checkpoint blocking / stop / stalled 用）
 RUN_V2_COLUMNS = {
     # open | yielding | waiting_brain | stopped
     "gate": "TEXT NOT NULL DEFAULT 'open'",
+    "objective_md": "TEXT",
+    "objective_status": "TEXT NOT NULL DEFAULT 'open'",
+    "end_reason": "TEXT",
+    "pending_action_json": "TEXT",
 }
 
 # authorizations 表 v2 新增列：付费算力（Bohrium Job）有界授权
 AUTHORIZATION_V2_COLUMNS = {
     "max_jobs": "INTEGER NOT NULL DEFAULT 0",
     "job_limits_json": "TEXT NOT NULL DEFAULT '{}'",
+    "allow_data_download": "INTEGER NOT NULL DEFAULT 0",
+    "max_trials": "INTEGER",
+}
+
+COMPUTE_V2_COLUMNS = {
+    "data_refs_json": "TEXT NOT NULL DEFAULT '[]'",
+    "purpose": "TEXT NOT NULL DEFAULT 'compute'",
 }
 
 # challenges 表 v2 新增列：平台资源清单（数据集/工具/服务），导入时从
@@ -368,6 +410,7 @@ def init_db() -> None:
         _ensure_columns(conn, "submissions", SUBMISSION_V2_COLUMNS)
         _ensure_columns(conn, "authorizations", AUTHORIZATION_V2_COLUMNS)
         _ensure_columns(conn, "challenges", CHALLENGE_V2_COLUMNS)
+        _ensure_columns(conn, "compute_jobs", COMPUTE_V2_COLUMNS)
         _migrate_experience_revisions(conn)
         conn.commit()
 

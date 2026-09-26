@@ -30,6 +30,8 @@ _TOOLS = [
                 "review": {"enum": ["none", "async", "blocking"]},
                 "stage": {"enum": ["progress", "blocked", "trial_complete"]},
                 "report_md": {"type": "string", "maxLength": 12000},
+                "research_summary_md": {"type": "string", "minLength": 1, "maxLength": 1600,
+                                        "description": "可选研究状态摘要（结果/失败/未知与下一问题）；仅是执行器解释，不等于验证"},
                 "research_question": {"type": "object", "description": "可选研究问题；选项仅供参考，审阅异步进行"},
                 "evidence_refs": {"type": "array",
                                   "items": {"type": "string", "maxLength": 256},
@@ -62,8 +64,27 @@ _TOOLS.append({
     "inputSchema": {"type": "object", "additionalProperties": False,
         "properties": {"action": {"enum": ["submit", "list", "reconcile", "stop"]},
                        "operation_id": {"type": "string", "maxLength": 100},
-                       "spec": {"type": "object"}, "input_directory": {"type": "string"}},
+                       "spec": {"type": "object"}, "input_directory": {"type": "string"},
+                       "preflight": {"type": "object"}},
         "required": ["action"]}})
+
+_TOOLS.append({
+    "name": "research_package_check",
+    "description": "只读检查当前 Trial 的 ARM 封存包，返回六项轨迹准入信号与封存哈希；不提交。",
+    "inputSchema": {"type": "object", "additionalProperties": False,
+        "properties": {"package_path": {"type": "string"},
+                       "trial_id": {"type": "string"}},
+        "required": []}})
+
+_DATA_TOOL = {
+    "name": "research_data",
+    "description": "查询或按本 Run 独立授权物化题目公开数据。request 需要 operation_id。",
+    "inputSchema": {"type": "object", "additionalProperties": False,
+        "properties": {"action": {"enum": ["list", "status", "request"]},
+                       "resource_key": {"type": "string"},
+                       "operation_id": {"type": "string"}},
+        "required": ["action"]}}
+_TOOLS.append(_DATA_TOOL)
 
 _TRACE_TOOL = {
     "name": "research_trace",
@@ -129,7 +150,7 @@ def _handle(msg: dict) -> dict | None:
     if method == "tools/list":
         role = os.environ.get("CS_TOOL_ROLE", "executor")
         return {"jsonrpc": "2.0", "id": mid, "result": {
-            "tools": [_TRACE_TOOL] if role == "brain" else _TOOLS}}
+            "tools": [_TRACE_TOOL, _DATA_TOOL] if role == "brain" else _TOOLS}}
     if method == "tools/call":
         params = msg.get("params", {})
         name = params.get("name")
@@ -141,6 +162,10 @@ def _handle(msg: dict) -> dict | None:
                 out = {"error": "submit/stop 需要稳定的 operation_id"}
             else:
                 out = _post("/api/v1/tools/job", args)
+        elif name == "research_package_check":
+            out = _post("/api/v1/tools/package_check", args)
+        elif name == "research_data":
+            out = _post("/api/v1/tools/data", args)
         elif name == "ack_guidance":
             out = _post("/api/v1/tools/ack", args)
         elif name == "research_trace":

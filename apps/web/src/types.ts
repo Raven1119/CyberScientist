@@ -38,6 +38,8 @@ export interface Settings {
   playground: { base_url: string; token_secret_ref: string }
   bohrium: {
     executable: string
+    wenyon_executable: string
+    wenyon_home: string
     access_key_secret_ref: string
     project_id: string | null
     host_overrides: Record<string, string>
@@ -138,6 +140,7 @@ export interface TrialSummary {
   goal: string
   status: string
   created_at: string
+  delivered?: boolean
 }
 
 export interface RunBudget {
@@ -174,6 +177,11 @@ export interface RunSummary {
 
 export interface RunDetail extends RunSummary {
   intention: string | null
+  objective_md?: string | null
+  objective_status?: string
+  end_reason?: string | null
+  gate?: string
+  pending_action_json?: string | null
   block_reason: string | null
   current_trial_id: string | null
   trials: TrialSummary[]
@@ -354,6 +362,8 @@ export interface Submission {
   mailbox_email?: string
   package_path: string
   package_sha256: string
+  source_package_sha256?: string | null
+  admission_json?: string | null
   status: string
   score: number | null
   score_status: 'unknown' | 'pending' | 'scored' | 'failed'

@@ -40,7 +40,7 @@ class DemoBrain:
         trigger = packet.get("trigger", "run_start")
         n_trials = packet.get("trial_count", 0)
         decision: dict[str, Any] = {
-            "schema_version": 1,
+            "schema_version": 2 if packet.get("lifecycle_version") == 2 else 1,
             "decision_id": f"dec_{uuid.uuid4().hex[:10]}",
             "run_id": packet.get("run_id", ""),
             "observed_state_version": packet.get("state_version", 0),
@@ -64,6 +64,9 @@ class DemoBrain:
         elif packet.get("latest_trial_status") == "done":
             decision["summary"] = "一轮已完成：积累演示经验并结束（演示）。"
             decision["actions"] = [{"op": "finish", "reason": "演示闭环完成"}]
+            if packet.get("lifecycle_version") == 2:
+                decision["actions"][0]["objective_assessment"] = {
+                    "status": "partial", "evidence_refs": [], "remaining_md": "演示不证明科学目标"}
             decision["experience_proposals"] = [{
                 "scope": "challenge", "challenge_id": packet.get("challenge_id"),
                 "title": "演示：链路自检先于科学计算",

@@ -22,7 +22,7 @@ def _extract_json(text: str) -> dict[str, Any] | None:
             obj = json.loads(raw)
         except json.JSONDecodeError:
             continue
-        if isinstance(obj, dict) and obj.get("schema_version") == 1:
+        if isinstance(obj, dict) and obj.get("schema_version") in (1, 2):
             return obj
     return None
 

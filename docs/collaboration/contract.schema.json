@@ -65,6 +65,12 @@
           "minLength": 1,
           "maxLength": 12000
         },
+        "research_summary_md": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1600,
+          "description": "Optional executor interpretation of research status; not independently verified."
+        },
         "research_question": {
           "type": "object",
           "additionalProperties": false,

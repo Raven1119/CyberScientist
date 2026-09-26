@@ -393,8 +393,8 @@ class KimiBrain:
                 "不要使用任何工具。\n"
             ) +
             "根据下面的 ReviewPacket 做出一次判断。只输出一个 JSON 代码块，不要输出其他文字。\n\n"
-            "Decision 结构（必须严格遵守，不得增删顶层字段）：\n"
-            '{"schema_version":1,"decision_id":"任意唯一字符串",'
+            "Decision 结构（严格遵守；v2 待处理意图可增加指定条件字段）：\n"
+            f'{{"schema_version":{2 if packet.get("lifecycle_version") == 2 else 1},"decision_id":"任意唯一字符串",'
             '"run_id":"见 ReviewPacket","observed_state_version":见 ReviewPacket,'
             '"summary":"一句话判断","evidence_refs":["引用见 ReviewPacket 事件"],'
             '"actions":[{"op":"..."}],'
@@ -406,8 +406,10 @@ class KimiBrain:
             '- {"op":"pause","reason":"..."}\n'
             '- {"op":"promote_experience","experience_id":"...","revision_hash":"...",'
             '"reason":"...","evidence_refs":["..."]}（仅题内；全局由用户审批，勿用）\n'
-            '- {"op":"finish","reason":"..."}\n'
-            "旧 request_submission 会被明确拒绝：bundle_manifest_ref 尚无冻结包解析契约。"
+            + ('- {"op":"finish","reason":"...","objective_assessment":{"status":"achieved|partial|not_achievable|stopped","evidence_refs":[],"remaining_md":"..."}}\n'
+               '若 ReviewPacket 有 pending_intent，顶层必须给 pending_intent_resolution=replay|revise|drop；replay 重放原动作。\n'
+               if packet.get("lifecycle_version") == 2 else '- {"op":"finish","reason":"..."}\n')
+            + "旧 request_submission 会被明确拒绝：bundle_manifest_ref 尚无冻结包解析契约。"
             "提交建议仅在 requested/shadow 的 ReviewResult 中用 guidance.kind=submit，"
             "经现有授权、预算和去重检查执行实验邮箱提交；不扩大正式提交授权。"
             "不要在当前 Decision 中混入 ReviewResult。\n"

@@ -1,5 +1,6 @@
 """A real open SSE response must not indefinitely block CLI SIGTERM shutdown."""
 import http.client
+import errno
 import json
 import os
 from pathlib import Path
@@ -42,8 +43,19 @@ sys.argv = ['cyberscientist', 'serve', '--port', port, '--mode', 'demo']
 from cyberscientist.cli import main
 main()
 """
-    with socket.socket() as reserved:
-        reserved.bind(("127.0.0.1", 0))
+    try:
+        reserved_socket = socket.socket()
+    except OSError as exc:
+        if exc.errno == errno.EPERM:
+            pytest.skip("sandbox forbids loopback listening sockets")
+        raise
+    with reserved_socket as reserved:
+        try:
+            reserved.bind(("127.0.0.1", 0))
+        except OSError as exc:
+            if exc.errno == errno.EPERM:
+                pytest.skip("sandbox forbids loopback listening sockets")
+            raise
         port = reserved.getsockname()[1]
     env = {
         "PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": str(tmp_path),

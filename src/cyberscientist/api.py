@@ -15,7 +15,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
-from . import collab, config, db, experiences, mailboxes, skills, compute
+from . import collab, config, db, datasets, experiences, mailboxes, skills, compute
 from .brains.codex import CodexBrain
 from .brains.demo import DemoBrain
 from .brains.kimi import KimiBrain
@@ -148,6 +148,8 @@ class AuthorizeBody(BaseModel):
     max_submissions: int = 0
     max_jobs: int = 0
     job_limits: dict | None = None
+    allow_data_download: bool = False
+    objective: str | None = None
     note: str | None = None
 
 
@@ -169,6 +171,7 @@ class ControlBody(BaseModel):
 class CheckpointBody(BaseModel):
     trial_id: str | None = None
     report: str
+    research_summary_md: str | None = None
     evidence_refs: list[str] = []
     experience_uses: list[dict[str, str]] = []
 
@@ -201,6 +204,13 @@ class ExperienceReview(BaseModel):
 def create_app(web_dist: Path | None = None) -> FastAPI:
     config.ensure_dirs()
     db.init_db()
+    for challenge in db.query("SELECT id,resources_json FROM challenges WHERE resources_json IS NOT NULL"):
+        try:
+            resources = json.loads(challenge["resources_json"])
+        except (TypeError, ValueError):
+            resources = []
+        if isinstance(resources, list):
+            datasets.register_resources(challenge["id"], resources)
     problems = experiences.check_pending_writes()
     if problems:
         # 启动对账发现不一致不再静默丢弃：如实告警（不写日志文件防密钥混入）
@@ -566,6 +576,9 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
                  json.dumps(resources, ensure_ascii=False)
                  if isinstance(resources, list) else None,
                  json.dumps(platform_snapshot, ensure_ascii=False)))
+            if isinstance(resources, list):
+                from . import datasets
+                datasets.register_resources(cid, resources)
             return {"challenge": _challenge_dict(cid)}
         raise HTTPException(422, detail={"code": "INVALID_IMPORT",
                                          "message": f"未知导入模式: {body.mode}"})
@@ -672,7 +685,9 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
         return controller.authorize(run_id, body.scope, body.allow_model_calls,
                                     body.max_model_turns, body.max_run_minutes,
                                     body.max_submissions, body.note,
-                                    max_jobs=body.max_jobs, job_limits=body.job_limits)
+                                    max_jobs=body.max_jobs, job_limits=body.job_limits,
+                                    allow_data_download=body.allow_data_download,
+                                    objective=body.objective)
 
     @app.put("/api/v1/runs/{run_id}/budget")
     async def update_budget(run_id: str, body: BudgetBody) -> dict[str, Any]:
@@ -685,6 +700,11 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
     @app.post("/api/v1/runs/{run_id}/start")
     async def start_run(run_id: str) -> dict[str, Any]:
         return await controller.start_async(run_id)
+
+    @app.post("/api/v1/runs/{run_id}/pending-intent/drop")
+    async def drop_pending_intent(run_id: str, request: Request) -> dict[str, Any]:
+        body = await request.json()
+        return controller.drop_pending_intent(run_id, body.get("reason", "用户放弃该意图"))
 
 
     @app.post("/api/v1/runs/{run_id}/control")
@@ -723,6 +743,8 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
                "review": "none", "stage": "progress",
                "report_md": body.report, "evidence_refs": body.evidence_refs,
                "experience_uses":body.experience_uses}
+        if body.research_summary_md is not None:
+            msg["research_summary_md"] = body.research_summary_md
         result = collab.submit_checkpoint(
             run_id, msg, source="user",
             notify=controller.notify_run_change)
@@ -760,7 +782,41 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
 
     @app.exception_handler(compute.ComputeError)
     async def compute_error(_: Request, exc: compute.ComputeError):
+        return JSONResponse(status_code=409, content={"detail": {"code": exc.code, "message": str(exc),
+                                                         "details": exc.details}})
+
+    @app.exception_handler(datasets.DataError)
+    async def data_error(_: Request, exc: datasets.DataError):
         return JSONResponse(status_code=409, content={"detail": {"code": exc.code, "message": str(exc)}})
+
+    @app.get("/api/v1/challenges/{challenge_id}/data")
+    async def list_challenge_data(challenge_id: str) -> dict:
+        return datasets.status(challenge_id)
+
+    @app.post("/api/v1/runs/{run_id}/data/materialize")
+    async def materialize_data(run_id: str, request: Request) -> dict:
+        run = db.query_one("SELECT challenge_id FROM runs WHERE id=?", (run_id,))
+        if not run:
+            raise datasets.DataError("NOT_FOUND", "Run 不存在")
+        body = await request.json()
+        return await asyncio.to_thread(datasets.materialize,
+            run["challenge_id"], body.get("resource_key", ""), body.get("operation_id", ""), run_id)
+
+    @app.post("/api/v1/tools/data")
+    async def tool_data(request: Request) -> dict:
+        auth = request.headers.get("authorization", "")
+        token = auth[7:] if auth.startswith("Bearer ") else ""
+        identity = collab.validate_token(token)
+        if not identity:
+            raise HTTPException(status_code=401, detail={"code": "INVALID_TOKEN"})
+        run = db.query_one("SELECT challenge_id FROM runs WHERE id=?", (identity["run_id"],))
+        body = await request.json()
+        if body.get("action") in ("list", "status"):
+            return datasets.status(run["challenge_id"])
+        if body.get("action") == "request":
+            return await asyncio.to_thread(datasets.materialize, run["challenge_id"],
+                body.get("resource_key", ""), body.get("operation_id", ""), identity["run_id"])
+        raise datasets.DataError("INVALID_ACTION", "支持 list/status/request")
 
     @app.post("/api/v1/tools/bohr")
     async def tool_bohr(request: Request) -> dict:
@@ -778,7 +834,8 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
         action = body.get("action")
         if action == "submit":
             result = await asyncio.to_thread(compute.submit, rid, body.get("operation_id"),
-                                             body.get("spec"), body.get("input_directory", ""))
+                                             body.get("spec"), body.get("input_directory", ""),
+                                             body.get("preflight"))
         elif action == "reconcile":
             result = await asyncio.to_thread(compute.reconcile, rid)
         elif action == "stop":
@@ -790,6 +847,16 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
         controller.notify_run_change(rid)
         return result
 
+    @app.post("/api/v1/tools/package_check")
+    async def tool_package_check(request: Request) -> dict:
+        identity = _tool_auth(request)
+        body = await request.json()
+        result = await asyncio.to_thread(mailboxes.preflight_submission,
+            identity["run_id"], body.get("trial_id"), body.get("package_path"))
+        result.pop("sealed_bytes", None)
+        result.pop("projected_steps", None)
+        return result
+
     @app.get("/api/v1/runs/{run_id}/jobs")
     async def run_jobs(run_id: str) -> dict:
         return compute.list_jobs(run_id)
@@ -797,6 +864,11 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
     @app.post("/api/v1/runs/{run_id}/jobs/reconcile")
     async def reconcile_jobs(run_id: str) -> dict:
         return await asyncio.to_thread(compute.reconcile, run_id)
+
+    @app.post("/api/v1/runs/{run_id}/jobs/{operation_id}/resolve-local-parse")
+    async def resolve_local_job_parse(run_id: str, operation_id: str) -> dict:
+        return await asyncio.to_thread(
+            compute.resolve_local_parse_failure, run_id, operation_id)
 
     @app.post("/api/v1/runs/{run_id}/jobs/{operation_id}/stop")
     async def stop_job(run_id: str, operation_id: str) -> dict:
@@ -882,7 +954,20 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
         body = await request.json()
         return await asyncio.to_thread(mailboxes.submit_experiment,
             run_id, body.get("trial_id"), body.get("package_path"),
-            body.get("operation_id", ""))
+            body.get("operation_id", ""),
+            body.get("allow_proxy_evidence", False),
+            body.get("allow_indeterminate_admission", False))
+
+    @app.post("/api/v1/runs/{run_id}/submissions/preflight")
+    async def preflight_submission(run_id: str, request: Request) -> dict[str, Any]:
+        body = await request.json()
+        result = await asyncio.to_thread(mailboxes.preflight_submission,
+            run_id, body.get("trial_id"), body.get("package_path"),
+            allow_proxy_evidence=body.get("allow_proxy_evidence", False),
+            allow_indeterminate_admission=body.get("allow_indeterminate_admission", False))
+        result.pop("sealed_bytes", None)
+        result.pop("projected_steps", None)
+        return result
 
     @app.post("/api/v1/submissions/poll")
     async def poll_scores(request: Request) -> dict[str, Any]:

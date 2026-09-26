@@ -164,8 +164,16 @@ export const TRIAL_STATUS_LABELS: Record<string, string> = {
   active: '进行中',
   done: '已完成',
   completed: '已完成',
+  reported_complete: '已交付',
   failed: '失败',
   cancelled: '已取消',
+  interrupted: '已中断',
+}
+
+export function trialStatusLabel(status: string, delivered?: boolean): string {
+  return status === 'interrupted' && delivered
+    ? '已交付 · 后被终止'
+    : TRIAL_STATUS_LABELS[status] ?? status
 }
 
 export const EVIDENCE_LABELS: Record<string, string> = {

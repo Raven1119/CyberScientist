@@ -99,6 +99,31 @@ async def test_pause_resume_terminate():
     assert c.run_snapshot(rid)["phase"] == "cancelled"
 
 
+async def test_cancelled_run_reopen_preserves_original_clock_and_trace():
+    _seed_challenge()
+    c = _controller()
+    rid = c.create_run("DEMO_CHALLENGE")["id"]
+    c.authorize(rid, "demo", False, 0, 30, 0, None)
+    await c.start_async(rid)
+    started_at = c.run_snapshot(rid)["started_at"]
+    await c.control(rid, "terminate", None, "reopen-test-terminate")
+    ended_at = c.run_snapshot(rid)["ended_at"]
+    stale = c.create_run("DEMO_CHALLENGE")["id"]
+    db.execute("UPDATE runs SET phase='recovering' WHERE id=?", (stale,))
+    result = await c.control(rid, "reopen", "恢复误终止的研究", "reopen-test")
+    assert result["status"] == "confirmed"
+    snap = c.run_snapshot(rid)
+    assert snap["phase"] == "recovering"
+    assert snap["started_at"] == started_at
+    assert snap["ended_at"] is None
+    assert (await c.control(rid, "reopen", "恢复误终止的研究",
+                            "reopen-test"))["deduplicated"]
+    events = db.events_after(rid, 0)
+    assert [e["type"] for e in events].count("run.terminated") == 1
+    reopened = next(e for e in events if e["type"] == "run.reopened")
+    assert reopened["payload"]["previous_ended_at"] == ended_at
+
+
 async def test_control_operation_id_dedup():
     """同一 operation_id 的并发控制请求只受理一次。"""
     _seed_challenge()
@@ -159,7 +184,7 @@ async def test_stale_decision_not_executed():
 
 
 def test_update_budget_settings_and_auth():
-    """预算运行时调整：大脑/Trial 走实时 settings，模型/时长/提交走授权行。"""
+    """v2 Trial 上限只改本 Run；大脑判断上限仍走实时 settings。"""
     _seed_challenge()
     c = _controller()
     rid = c.create_run("DEMO_CHALLENGE")["id"]
@@ -170,12 +195,13 @@ def test_update_budget_settings_and_auth():
     assert out["updated"] == {"max_brain_reviews": 20, "max_trials": 9,
                               "max_model_turns": 80, "max_run_minutes": 120,
                               "max_submissions": 5}
-    # settings 落盘并被实时读取
+    # 新 Run 的 Trial 上限不再污染全局默认值。
     assert config.load_settings()["run_defaults"]["max_brain_reviews"] == 20
-    assert config.load_settings()["run_defaults"]["max_trials"] == 9
+    assert config.load_settings()["run_defaults"]["max_trials"] == 3
     # 授权行更新并反映在 budget 状态里
     budget = c.run_snapshot(rid)["budget"]
     assert budget["max_brain_reviews"] == 20
+    assert budget["max_trials"] == 9
     assert budget["model_turns"]["limit"] == 80
     assert budget["run_minutes_limit"] == 120
     assert budget["max_submissions"] == 5

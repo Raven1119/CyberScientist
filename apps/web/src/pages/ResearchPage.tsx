@@ -15,7 +15,7 @@ import {
   SCORE_STATUS_LABELS,
   SOURCE_LABELS,
   TERMINAL_PHASES,
-  TRIAL_STATUS_LABELS,
+  trialStatusLabel,
 } from '../labels'
 import type {
   ChallengeDetail,
@@ -33,12 +33,13 @@ import type {
 } from '../types'
 import { useRunEventStream, type StreamStatus } from '../useRunEventStream'
 
-type Tab = 'events' | 'trials' | 'checkpoints' | 'submission'
+type Tab = 'events' | 'trials' | 'checkpoints' | 'data' | 'submission'
 
 const TABS: { key: Tab; label: string }[] = [
   { key: 'events', label: '事件流' },
   { key: 'trials', label: 'Trials' },
   { key: 'checkpoints', label: '检查点' },
+  { key: 'data', label: '公开数据' },
   { key: 'submission', label: '提交与评分' },
 ]
 
@@ -139,6 +140,7 @@ export default function ResearchPage() {
   const active = currentRun ? ACTIVE_PHASES.includes(currentRun.phase) : false
 
   const [runDetail, setRunDetail] = useState<RunDetail | null>(null)
+  const lifecycleV2 = (runDetail?.config_snapshot as { lifecycle_version?: number } | undefined)?.lifecycle_version === 2
 
   const phase = runDetail?.phase ?? currentRun?.phase ?? null
   const paused = phase === 'paused'
@@ -447,18 +449,41 @@ export default function ResearchPage() {
         </div>
       )}
 
+      {runDetail?.gate === 'awaiting_budget' && (
+        <div className="callout" role="alert">
+          <strong>Trial 已达本 Run 上限，待处理意图已保存。</strong>
+          <div className="actions" style={{ marginTop: 8 }}>
+            <button type="button" className="btn" onClick={() => setBudgetOpen(true)}>提高 Trial 上限</button>
+            <button type="button" className="btn" onClick={() => {
+              if (!currentRun) return
+              void api.post(`/api/v1/runs/${currentRun.id}/pending-intent/drop`, { reason: '用户在前端放弃意图' })
+                .then(() => void refreshRunDetail())
+                .catch((err: unknown) => toast('放弃意图失败：' + (err instanceof Error ? err.message : String(err))))
+            }}>放弃该意图</button>
+            <button type="button" className="btn danger" onClick={() => setTerminateOpen(true)}>结束 Run</button>
+          </div>
+        </div>
+      )}
+
       <div className="work-grid">
         <div className="stack">
           <article className="card intention-card">
             <div className="card-head">
-              <h2>当前研究意图</h2>
+              <h2>{lifecycleV2 ? '用户目标与当前 Trial' : '当前研究意图'}</h2>
               <span className="instrument-label">THINKING SPACE</span>
             </div>
             <div className="card-body">
-              <ResearchIntention
-                key={currentRun?.id}
-                text={runDetail?.intention ?? '尚未开始研究。开始后会显示大脑当前的研究意图。'}
-              />
+              {lifecycleV2 && runDetail ? (
+                <div>
+                  <p className="pre-wrap">{runDetail.objective_md || '用户目标未填写'}</p>
+                  <p className="small-text">用户目标状态：{runDetail.objective_status || 'open'}</p>
+                  <p className="small-text">当前 Trial：{runDetail.trials.find((t) => t.id === runDetail.current_trial_id)?.goal || '尚无'}</p>
+                  {runDetail.end_reason && <p className="small-text">结束原因：{runDetail.end_reason}</p>}
+                </div>
+              ) : (
+                <ResearchIntention key={currentRun?.id}
+                  text={runDetail?.intention ?? '尚未开始研究。开始后会显示大脑当前的研究意图。'} />
+              )}
             </div>
           </article>
 
@@ -601,7 +626,7 @@ export default function ResearchPage() {
                                   : 'blue'
                             }
                           >
-                            {TRIAL_STATUS_LABELS[t.status] ?? t.status}
+                            {trialStatusLabel(t.status, t.delivered)}
                           </Badge>
                         </li>
                       ))}
@@ -642,8 +667,12 @@ export default function ResearchPage() {
                 <SubmissionsPanel
                   challengeId={challengeId}
                   runId={currentRun?.id ?? null}
+                  trialId={runDetail?.current_trial_id ?? null}
                   refreshKey={subRefresh}
                 />
+              )}
+              {tab === 'data' && challengeId && (
+                <DataPanel challengeId={challengeId} runId={currentRun?.id ?? null} />
               )}
             </div>
           </article>
@@ -1339,6 +1368,8 @@ function StartDialog({
   const [maxSubmissions, setMaxSubmissions] = useState(0)
   const [maxJobs, setMaxJobs] = useState(0)
   const [note, setNote] = useState('')
+  const [objective, setObjective] = useState('')
+  const [allowDataDownload, setAllowDataDownload] = useState(false)
   const [busy, setBusy] = useState(false)
 
   useEffect(() => {
@@ -1346,6 +1377,8 @@ function StartDialog({
       setAllowModelCalls(false)
       setShadowEnabled(false)
       setNote('')
+      setObjective('')
+      setAllowDataDownload(false)
       api
         .get<{ run_defaults: { max_model_turns: number; max_run_minutes: number; max_submissions: number; max_jobs: number } }>(
           '/api/v1/settings',
@@ -1377,6 +1410,8 @@ function StartDialog({
         max_jobs: maxJobs,
         job_limits: { max_concurrent_jobs: 2, max_cpu: 16, max_memory_gb: 16, max_disk_gb: 10, allow_gpu: false },
         note: note.trim() || undefined,
+        objective: objective.trim() || note.trim() || undefined,
+        allow_data_download: allowDataDownload,
       })
       await api.post(`/api/v1/runs/${run.id}/start`)
       toast('研究已开始。')
@@ -1484,6 +1519,15 @@ function StartDialog({
         </div>
       </div>
       <p className="inline-note">算力授权：最多同时 2 个任务，每个最多 16 核 CPU、16 GB 内存、10 GB 磁盘，无 GPU。失败和未知创建计入 Job 总数，每个 Job 必须设置本轮剩余时长内的超时。</p>
+      <div className="field checkbox">
+        <input id="auth-data-download" type="checkbox" checked={allowDataDownload}
+          onChange={(e) => setAllowDataDownload(e.target.checked)} />
+        <label htmlFor="auth-data-download">允许用本账号下载题目公开数据</label>
+      </div>
+      <div className="field">
+        <label htmlFor="auth-objective">本 Run 的用户目标</label>
+        <textarea id="auth-objective" value={objective} onChange={(e) => setObjective(e.target.value)} />
+      </div>
       <div className="field">
         <label htmlFor="auth-note">备注（可选）</label>
         <input id="auth-note" value={note} onChange={(e) => setNote(e.target.value)} />
@@ -1503,18 +1547,81 @@ function StartDialog({
   )
 }
 
+type DataItem = {
+  materialization_id: string
+  resource_key: string
+  status: string
+  error_code?: string | null
+  content_sha256?: string
+  workspace_path?: string
+  hash_semantics: string
+}
+
+function DataPanel({ challengeId, runId }: { challengeId: string; runId: string | null }) {
+  const { toast } = useApp()
+  const [items, setItems] = useState<DataItem[]>([])
+  const [busy, setBusy] = useState(false)
+  const load = useCallback(async () => {
+    try {
+      const result = await api.get<{ items: DataItem[] }>(`/api/v1/challenges/${encodeURIComponent(challengeId)}/data`)
+      setItems(result.items)
+    } catch (err) {
+      toast('读取公开数据状态失败：' + (err instanceof Error ? err.message : String(err)))
+    }
+  }, [challengeId, toast])
+  useEffect(() => { void load() }, [load])
+  async function request(item: DataItem) {
+    if (!runId) return
+    setBusy(true)
+    try {
+      await api.post(`/api/v1/runs/${runId}/data/materialize`, {
+        resource_key: item.resource_key, operation_id: `data-${crypto.randomUUID()}`,
+      })
+      await load()
+    } catch (err) {
+      toast('数据物化失败：' + (err instanceof Error ? err.message : String(err)))
+      await load()
+    } finally { setBusy(false) }
+  }
+  return <div>
+    <p className="inline-note">公开数据下载需在本 Run 单独授权。Wenyon 公开清单及所列文件校验通过时显示 verified；缺少可核对的登记哈希时显示 unverified。</p>
+    <button type="button" className="btn small" onClick={() => void load()}>刷新数据状态</button>
+    {items.length === 0 ? <p className="small-text">该题未登记可物化数据。</p> :
+      <ul className="plain-list">{items.map((item) => <li key={item.materialization_id} className="row-item block">
+        <strong>{item.resource_key}</strong>
+        <div className="small-text">状态：{item.status} · 哈希语义：{item.hash_semantics}
+          {item.error_code && ` · ${item.error_code}`}</div>
+        {item.error_code === 'AUTH_REQUIRED' && <div className="small-text">
+          Wenyon 未通过认证。请检查其隔离 HOME 中的原生 CLI 登录状态；AccessKey 已配置不等于 Wenyon 会话有效。
+        </div>}
+        {item.content_sha256 && <div className="small-text">SHA-256：{item.content_sha256}</div>}
+        {item.workspace_path && <div className="small-text">工作区：{item.workspace_path}</div>}
+        {runId && item.status !== 'unsupported' && <button type="button" className="btn small" disabled={busy}
+          onClick={() => void request(item)}>请求物化</button>}
+      </li>)}</ul>}
+  </div>
+}
+
 function SubmissionsPanel({
   challengeId,
   runId,
+  trialId,
   refreshKey,
 }: {
   challengeId: string
   runId: string | null
+  trialId: string | null
   refreshKey: number
 }) {
   const { toast } = useApp()
   const [items, setItems] = useState<Submission[] | null>(null)
   const [busy, setBusy] = useState(false)
+  const [packagePath, setPackagePath] = useState('')
+  const [preflight, setPreflight] = useState<{
+    sealed_package_sha256: string
+    error_code: string | null
+    admission: { verdict: string; signals: Record<string, { ok: boolean | null; detail: string }> }
+  } | null>(null)
 
   const load = useCallback(async () => {
     try {
@@ -1558,9 +1665,33 @@ function SubmissionsPanel({
     }
   }
 
+  async function checkPackage() {
+    if (!runId) return
+    setBusy(true)
+    try {
+      const result = await api.post<typeof preflight>(`/api/v1/runs/${runId}/submissions/preflight`, {
+        trial_id: trialId, package_path: packagePath.trim() || undefined,
+      })
+      setPreflight(result)
+    } catch (err) {
+      toast('提交预检失败：' + (err instanceof Error ? err.message : String(err)))
+    } finally { setBusy(false) }
+  }
+
   if (items === null) return <LoadingState />
   return (
     <div>
+      {runId && <div className="callout" style={{ marginBottom: 12 }}>
+        <strong>提交包只读预检</strong>
+        <div className="field"><label htmlFor="preflight-package-path">工作区相对包路径（留空用当前 Trial 的 result_package.zip）</label>
+          <input id="preflight-package-path" value={packagePath} onChange={(e) => setPackagePath(e.target.value)} /></div>
+        <button type="button" className="btn" disabled={busy} onClick={() => void checkPackage()}>检查封存包</button>
+        {preflight && <div role="status">
+          <p>准入：{preflight.admission.verdict} · 门禁：{preflight.error_code || '通过'} · 封存 SHA-256：{preflight.sealed_package_sha256}</p>
+          <ul>{Object.entries(preflight.admission.signals).map(([name, signal]) =>
+            <li key={name}>{name}：{signal.ok === null ? '未知' : signal.ok ? '通过' : '未满足'} · {signal.detail}</li>)}</ul>
+        </div>}
+      </div>}
       <div className="actions" style={{ marginBottom: 10 }}>
         <button type="button" className="btn" disabled={busy} onClick={() => void poll()}>
           轮询评分

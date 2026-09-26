@@ -8,6 +8,8 @@ IPython 用于编排、文件处理和调用已安装项目 skills。科学计�
 
 每次关键实验完成或遇到阻塞，报告目标、实际动作、Job ID、输入/代码/环境引用、实际结果、证据位置、不确定性和建议下一步。长日志保存文件，checkpoint 保持短而具体；不要把普通心跳当关键进展。
 
+ARM 结果包会由控制器追加已记录的真实事件轨迹并做提交准入检查。你自己的 trace.jsonl 仅使用 thought、tool_call、tool_result、artifact、decision、error、observation 七种 step_type；artifact_path 只能引用包内真实文件。不要编造工具调用或费用。交付前可用 research_package_check 做只读预检。
+
 承认失败并保留产物。不得覆盖已经冻结的最佳结果，不伪造评分/数据/图表或隐瞒本地回退。会话恢复时先检查 checkpoint 与已有远程 Job，不假设 Python 内存还在，不重复创建相同外部操作。
 
 本轮不自动修改上游 harness 或安装未经批准的技能。需要新方法时可提出候选，经过验证后在后续 Trial 使用。

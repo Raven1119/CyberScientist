@@ -239,11 +239,12 @@ def submit_checkpoint(run_id: str, msg: dict[str, Any], *,
         conn.execute(
             "INSERT INTO checkpoints(id, run_id, trial_id, report,"
             " evidence_refs, created_at, checkpoint_key, content_hash,"
-            " stage, review, source)"
-            " VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+            " stage, review, source, research_summary_md)"
+            " VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
             (cp_id, run_id, trial_id, msg["report_md"],
              json.dumps(msg["evidence_refs"], ensure_ascii=False), now,
-             key, digest, msg["stage"], msg["review"], source))
+             key, digest, msg["stage"], msg["review"], source,
+             msg.get("research_summary_md")))
         db.append_event_tx(
             conn, run_id, source if source in ("executor", "user") else "executor",
             "checkpoint.created",
@@ -274,9 +275,12 @@ def submit_checkpoint(run_id: str, msg: dict[str, Any], *,
             review_id = _enqueue_request_tx(
                 conn, run_id, source="lifecycle", blocking=True,
                 trigger="trial_complete", checkpoint_id=cp_id)
+            from . import datasets
+            evidence_class = datasets.evidence_class(conn, run_id, trial_id)
             db.append_event_tx(conn, run_id, "controller",
                                "trial.reported_complete",
-                               {"trial_id": trial_id, "checkpoint_id": cp_id},
+                               {"trial_id": trial_id, "checkpoint_id": cp_id,
+                                "evidence_class": evidence_class},
                                trial_id=trial_id)
             next_action = "yield"
         elif msg["review"] != "none":
@@ -300,14 +304,17 @@ def submit_checkpoint(run_id: str, msg: dict[str, Any], *,
         delivered = deliver_via_checkpoint_return(conn, run_id, trial_id)
         current = conn.execute("SELECT phase,gate FROM runs WHERE id=?", (run_id,)).fetchone()
         next_action = "continue" if current["phase"] == "running" and current["gate"] == "open" else "yield"
+        from . import datasets
+        evidence_class = datasets.evidence_class(conn, run_id, trial_id)
         conn.execute("UPDATE checkpoints SET receipt_json=? WHERE id=?",
-                     (json.dumps({"review_id":review_id,"guidance":delivered},ensure_ascii=False),cp_id))
+                     (json.dumps({"review_id":review_id,"guidance":delivered,
+                                  "evidence_class":evidence_class},ensure_ascii=False),cp_id))
 
     if notify:
-        notify(run_id)  # 新检查点即使不要求审阅，也要唤醒 shadow 评估
+        notify(run_id)  # 唤醒已排队请求；sparse shadow 仅由研究级事件触发
     return {"checkpoint_id": cp_id, "review_id": review_id,
             "next_action": next_action, "deduplicated": False,
-            "guidance": delivered}
+            "guidance": delivered, "evidence_class": evidence_class}
 
 
 def _enqueue_request_tx(conn: sqlite3.Connection, run_id: str, *,

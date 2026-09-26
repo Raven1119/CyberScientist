@@ -36,6 +36,8 @@
 
 本机 Python 3.12 的普通 `asyncio.run(asyncio.to_thread(lambda: 1))` 在线程工作完成后仍可能挂在事件循环等待；未修饰的全量 `.venv/bin/python -m pytest -q` 卡在 Bohrium 连接测试。上表完整回归使用**仅在测试进程内**的定时唤醒包装：保存 `asyncio.BaseEventLoop.run_forever`，每 0.05 秒 `call_later` 唤醒一次直到循环退出，再交由 `pytest.main(...)` 运行；未改产品代码或测试断言。单独 CLI 用例需要监听 `127.0.0.1`，普通沙箱拒绝 socket，故单独在允许本机回环监听后执行。测试结果不应误写成未经包装的默认命令通过。
 
+2026-09-26 纠正：最小复现进一步证明是此沙箱拒绝 socketpair 的 `send(2)`、允许 `os.write(2)`，不是 Python 3.12 本身的已知缺陷。当前 `tests/conftest.py` 仅在该限制出现时替换测试进程的 asyncio 跨线程唤醒写入；下面的定时包装仅保留作历史验证记录。
+
 完整回归的临时包装（从仓库根目录执行）：
 
 ```bash

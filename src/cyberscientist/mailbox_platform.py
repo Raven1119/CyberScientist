@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import itertools
+import hashlib
 import json
 import math
 import re
@@ -224,12 +225,10 @@ class BohriumPlaygroundPlatform:
             package_bytes = pkg.read_bytes()
         q_cid = urllib.parse.quote(challenge_id, safe="")
 
-        trace = meta.get("trace") or [{
-            "type": "tool_call",
-            "title": "Submit reproduction package",
-            "body": f"CyberScientist 提交现成包 {pkg.name}"
-                    f"（{len(package_bytes)} 字节）",
-        }]
+        trace = meta.get("trace")
+        if trace is None:
+            trace = [{"step_type": "observation", "title": "Sealed package",
+                      "body": "提交封存包 " + hashlib.sha256(package_bytes).hexdigest()}]
         fields = {
             "method": meta.get("method") or "CyberScientist reproduction",
             "type": "agent",
@@ -272,6 +271,18 @@ class BohriumPlaygroundPlatform:
             on_feedback("bundle", public_feedback(uploaded, secret, self.operator_token))
             bundle_uploaded = True
             on_stage("bundle_uploaded", str(attempt_id))
+            status = uploaded.get("bundleStatus") if isinstance(uploaded, dict) else None
+            validation = uploaded.get("validation") if isinstance(uploaded, dict) else None
+            admission = validation.get("trace_admission") if isinstance(validation, dict) else None
+            violations = uploaded.get("violations") if isinstance(uploaded, dict) else None
+            admission_rules = {v.get("rule") for v in violations if isinstance(v, dict)} \
+                if isinstance(violations, list) else set()
+            blocked = (status in ("needs_review", "incomplete", "failed")
+                       or bool(admission_rules & {"trace_admission_blocked", "trace_admission_indeterminate"})
+                       or (isinstance(admission, dict) and admission.get("admitted") is False))
+            if blocked:
+                on_stage("bundle_blocked", str(attempt_id))
+                raise PlatformError("bundle_blocked: 平台未放行封存包；保留 draft 与额度")
 
         on_stage("submit_sent", str(attempt_id))
         submitted = self._http("POST", f"/attempts/{q_aid}/submit", token=secret)

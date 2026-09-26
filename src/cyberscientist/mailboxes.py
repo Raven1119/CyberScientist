@@ -9,10 +9,11 @@ import hashlib
 import json
 import sqlite3
 import uuid
+import zipfile
 from pathlib import Path
 from typing import Any
 
-from . import config, db, experience_context
+from . import arm_admission, config, db, experience_context, package_seal
 from .mailbox_platform import (MailboxPlatform, PlatformError, final_score,
                                get_platform, public_feedback)
 
@@ -268,6 +269,86 @@ def _freeze(sid: str, package: Path, content: bytes) -> str:
     return frozen.relative_to(config.WORKSPACE_DIR).as_posix()
 
 
+def _protocol_snapshot() -> dict[str, Any] | None:
+    path = Path(__file__).resolve().parents[2] / "contracts" / "arm_protocol.json"
+    try:
+        return json.loads(path.read_text())
+    except (OSError, ValueError):
+        return None
+
+
+def _data_inputs(run_id: str, trial_id: str | None) -> dict[str, Any]:
+    run = db.query_one("SELECT c.resources_json FROM runs r JOIN challenges c"
+                       " ON c.id=r.challenge_id WHERE r.id=?", (run_id,))
+    try:
+        resources = json.loads(run["resources_json"] or "[]") if run else []
+    except ValueError:
+        resources = []
+    requires_data = any(isinstance(r, dict) and r.get("role") == "task-public-data"
+                        for r in resources)
+    rows = db.query("SELECT data_refs_json FROM compute_jobs WHERE run_id=?"
+                    + (" AND trial_id=?" if trial_id else ""),
+                    (run_id, trial_id) if trial_id else (run_id,))
+    refs = sorted({ref for row in rows for ref in json.loads(row["data_refs_json"] or "[]")})
+    materializations = []
+    for ref in refs:
+        item = db.query_one("SELECT id,resource_key,store_path,status FROM data_materializations WHERE id=?", (ref,))
+        if item and item["store_path"]:
+            materializations.append({"id": item["id"], "resource_key": item["resource_key"],
+                                     "content_sha256": Path(item["store_path"]).name,
+                                     "status": item["status"]})
+    return {"evidence_class": "official_data" if refs else ("proxy" if requires_data else "not_applicable"),
+            "materializations": materializations}
+
+
+def preflight_submission(run_id: str, trial_id: str | None,
+                         package_path: str | None, *, allow_proxy_evidence: bool = False,
+                         allow_indeterminate_admission: bool = False) -> dict[str, Any]:
+    if type(allow_proxy_evidence) is not bool or type(allow_indeterminate_admission) is not bool:
+        raise MailboxError("INVALID_ARGUMENT", "提交准入覆盖标志必须是显式布尔值")
+    package = _resolve_package(run_id, trial_id, package_path)
+    source = package.read_bytes()
+    source_hash = hashlib.sha256(source).hexdigest()
+    data = _data_inputs(run_id, trial_id)
+    if package.suffix.lower() != ".zip":
+        return {"source_package_sha256": source_hash, "sealed_package_sha256": source_hash,
+                "sealed_bytes": source, "admission": {"verdict": "not_applicable", "signals": {}},
+                "data_inputs": data, "error_code": None}
+    last = db.query_one("SELECT MAX(seq) AS n FROM events WHERE run_id=?", (run_id,))
+    try:
+        sealed, steps = package_seal.seal(source, run_id, trial_id, last["n"] or 0, data)
+    except (KeyError, ValueError, TypeError, sqlite3.Error, OSError, zipfile.BadZipFile) as exc:
+        raise MailboxError("INVALID_PACKAGE", f"ARM 包无法封存：{type(exc).__name__}") from exc
+    report = arm_admission.check(sealed, _protocol_snapshot())
+    code = None
+    if report["verdict"] == "blocked":
+        code = "TRACE_ADMISSION_BLOCKED"
+    elif report["verdict"] == "indeterminate" and not allow_indeterminate_admission:
+        code = "TRACE_ADMISSION_INDETERMINATE"
+    elif data["evidence_class"] == "proxy" and not allow_proxy_evidence:
+        code = "PROXY_EVIDENCE"
+    if code is None:
+        import io
+        import zipfile
+        from . import job_preflight
+        try:
+            with zipfile.ZipFile(io.BytesIO(sealed)) as archive:
+                manifest = json.loads(archive.read("arm_manifest.json"))
+                files = {name: archive.read(name) for name in archive.namelist()
+                         if name.endswith((".py", ".txt")) and archive.getinfo(name).file_size <= 2_000_000}
+            job_preflight.check_sources(files, entry=manifest.get("entrypoint"))
+        except job_preflight.PreflightError as exc:
+            code = exc.code
+        except (KeyError, ValueError, zipfile.BadZipFile):
+            code = "INVALID_PACKAGE"
+    return {"source_package_sha256": source_hash,
+            "sealed_package_sha256": hashlib.sha256(sealed).hexdigest(),
+            "sealed_bytes": sealed, "admission": report, "projected_steps": steps,
+            "data_inputs": data, "allow_proxy_evidence": allow_proxy_evidence,
+            "allow_indeterminate_admission": allow_indeterminate_admission,
+            "error_code": code}
+
+
 def _perform_submission(sid: str, platform: MailboxPlatform, challenge_id: str) -> dict:
     row = db.query_one("SELECT s.*, m.email, m.secret_ref, m.platform FROM submissions s"
                        " JOIN mailboxes m ON m.id=s.mailbox_id WHERE s.id=?", (sid,))
@@ -294,7 +375,8 @@ def _perform_submission(sid: str, platform: MailboxPlatform, challenge_id: str) 
             row["email"], config.resolve_secret(row["secret_ref"] or ""),
             str(config.WORKSPACE_DIR / row["package_path"]), challenge_id=challenge_id,
             meta={"on_stage": stage, "on_feedback": feedback,
-                  "package_bytes": frozen_bytes, **_submission_metadata(row["run_id"])})
+                  "package_bytes": frozen_bytes,
+                  "trace": _form_trace(frozen_bytes), **_submission_metadata(row["run_id"])})
         # Only explicit definitive rejection without a remote side effect releases quota.
         status = "submitted" if receipt.get("accepted") is True else "unknown"
         if receipt.get("accepted") is False and receipt.get("no_side_effect") is True:
@@ -322,17 +404,49 @@ def _perform_submission(sid: str, platform: MailboxPlatform, challenge_id: str) 
     return dict(db.query_one("SELECT * FROM submissions WHERE id=?",(sid,))) | {"deduplicated":False}
 
 
+def _form_trace(package_bytes: bytes) -> list[dict[str, Any]]:
+    import io
+    import zipfile
+    try:
+        with zipfile.ZipFile(io.BytesIO(package_bytes)) as archive:
+            rows = [json.loads(line) for line in archive.read(package_seal.TRACE).splitlines() if line.strip()]
+        return rows[-20:] or [{"step_type": "observation", "title": "Sealed package",
+                               "body": "提交封存包 " + hashlib.sha256(package_bytes).hexdigest()}]
+    except (KeyError, ValueError, zipfile.BadZipFile):
+        return [{"step_type": "observation", "title": "Sealed package",
+                 "body": "提交封存包 " + hashlib.sha256(package_bytes).hexdigest()}]
+
+
 def submit_experiment(run_id: str, trial_id: str | None,
-                      package_path: str | None, operation_id: str) -> dict[str, Any]:
+                      package_path: str | None, operation_id: str,
+                      allow_proxy_evidence: bool = False,
+                      allow_indeterminate_admission: bool = False) -> dict[str, Any]:
     if not operation_id:
         raise MailboxError("INVALID_MESSAGE", "缺少 operation_id（幂等键）")
     package = _resolve_package(run_id, trial_id, package_path)
-    content = package.read_bytes()
-    digest = hashlib.sha256(content).hexdigest()
+    source_content = package.read_bytes()
+    source_digest = hashlib.sha256(source_content).hexdigest()
     platform = _platform()
     challenge_id = _run_challenge_id(run_id)
     fingerprint = _request_hash({"run_id":run_id,"trial_id":trial_id,
-        "package_path":str(package),"hash":digest,"platform":platform.name,"challenge":challenge_id})
+        "package_path":str(package),"hash":source_digest,"platform":platform.name,
+        "challenge":challenge_id,"allow_proxy_evidence":allow_proxy_evidence,
+        "allow_indeterminate_admission":allow_indeterminate_admission})
+    with db.transaction() as conn:
+        dup = _duplicate(conn, operation_id, fingerprint)
+        if dup: return dup
+    check = preflight_submission(run_id, trial_id, package_path,
+        allow_proxy_evidence=allow_proxy_evidence,
+        allow_indeterminate_admission=allow_indeterminate_admission)
+    if check["error_code"]:
+        with db.transaction() as conn:
+            db.append_event_tx(conn, run_id, "controller", "submission.preflight_failed",
+                {"code": check["error_code"], "source_package_sha256": source_digest,
+                 "sealed_package_sha256": check["sealed_package_sha256"],
+                 "admission": check["admission"]}, trial_id=trial_id)
+        raise MailboxError(check["error_code"], "提交包预检未通过")
+    content = check["sealed_bytes"]
+    digest = check["sealed_package_sha256"]
     with db.transaction() as conn:
         dup = _duplicate(conn,operation_id,fingerprint)
         if dup: return dup
@@ -348,10 +462,15 @@ def submit_experiment(run_id: str, trial_id: str | None,
         conn.execute("UPDATE mailboxes SET submissions_used=submissions_used+1,"
                      " status=CASE WHEN submissions_used+1>=submission_limit THEN 'exhausted' ELSE status END WHERE id=?",(mb["id"],))
         conn.execute("INSERT INTO submissions(id,run_id,trial_id,mailbox_id,package_path,package_sha256,"
-                     " status,operation_id,created_at,request_hash,stage) VALUES(?,?,?,?,?,?,'unknown',?,?,?,'reserved')",
-                     (sid,run_id,trial_id,mb["id"],frozen,digest,operation_id,db.utcnow(),fingerprint))
+                     " status,operation_id,created_at,request_hash,stage,source_package_sha256,admission_json)"
+                     " VALUES(?,?,?,?,?,?,'unknown',?,?,?,'reserved',?,?)",
+                     (sid,run_id,trial_id,mb["id"],frozen,digest,operation_id,db.utcnow(),fingerprint,
+                      source_digest,json.dumps(check["admission"],ensure_ascii=False)))
         db.append_event_tx(conn,run_id,"controller","submission.created",
-                           {"submission_id":sid,"package_sha256":digest},trial_id=trial_id)
+                           {"submission_id":sid,"package_sha256":digest,
+                            "source_package_sha256":source_digest,
+                            "allow_proxy_evidence":allow_proxy_evidence,
+                            "allow_indeterminate_admission":allow_indeterminate_admission},trial_id=trial_id)
     return _perform_submission(sid,platform,challenge_id)
 
 

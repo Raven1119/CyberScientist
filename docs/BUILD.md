@@ -15,6 +15,10 @@ command -v python3 uv node npm codex kimi prime-agent bohr
 
 Python 需满足 `pyproject.toml` 的版本要求；代理 CLI 按实际选用的大脑/执行器准备。开发依赖与前端构建完成后再启动应用：
 
+公开 Wenyon 数据下载需要支持 `bohr wenyon` 的新版 CLI 及其扩展。前端设置中的“Wenyon 专用 bohr 路径”和“隔离 HOME”只作用于数据下载，原 Job CLI 路径保持独立；扩展可放在项目数据目录，避免改动用户全局 CLI 配置。未获得新的一次性账号下载授权前，只检查 `wenyon dataset download --help`，不要用真实数据请求代替环境检查。
+
+Wenyon 扩展的认证与 bohr 本地发现 AccessKey 是两回事。本机曾出现 `bohr auth status` 报 AccessKey 已配置，但 `bohr wenyon auth whoami` 在同一隔离 HOME 下报 `not logged in (no state)`，实际下载收到服务 401。下载前应在**配置的 Wenyon 专用 bohr 和同一隔离 HOME** 中检查 `wenyon auth whoami`；若无会话，由用户通过该主 CLI 完成原生登录并复查。后端为该客户端同时隔离 HOME 和 XDG 会话目录；应用不自动登录，也不因 401 自动重试下载。
+
 ```bash
 uv sync --locked
 uv run pytest tests/ -q

@@ -1,0 +1,464 @@
+{
+  "accepted_versions": [
+    "1.0",
+    "1.1"
+  ],
+  "docs_url": "#docs/arm-bundles",
+  "expected_outputs": {
+    "legacy_link": "path: results/foo.png",
+    "note": "produced_by id-references are stable across path renames; legacy path-based linkage still works for v1.0.",
+    "preferred_link": "produced_by: [artifact_id, ...]"
+  },
+  "fetched_at": "2026-09-25T16:14:31.242314+00:00",
+  "handoff": {
+    "attempt_outcome_enum": [
+      "success",
+      "partial",
+      "failed",
+      "stuck"
+    ],
+    "note": "Server-computed fields overwrite any user-supplied values on upload.",
+    "server_computed": [
+      "modality_coverage",
+      "deltas_from_parent"
+    ],
+    "status_enum": [
+      "stuck",
+      "partial",
+      "failed"
+    ],
+    "status_refused_by_enum": [
+      "complete"
+    ],
+    "status_rejected_by_schema": [
+      "success"
+    ],
+    "status_rejection": "A handoff.status the schema accepts but the outcome enum does not (see status_refused_by_enum) is refused on the value's own merits. The value never reaches attempt.outcome: an attempt without an outcome is left without one, and an attempt that already has one keeps it unchanged. The value is never truncated to the column width, and never mapped to a nearby accepted value. The raw string stays in the stored manifest, and the upload response carries a 'handoff_value_not_in_enum' violation -- for every upload that declares one, whatever the column already holds. A value the schema itself refuses (status_rejected_by_schema) fails manifest validation upstream of this, so no sync runs and no 'handoff_value_not_in_enum' violation is reported for it.",
+    "user_supplied": [
+      "status",
+      "stuck_at",
+      "next_suggestion",
+      "blocked_by",
+      "hypothesis",
+      "next_owner_hint",
+      "modality_notes"
+    ]
+  },
+  "metrics": {
+    "discouraged": [
+      "ssim"
+    ],
+    "enum": [
+      "relative_error",
+      "absolute_error",
+      "rmse",
+      "mean_abs_error",
+      "max_abs_error",
+      "l2_relative_norm",
+      "pearson_r",
+      "spearman_r",
+      "ks_statistic",
+      "kl_divergence",
+      "physical_consistency",
+      "exact_match",
+      "ssim",
+      "custom"
+    ],
+    "formulas": {
+      "absolute_error": "max(0, 1 - deviation/tolerance), tolerance default 1.0",
+      "custom": "requires verifier_script (relative to bundle root)",
+      "exact_match": "binary score, must be supplied",
+      "kl_divergence": "exp(-kl)",
+      "ks_statistic": "1 - ks",
+      "l2_relative_norm": "max(0, 1 - deviation/tolerance)",
+      "pearson_r": "(r + 1) / 2, clipped to [0, 1]",
+      "physical_consistency": "binary score, must be supplied",
+      "relative_error": "max(0, 1 - deviation/tolerance), tolerance default 0.1",
+      "rmse": "max(0, 1 - deviation/tolerance)",
+      "spearman_r": "(r + 1) / 2, clipped to [0, 1]",
+      "ssim": "score field as-is, capped at 0.3 contribution"
+    },
+    "guidance": "Prefer numerical metrics computed on actual values over visual similarity. Image shape is easy to fake; computational results are not. SSIM contributions are clipped to 0.3 in result_fidelity.",
+    "preferred_numerical": [
+      "relative_error",
+      "rmse",
+      "l2_relative_norm",
+      "pearson_r",
+      "ks_statistic",
+      "kl_divergence",
+      "physical_consistency"
+    ],
+    "ssim_cap": 0.3
+  },
+  "modalities": {
+    "all": [
+      "execution",
+      "skills",
+      "knowledge",
+      "rag",
+      "characterization",
+      "sub_agent",
+      "trace"
+    ],
+    "layout": {
+      "characterization": {
+        "paths": [
+          "characterization.json"
+        ],
+        "required": true
+      },
+      "execution": {
+        "paths": [
+          "src/reproduce.py",
+          "results/run.log",
+          "run.log",
+          "logs/run.log",
+          "results/*"
+        ],
+        "required": true
+      },
+      "knowledge": {
+        "paths": [
+          "knowledge/claims.json"
+        ],
+        "required": false
+      },
+      "rag": {
+        "paths": [
+          "paper/paper.pdf",
+          "paper/chunks.json"
+        ],
+        "required": false
+      },
+      "skills": {
+        "paths": [
+          "skills/*.md"
+        ],
+        "required": false
+      },
+      "sub_agent": {
+        "paths": [
+          "sub_agent/persona.md"
+        ],
+        "required": false
+      },
+      "trace": {
+        "paths": [
+          "trace/trace.jsonl",
+          "traces/*.jsonl"
+        ],
+        "required": true
+      }
+    },
+    "required": [
+      "execution",
+      "characterization",
+      "trace"
+    ]
+  },
+  "name": "ARM Bundle Submission Protocol",
+  "reference_url": "docs/ARM_PROTOCOL_REFERENCE.md",
+  "schemas": {
+    "arm_manifest": "/api/schemas/arm-manifest/v1",
+    "characterization": "/api/schemas/characterization/v1",
+    "trace_step": "/api/schemas/trace-step/v1"
+  },
+  "scorecard": {
+    "dimension_is_computed": {
+      "environment_reproducibility": false,
+      "executability": true,
+      "output_coverage": true,
+      "packaging": true,
+      "result_fidelity": true,
+      "trace_quality": true
+    },
+    "dimensions": [
+      "packaging",
+      "executability",
+      "output_coverage",
+      "result_fidelity",
+      "environment_reproducibility",
+      "trace_quality"
+    ],
+    "output_coverage_formula": "|deviations.target ∩ expected_outputs.name| / |expected_outputs|",
+    "result_fidelity_formula": "mean(deviations.score), with SSIM contributions clipped to 0.3 before averaging",
+    "uncomputed_dimensions_note": "Dimensions marked false are part of the stored scorecard shape but nothing in the current server writes them, so they stay at whatever they were - do not read them as a score."
+  },
+  "source_sha256": "7042a86210915ad516521b052be3c62278c28696716909ca43cb08ea375c8cf4",
+  "status_machine": {
+    "needs_review_means": "Held out of scoring pending a human. For its trace cleared no admission signal, this applies only to a bundle that is otherwise ready. For its trace could not be read in full, it applies regardless of whether the bundle is otherwise ready: the hold takes precedence over `incomplete`, because a package we cannot read is not one we can tell you is missing a file. So a bundle here may also be structurally incomplete. Held is not final: an operator can lift the hold with allow_unadmitted_trace on the admin recompute endpoint (recorded as overridden_by_admin on that run's report). Lifting it means only that this run does not hold: nothing is restored. The bundle keeps whatever state the rest of the pipeline computed for it, so a package that is otherwise incomplete stays `incomplete`; an attempt parked by an earlier hold stays at `pending_review` and off the leaderboard until someone moves it back by hand; and the parked_from_status note lives on the report of the run that parked it, not on later ones.",
+    "ready_requires": [
+      "required_modalities_ok = true",
+      "completeness >= 0.6",
+      "no validation errors",
+      "trace_admission.verdict != 'blocked' and != 'indeterminate', unless an operator released it (trace_admission.overridden_by_admin = true, set by allow_unadmitted_trace on the admin recompute endpoint)"
+    ],
+    "states": [
+      "draft",
+      "packaging",
+      "incomplete",
+      "ready",
+      "needs_review",
+      "verified",
+      "failed"
+    ]
+  },
+  "submission_endpoint": "POST /api/attempts/{id}/bundle",
+  "tooling": {
+    "recorder": {
+      "commands": [
+        "init",
+        "list-sessions",
+        "convert",
+        "validate"
+      ],
+      "install": "Ships inside the platform repository, not as a standalone package. Run: git clone https://git.dp.tech/incubation/playground-for-agentic-science playground && cd playground/tools/trace-record && rm -f ~/.local/bin/trace-record && bash install.sh && ~/.local/bin/trace-record --help >/dev/null  (the clone needs access to that host). This installs the `trace-record` CLI into ~/.local/bin. The `rm -f` and the trailing `--help` run are part of the command, not decoration: the installer exits 0 even when every write failed, and any executable already sitting at that path would satisfy a mere existence check afterwards. Removing the target first means the command can only succeed if this run recreated it - so it deletes an existing trace-record before installing, and fails loudly if it cannot. **That `rm -f` is not the only thing this command changes on your machine, and naming just one destructive step would imply it was: read install_effects in this same response before you run it.** In particular it copies eight SKILL.md files over ~/.claude/skills/ with no backup, rewrites ~/.openclaw/hooks/post-tool.sh in full unless it already mentions arm-emit, and wires recorders into every agent tool it finds. install_effects covers both scopes - what it changes under your home directory and what it changes in the working directory you run it from - and each entry says whether it can destroy a file of yours. The trailing run replaces an earlier `test -x`, which only checked the executable bit: the installer writes the clone path into the wrapper without escaping it, so from a working directory whose name contains a double quote, a backtick or a dollar sign the wrapper is reparsed by the shell and cannot run at all - while `test -x` was perfectly happy. Running it is the only check that means what the next instruction needs. There is no public one-line installer for this CLI: the similarly named script at raw.githubusercontent.com/zhizhengzhao/trace_record/main/install.sh installs a different tool (`trace-submit`) and does not provide the commands listed below.",
+      "install_effects": [
+        {
+          "action": "overwrite",
+          "condition": "always",
+          "detail": "The command itself runs `rm -f` on this path before installing, so anything you had there is gone - that is deliberate (it is how the command proves this run recreated the file), but it is destructive.",
+          "overwrites_your_files": true,
+          "path": "~/.local/bin/trace-record",
+          "requires_any": [],
+          "scope": "home"
+        },
+        {
+          "action": "overwrite",
+          "condition": "always",
+          "detail": "Copied from the clone; replaces any file already there.",
+          "overwrites_your_files": true,
+          "path": "~/.local/bin/ears-trace",
+          "requires_any": [],
+          "scope": "home"
+        },
+        {
+          "action": "overwrite",
+          "condition": "always",
+          "detail": "Copied from the clone; replaces any file already there.",
+          "overwrites_your_files": true,
+          "path": "~/.local/bin/ears-state",
+          "requires_any": [],
+          "scope": "home"
+        },
+        {
+          "action": "overwrite",
+          "condition": "always",
+          "detail": "Copied from the clone; replaces any file already there.",
+          "overwrites_your_files": true,
+          "path": "~/.local/bin/arm-emit",
+          "requires_any": [],
+          "scope": "home"
+        },
+        {
+          "action": "overwrite",
+          "condition": "always",
+          "detail": "Eight skills (checkpoint, resume, reflect, distill, orchestrate, sync-and-plan, wrap-up, brainstorm) are copied over whatever is already at those paths, with no backup and no prompt. If you keep your own SKILL.md under any of those names, it is gone.",
+          "overwrites_your_files": true,
+          "path": "~/.claude/skills/*/SKILL.md",
+          "requires_any": [],
+          "scope": "home"
+        },
+        {
+          "action": "overwrite",
+          "condition": "if ~/.openclaw exists",
+          "detail": "Rewritten in full unless the file already contains the string `arm-emit`. Your own post-tool hook is replaced with no backup and no prompt.",
+          "overwrites_your_files": true,
+          "path": "~/.openclaw/hooks/post-tool.sh",
+          "requires_any": [
+            "~/.openclaw"
+          ],
+          "scope": "home"
+        },
+        {
+          "action": "configure",
+          "condition": "always",
+          "detail": "A PostToolUse hook entry is added. The file is read, merged and rewritten, so your other keys survive. This happens even on a machine with no Claude Code installed: the installer creates ~/.claude/skills before it checks whether ~/.claude exists, so the check it runs can only succeed.",
+          "overwrites_your_files": false,
+          "path": "~/.claude/settings.json",
+          "requires_any": [],
+          "scope": "home"
+        },
+        {
+          "action": "create",
+          "condition": "if ~/.config/opencode or ~/.local/share/opencode exists",
+          "detail": "Written only when the file is absent; an existing plugin file is left alone.",
+          "overwrites_your_files": false,
+          "path": "~/.config/opencode/plugins/trace-record.ts",
+          "requires_any": [
+            "~/.config/opencode",
+            "~/.local/share/opencode"
+          ],
+          "scope": "home"
+        },
+        {
+          "action": "create",
+          "condition": "always",
+          "detail": "The command clones this repository into your current working directory. That clone is the only thing this command writes outside your home directory - measured, not assumed: the cursor patcher would touch .git/hooks/pre-commit, but it looks at the directory it is run from, which by then is inside the clone, so it does not fire here. Running `~/.local/bin/trace-record init` yourself from a git repo is a different story.",
+          "overwrites_your_files": false,
+          "path": "./playground",
+          "requires_any": [],
+          "scope": "working_directory"
+        }
+      ],
+      "invocation": {
+        "home_relative_path": ".local/bin/trace-record",
+        "needs_on_path": [
+          "bash",
+          "python3"
+        ],
+        "note": "Join home_relative_path onto the invoking user's home directory to get something you can pass straight as argv[0]. The shell form is only usable where a shell expands ~ - passing it as argv[0] raises ENOENT. Either way you do not need ~/.local/bin itself on PATH, but the installed wrapper is a #!/usr/bin/env bash script that execs a bare python3, so the programs in needs_on_path must still resolve through PATH: with an empty PATH the call exits 127 before the CLI runs.",
+        "shell": "~/.local/bin/trace-record"
+      },
+      "modes": {
+        "live": "PostToolUse hooks (Claude Code) / plugin (OpenCode) / git pre-commit (Cursor) / post-tool hook (OpenClaw) emit ARM steps as you work.",
+        "post_hoc": "Convert an existing native session log to trace.jsonl with `~/.local/bin/trace-record convert --tool auto --in <session>`."
+      },
+      "name": "trace-record",
+      "preflight": "Run `~/.local/bin/trace-record validate trace/trace.jsonl` before bundling - that is the exact path the install command above proves it recreated, so you do not have to put ~/.local/bin on your PATH. That is the whole of the claim: the installed wrapper is still a #!/usr/bin/env bash script that execs a bare python3, so those two do resolve through PATH and an empty PATH makes this exit 127 - read tooling.recorder.invocation.needs_on_path. (If ~/.local/bin is on your PATH the bare name `trace-record` resolves to the same file; the installer warns when it is not, and still exits 0.) If you are building an argv list rather than a shell line, do not copy that string: read tooling.recorder.invocation.home_relative_path and join it onto your own home directory, because nothing expands ~ for you. It reads a standalone trace.jsonl. It hard-fails on typed_step_type, tool_call_pairing, but those are not server refusal rules: server-side they only change the counts behind them, so a red run here says nothing about what happens to the bundle - read status_machine. On tool_call_pairing the two sides can even run opposite rules on the same schema-legal input: an empty-string tool_call_id makes this command exit 2 with two missing-tool_call_id failures, while the server drops that id entirely, counts it in neither tool_call_count nor paired_tool_call_count, and reports no error for it. It reads the data behind cost_floor but applies its own rule rather than the server threshold, so passing here says nothing about that check. It cannot see timestamp_window, artifact_existence, stdout_anchor at all, which need the bundle members, the manifest or results/run.log. It also applies local gates of its own that the server does not run (e.g. it fails a thin thought chain). A non-zero exit is not always a verdict either: on a tool_call_id that is a non-empty object or array - which the trace-step schema does not allow - this command exits 1 with a TypeError traceback and prints no summary, while the server ignores that id and carries on. It is NOT a mirror of the server in either direction. Separately from those checks, an admission gate needs at least one of six signals (log_anchor, artifact_path, paired_tool_calls, declared_cost, timeline, substance). More than one thing can hold a bundle back: clearing none of those six signals; a row source the gate meant to judge could not be read — including a declared manifest.trace path that resolves to nothing while a member nearly matches it; a selected JSONL file contains a line that is not valid JSON; the trace checker itself raised on this bundle, so nothing is known about the trace at all. Whether any of those actually stops a given bundle, and how a hold is lifted, is not restated here - read status_machine in this same response. This command cannot settle any of those six for you, and the reason is structural: it summarises the one standalone JSONL you hand it, while the gate selects which rows of the bundle to judge. That selection is published as data in this same response under tooling.recorder.trace_row_selection - read those fields rather than assuming, because the file you validated here is not necessarily the set of rows judged there. Even on a single identical file the two sides still part ways per signal: a boolean tool_call_id is paired here and excluded there, and cost is shown here rounded but compared there exactly. So a clean local run is not by itself evidence that the bundle will be admitted.",
+      "purpose": "Produce ARM v1.1 compliant trace/trace.jsonl from native session logs of common agentic IDEs/CLIs.",
+      "supports": [
+        "claude_code",
+        "opencode",
+        "cursor",
+        "openclaw"
+      ],
+      "trace_row_selection": {
+        "applies_to": "admission validation (validate_trace / trace_admission_verdict)",
+        "bundle_root": {
+          "applies": "before every selection rule, to every path those rules resolve, including manifest.trace",
+          "caution": "adding or removing a single file at the archive root (a README, say) can change which directory qualifies, and therefore which rows are judged",
+          "id": "common_top_level_directory",
+          "rule": "if every member of the archive sits under one shared top-level directory, that directory is the bundle root; otherwise the bundle root is the archive root"
+        },
+        "evaluation": "rules are tried in order; the first one that matches decides",
+        "if_no_rule_matches": "no rows are judged",
+        "rules": [
+          {
+            "conditions": [
+              {
+                "accepted_value_types": [
+                  "string"
+                ],
+                "id": "value_type"
+              },
+              {
+                "id": "suffix",
+                "required_suffix": ".jsonl"
+              },
+              {
+                "id": "member_exists",
+                "member_resolution": "bundle_root_exact",
+                "record_unresolved_claim": true,
+                "unresolved_claim_resolution": "path_suffix"
+              }
+            ],
+            "id": "manifest_pointer",
+            "kind": "manifest_pointer",
+            "on_condition_not_met": "conditions are evaluated in the order listed and short-circuit: the first unmet condition ends this rule and the next rule is tried. Only the member_exists condition records an unmet claim, and only when evaluation actually reaches it — a value that fails value_type or suffix is ignored silently, however closely a member resembles it",
+            "reads": "manifest.trace",
+            "selects": "the single member the pointer names, whatever its basename"
+          },
+          {
+            "directory_precedence": [
+              "traces/",
+              "trace/"
+            ],
+            "excluded_basenames": [
+              "raw_messages.jsonl"
+            ],
+            "id": "directory_scan",
+            "kind": "directory_scan",
+            "merges_all_eligible_members_of_selected_directory": true,
+            "on_condition_not_met": "fall through to the next rule",
+            "required_suffix": ".jsonl",
+            "selects": "every eligible member of the first directory that has one",
+            "skips_directory_with_no_eligible_member": true
+          },
+          {
+            "candidates": [
+              "traces/trace.json",
+              "trace.json"
+            ],
+            "id": "legacy_json_array",
+            "kind": "first_existing_member",
+            "member_format": "JSON array of steps (not JSONL)",
+            "member_must_exist": true,
+            "member_resolution": "bundle_root_exact",
+            "on_condition_not_met": "no rows are judged",
+            "selects": "the first candidate that exists"
+          }
+        ]
+      }
+    }
+  },
+  "trace_anti_fraud": {
+    "admission": {
+      "fail_closed": "A trace the checker cannot read in full is judged `indeterminate` rather than given the benefit of the doubt; what that means for the bundle is stated in status_machine.",
+      "not_a_fraud_verdict": "Each signal is individually cheap to fake. Clearing admission is not a finding that the trace is honest — that judgement belongs to the conviction layer, not to this gate.",
+      "purpose": "Floor for entering scoring at all, separate from the score above. What happens to a bundle that does not clear it is stated once, in status_machine.",
+      "signals": [
+        "log_anchor",
+        "artifact_path",
+        "paired_tool_calls",
+        "declared_cost",
+        "timeline",
+        "substance"
+      ],
+      "signals_required": 1,
+      "thresholds": {
+        "declared_cost_usd": 0.01,
+        "log_anchor_fields": [
+          "body",
+          "title",
+          "tool_output"
+        ],
+        "log_anchor_max_chars": 80,
+        "log_anchor_min_chars": 12,
+        "substance_distinct_step_types": 2,
+        "substance_narrative_chars": 30,
+        "substance_narrative_fields": [
+          "title",
+          "body",
+          "code"
+        ],
+        "substance_typed_steps": 2,
+        "timeline_distinct_timestamps": 2
+      },
+      "verdicts": [
+        "admit",
+        "blocked",
+        "indeterminate",
+        "not_applicable"
+      ]
+    },
+    "checks": [
+      {
+        "description": "Steps whose step_type is one of {thought,tool_call,tool_result,artifact,decision,error,observation} are counted as typed_step_count; steps with any other value are excluded from that count rather than rejected.",
+        "id": "typed_step_type"
+      },
+      {
+        "description": "tool_call_count and paired_tool_call_count count distinct tool_call_id values, not steps: an id repeated across several tool_call rows collapses to one, and an id that is not a non-empty string or a non-boolean int is dropped entirely. An id counts as paired when some tool_result carries the same id. Unmatched ids only widen the gap and are not rejected.",
+        "id": "tool_call_pairing"
+      },
+      {
+        "description": "Step timestamps should fall within [ran_at - slack, ran_at + slack + wall_time_s], where slack = max(2 * wall_time_s, 10 minutes).",
+        "id": "timestamp_window"
+      },
+      {
+        "description": "At least one step_type=artifact row must reference a path that exists in the bundle; rows that do not resolve are ignored rather than rejected.",
+        "id": "artifact_existence"
+      },
+      {
+        "description": "Total cost_usd must clear a 0.01 floor.",
+        "id": "cost_floor"
+      },
+      {
+        "description": "At least one line of a step body/title/tool_output, trimmed and cut to 80 chars, at least 12 chars long after that, appearing verbatim in the file execution.log_path names (resolved exactly, not by suffix); with no execution.log_path declared the anchor is never found.",
+        "id": "stdout_anchor"
+      }
+    ],
+    "scoring": "trace_quality is written in two stages - bundle_validation: a bundle that contains a trace file scores 1.0, one without scores 0.0 - this stage never looks at how many steps are in it; trace_extraction: graded by the number of steps the server actually extracted. The step tiers are: 5 or more steps score 1.0, 1-4 steps score 0.5, no steps scores 0.0. The second stage runs only after the server has extracted the trace; bundle validation can return before that point (an unreadable arm_manifest.json is one way), and on those paths the step tiers never run at all - the value stays at whatever the first stage set from mere file presence. So do not read this dimension as a step count without checking that the trace was extracted. The anti-fraud checks above do not feed it."
+  },
+  "version": "1.1"
+}

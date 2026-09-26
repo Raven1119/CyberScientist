@@ -52,6 +52,8 @@ export default function MailboxPage() {
   const [regCount, setRegCount] = useState(1)
   const [confirming, setConfirming] = useState<Submission | null>(null)
   const [pkgPath, setPkgPath] = useState('')
+  const [allowProxyEvidence, setAllowProxyEvidence] = useState(false)
+  const [allowIndeterminateAdmission, setAllowIndeterminateAdmission] = useState(false)
   const [pollingTasks, setPollingTasks] = useState<PollingTask[]>([])
 
   const refreshPolling = useCallback(async () => {
@@ -215,6 +217,8 @@ export default function MailboxPage() {
         package_path: pkgPath.trim() || undefined,
         trial_id: pkgPath.trim() ? undefined : (currentTrialId ?? undefined),
         operation_id: `sub-${crypto.randomUUID()}`,
+        allow_proxy_evidence: allowProxyEvidence,
+        allow_indeterminate_admission: allowIndeterminateAdmission,
       })
       toast('实验提交已受理。')
       await refresh()
@@ -430,6 +434,16 @@ export default function MailboxPage() {
                     onClick={() => void submitExperiment()}>
                     提交
                   </button>
+                </div>
+                <div className="field checkbox">
+                  <input id="allow-proxy-evidence" type="checkbox" checked={allowProxyEvidence}
+                    onChange={(e) => setAllowProxyEvidence(e.target.checked)} />
+                  <label htmlFor="allow-proxy-evidence">明确允许代理证据提交（未用到题目官方公开数据）</label>
+                </div>
+                <div className="field checkbox">
+                  <input id="allow-indeterminate-admission" type="checkbox" checked={allowIndeterminateAdmission}
+                    onChange={(e) => setAllowIndeterminateAdmission(e.target.checked)} />
+                  <label htmlFor="allow-indeterminate-admission">明确允许本地轨迹准入未知时继续</label>
                 </div>
                 {!pkgPath.trim() && (
                   <p className="small-text">

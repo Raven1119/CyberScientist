@@ -23,7 +23,7 @@ from typing import Any
 
 import jsonschema
 
-from . import collab, config, db, decision as decision_mod, experiences, mailboxes, observation, experience_context
+from . import collab, config, datasets, db, decision as decision_mod, experiences, mailboxes, observation, experience_context
 from . import skills as skills_mod
 from .brains.base import BrainRuntime
 from .brains.codex import CodexBrain
@@ -40,6 +40,31 @@ PHASES = ("created", "running", "pausing", "paused", "blocked",
 # 值得触发静默观察的科学变化（心跳/进度/大脑自身输出不在内）
 _SHADOW_TRIGGERS = ("job.observed", "job.unknown", "submission.scored", "submission.score_corrected", "checkpoint.created", "trial.reported_complete",
                     "trial.stalled", "trial.done", "prime.error")
+
+_SPARSE_SHADOW_EVENTS = (
+    "trial.stalled", "trial.done", "trial.reported_complete",
+    "submission.scored", "submission.score_corrected", "run.blocked",
+    "prime.error", "job.unknown", "job.observed",
+)
+_RESEARCH_JOB_STATES = frozenset(("Failed", "Stopped", "Finished"))
+_RESEARCH_TRIAL_EVENTS = frozenset((
+    "trial.stalled", "trial.done", "trial.reported_complete"))
+
+
+def _is_sparse_brain_trigger(event_type: str, payload: dict[str, Any],
+                             previous_state: str | None = None) -> bool:
+    """Only durable research transitions wake sparse shadow supervision."""
+    if event_type == "job.observed":
+        status = payload.get("status")
+        return (bool(payload.get("operation_id")) and
+                status in _RESEARCH_JOB_STATES and
+                status != previous_state)
+    if event_type == "job.unknown":
+        return previous_state != "unknown"
+    if event_type in _RESEARCH_TRIAL_EVENTS:
+        return event_type != previous_state
+    return event_type in _SPARSE_SHADOW_EVENTS
+
 
 _REVIEW_RESULT_SCHEMA: dict[str, Any] = json.loads(
     (Path(__file__).resolve().parent.parent.parent
@@ -400,7 +425,8 @@ class RunController:
         snapshot = {"settings": self._redacted_settings(settings),
                     "shadow": shadow_cfg,
                     "challenge_id": challenge_id, "mode": mode,
-                    "compute_policy_version": 1, "sparse_brain_version": 1}
+                    "compute_policy_version": 1, "sparse_brain_version": 1,
+                    "lifecycle_version": 2}
         db.execute(
             "INSERT INTO runs(id, challenge_id, mode, phase, state_version, intention,"
             " config_snapshot, created_at) VALUES(?,?,?,?,0,NULL,?,?)",
@@ -426,7 +452,9 @@ class RunController:
     def authorize(self, run_id: str, scope: str, allow_model_calls: bool,
                   max_model_turns: int, max_run_minutes: int,
                   max_submissions: int, note: str | None,
-                  max_jobs: int = 0, job_limits: dict | None = None) -> dict[str, Any]:
+                  max_jobs: int = 0, job_limits: dict | None = None,
+                  allow_data_download: bool = False,
+                  objective: str | None = None) -> dict[str, Any]:
         run = self._require_run(run_id)
         if run["phase"] not in ("created", "blocked"):
             raise ControllerError("INVALID_STATE", f"当前阶段 {run['phase']} 不能授权")
@@ -438,12 +466,13 @@ class RunController:
         db.execute(
             "INSERT INTO authorizations(id, run_id, scope, allow_model_calls,"
             " max_model_turns, max_run_minutes, max_submissions, max_jobs,"
-            " granted_at, note, job_limits_json)"
-            " VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+            " granted_at, note, job_limits_json,allow_data_download,max_trials)"
+            " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (auth_id, run_id, scope, int(allow_model_calls), max_model_turns,
-             max_run_minutes, max_submissions, max_jobs, db.utcnow(), note, json.dumps(limits)))
-        db.execute("UPDATE runs SET authorization_id=?, block_reason=NULL WHERE id=?",
-                   (auth_id, run_id))
+             max_run_minutes, max_submissions, max_jobs, db.utcnow(), note, json.dumps(limits),
+             int(allow_data_download), config.load_settings()["run_defaults"]["max_trials"]))
+        db.execute("UPDATE runs SET authorization_id=?, block_reason=NULL,objective_md=? WHERE id=?",
+                   (auth_id, (objective if objective is not None else note), run_id))
         if run["phase"] == "blocked":
             db.execute("UPDATE runs SET phase='created' WHERE id=?", (run_id,))
         db.append_event(run_id, "controller", "run.authorized",
@@ -463,7 +492,7 @@ class RunController:
                                   f"Run 已终态 {run['phase']}，不能调整预算")
         changes: dict[str, int] = {}
         settings_keys = {"max_brain_reviews": max_brain_reviews,
-                         "max_trials": max_trials}
+                         "max_trials": max_trials if not self._lifecycle_v2(run) else None}
         if any(v is not None for v in settings_keys.values()):
             settings = config.load_settings()
             for key, value in settings_keys.items():
@@ -479,6 +508,8 @@ class RunController:
                      "max_run_minutes": max_run_minutes,
                      "max_submissions": max_submissions,
                      "max_jobs": max_jobs}
+        if self._lifecycle_v2(run):
+            auth_keys["max_trials"] = max_trials
         if any(v is not None for v in auth_keys.values()):
             if not run["authorization_id"]:
                 raise ControllerError("NEEDS_AUTHORIZATION",
@@ -495,10 +526,32 @@ class RunController:
         if not changes:
             raise ControllerError("INVALID_ARGUMENT", "未提供任何预算字段")
         db.append_event(run_id, "controller", "run.budget_updated", changes)
+        if self._lifecycle_v2(run) and max_trials is not None and run["gate"] == "awaiting_budget":
+            used = len(db.query("SELECT id FROM trials WHERE run_id=?", (run_id,)))
+            if max_trials > used:
+                with db.transaction() as conn:
+                    conn.execute("UPDATE runs SET gate='open' WHERE id=? AND gate='awaiting_budget'", (run_id,))
+                    db.append_event_tx(conn, run_id, "controller", "run.budget_granted",
+                                       {"max_trials": max_trials, "pending_intent": True})
+                self._enqueue_lifecycle(run_id, trigger="budget_granted")
         if run_id in self._signals:
             self._signals[run_id].put_nowait({"type": "budget_updated"})
         return {"run_id": run_id, "updated": changes,
                 "budget": self._budget_status(self._require_run(run_id))}
+
+    @staticmethod
+    def _lifecycle_v2(run: Any) -> bool:
+        return json.loads(run["config_snapshot"]).get("lifecycle_version") == 2
+
+    def drop_pending_intent(self, run_id: str, reason: str) -> dict[str, Any]:
+        run = self._require_run(run_id)
+        if not self._lifecycle_v2(run) or not run["pending_action_json"]:
+            raise ControllerError("INVALID_STATE", "没有待处理的 Trial 意图")
+        with db.transaction() as conn:
+            conn.execute("UPDATE runs SET pending_action_json=NULL,gate='open' WHERE id=?", (run_id,))
+            db.append_event_tx(conn, run_id, "user", "run.pending_intent_dropped",
+                               {"reason": reason[:500]})
+        return self.run_snapshot(run_id)
 
     async def start_async(self, run_id: str) -> dict[str, Any]:
         run = self._require_run(run_id)
@@ -610,6 +663,58 @@ class RunController:
                     "notice": "正在暂停；已有远程任务可能继续运行/计费"})
             await q.put({"type": "pause"})
             return {"status": "accepted", "detail": "暂停中，等待代理确认"}
+        if action == "reopen":
+            # Explicit recovery from a cancelled Run keeps its original clock,
+            # authorization, events and Job ledger. It never dispatches work.
+            if run["phase"] == "recovering":
+                previous_op = db.query_one(
+                    "SELECT run_id,kind FROM operations WHERE operation_id=?",
+                    (operation_id,))
+                if previous_op and previous_op["run_id"] == run_id \
+                        and previous_op["kind"] == "control.reopen":
+                    return {"status": "confirmed", "deduplicated": True}
+            if run["phase"] != "cancelled" or not run["started_at"]:
+                raise ControllerError("INVALID_STATE", "仅已取消且曾启动的 Run 可以重开")
+            self._require_model_authorization(run_id)
+            if self._run_minutes_exceeded(run):
+                raise ControllerError("AUTH_EXPIRED", "原 Run 的时长授权已到期")
+            if not text or not text.strip():
+                raise ControllerError("INVALID_ARGUMENT", "重开需要记录原因")
+            with db.transaction() as conn:
+                other = conn.execute(
+                    "SELECT id FROM runs WHERE phase IN"
+                    " ('created','running','pausing','paused') AND id<>?",
+                    (run_id,)).fetchone()
+                if other:
+                    raise ControllerError("RUN_ACTIVE", f"已有活跃 Run {other['id']}")
+                previous = conn.execute(
+                    "SELECT ended_at FROM runs WHERE id=? AND phase='cancelled'",
+                    (run_id,)).fetchone()
+                if not previous:
+                    raise ControllerError("INVALID_STATE", "Run 状态已变化")
+                inserted = conn.execute(
+                    "INSERT OR IGNORE INTO operations(operation_id,run_id,kind,status,"
+                    " request_summary,payload_hash,created_at)"
+                    " VALUES(?,?,?,?,?,?,?)",
+                    (operation_id, run_id, "control.reopen", "confirmed",
+                     _redact(text), "", db.utcnow())).rowcount
+                if not inserted:
+                    existing = conn.execute(
+                        "SELECT run_id,kind FROM operations WHERE operation_id=?",
+                        (operation_id,)).fetchone()
+                    if existing and existing["run_id"] == run_id \
+                            and existing["kind"] == "control.reopen":
+                        return {"status": "confirmed", "deduplicated": True}
+                    raise ControllerError("CONFLICT", "操作 ID 已用于其他动作")
+                conn.execute(
+                    "UPDATE runs SET phase='recovering', ended_at=NULL,"
+                    " block_reason=?, state_version=state_version+1 WHERE id=?",
+                    ("已重开；等待原生 recovery 审阅", run_id))
+                db.append_event_tx(conn, run_id, "controller", "run.reopened", {
+                    "previous_phase": "cancelled", "previous_ended_at": previous["ended_at"],
+                    "reason": _redact(text),
+                    "notice": "保留原授权、运行时钟与 Job 账本；未自动重提或改写远端任务"})
+            return {"status": "confirmed", "detail": "已进入 recovering；请恢复原 Run"}
         if action == "resume":
             self._require_model_authorization(run_id)
             if run["phase"] == "recovering":
@@ -662,11 +767,11 @@ class RunController:
                     "SELECT status FROM operations WHERE operation_id=?", (operation_id,))
                 return {"status": existing["status"], "deduplicated": True}
             with db.transaction() as conn:
-                conn.execute("UPDATE runs SET phase='cancelled', ended_at=?"
+                conn.execute("UPDATE runs SET phase='cancelled', ended_at=?,end_reason='user_terminate'"
                              " WHERE id=?", (db.utcnow(), run_id))
                 conn.execute("UPDATE trials SET status='interrupted'"
                              " WHERE run_id=?"
-                             " AND status IN ('active','reported_complete','stalled')",
+                             " AND status IN ('active','stalled')",
                              (run_id,))
                 conn.execute("UPDATE review_requests SET status='obsolete',"
                              " updated_at=? WHERE run_id=?"
@@ -882,6 +987,11 @@ class RunController:
                 - run["brain_reviews_used"] - 1},
             "question": question,
         }
+        if self._lifecycle_v2(run):
+            packet.pop("current_intention", None)
+            packet["run_objective"] = run["objective_md"]
+            packet["current_trial_goal"] = trial["goal"] if trial else None
+            packet["pending_intent"] = json.loads(run["pending_action_json"]) if run["pending_action_json"] else None
         if sparse:
             auth = db.query_one(
                 "SELECT note,max_jobs,max_submissions,max_run_minutes"
@@ -891,6 +1001,7 @@ class RunController:
                 "goal_md": overview["goal_md"],
                 "checkpoints": overview["checkpoint_summaries"],
                 "compute_jobs": overview["compute_jobs"],
+                "data_status": overview["data_status"],
                 "known_scores": overview["known_scores"],
                 "research_note_md": overview["brain_private_note_md"],
                 "watchlist": overview["watchlist"],
@@ -1282,8 +1393,9 @@ class RunController:
                     # 非预期中断（如通信失败）：唤醒大脑裁决，不干等
                     self._executor_busy[run_id] = False
                     self._enqueue_lifecycle(run_id, trigger="executor_aborted")
-            if etype in _SHADOW_TRIGGERS or \
-                    f"prime.{etype}" in ("prime.checkpoint.created",):
+            if (etype in _SHADOW_TRIGGERS or
+                    f"prime.{etype}" == "prime.checkpoint.created" or
+                    (self._sparse_brain(run) and etype == "error")):
                 self._maybe_shadow(run_id)
         elif stype == "steer":
             # 用户指导 → 生命周期审阅（同一个大脑排队入口）
@@ -1450,7 +1562,7 @@ class RunController:
     def _maybe_shadow(self, run_id: str) -> None:
         """有新的有效科学变化且额度允许时，排队一次被动观察（合并语义）。"""
         run = self._require_run(run_id)
-        if run["phase"] != "running":
+        if run["phase"] != "running" or run["gate"] == "awaiting_budget":
             return
         sup = db.query_one("SELECT * FROM supervision WHERE run_id=?",
                            (run_id,))
@@ -1469,13 +1581,48 @@ class RunController:
             (run_id,))
         if pending:
             return  # 合并：大脑忙/已有待处理范围时不另起请求
-        notable = db.query_one(
-            f"SELECT MAX(seq) AS s FROM events WHERE run_id=?"
-            f" AND type IN ({','.join('?' * len(_SHADOW_TRIGGERS))})",
-            (run_id, *_SHADOW_TRIGGERS))
-        latest = (notable["s"] or 0) if notable else 0
-        if latest <= sup["covered_seq"]:
-            return  # 无新有效变化，不调用模型
+        if self._sparse_brain(run):
+            candidates = db.query(
+                f"SELECT seq,type,trial_id,payload FROM events WHERE run_id=? AND seq>?"
+                f" AND type IN ({','.join('?' * len(_SPARSE_SHADOW_EVENTS))})"
+                " ORDER BY seq",
+                (run_id, sup["covered_seq"], *_SPARSE_SHADOW_EVENTS))
+            wake = False
+            for event in candidates:
+                payload = json.loads(event["payload"])
+                previous = None
+                if event["type"].startswith("job.") and payload.get("operation_id"):
+                    prior = db.query_one(
+                        "SELECT type,payload FROM events WHERE run_id=? AND seq<?"
+                        " AND type IN ('job.observed','job.unknown')"
+                        " AND json_extract(payload,'$.operation_id')=?"
+                        " ORDER BY seq DESC LIMIT 1",
+                        (run_id, event["seq"], payload["operation_id"]))
+                    if prior:
+                        previous = ("unknown" if prior["type"] == "job.unknown"
+                                    else json.loads(prior["payload"]).get("status"))
+                elif event["type"] in _RESEARCH_TRIAL_EVENTS:
+                    trial_id = payload.get("trial_id") or event["trial_id"]
+                    if trial_id:
+                        prior = db.query_one(
+                            "SELECT type FROM events WHERE run_id=? AND seq<?"
+                            " AND type IN ('trial.stalled','trial.done','trial.reported_complete')"
+                            " AND trial_id=? ORDER BY seq DESC LIMIT 1",
+                            (run_id, event["seq"], trial_id))
+                        previous = prior["type"] if prior else None
+                if _is_sparse_brain_trigger(event["type"], payload, previous):
+                    wake = True
+                    break
+            if not wake:
+                return
+        else:
+            notable = db.query_one(
+                f"SELECT MAX(seq) AS s FROM events WHERE run_id=?"
+                f" AND type IN ({','.join('?' * len(_SHADOW_TRIGGERS))})",
+                (run_id, *_SHADOW_TRIGGERS))
+            latest = (notable["s"] or 0) if notable else 0
+            if latest <= sup["covered_seq"]:
+                return  # 旧 Run 保持原触发语义
         with db.transaction() as conn:
             collab._enqueue_request_tx(conn, run_id, source="shadow",
                                        blocking=False, trigger="passive",
@@ -1491,7 +1638,7 @@ class RunController:
         """
         import time as _time
         run = self._require_run(run_id)
-        if run["phase"] != "running":
+        if run["phase"] != "running" or run["gate"] == "awaiting_budget":
             return
         if self._sparse_brain(run):
             return  # 定时器只检查健康；新 Run 只由研究级变化唤醒。
@@ -1651,10 +1798,54 @@ class RunController:
 
     async def _run_one_review(self, run_id: str, req: Any,
                               brain: BrainRuntime, b_session: Any) -> None:
+        import time
+        started = time.monotonic()
+        initial_seq = self._last_seq(run_id)
+        try:
+            await self._run_one_review_impl(run_id, req, brain, b_session)
+        finally:
+            current = db.query_one("SELECT status,frame_json FROM review_requests WHERE id=?", (req["id"],))
+            events = [dict(e) | {"payload": json.loads(e["payload"])} for e in db.query(
+                "SELECT seq,type,payload FROM events WHERE run_id=? AND seq>? ORDER BY seq",
+                (run_id, initial_seq))]
+            usage = [e["payload"] for e in events if e["type"] == "brain.usage.updated"
+                     and e["payload"].get("review_id") == req["id"]]
+            last = (usage[-1].get("usage") or {}).get("last") if usage else None
+            if not isinstance(last, dict):
+                last = {}
+            decision = next((e["payload"] for e in events if e["type"] == "brain.decision"), None)
+            changed = any(e["type"] in ("trial.created", "run.finished", "run.pausing",
+                                        "submission.created") for e in events)
+            done = next((e["payload"] for e in events if e["type"] == "brain.review_done"), None)
+            outcome = ("error" if not current or current["status"] in ("error", "obsolete", "pending", "running") else
+                       "decision_direction" if changed else "decision_other" if decision else
+                       "guidance" if done and done.get("disposition") == "intervene" else
+                       "answer" if req["trigger"] in ("executor_question", "research_question") else "silent")
+            db.append_event(run_id, "brain", "brain.review_metrics", {
+                "review_id": req["id"],
+                "mode": ("question" if req["trigger"] in ("executor_question", "research_question")
+                         else "lifecycle" if req["source"] == "lifecycle" else
+                         "shadow" if req["source"] == "shadow" else "requested"),
+                "trigger": req["trigger"],
+                "packet_bytes": len((current["frame_json"] or "").encode("utf-8")) if current else 0,
+                "tokens_last_total": last.get("totalTokens"),
+                "tokens_input": last.get("inputTokens"),
+                "tokens_cached": last.get("cachedInputTokens"),
+                "tokens_output": last.get("outputTokens"),
+                "latency_s": round(time.monotonic() - started, 3),
+                "trace_reads": sum(e["type"] == "brain.trace_read" and
+                                   e["payload"].get("review_id") == req["id"] for e in events),
+                "outcome": outcome, "direction_changed": changed})
+
+    async def _run_one_review_impl(self, run_id: str, req: Any,
+                              brain: BrainRuntime, b_session: Any) -> None:
         """worker 唯一的大脑调用点；结果由控制器短事务单点接受。"""
         self._require_model_authorization(run_id)
         run = self._require_run(run_id)
         if run["phase"] != "running":
+            return
+        if run["gate"] == "awaiting_budget" and req["trigger"] != "budget_granted":
+            self._obsolete_request(req["id"], "等待 Trial 预算；不唤醒大脑")
             return
         if self._run_minutes_exceeded(run):
             self._obsolete_request(req["id"], "授权时长已用尽")
@@ -1782,7 +1973,7 @@ class RunController:
                                     _runtime_event_payload(ev.payload))
                 elif ev.type == "usage":
                     db.append_event(run_id, "brain", "brain.usage.updated",
-                                    _runtime_event_payload(ev.payload))
+                                    _runtime_event_payload(ev.payload) | {"review_id": req["id"]})
                 elif ev.type in ("message", "raw"):
                     raw_parts.append(str(ev.payload.get("text", "")))
         except Exception as exc:  # noqa: BLE001
@@ -2160,6 +2351,13 @@ class RunController:
             } if auth else None,
             "experience_manifest": self._memory_manifest(run, settings),
         }
+        if self._lifecycle_v2(run):
+            packet.pop("current_intention", None)
+            packet["lifecycle_version"] = 2
+            packet["run_objective"] = run["objective_md"]
+            packet["current_trial_goal"] = trial["goal"] if trial else None
+            packet["pending_intent"] = json.loads(run["pending_action_json"]) if run["pending_action_json"] else None
+        packet["data_status"] = datasets.status(run["challenge_id"])["items"]
         # 题目信息进帧：大脑开局必须亲自核实任务要素（数据/工具链/评分契约），
         # 不再只能依赖执行器转述（2026-09-19：大脑因帧内无题面，
         # 把执行器「PyPI/bohr 查无」误当「资源不可得」）
@@ -2252,11 +2450,40 @@ class RunController:
             db.append_event(run_id, "brain", "brain.decision_rejected",
                             {"reasons": structural})
             return
+        v2 = self._lifecycle_v2(run)
+        if (dec.get("schema_version") not in (1, 2) if v2
+                else dec.get("schema_version") != 1):
+            db.append_event(run_id, "brain", "brain.decision_rejected",
+                            {"reasons": ["Decision schema_version 与 Run 生命周期版本不符"]})
+            return
         if dec["observed_state_version"] < run["state_version"]:
             db.append_event(run_id, "brain", "brain.decision_stale", {
                 "detail": f"判断基于 state_version={dec['observed_state_version']}，"
                           f"当前 {run['state_version']}；保存但不执行"})
             return
+        pending = json.loads(run["pending_action_json"]) if v2 and run["pending_action_json"] else None
+        if pending:
+            if dec.get("schema_version") != 2:
+                db.append_event(run_id, "brain", "brain.action_rejected",
+                                {"op": "pending_intent", "reason": "待处理意图需要 v2 Decision"})
+                return
+            resolution = dec.get("pending_intent_resolution")
+            if resolution not in ("replay", "revise", "drop"):
+                db.append_event(run_id, "brain", "brain.action_rejected",
+                                {"op": "pending_intent", "reason": "v2 必须给出 pending_intent_resolution"})
+                return
+            if resolution == "replay":
+                if run["state_version"] != pending["state_version"]:
+                    db.append_event(run_id, "brain", "brain.action_rejected",
+                                    {"op": "pending_intent", "reason": "待重放意图的状态版本已变化"})
+                    return
+                dec = {**dec, "actions": [pending["action"]]}
+            with db.transaction() as conn:
+                conn.execute("UPDATE runs SET pending_action_json=NULL WHERE id=?", (run_id,))
+                db.append_event_tx(conn, run_id, "brain", "run.pending_intent_resolved",
+                                   {"resolution": resolution, "decision_id": dec["decision_id"]})
+            if resolution == "drop":
+                return
         current_tid = run["current_trial_id"]
         stalled_tid = None
         reported_tid = None
@@ -2311,11 +2538,23 @@ class RunController:
                 # 有界授权：Trial 数上限
                 trial_count = len(db.query("SELECT id FROM trials WHERE run_id=?",
                                            (run_id,)))
-                if trial_count >= defaults["max_trials"]:
-                    db.append_event(run_id, "brain", "brain.action_rejected", {
-                        "op": op,
-                        "reason": f"达到 Trial 上限 {defaults['max_trials']}；"
-                                  f"需要新 Trial 请结束当前 Run 重新授权"})
+                auth = db.query_one("SELECT max_trials FROM authorizations WHERE id=?",
+                                    (run["authorization_id"],)) if v2 else None
+                limit = auth["max_trials"] if v2 and auth and auth["max_trials"] else defaults["max_trials"]
+                if trial_count >= limit:
+                    if v2:
+                        pending_action = {"decision_id": dec["decision_id"], "action": action,
+                                          "state_version": run["state_version"],
+                                          "rejected_at": db.utcnow()}
+                        with db.transaction() as conn:
+                            conn.execute("UPDATE runs SET gate='awaiting_budget',pending_action_json=? WHERE id=?",
+                                         (json.dumps(pending_action,ensure_ascii=False), run_id))
+                            db.append_event_tx(conn, run_id, "controller", "run.awaiting_budget",
+                                               {"limit": limit, "used": trial_count,
+                                                "pending_action": pending_action})
+                    else:
+                        db.append_event(run_id, "brain", "brain.action_rejected", {
+                            "op": op, "reason": f"达到 Trial 上限 {limit}；需要新 Trial 请结束当前 Run 重新授权"})
                     continue
                 trial_id = _rid("trial")
                 parent = run["current_trial_id"]
@@ -2326,10 +2565,12 @@ class RunController:
                         " VALUES(?,?,?,?,?,'active',?)",
                         (trial_id, run_id, parent, action["goal"],
                          action["success_check"], db.utcnow()))
-                    conn.execute(
-                        "UPDATE runs SET current_trial_id=?, intention=?,"
-                        " gate='open' WHERE id=?",
-                        (trial_id, action["goal"], run_id))
+                    if v2:
+                        conn.execute("UPDATE runs SET current_trial_id=?,gate='open' WHERE id=?",
+                                     (trial_id, run_id))
+                    else:
+                        conn.execute("UPDATE runs SET current_trial_id=?,intention=?,gate='open' WHERE id=?",
+                                     (trial_id, action["goal"], run_id))
                     db.append_event_tx(conn, run_id, "controller",
                                        "trial.created",
                                        {"trial_id": trial_id,
@@ -2346,6 +2587,8 @@ class RunController:
                              "该目录允许写入。用检查点报告交付，交由控制器提交。\n"
                              f"本轮授权与用户目标：{json.dumps(packet.get('authorization'), ensure_ascii=False)}\n"
                              f"题目与平台契约：{json.dumps(dict(db.query_one('SELECT title,content,resources_json,platform_snapshot_json FROM challenges WHERE id=?', (run['challenge_id'],))), ensure_ascii=False)}\n"
+                             f"公开数据物化状态：{json.dumps(datasets.status(run['challenge_id'])['items'], ensure_ascii=False)}\n"
+                             "提交包会追加真实事件轨迹并接受准入检查；自有 trace.jsonl 只能使用七种合法 step_type，artifact_path 必须是包内现存文件，禁止编造工具调用或费用。\n"
                              "冻结经验（只使用这份正文；采用时在检查点声明版本）：\n"
                              f"{experience_context.encode(experience_context.for_trial(run_id,trial_id))}\n"
                              f"{executor_instruction_suffix()}"
@@ -2407,6 +2650,23 @@ class RunController:
                 if q:
                     await q.put({"type": "pause"})
             elif op == "finish":
+                if v2:
+                    assessment = action.get("objective_assessment")
+                    if not isinstance(assessment, dict):
+                        db.append_event(run_id, "brain", "brain.action_rejected",
+                                        {"op": op, "reason": "v2 finish 缺少 objective_assessment"})
+                        continue
+                    if assessment.get("status") == "achieved":
+                        refs = assessment.get("evidence_refs") or []
+                        valid = bool(refs) and all(db.query_one(
+                            "SELECT 1 FROM events WHERE run_id=? AND (event_id=? OR CAST(seq AS TEXT)=?)",
+                            (run_id, ref, str(ref).split("#")[-1])) for ref in refs)
+                        if not valid:
+                            db.append_event(run_id, "brain", "brain.action_rejected",
+                                            {"op": op, "reason": "achieved 缺少可解析的真实证据引用"})
+                            continue
+                    db.execute("UPDATE runs SET objective_status=?,end_reason=? WHERE id=?",
+                               (assessment["status"], action["reason"], run_id))
                 # Run 终态前先自动整理本题经验（一轮 curation 生命周期审阅），
                 # 审阅完结（done/error/obsolete）后由 _finish_request 钩子收尾；
                 # 额度用尽或已在整理则直接收尾，防死锁
@@ -2559,8 +2819,8 @@ class RunController:
     def _finalize_run(self, run_id: str, reason: str) -> None:
         self._record_experience_snapshot(run_id, "at_end")
         with db.transaction() as conn:
-            conn.execute("UPDATE runs SET phase='finished', ended_at=?"
-                         " WHERE id=?", (db.utcnow(), run_id))
+            conn.execute("UPDATE runs SET phase='finished', ended_at=?,end_reason=?"
+                         " WHERE id=?", (db.utcnow(), reason, run_id))
             collab.revoke_run_tokens(conn, run_id)
             db.append_event_tx(conn, run_id, "controller",
                                "run.finished", {"reason": reason})
@@ -2966,6 +3226,11 @@ class RunController:
         run = self._require_run(run_id)
         trials = [dict(t) for t in db.query(
             "SELECT * FROM trials WHERE run_id=? ORDER BY created_at", (run_id,))]
+        delivered = {r["trial_id"] for r in db.query(
+            "SELECT DISTINCT trial_id FROM events WHERE run_id=?"
+            " AND type='trial.reported_complete' AND trial_id IS NOT NULL", (run_id,))}
+        for trial in trials:
+            trial["delivered"] = trial["id"] in delivered or trial["status"] == "reported_complete"
         d = dict(run)
         d["config_snapshot"] = json.loads(d["config_snapshot"])
         d["trials"] = trials
@@ -2997,7 +3262,8 @@ class RunController:
             "max_brain_reviews": defaults["max_brain_reviews"],
             "trials_used": len(db.query("SELECT id FROM trials WHERE run_id=?",
                                         (run["id"],))),
-            "max_trials": defaults["max_trials"],
+            "max_trials": (auth["max_trials"] if self._lifecycle_v2(run) and auth and auth["max_trials"]
+                           else defaults["max_trials"]),
             "run_minutes_limit": auth["max_run_minutes"] if auth else 0,
             "run_minutes_exceeded": self._run_minutes_exceeded(run),
             "model_turns": {"limit": auth["max_model_turns"] if auth else 0,

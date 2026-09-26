@@ -20,12 +20,15 @@ from .bohr_proxy import redact
 TERMINAL = {'Finished', 'Failed', 'Stopped'}
 DEFAULT_LIMITS = {'max_concurrent_jobs': 2, 'max_cpu': 16, 'max_memory_gb': 16,
                   'max_disk_gb': 10, 'allow_gpu': False}
+_PROJECT_PARSE_ERROR = ('failed to parse config file: json: cannot unmarshal '
+                        'string into Go struct field JobJson.project_id of type int')
 
 
 class ComputeError(Exception):
-    def __init__(self, code: str, message: str):
+    def __init__(self, code: str, message: str, details: dict | None = None):
         super().__init__(message)
         self.code = code
+        self.details = details or {}
 
 
 def validate_limits(value: dict | None) -> dict:
@@ -42,6 +45,22 @@ def validate_limits(value: dict | None) -> dict:
 
 def _json(value):
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(',', ':'))
+
+
+def _project_id(value: object) -> int:
+    """Normalize the settings/API value to bohr 1.1.0's integer JobJson field."""
+    if type(value) is int and value > 0:
+        return value
+    if isinstance(value, str) and re.fullmatch(r'[1-9][0-9]*', value):
+        return int(value)
+    raise ComputeError('INVALID_PROJECT', 'Bohrium 项目 ID 必须是正整数')
+
+
+def _local_project_parse_failure(receipt: dict) -> bool:
+    """The native CLI rejected its input JSON before it could create a Job."""
+    return (receipt.get('ok') is False and not receipt.get('unknown')
+            and _PROJECT_PARSE_ERROR in
+            (receipt.get('stdout', '') + '\n' + receipt.get('stderr', '')))
 
 
 def _run(run_id):
@@ -65,14 +84,27 @@ def _path(run, value: str) -> Path:
 def _native(args: list[str], *, timeout: int = 90) -> dict:
     settings = config.load_settings()['bohrium']
     key = config.resolve_secret(settings.get('access_key_secret_ref', ''))
+    wenyon = args[:1] == ['wenyon']
+    executable = (settings.get('wenyon_executable') if wenyon else None) or settings['executable']
     env = {k: v for k, v in os.environ.items() if not k.startswith(('CS_', 'BOHR_', 'PLAYGROUND_'))
            and k not in ('ACCESS_KEY', 'OPENAPI_HOST', 'TIEFBLUE_HOST')}
+    if wenyon and settings.get('wenyon_home'):
+        home = Path(settings['wenyon_home'])
+        env['HOME'] = str(home)
+        # Keep the companion CLI's Vouch/XDG session in the same isolated home.
+        for name, relative in (('XDG_CONFIG_HOME', '.config'),
+                               ('XDG_STATE_HOME', '.local/state'),
+                               ('XDG_CACHE_HOME', '.cache'),
+                               ('XDG_RUNTIME_DIR', '.run')):
+            directory = home / relative
+            directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+            env[name] = str(directory)
     env.update(BOHR_ACCESS_KEY=key, ACCESS_KEY=key,
                PROJECT_ID=str(settings.get('project_id', '')),
                OPENAPI_HOST='https://open.bohrium.com', TIEFBLUE_HOST='https://tiefblue.dp.tech')
     env.update(settings.get('host_overrides') or {})
     try:
-        result = subprocess.run([settings['executable'], *args], env=env, capture_output=True,
+        result = subprocess.run([executable, *args], env=env, capture_output=True,
                                 text=True, errors='replace', timeout=timeout)
         out, err = redact(result.stdout, [key]), redact(result.stderr, [key])
         # bohr 1.1.0 can print an error while returning zero.
@@ -126,18 +158,26 @@ def _authorized(conn, run_id):
     return run, limits, remaining
 
 
-def submit(run_id: str, operation_id: str, spec: dict, input_directory: str) -> dict:
+def submit(run_id: str, operation_id: str, spec: dict, input_directory: str,
+           preflight: dict | None = None) -> dict:
     if not isinstance(operation_id, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,100}', operation_id):
         raise ComputeError('INVALID_OPERATION', '需要稳定且安全的 operation_id')
     run = _run(run_id)
     source = _path(run, input_directory)
     if not source.is_dir():
         raise ComputeError('INVALID_PATH', '输入目录不存在')
+    from . import datasets
+    try:
+        data_refs = datasets.input_refs(source)
+    except datasets.DataError as exc:
+        raise ComputeError(exc.code, str(exc)) from exc
     allowed = {'job_name', 'command', 'log_file', 'backward_files', 'project_id', 'machine_type',
                'image_address', 'job_type', 'disk_size', 'max_reschedule_times', 'max_run_time',
                'nnode', 'result_path', 'dataset_path'}
     if not isinstance(spec, dict) or set(spec)-allowed:
         raise ComputeError('INVALID_SPEC', 'Job 配置含未支持字段')
+    if preflight is not None and not isinstance(preflight, dict):
+        raise ComputeError('INVALID_PREFLIGHT', 'preflight 必须是对象')
     key = config.resolve_secret(config.load_settings()['bohrium'].get('access_key_secret_ref', ''))
     if key and key in _json(spec):
         raise ComputeError('SECRET_INPUT', 'Job 配置不能包含账号密钥')
@@ -151,10 +191,34 @@ def submit(run_id: str, operation_id: str, spec: dict, input_directory: str) -> 
                 raise ComputeError('SECRET_INPUT', '输入目录含凭据文件')
             total += path.stat().st_size
             if total > 1024**3:
-                raise ComputeError('INPUT_TOO_LARGE', '输入超过 1 GiB，请使用已授权远端数据集')
+                raise ComputeError('DATA_TOO_LARGE_FOR_INPUT', '输入超过 1 GiB；Wenyon 到 dataset_path 的挂载映射尚未验证')
             with path.open('rb') as stream:
                 sha = hashlib.file_digest(stream, 'sha256').hexdigest()
             manifest.append((str(path.relative_to(source)), sha))
+    from . import job_preflight
+    files = {rel: (source / rel).read_bytes() for rel, _ in manifest
+             if Path(rel).suffix in ('.py', '.txt') and (source / rel).stat().st_size <= 2_000_000}
+    options = preflight or {}
+    try:
+        report = job_preflight.check_sources(files, str(spec.get('command') or ''),
+            options.get('entry'), options.get('allow_network_install') is True)
+        if preflight is not None and options.get('purpose') != 'probe':
+            row = db.query_one('SELECT facts_json FROM image_facts WHERE image_address=?'
+                               ' ORDER BY observed_at DESC LIMIT 1', (spec.get('image_address'),))
+            facts = json.loads(row['facts_json']) if row else None
+            report = job_preflight.check_image_facts(report, str(spec.get('image_address') or ''),
+                options.get('api_checks') or [], facts)
+        else:
+            report['api_checked'] = False
+        db.append_event(run_id, 'controller', 'job.preflight',
+                        {'operation_id': operation_id, 'status': 'passed', 'report': report},
+                        trial_id=run['current_trial_id'])
+    except job_preflight.PreflightError as exc:
+        db.append_event(run_id, 'controller', 'job.preflight',
+                        {'operation_id': operation_id, 'status': 'rejected',
+                         'code': exc.code, 'details': exc.details},
+                        trial_id=run['current_trial_id'])
+        raise ComputeError(exc.code, str(exc), exc.details) from exc
     digest = hashlib.sha256(_json([spec, manifest, str(source)]).encode()).hexdigest()
     # Persist a reservation before materializing/dispatching, under the SQLite writer lock.
     with db.transaction() as conn:
@@ -177,17 +241,19 @@ def submit(run_id: str, operation_id: str, spec: dict, input_directory: str) -> 
             raise ComputeError('RESOURCE_LIMIT', '仅支持单节点，禁止平台自动重调度重跑')
         if any(not isinstance(spec.get(k), str) or not spec[k].strip() for k in ('command', 'image_address')):
             raise ComputeError('INVALID_SPEC', '需要计算命令和完整镜像地址')
-        project = config.load_settings()['bohrium']['project_id']
-        if spec.get('project_id', project) != project:
+        project = _project_id(config.load_settings()['bohrium']['project_id'])
+        if _project_id(spec.get('project_id', project)) != project:
             raise ComputeError('INVALID_PROJECT', 'Job 必须属于配置的授权项目')
         effective = dict(spec, project_id=project, nnode=1, max_reschedule_times=0, job_type='container', disk_size=disk,
                          job_name=f"cs-{run_id}-{hashlib.sha256(operation_id.encode()).hexdigest()[:16]}")
         now = db.utcnow()
-        conn.execute('INSERT INTO compute_jobs(operation_id,run_id,trial_id,request_hash,spec_json,input_directory,status,created_at,updated_at)'
-                     " VALUES(?,?,?,?,?,?,'submitting',?,?)", (operation_id, run_id, run['current_trial_id'], digest,
-                     _json(effective), str(source), now, now))
+        conn.execute('INSERT INTO compute_jobs(operation_id,run_id,trial_id,request_hash,spec_json,input_directory,status,created_at,updated_at,data_refs_json,purpose)'
+                     " VALUES(?,?,?,?,?,?,'submitting',?,?,?,?)", (operation_id, run_id, run['current_trial_id'], digest,
+                     _json(effective), str(source), now, now, _json(data_refs),
+                     'probe' if options.get('purpose') == 'probe' else 'compute'))
         db.append_event_tx(conn, run_id, 'controller', 'job.reserved',
-                           {'operation_id': operation_id, 'job_name': effective['job_name']}, trial_id=run['current_trial_id'])
+                           {'operation_id': operation_id, 'job_name': effective['job_name'],
+                            'data_refs': data_refs}, trial_id=run['current_trial_id'])
     staging = config.DATA_DIR / 'job-inputs' / operation_id
     try:
         staging.mkdir(parents=True, exist_ok=False)
@@ -217,6 +283,8 @@ def submit(run_id: str, operation_id: str, spec: dict, input_directory: str) -> 
         receipt = {'ok': False, 'not_started': True, 'stderr': str(exc)[:500]}
     else:
         receipt = _native(['job', 'submit', '-i', str(staging / 'job.json'), '-p', str(staging / 'input')], timeout=180)
+        if _local_project_parse_failure(receipt):
+            receipt['not_started'] = True
     matches = re.findall(r'\bJobId:\s*(\d+)', receipt.get('stdout', ''), re.I)
     job_id = int(matches[0]) if len(set(matches)) == 1 else None
     status = 'accepted' if job_id else ('not_started' if receipt.get('not_started') else 'unknown')
@@ -229,6 +297,41 @@ def submit(run_id: str, operation_id: str, spec: dict, input_directory: str) -> 
         db.append_event_tx(conn, run_id, 'controller', 'job.' + status,
                            {'operation_id': operation_id, 'platform_job_id': job_id, 'status': status, 'receipt': receipt}, trial_id=run['current_trial_id'])
     return {'operation_id': operation_id, 'platform_job_id': job_id, 'status': status, 'receipt': receipt}
+
+
+def resolve_local_parse_failure(run_id: str, operation_id: str) -> dict:
+    """Explicitly settle only the known bohr project-ID decode failure.
+
+    This does not turn a missing remote-list match or a timeout into proof of
+    non-creation. All other unknown operations retain their reservation.
+    """
+    _run(run_id)
+    with db.transaction() as conn:
+        row = conn.execute(
+            'SELECT * FROM compute_jobs WHERE run_id=? AND operation_id=?',
+            (run_id, operation_id)).fetchone()
+        if not row:
+            raise ComputeError('NOT_FOUND', '受控 Job 操作不存在')
+        if row['status'] == 'not_started':
+            return {'operation_id': operation_id, 'status': 'not_started',
+                    'deduplicated': True}
+        receipt = json.loads(row['receipt_json'] or '{}')
+        spec = json.loads(row['spec_json'])
+        if (row['status'] != 'unknown' or row['platform_job_id'] is not None
+                or type(spec.get('project_id')) is not str
+                or not _local_project_parse_failure(receipt)):
+            raise ComputeError('INSUFFICIENT_EVIDENCE',
+                               '只有本地项目 ID JSON 解码失败可确认为未启动')
+        conn.execute(
+            "UPDATE compute_jobs SET status='not_started',updated_at=?"
+            " WHERE run_id=? AND operation_id=? AND status='unknown'",
+            (db.utcnow(), run_id, operation_id))
+        db.append_event_tx(conn, run_id, 'controller', 'job.not_started_confirmed', {
+            'operation_id': operation_id, 'basis': 'native_project_id_json_decode_failure',
+            'receipt_sha256': hashlib.sha256(row['receipt_json'].encode()).hexdigest(),
+            'notice': '仅释放本地解析失败的占位；其他 unknown 操作仍禁止重试'},
+            trial_id=row['trial_id'])
+    return {'operation_id': operation_id, 'status': 'not_started'}
 
 
 def reconcile(run_id: str) -> dict:
@@ -308,6 +411,24 @@ def cli(run_id: str, args: list[str], cwd: str) -> dict:
         raise ComputeError('INVALID_COMMAND', '命令参数格式错误')
     run = _run(run_id)
     work = _path(run, cwd)
+    if args[:3] == ['wenyon', 'dataset', 'download']:
+        from . import datasets
+        parser = argparse.ArgumentParser(exit_on_error=False, add_help=False)
+        parser.add_argument('dataset_id'); parser.add_argument('--version', required=True)
+        parser.add_argument('--output-dir'); parser.add_argument('--output')
+        parser.add_argument('--cs-operation-id')
+        try:
+            opts, unknown = parser.parse_known_args(args[3:])
+            if unknown or not opts.dataset_id or not opts.version:
+                raise ValueError()
+        except (ValueError, argparse.ArgumentError):
+            raise ComputeError('INVALID_COMMAND', '受控下载格式：bohr wenyon dataset download ID --version V --output-dir DIR --output json')
+        key = f'wenyon:{opts.dataset_id}@{opts.version}'
+        op = opts.cs_operation_id or 'data_' + hashlib.sha256(_json([run_id,key]).encode()).hexdigest()[:32]
+        try:
+            return datasets.materialize(run['challenge_id'], key, op, run_id)
+        except datasets.DataError as exc:
+            raise ComputeError(exc.code, str(exc)) from exc
     if args[:2] == ['job', 'submit']:
         parser = argparse.ArgumentParser(exit_on_error=False, add_help=False)
         parser.add_argument('-i', '--input'); parser.add_argument('-p', '--input_directory')
@@ -347,7 +468,23 @@ def cli(run_id: str, args: list[str], cwd: str) -> dict:
             raise ComputeError('INVALID_PATH', '日志/结果下载必须显式指定 -o 工作目录')
         if opts.json:
             command.append('--json')
-        return _native(command)
+        receipt = _native(command)
+        if args[1] == 'download' and row['purpose'] == 'probe' and receipt.get('ok') and opts.output:
+            facts_path = dest / 'results' / 'facts.json'
+            try:
+                facts = json.loads(facts_path.read_text())
+                if not isinstance(facts.get('packages'), dict):
+                    raise ValueError('packages 缺失')
+                digest = hashlib.sha256(_json(facts).encode()).hexdigest()
+                db.execute('INSERT OR IGNORE INTO image_facts(image_address,facts_sha256,facts_json,source_operation_id,observed_at)'
+                           ' VALUES(?,?,?,?,?)', (json.loads(row['spec_json'])['image_address'], digest,
+                                                  _json(facts), row['operation_id'], db.utcnow()))
+                db.append_event(run_id, 'controller', 'image_facts.observed',
+                                {'operation_id': row['operation_id'], 'facts_sha256': digest})
+            except (OSError, ValueError, KeyError, TypeError):
+                db.append_event(run_id, 'controller', 'image_facts.unknown',
+                                {'operation_id': row['operation_id'], 'reason': 'facts.json 解析失败'})
+        return receipt
     if args in (['version'], ['project', 'list', '--json'], ['image', 'list', '--json'], ['machine', 'list', '--json']):
         return _native(args)
     raise ComputeError('UNSUPPORTED_COMMAND', '此操作未开放；请使用受控 Job 接口')

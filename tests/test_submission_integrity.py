@@ -1,4 +1,7 @@
 import threading
+import io
+import json
+import zipfile
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
@@ -89,7 +92,20 @@ def test_each_lost_receipt_keeps_attempt_and_reservation(monkeypatch, failed_sta
     from cyberscientist.mailbox_platform import BohriumPlaygroundPlatform
     rid, path = setup_run()
     package = config.WORKSPACE_DIR / path
-    package = package.with_suffix('.zip'); package.write_bytes(b'fake fixture zip bytes')
+    package = package.with_suffix('.zip')
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, 'w') as archive:
+        archive.writestr('arm_manifest.json', json.dumps({
+            'arm_version': '1.1', 'entrypoint': 'src/reproduce.py',
+            'execution': {'log_path': 'results/run.log'},
+            'trace': {'files': ['traces/trace.jsonl']}}))
+        archive.writestr('src/reproduce.py', 'print("fixture")\n')
+        archive.writestr('results/run.log', 'fixture log\n')
+        archive.writestr('characterization.json', '{}')
+        archive.writestr('traces/trace.jsonl', '\n'.join(json.dumps(row) for row in [
+            {'step_type': 'tool_call', 'title': 'fixture call', 'tool_call_id': 'x'},
+            {'step_type': 'tool_result', 'title': 'fixture result', 'tool_call_id': 'x'}]))
+    package.write_bytes(buf.getvalue())
     platform = BohriumPlaygroundPlatform('https://unused.invalid')
     platform.name='demo'; platform.is_demo=True
     calls=[]

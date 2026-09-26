@@ -56,6 +56,14 @@ class PrimeRuntime(Protocol):
 
 `contract_status=verified|partial|conflict|unknown`。`verified` 指所需提交契约已用指定版本与证据核实，不宣称科学真理已被验证。冲突必须显示原始来源，不由模型凭偏好选择。
 
+CS-EV-01 新增的持久字段：`runs.objective_md/objective_status/end_reason/pending_action_json`、`authorizations.allow_data_download/max_trials`、`compute_jobs.data_refs_json/purpose`、`submissions.source_package_sha256/admission_json`。新增 `data_materializations`、`image_facts` 两张表。旧 Run 无 `lifecycle_version:2` 时沿用旧语义；新 Run 的用户目标只保存在 `objective_md`，Trial 局部目标只保存在 `trials.goal`。达到 Trial 上限会把动作保存为 `pending_action_json` 并关闭新 Job 门禁；提高本 Run 上限后排一次 `budget_granted` 审阅，由 v2 Decision 选择 replay/revise/drop。v2 finish 必须给 `objective_assessment`。
+
+公开数据接口：`GET /api/v1/challenges/{id}/data` 返回物化状态；`POST /api/v1/runs/{id}/data/materialize` 接收 `resource_key/operation_id`，必须由该请求的 Run 事先取得 `allow_data_download` 授权，不能借同题其他 Run 的授权。MCP `research_data` 支持 list/status/request；Run-local bohr shim 只将固定形状的 `wenyon dataset download ID --version V` 路由到该受控入口。`bohrium.wenyon_executable` 与 `bohrium.wenyon_home` 可为该入口选用项目隔离的新版 bohr/扩展；Job 仍使用 `bohrium.executable`，用户全局 CLI 配置不改。未安装扩展时记录 `WENYON_CLI_UNAVAILABLE`。实测的 `public_manifest_sha256` 是下载的 `public-manifest.json` 原文字节 SHA-256；已识别的 `playground-wenyon-public-manifest/v1` 还需逐项核对清单声明的文件哈希、大小和登记总字节数，全部匹配才记 `verified`/`manifest_sha256`。没有登记哈希或清单格式未知时仍为 `unverified`。Job 输入若包含 `DATA_MANIFEST.json`，冻结前逐文件校验，已使用的物化 ID 记入 `data_refs_json`。
+
+提交接口：`POST /api/v1/runs/{id}/submissions/preflight` 只读返回源包与封存包 SHA-256、六项信号和 `error_code`。提交使用同一份封存字节，源包哈希与 admission 报告保存在提交行；proxy 证据默认阻断，只有用户显式传 `allow_proxy_evidence=true` 才允许继续。`research_package_check` 是执行器的只读 MCP 入口。平台 bundle 上传后若状态为 needs_review/incomplete/failed 或回执含轨迹准入阻断，stage 为 `bundle_blocked`，不调用 `/submit`，远端 draft 与本地额度均保留。
+
+Job 提交 `preflight` 与 `spec` 平级，不透传给 bohr。入口/本地导入/联网安装在预留前检查；显式 API 检查缺少镜像事实时返回 `IMAGE_FACTS_MISSING` 和最小探针模板，真实探针仍需现有 Job 授权。`GET /api/v1/runs/{id}` 的 Trial 增加按 `trial.reported_complete` 事件计算的 `delivered`，已交付后终止不改写交付状态。
+
 ### 事件
 
 ```json

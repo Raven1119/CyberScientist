@@ -2,6 +2,7 @@
 import json
 import subprocess
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from threading import Event
 
 import pytest
@@ -13,6 +14,9 @@ from test_collaboration import _seed_challenge
 @pytest.fixture
 def run(monkeypatch):
     _seed_challenge()
+    settings = config.load_settings()
+    settings['bohrium']['project_id'] = 88474
+    config.save_settings(settings)
     c = RunController()
     rid = c.create_run('COLLAB_CH', mode='connected')['id']
     c.authorize(rid, 'compute', True, 20, 120, 0, '', max_jobs=3)
@@ -107,6 +111,76 @@ def test_resource_admission_rejects_before_native_call(run, change):
     with pytest.raises(compute.ComputeError):
         compute.submit(rid, 'one', spec() | change, str(source))
     assert compute.list_jobs(rid)['reserved_jobs'] == 0
+
+
+@pytest.mark.parametrize('requested_id', [88474, '88474', None])
+def test_string_setting_emits_native_integer_project_id(run, monkeypatch, requested_id):
+    rid, source = run
+    settings = config.load_settings()
+    settings['bohrium']['project_id'] = '88474'
+    config.save_settings(settings)
+
+    def native(args, **kwargs):
+        job_json = json.loads(Path(args[3]).read_text())
+        assert job_json['project_id'] == 88474
+        assert type(job_json['project_id']) is int
+        return receipt('JobId: 123')
+
+    monkeypatch.setattr(compute, '_native', native)
+    job_spec = spec() if requested_id is None else spec(project_id=requested_id)
+    assert compute.submit(rid, 'project_type', job_spec, str(source))['status'] == 'accepted'
+
+
+@pytest.mark.parametrize('requested_id', [True, '088474', 88475])
+def test_invalid_or_foreign_project_rejected_before_reservation(run, requested_id):
+    rid, source = run
+    settings = config.load_settings()
+    settings['bohrium']['project_id'] = '88474'
+    config.save_settings(settings)
+    with pytest.raises(compute.ComputeError) as exc:
+        compute.submit(rid, 'project_type', spec(project_id=requested_id), str(source))
+    assert exc.value.code == 'INVALID_PROJECT'
+    assert compute.list_jobs(rid)['reserved_jobs'] == 0
+
+
+def test_known_native_project_decode_failure_is_not_started(run, monkeypatch):
+    rid, source = run
+    error = ('failed to parse config file: json: cannot unmarshal string '
+             'into Go struct field JobJson.project_id of type int')
+    monkeypatch.setattr(compute, '_native', lambda *a, **k: receipt(error, False))
+    result = compute.submit(rid, 'new_parse_failure', spec(), str(source))
+    assert result['status'] == 'not_started'
+    assert compute.list_jobs(rid)['reserved_jobs'] == 0
+
+
+def test_historical_local_decode_failure_can_be_settled_with_event(run, monkeypatch):
+    rid, source = run
+    monkeypatch.setattr(compute, '_native', lambda *a, **k: receipt('Error: no response', False))
+    assert compute.submit(rid, 'old_parse_failure', spec(), str(source))['status'] == 'unknown'
+    row = db.query_one('SELECT spec_json FROM compute_jobs WHERE operation_id=?',
+                       ('old_parse_failure',))
+    old_spec = json.loads(row['spec_json'])
+    old_spec['project_id'] = '88474'
+    error = ('failed to parse config file: json: cannot unmarshal string '
+             'into Go struct field JobJson.project_id of type int')
+    db.execute('UPDATE compute_jobs SET spec_json=?,receipt_json=? WHERE operation_id=?',
+               (json.dumps(old_spec), json.dumps(receipt(error, False)),
+                'old_parse_failure'))
+    assert compute.resolve_local_parse_failure(rid, 'old_parse_failure')['status'] == 'not_started'
+    assert compute.resolve_local_parse_failure(rid, 'old_parse_failure')['deduplicated']
+    assert compute.list_jobs(rid)['reserved_jobs'] == 0
+    assert any(e['type'] == 'job.not_started_confirmed'
+               for e in db.events_after(rid, 0))
+
+
+def test_ambiguous_create_cannot_be_settled_as_local_parse_failure(run, monkeypatch):
+    rid, source = run
+    monkeypatch.setattr(compute, '_native', lambda *a, **k: receipt('Error: no response', False))
+    compute.submit(rid, 'ambiguous', spec(), str(source))
+    with pytest.raises(compute.ComputeError) as exc:
+        compute.resolve_local_parse_failure(rid, 'ambiguous')
+    assert exc.value.code == 'INSUFFICIENT_EVIDENCE'
+    assert compute.list_jobs(rid)['reserved_jobs'] == 1
 
 
 def test_paused_and_foreign_job_mutations_are_rejected(run):

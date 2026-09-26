@@ -548,6 +548,18 @@ export default function SettingsPage() {
                   }
                 />
               </div>
+              <div className="field">
+                <label htmlFor="wenyon-executable">Wenyon 专用 bohr 路径</label>
+                <input id="wenyon-executable" value={settings.bohrium.wenyon_executable || ''}
+                  onChange={(e) => update((s) => ({ ...s, bohrium: { ...s.bohrium, wenyon_executable: e.target.value } }))}
+                  placeholder="留空沿用上方 bohr；仅用于公开数据下载" />
+              </div>
+              <div className="field">
+                <label htmlFor="wenyon-home">Wenyon 扩展目录的隔离 HOME</label>
+                <input id="wenyon-home" value={settings.bohrium.wenyon_home || ''}
+                  onChange={(e) => update((s) => ({ ...s, bohrium: { ...s.bohrium, wenyon_home: e.target.value } }))}
+                  placeholder="留空沿用进程 HOME；不会修改全局 CLI 配置" />
+              </div>
               <SecretField
                 label="Bohrium AccessKey"
                 secretId={(settings.bohrium.access_key_secret_ref || 'local:bohrium_access_key').replace(/^local:/, '')}

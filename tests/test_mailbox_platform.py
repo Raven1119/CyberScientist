@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import io
+import hashlib
 import json
 import urllib.error
 import urllib.request
@@ -106,7 +107,8 @@ def test_submit_zip_happy_path(tmp_path):
     assert f["status"] == "draft" and f["type"] == "agent"
     assert f["outcome"] == "success" and f["model"] == "Kimi K3"
     trace = json.loads(f["trace"])
-    assert trace[0]["type"] in ("tool_call", "thought")
+    assert trace == [{"step_type": "observation", "title": "Sealed package",
+                      "body": "提交封存包 " + hashlib.sha256(pkg.read_bytes()).hexdigest()}]
     assert fake.calls[1]["path"] == "/attempts/42/bundle"
     assert fake.calls[1]["form_files"][0][0] == "bundle"
     assert fake.calls[2]["path"] == "/attempts/42/submit"

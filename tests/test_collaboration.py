@@ -26,7 +26,11 @@ def _seed_challenge(cid="COLLAB_CH"):
 
 
 def _decision(actions, sv=0, rid="run_test"):
-    return {"schema_version": 1, "decision_id": f"d-{id(actions)}",
+    actions = [({**action, "objective_assessment": {
+        "status": "partial", "evidence_refs": [], "remaining_md": "测试未评估科学目标"}}
+        if action.get("op") == "finish" and "objective_assessment" not in action
+        else action) for action in actions]
+    return {"schema_version": 2, "decision_id": f"d-{id(actions)}",
             "run_id": rid, "observed_state_version": sv,
             "summary": "测试决策", "evidence_refs": [],
             "actions": actions, "experience_proposals": []}
@@ -241,12 +245,15 @@ async def test_t2_silent_review_has_zero_executor_effect():
     await _start(c, brain, rid)
     prompts0, steers0, aborts0 = len(ex.prompts), len(ex.steers), len(ex.aborts)
 
-    # 有效变化（检查点）触发被动观察
+    # 研究级变化触发被动观察；普通检查点仅持久化。
     collab.submit_checkpoint(rid, {
         "schema_version": 1, "message_type": "checkpoint",
         "checkpoint_key": "k1", "review": "none", "stage": "progress",
         "report_md": "进展", "evidence_refs": []},
         source="executor", notify=c.notify_run_change)
+    db.append_event(rid, "controller", "submission.scored",
+                    {"submission_id": "s1", "score": 0.4})
+    c.notify_run_change(rid)
     ok = await _wait(lambda: len(brain.calls) >= 2)
     assert ok, "shadow 审阅未触发"
     frame = brain.calls[-1]
@@ -272,13 +279,16 @@ async def test_t3_burst_merges_and_no_self_loop():
     await _start(c, brain, rid)
     calls0 = len(brain.calls)
 
-    # 事件突发：多个有效变化合并为一个 shadow 请求
+    # 事件突发：多个研究级变化合并为一个 shadow 请求
     for i in range(3):
         collab.submit_checkpoint(rid, {
             "schema_version": 1, "message_type": "checkpoint",
             "checkpoint_key": f"burst-{i}", "review": "none",
             "stage": "progress", "report_md": f"r{i}", "evidence_refs": []},
             source="executor", notify=c.notify_run_change)
+        db.append_event(rid, "controller", "submission.scored",
+                        {"submission_id": f"s{i}", "score": i})
+        c.notify_run_change(rid)
     await asyncio.sleep(0.3)
     assert len(_shadow_reviews(rid)) == 1, "突发事件未合并为单次审阅"
 
@@ -312,6 +322,9 @@ async def test_t3b_shadow_failure_degrades_not_pauses():
         "checkpoint_key": "fail-1", "review": "none", "stage": "progress",
         "report_md": "r", "evidence_refs": []},
         source="executor", notify=c.notify_run_change)
+    db.append_event(rid, "controller", "submission.scored",
+                    {"submission_id": "s1", "score": 0.4})
+    c.notify_run_change(rid)
     ok = await _wait(lambda: len(brain.calls) >= 2)
     assert ok
     await brain.results.put({"error": "模型调用超时"})
@@ -502,6 +515,9 @@ async def test_t8_pause_invalidates_shadow_guidance_and_stop_gate():
     # shadow 审阅产生指导，执行器忙 → queued
     collab.submit_checkpoint(rid, _cp_msg("s1"), source="executor",
                              notify=c.notify_run_change)
+    db.append_event(rid, "controller", "submission.scored",
+                    {"submission_id": "s1", "score": 0.4})
+    c.notify_run_change(rid)
     ok = await _wait(lambda: any(
         p.get("protocol") == "review_result" for p in brain.calls))
     assert ok
@@ -817,6 +833,9 @@ async def test_b1_inflight_shadow_result_expires_after_disable():
 
     collab.submit_checkpoint(rid, _cp_msg("b1", review="none"),
                              source="executor", notify=c.notify_run_change)
+    db.append_event(rid, "controller", "submission.scored",
+                    {"submission_id": "s1", "score": 0.4})
+    c.notify_run_change(rid)
     ok = await _wait(lambda: any(
         p.get("protocol") == "review_result" for p in brain.calls))
     assert ok, "shadow 审阅未开始"
@@ -1055,7 +1074,7 @@ async def test_review_salvage_string_watchlist():
     await _start(c, brain, rid)
     collab.submit_checkpoint(rid, {
         "schema_version": 1, "message_type": "checkpoint",
-        "checkpoint_key": "salvage-1", "review": "none", "stage": "progress",
+        "checkpoint_key": "salvage-1", "review": "async", "stage": "progress",
         "report_md": "r", "evidence_refs": []},
         source="executor", notify=c.notify_run_change)
     ok = await _wait(lambda: len(brain.calls) >= 2)
@@ -1076,7 +1095,8 @@ async def test_review_salvage_string_watchlist():
     types = [e["type"] for e in db.events_after(rid, 0)]
     assert "brain.review_salvaged" in types
     assert "brain.error" not in types
-    assert _shadow_reviews(rid)[-1]["status"] == "done"
+    assert db.query_one("SELECT status FROM review_requests WHERE run_id=?"
+                        " AND source='executor'", (rid,))["status"] == "done"
     await c.control(rid, "terminate", None, "op-term-salv1")
 
 
@@ -1088,7 +1108,7 @@ async def test_review_salvage_bad_guidance_downgrades():
     await _start(c, brain, rid)
     collab.submit_checkpoint(rid, {
         "schema_version": 1, "message_type": "checkpoint",
-        "checkpoint_key": "salvage-2", "review": "none", "stage": "progress",
+        "checkpoint_key": "salvage-2", "review": "async", "stage": "progress",
         "report_md": "r", "evidence_refs": []},
         source="executor", notify=c.notify_run_change)
     ok = await _wait(lambda: len(brain.calls) >= 2)
@@ -1105,7 +1125,8 @@ async def test_review_salvage_bad_guidance_downgrades():
     salv = [e for e in db.events_after(rid, 0)
             if e["type"] == "brain.review_salvaged"]
     assert salv and any("降级" in f for f in salv[-1]["payload"]["fixes"])
-    assert _shadow_reviews(rid)[-1]["status"] == "done"
+    assert db.query_one("SELECT status FROM review_requests WHERE run_id=?"
+                        " AND source='executor'", (rid,))["status"] == "done"
     await c.control(rid, "terminate", None, "op-term-salv2")
 
 
@@ -1248,6 +1269,12 @@ async def test_periodic_shadow_wakes_brain_when_executor_silent():
     n = len(brain.calls)
     await asyncio.sleep(0.6)
     assert len(brain.calls) == n, "无新事件时 periodic 自激"
+    collab.submit_checkpoint(rid, _cp_msg("old-run-checkpoint", review="none",
+                                         report="旧 Run 报告正文"),
+                             source="executor", notify=c.notify_run_change)
+    assert await _wait(lambda: len(brain.calls) > n)
+    assert brain.calls[-1]["checkpoint_summaries"][-1]["report_md"] == "旧 Run 报告正文"
+    await brain.results.put({"review_result": _review_result(brain.calls[-1]["frame_id"])})
     await c.control(rid, "terminate", None, "op-term-periodic")
 
 
@@ -1272,10 +1299,115 @@ async def test_sparse_brain_normal_progress_does_not_periodically_review():
                         " AND trigger='periodic'", (rid,)) is None
     collab.submit_checkpoint(rid, _cp_msg("milestone", review="none"),
                              source="executor", notify=c.notify_run_change)
-    assert await _wait(lambda: len(brain.calls) > count)
-    await brain.results.put({"review_result": _review_result(
-        brain.calls[-1]["frame_id"])})
+    await asyncio.sleep(0.6)
+    assert len(brain.calls) == count
+    assert _shadow_reviews(rid) == []
     await c.control(rid, "terminate", None, "op-term-sparse-periodic")
+
+
+async def test_sparse_checkpoint_summary_and_explicit_review_once():
+    from cyberscientist import research_trace
+
+    _seed_challenge()
+    c, brain, _ = _rig(shadow=True, max_interval=0.2)
+    rid = c.create_run("COLLAB_CH", shadow_enabled=True)["id"]
+    await _start(c, brain, rid)
+    count = len(brain.calls)
+    report = ("pip install package\nbash run.sh\n大量工具日志\n"
+              "最终科学结论：频率失败，但几何可复用")
+    summarized = _cp_msg("with-summary", review="none", report=report)
+    summarized["research_summary_md"] = "频率阶段失败；成功几何仍可复用；失败原因尚未确认。"
+    first = collab.submit_checkpoint(rid, summarized, source="executor",
+                                     notify=c.notify_run_change)
+    legacy = _cp_msg("legacy-no-summary", review="async", report=report)
+    second = collab.submit_checkpoint(rid, legacy, source="executor",
+                                      notify=c.notify_run_change)
+    assert first["review_id"] is None and second["review_id"]
+    assert await _wait(lambda: len(brain.calls) > count)
+    frame = brain.calls[-1]
+    checkpoints = {item["checkpoint_id"]: item
+                   for item in frame["checkpoint_summaries"]}
+    assert checkpoints[first["checkpoint_id"]]["research_summary_md"] == summarized["research_summary_md"]
+    assert checkpoints[first["checkpoint_id"]]["research_summary_available"] is True
+    assert checkpoints[second["checkpoint_id"]]["research_summary_available"] is False
+    assert checkpoints[second["checkpoint_id"]]["stage"] == "progress"
+    assert checkpoints[second["checkpoint_id"]]["evidence_refs"] == legacy["evidence_refs"]
+    assert "report_md" not in checkpoints[first["checkpoint_id"]]
+    assert "report_md" not in checkpoints[second["checkpoint_id"]]
+    serialized = json.dumps(frame, ensure_ascii=False)
+    assert "pip install" not in serialized and "bash run.sh" not in serialized
+    assert "大量工具日志" not in serialized
+    read = research_trace.access(rid, {"action": "read",
+                                      "ref": f"checkpoint:{second['checkpoint_id']}"})
+    assert json.loads(read["content"])["report_md"] == report
+    assert db.query_one("SELECT report FROM checkpoints WHERE id=?",
+                        (first["checkpoint_id"],))["report"] == report
+    await brain.results.put({"review_result": _review_result(frame["frame_id"])})
+    assert await _wait(lambda: db.query_one(
+        "SELECT status FROM review_requests WHERE id=?",
+        (second["review_id"],))["status"] == "done")
+    await asyncio.sleep(0.4)
+    assert len(brain.calls) == count + 1
+    assert _shadow_reviews(rid) == []
+    final = collab.submit_checkpoint(
+        rid, _cp_msg("research-delivery", review="none", stage="trial_complete"),
+        source="executor", notify=c.notify_run_change)
+    assert final["review_id"] and final["next_action"] == "yield"
+    lifecycle = db.query_one("SELECT source,trigger FROM review_requests WHERE id=?",
+                             (final["review_id"],))
+    assert (lifecycle["source"], lifecycle["trigger"]) == ("lifecycle", "trial_complete")
+    assert c.run_snapshot(rid)["gate"] == "yielding"
+    assert await _wait(lambda: len(brain.calls) == count + 2)
+    assert _shadow_reviews(rid) == []
+    await c.control(rid, "terminate", None, "op-term-summary")
+
+
+async def test_sparse_job_terminal_transition_wakes_once():
+    _seed_challenge()
+    c, brain, _ = _rig(shadow=True, max_interval=0.2)
+    rid = c.create_run("COLLAB_CH", shadow_enabled=True)["id"]
+    await _start(c, brain, rid)
+    count = len(brain.calls)
+
+    for status in ("Running", "Running", "Scheduling", "Pending"):
+        db.append_event(rid, "controller", "job.observed",
+                        {"operation_id": "job-1", "status": status})
+        c.notify_run_change(rid)
+    await asyncio.sleep(0.35)
+    assert len(brain.calls) == count
+    assert _shadow_reviews(rid) == []
+
+    db.append_event(rid, "controller", "job.observed",
+                    {"operation_id": "job-1", "status": "Failed"})
+    c.notify_run_change(rid)
+    assert await _wait(lambda: len(brain.calls) == count + 1)
+    await brain.results.put({"review_result": _review_result(brain.calls[-1]["frame_id"])})
+    assert await _wait(lambda: _shadow_reviews(rid)[-1]["status"] == "done")
+    db.append_event(rid, "controller", "job.observed",
+                    {"operation_id": "job-1", "status": "Failed"})
+    c.notify_run_change(rid)
+    await asyncio.sleep(0.35)
+    assert len(brain.calls) == count + 1
+    assert len(_shadow_reviews(rid)) == 1
+    db.append_event(rid, "controller", "submission.scored",
+                    {"submission_id": "score-1", "score": 0.6})
+    c.notify_run_change(rid)
+    assert await _wait(lambda: len(brain.calls) == count + 2)
+    await brain.results.put({"review_result": _review_result(brain.calls[-1]["frame_id"])})
+    assert await _wait(lambda: _shadow_reviews(rid)[-1]["status"] == "done")
+    trial_id = c.run_snapshot(rid)["current_trial_id"]
+    db.append_event(rid, "controller", "trial.stalled",
+                    {"trial_id": trial_id}, trial_id=trial_id)
+    c.notify_run_change(rid)
+    assert await _wait(lambda: len(brain.calls) == count + 3)
+    await brain.results.put({"review_result": _review_result(brain.calls[-1]["frame_id"])})
+    assert await _wait(lambda: _shadow_reviews(rid)[-1]["status"] == "done")
+    db.append_event(rid, "controller", "trial.stalled",
+                    {"trial_id": trial_id}, trial_id=trial_id)
+    c.notify_run_change(rid)
+    await asyncio.sleep(0.35)
+    assert len(brain.calls) == count + 3
+    await c.control(rid, "terminate", None, "op-term-job-transition")
 
 
 async def test_sparse_brain_open_answer_optional_read_and_delivery():
