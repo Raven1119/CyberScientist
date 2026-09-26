@@ -12,7 +12,8 @@ SQLite 保存不可覆盖的修订历史和检索索引，当前有效文本以�
 | scope / challenge_id | global 或 challenge；后者必须与目录对应 |
 | status | candidate / active / retired；代表是否参与默认检索 |
 | evidence_status | hypothesis / observed / validated / contradicted；与是否启用独立 |
-| kind | heuristic / procedure / failure / platform |
+| kind | heuristic / procedure / failure / platform / environment |
+| audience | brain / executor / both；旧条目缺省为 both |
 | tags / applicability | 检索标签和适用条件 |
 | evidence_refs | 具体 Trial、Job、文件 hash、官方文档或反馈引用 |
 | expires_at | 可选；平台/评分规则类经验建议有失效复核时间 |
@@ -31,7 +32,7 @@ revision hash、操作者、前驱、写入时间由系统维护，不能靠用�
 - **触发**：Run 收尾（finish）自动推迟为一轮 curation 生命周期审阅——素材含本题全部经验正文节选与逐条使用-结果回联（usage），审阅完结后自动终态；额度用尽则跳过直接收尾，防死锁。全局整理由用户在前端手动触发（无 Run 的一次性大脑会话），素材含全局条目（含待审批与驳回批注）+ 入选题目的题内经验与回联。
 - **效果回联**：Run 起止各记一份 active 经验版本清单（runs.experience_snapshot），提交分数本就连着 run_id；usage 统计精确到题目粒度，只在整理/选择经验时给大脑看，平时帧不带。无任何自动评分规则，判断归大脑。
 
-用户可编辑、停用、回滚任何经验。修改建议/结论的修订重新评估 evidence_status；不得继承旧版本 validated 标签。
+用户可编辑、停用、回滚普通经验。`environment` 只由代码依据已登记的真实回执事件生成和刷新，用户与代理不能编辑、审批或回滚；修改建议/结论的修订重新评估 evidence_status，不得继承旧版本 validated 标签。
 
 UI 显示“当前可用版本”和“本轮实际使用版本”。编辑后默认下一 Trial 生效；当前 Trial 使用冻结快照。用户可以另发一条指导或暂停，不静默重写正在执行的上下文。
 
@@ -70,7 +71,9 @@ UI 显示“当前可用版本”和“本轮实际使用版本”。编辑后�
 
 Trial 开始时生成不可变 `memory_manifest`：经验 ID、revision hash、scope、evidence_status、title（入选理由与注入正文 hash 未实现，留债）。
 
-执行器不接收经验正文注入：Trial 任务文本给出经验库目录，提示词要求开工前自读 global/ 与本题目录下 status=active 的条目；运行中经验更新由大脑在指导里告知。经验是可质疑的输入，不能变更预算、读其他秘密、安装未批准 skill 或覆盖系统边界。用户意图/题面与经验冲突时记录冲突，不能悄悄让旧经验压过新证据。
+大脑的帧和清单只冻结 `brain`/`both`，执行器 Trial 任务只冻结 `executor`/`both`；旧条目按 `both`。执行器任务文本包含该冻结清单和经验库目录，可按需读取；不应把未投递角色的条目当作任务输入。运行中经验更新由大脑在指导里告知。经验是可质疑的输入，不能变更预算、读其他秘密、安装未批准 skill 或覆盖系统边界。用户意图/题面与经验冲突时记录冲突，不能悄悄让旧经验压过新证据。
+
+环境事实来自镜像事实、沙箱机器/模板/配额及客户端主机的受控回执，保存 `observed_at`、`source=event:<run>:<seq>` 和默认 7 天的 `recheck_after`。新回执内容有变时追加修订；到期无新回执则转为待复核候选，停止注入。该字段描述观察时的环境，不是长期稳定的平台承诺。
 
 ## 经验与 skills
 

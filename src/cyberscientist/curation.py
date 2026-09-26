@@ -35,6 +35,7 @@ def prompt(packet: dict) -> str:
         '区分科学失败、环境故障、工具错误、unknown 和外部指导；不得把外部帮助归为自主发现。'
         '从真实证据提出适用条件、动作、失效条件；证据不足可提出零条。'
         '引用给定 evidence_ref/checkpoint 引用，不虚构验证、采用或因果收益。'
+        '每条提议给出 audience=brain/executor/both；未给时按 both。环境事实只能由真实回执代码生成，不可提议。'
         '全局经验仅为 candidate；本次推导仍是 hypothesis。'
         '仅输出以下 JSON 格式，不含 run_id、状态版本或 actions：\n'
         '{"schema_version":1,"message_type":"curation_result","summary":"...",'

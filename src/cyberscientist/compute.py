@@ -389,6 +389,19 @@ def reconcile(run_id: str) -> dict:
     except (ValueError, KeyError):
         db.append_event(run_id, 'controller', 'job.observation_unknown', {'receipt': receipt})
         return list_jobs(run_id) | {'observation': 'unknown'}
+    from . import environment_facts
+    bohrium_cfg=config.load_settings()['bohrium']
+    host = client_host_overrides(bohrium_cfg,wenyon=False)['OPENAPI_HOST']
+    host_fact = {'client':'legacy_job','host':host}
+    try:
+        if config.resolve_secret(bohrium_cfg.get('access_key_secret_ref','')) and \
+                environment_facts.needs_refresh('bohrium:legacy_job:host',host_fact):
+            event=db.append_event(run_id,'controller','environment.host_observed',
+                                  {'client':'legacy_job','host':host,
+                                   'receipt_sha256':hashlib.sha256(receipt['stdout'].encode()).hexdigest()})
+            environment_facts.record('bohrium:legacy_job:host','Bohrium Job 客户端主机',host_fact,event)
+    except Exception:
+        log.exception('Could not record Job host environment fact')
     for row in rows:
         name = row['spec']['job_name']
         matches = [j for j in remote if j.get('jobName') == name and (
@@ -597,8 +610,17 @@ def cli(run_id: str, args: list[str], cwd: str) -> dict:
                 db.execute('INSERT OR IGNORE INTO image_facts(image_address,facts_sha256,facts_json,source_operation_id,observed_at)'
                            ' VALUES(?,?,?,?,?)', (json.loads(row['spec_json'])['image_address'], digest,
                                                   _json(facts), row['operation_id'], db.utcnow()))
-                db.append_event(run_id, 'controller', 'image_facts.observed',
-                                {'operation_id': row['operation_id'], 'facts_sha256': digest})
+                event=db.append_event(run_id, 'controller', 'image_facts.observed',
+                                      {'operation_id': row['operation_id'], 'facts_sha256': digest})
+                from . import environment_facts
+                image=json.loads(row['spec_json'])['image_address']
+                if config.resolve_secret(config.load_settings()['bohrium'].get('access_key_secret_ref','')):
+                    try:
+                        environment_facts.record('bohrium:image:'+image,'镜像环境 '+image,
+                                                 {'image_address':image,'facts_sha256':digest,
+                                                  'packages':facts['packages']},event)
+                    except Exception:
+                        log.exception('Could not record image environment fact')
             except (OSError, ValueError, KeyError, TypeError, zipfile.BadZipFile):
                 db.append_event(run_id, 'controller', 'image_facts.unknown',
                                 {'operation_id': row['operation_id'], 'reason': 'facts.json 解析失败'})

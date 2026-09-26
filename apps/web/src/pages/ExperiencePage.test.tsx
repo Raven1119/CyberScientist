@@ -41,4 +41,19 @@ describe('experience editor integrity', () => {
     await user.click(screen.getByRole('button', { name: '新建经验' }))
     expect((screen.getByLabelText('ID') as HTMLInputElement).disabled).toBe(false)
   })
+
+  it('lets users choose delivery audience and keeps environment facts read only', async () => {
+    get.mockImplementation(async (url: string) => url.includes('/experiences/') ?
+      { ...detail('env_A'), frontmatter: { ...entry('env_A'), kind: 'environment', audience: 'both' } } :
+      { items: [{ ...entry('env_A'), kind: 'environment', audience: 'both' }] })
+    const user = userEvent.setup()
+    render(<ExperiencePage />)
+    await user.click(await screen.findByRole('button', { name: /env_A ·/ }))
+    await waitFor(() => expect((screen.getByLabelText('投递对象') as HTMLSelectElement).value).toBe('both'))
+    expect(screen.getByLabelText('投递对象').matches(':disabled')).toBe(true)
+    expect(screen.getByRole('button', { name: '保存新修订' }).matches(':disabled')).toBe(true)
+    await user.click(screen.getByRole('button', { name: '新建经验' }))
+    await user.selectOptions(screen.getByLabelText('投递对象'), 'executor')
+    expect((screen.getByLabelText('投递对象') as HTMLSelectElement).value).toBe('executor')
+  })
 })

@@ -2,6 +2,7 @@
 
 ## 已实现
 
+- CS-UP-02 W5：经验受众 `brain/executor/both` 进入提议协议、版本化 Markdown、前端编辑和两种冻结投递；旧条目缺省 both。控制器依据受控回执事件生成全局环境事实，内容变化保留修订，七天未刷新则转待复核候选并停止注入；环境条目在代理协议、后端写入和前端编辑处均不可手工创建或修改。
 - CS-UP-02 W4：Run 级沙箱授权增加同时数量、累计分钟及独立 GPU 开关；隔离 bohr 2.x 网关提供创建、按 request ID 对账、执行、文件读写、删除、只读查询，Run 专用 bohr 代理与 `research_sandbox` MCP 共用校验。创建前预留、跨 Run 禁止操作、当前 Trial/题目路径约束、脱敏截断回执及文件哈希入账；执行事件成对映射至 ARM 工具轨迹。Run 终止/结束与到期清理沙箱，启动时只删除本系统已登记且所属 Run 已终态的沙箱，未知归属只报告。前端显示沙箱、镜像、状态、到期和累计分钟，提供手动删除；两个项目技能默认给执行器。
 - CS-UP-02 W3：评分轮询把 Attempt 回执的分项与评分回执分别脱敏、去重入账；科学分和轨迹分写入提交账本并进入收割候选与审阅帧，缺失时保持 unknown。旧 Job 与新 Wenyon/沙箱客户端的主机覆盖可分别配置，兼容旧平铺配置并保护旧客户端不被误导到新主机。
 - CS-UP-02 W2：后台每 15 秒逐 Run 检查有效研究进展；无活跃 Job/沙箱执行/模型退避时，默认静默 300 秒触发带组件诊断的生命周期审阅，连续两次未恢复进展则记录 `run.needs_attention` 并暂停。大脑审阅有界超时后重建会话，执行器会话失联重建但不重放远端 Job。模型 429/明确限流/额度耗尽按角色落 SQLite 重试状态，遵循 Retry-After 或 60–900 秒指数退避；限流尝试不扣大脑判断额度、不计审阅失败或执行器中止。前端可设置三项时限并显示暂停原因。
@@ -22,6 +23,7 @@
 
 ## 已实际验证
 
+- CS-UP-02 W5：临时 SQLite + synthetic 回执测试覆盖角色注入、环境事实创建/冲突修订/到期、代理与用户拒写；`.venv/bin/pytest -q` 为 429 passed、1 skipped（既有回环监听限制），`npm --prefix apps/web test -- --run` 为 17 passed，`npm --prefix apps/web run build`、`compileall`、`git diff --check` 通过。未据 synthetic 回执推断真实平台环境。
 - CS-UP-02 W4：联网前置检查两域名解析、公开首页返回 HTTP 301。本机 SQLite 迁移前备份 14,184,448 字节到 `.package-checks/cs-up-02-w4-20260926T213030Z/`，两次 `db.init_db()` 后沙箱两表和三列存在，题目 4、Run 7、提交 2、Job 28 行不变。首次真实创建被本地计费确认拦截，回执明确未执行/未计费，原 request ID 查无实例。加入 `--yes` 后仅实际创建一个默认 `sdbxagent` 沙箱（2 CPU、4096 MB），沙箱内执行 `print(1)` 为退出码 0，小文件写入/读回一致；删除后先观察到 `destroying`，稍后只读列表确认目标消失，探针账本最终为 `deleted`。全部脱敏回执、夹具数据库及文件只在本机忽略目录。fake 网关测试覆盖授权、禁用参数、跨 Run 所有权、路径、未知创建对账、执行轨迹、终止回收、启动孤儿处理、回执脱敏与异步删除。全量 `.venv/bin/pytest -q` 为 425 passed、1 skipped（既有回环监听限制）；随后针对异常终止回收的代码补丁，`tests/test_controller.py tests/test_sandboxes.py` 复测 27 passed。前端 16 passed；构建、`compileall`、`git diff --check` 通过。
 - CS-UP-02 W3：经平台适配器各读取一次公开 Attempt 36189、历史 Attempt 46231 及其 `/score`；36189 的回执中 `harbor_score=100.0`、`trace_score=70.525`、`displayScore=80.0`，分项一致性判为 0。46231 两接口均无科学分/轨迹分，未推断数值。旧客户端第一次受控 `job list` 因无 `/dev/tty` 失败；第二次受控只读 `job list --json` 返回退出码 0、`ok=true`，确认 `openapi.dp.tech` 的列表查询。迁移前备份 14,184,448 字节数据库至本机忽略目录，连续两次 `db.init_db()` 后新增两列，题目 4、Run 7、提交 2 的行数不变。脱敏探针审计存 `.package-checks/cs-up-02-w3-20260926T211157Z/`，未创建 Job。全套 `.venv/bin/pytest -q` 为 414 passed、1 skipped（既有回环监听限制）；前端 15 passed，构建、`compileall`、`git diff --check` 通过。
 - CS-UP-02 W2：迁移前 SQLite 在线备份存本机忽略目录 `.package-checks/cs-up-02-w2-20260926T210140Z/`；`db.init_db()` 重复执行后新增每 Run/角色限流表及 `state` 列，题目 4、Run 7、提交 2 的数量不变。fake 测试覆盖静默唤醒与修复、第二次无进展暂停、Running Job 长时豁免、心跳/usage/重复 job list 不续命、大脑超时重建、执行器失联重建、大脑和执行器连续 429 后成功、超过限流时限暂停，以及非终态阶段唤醒/超时映射。最终 `.venv/bin/pytest -q` 为 410 passed、1 skipped（既有回环监听限制）；前端 15 passed；构建、`compileall` 和 `git diff --check` 通过。
@@ -57,7 +59,7 @@
 
 ## 尚未验证
 
-- CS-UP-02 W1 的多个真实 Run 并行及真实所选模型的原生会话检查尚未验证；W2 的真实 Codex/Kimi/Prime 错误文案、限流重试效果和长时看门狗仍未在真实 Run 验证。W3 的真实 `job submit` 仍未验证。W4 沙箱在真实科研中的用途与平台实际计费单位/金额未验证；W5–W7 尚未实施。本包没有新模型调用、科研 Run、Job 创建或 Attempt 提交。
+- CS-UP-02 W1 的多个真实 Run 并行及真实所选模型的原生会话检查尚未验证；W2 的真实 Codex/Kimi/Prime 错误文案、限流重试效果和长时看门狗仍未在真实 Run 验证。W3 的真实 `job submit` 仍未验证。W4 沙箱在真实科研中的用途与平台实际计费单位/金额未验证；W5 的真实环境事实自动采集尚未通过新的外部回执验收，W6–W7 尚未实施。本包没有新模型调用、科研 Run、Job 创建或 Attempt 提交。
 - CS-UP-01 的新封存包尚未经真实平台准入验证；真实评分器的复评时间线也未经真实环境验证。本卡未进行真实 Run、模型调用、Job、沙箱、Attempt 或平台账号访问。
 - CS-EV-01a 的第一次 D1 探针曾受沙箱网络权限阻断；CS-EV-01b 已定位并修复旧 CLI 的 API host 错配，真实历史 Job 与 PR-4 Job 均已成功取回。仍未验证平台对 PR-4 科学结果的评分或比赛有效性；本卡未创建新的生产 Job。
 - PR-3 的这个 v1 样本已下载并核对，且经真实 Run 物化与 Job 输入冻结；其他 Wenyon 清单格式及不同数据集的哈希语义未验证。已验证输入清单和数据证明，不等于验证所有远端读取行为。真实平台对封存包的准入结论及科学结果仍未验证。

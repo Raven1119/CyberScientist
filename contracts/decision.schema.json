@@ -283,14 +283,18 @@
             "minLength": 1,
             "description": "更新已有经验条目的 id；缺省=新建。冲突语义=追加新修订"
           },
-          "kind": {
-            "enum": [
-              "heuristic",
-              "procedure",
-              "failure",
-              "platform"
-            ]
-          },
+        "kind": {
+          "enum": [
+            "heuristic",
+            "procedure",
+            "failure",
+            "platform"
+          ]
+        },
+        "audience": {
+          "enum": ["brain", "executor", "both"],
+          "description": "经验投递角色；缺省为 both，环境事实不可由代理提议"
+        },
           "expected_revision": {
             "type": "string",
             "minLength": 1

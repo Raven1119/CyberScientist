@@ -5,6 +5,7 @@ challenge_id: DEMO_CHALLENGE
 status: candidate
 evidence_status: hypothesis
 kind: heuristic
+audience: both
 title: 请填写一条有边界的经验
 tags: []
 applicability: 请说明何时适用

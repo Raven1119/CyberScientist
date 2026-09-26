@@ -13,10 +13,13 @@ def encode(value) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True)
 
 
-def select(challenge_id: str | None, budget: int | None = None, goal: str = "") -> list[dict]:
+def select(challenge_id: str | None, budget: int | None = None, goal: str = "",
+           role: str = 'both') -> list[dict]:
     if budget is None:
         budget = config.load_settings()["memory"]["max_injected_characters"]
     entries = experiences.active_experiences(challenge_id)
+    if role in ('brain','executor'):
+        entries = [entry for entry in entries if entry.get('audience','both') in (role,'both')]
     # Ownership is decidable; free-text applicability is retained for model judgment.
     words = set(goal.casefold().split())
     entries.sort(key=lambda x: (x['scope'] != 'challenge',
@@ -44,13 +47,14 @@ def select(challenge_id: str | None, budget: int | None = None, goal: str = "") 
     return selected
 
 
-def freeze(run_id: str, trial_id: str | None, boundary: str, items=None) -> dict:
+def freeze(run_id: str, trial_id: str | None, boundary: str, items=None,
+           role: str = 'both') -> dict:
     row = db.query_one('SELECT content_json FROM experience_contexts WHERE run_id=? AND boundary=?',
                        (run_id, boundary))
     if row:
         return json.loads(row['content_json'])
     run = db.query_one('SELECT challenge_id,intention FROM runs WHERE id=?', (run_id,))
-    items = select(run['challenge_id'],goal=run['intention'] or '') if items is None else items
+    items = select(run['challenge_id'],goal=run['intention'] or '',role=role) if items is None else items
     with db.transaction() as conn:
         return freeze_tx(conn, run_id, trial_id, boundary, items)
 

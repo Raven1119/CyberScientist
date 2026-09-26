@@ -242,7 +242,8 @@ export interface ExperienceFrontmatter {
   challenge_id: string | null
   status: 'candidate' | 'active' | 'retired'
   evidence_status: 'hypothesis' | 'observed' | 'validated' | 'contradicted'
-  kind: 'heuristic' | 'procedure' | 'failure' | 'platform'
+  kind: 'heuristic' | 'procedure' | 'failure' | 'platform' | 'environment'
+  audience: 'brain' | 'executor' | 'both'
   tags: string[]
   applicability: string
   evidence_refs: string[]

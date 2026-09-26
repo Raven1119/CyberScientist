@@ -126,7 +126,7 @@ def _supervision(run_id: str) -> dict[str, Any]:
 
 
 def _selected_experiences(challenge_id: str | None) -> tuple[list[dict], bool]:
-    items = experience_context.select(challenge_id)
+    items = experience_context.select(challenge_id, role='brain')
     return items, any(it.get("body_truncated") for it in items)
 
 
@@ -263,9 +263,8 @@ def build_frame(run_id: str, *, mode: str, frame_id: str,
     omitted += digest_omitted
     truncated = truncated or digest_omitted > 0
 
-    context = experience_context.for_trial(run_id, run["current_trial_id"])
-    if context is None:
-        context = experience_context.freeze(run_id,run["current_trial_id"],f"frame:{frame_id}")
+    context = experience_context.freeze(run_id,run["current_trial_id"],
+                                        f"frame:{frame_id}",role='brain')
     exps = context["items"]
     truncated |= any(it.get("body_truncated") for it in exps)
     note, clip = _clip(sup["private_note_md"], _MAX_NOTE)

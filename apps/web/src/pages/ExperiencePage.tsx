@@ -27,6 +27,7 @@ const EMPTY_FRONTMATTER: ExperienceFrontmatter = {
   status: 'candidate',
   evidence_status: 'hypothesis',
   kind: 'heuristic',
+  audience: 'both',
   tags: [],
   applicability: '',
   evidence_refs: [],
@@ -419,6 +420,7 @@ export default function ExperiencePage() {
                       </span>
                     </div>
                     <div className="actions">
+                      {e.kind === 'environment' ? <span className="small-text">待真实回执复核</span> : <>
                       <button
                         type="button"
                         className="btn small primary"
@@ -429,6 +431,7 @@ export default function ExperiencePage() {
                       <button type="button" className="btn small" onClick={() => setRejectTarget(e)}>
                         驳回
                       </button>
+                      </>}
                     </div>
                   </div>
                   {e.review_note && (
@@ -546,6 +549,8 @@ export default function ExperiencePage() {
             </div>
           </div>
           <div className="card-body">
+            {fm.kind === 'environment' && <p className="inline-note">环境事实由系统根据真实回执维护；过期待复核，不能手动编辑或审批。</p>}
+            <fieldset disabled={fm.kind === 'environment'} style={{ border: 0, padding: 0, minWidth: 0 }}>
             <div className="fields triple">
               <div className="field">
                 <label htmlFor="exp-id">ID</label>
@@ -631,6 +636,16 @@ export default function ExperiencePage() {
                   <option value="procedure">流程</option>
                   <option value="failure">失败模式</option>
                   <option value="platform">平台</option>
+                  {fm.kind === 'environment' && <option value="environment">环境事实</option>}
+                </select>
+              </div>
+              <div className="field">
+                <label htmlFor="exp-audience">投递对象</label>
+                <select id="exp-audience" value={fm.audience ?? 'both'}
+                  onChange={(e) => setFrontmatter({ ...fm, audience: e.target.value as ExperienceFrontmatter['audience'] })}>
+                  <option value="both">大脑和执行器</option>
+                  <option value="brain">仅大脑</option>
+                  <option value="executor">仅执行器</option>
                 </select>
               </div>
               <div className="field">
@@ -729,6 +744,7 @@ export default function ExperiencePage() {
                 </button>
               </div>
             </div>
+            </fieldset>
           </div>
         </article>
       </div>
@@ -747,7 +763,7 @@ export default function ExperiencePage() {
                     {r.reason && ` · ${r.reason}`}
                   </span>
                 </div>
-                <button type="button" className="btn small" disabled={busy} onClick={() => void restore(r)}>
+                <button type="button" className="btn small" disabled={busy || detail.frontmatter.kind === 'environment'} onClick={() => void restore(r)}>
                   回滚为新修订
                 </button>
               </li>

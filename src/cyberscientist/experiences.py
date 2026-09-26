@@ -20,7 +20,8 @@ from . import config, db
 
 VALID_STATUS = {"candidate", "active", "retired"}
 VALID_EVIDENCE = {"hypothesis", "observed", "validated", "contradicted"}
-VALID_KIND = {"heuristic", "procedure", "failure", "platform"}
+VALID_KIND = {"heuristic", "procedure", "failure", "platform", "environment"}
+VALID_AUDIENCE = {'brain','executor','both'}
 REQUIRED_FRONTMATTER = ["id", "title", "scope", "status", "evidence_status", "kind"]
 
 FRONTMATTER_RE = re.compile(r"\A---\n(.*?)\n---\n?(.*)\Z", re.DOTALL)
@@ -73,7 +74,7 @@ def _point_at(row) -> None:
         if row["activate"]:
             conn.execute("UPDATE experience_heads SET active_revision_id=? WHERE experience_id=?",
                          (row["id"], row["experience_id"]))
-        elif fm["status"] == "retired" or fm["scope"] == "challenge":
+        elif fm["status"] == "retired" or fm["scope"] == "challenge" or fm.get('kind')=='environment':
             conn.execute("UPDATE experience_heads SET active_revision_id=NULL WHERE experience_id=?",
                          (row["experience_id"],))
 
@@ -131,6 +132,18 @@ def parse_experience(content: str, file_path: Path) -> dict[str, Any]:
                               f"evidence_status 必须是 {sorted(VALID_EVIDENCE)}")
     if fm["kind"] not in VALID_KIND:
         raise ExperienceError("INVALID_EXPERIENCE", f"kind 必须是 {sorted(VALID_KIND)}")
+    if fm.get('audience','both') not in VALID_AUDIENCE:
+        raise ExperienceError('INVALID_EXPERIENCE','audience 必须是 brain、executor 或 both')
+    if fm['kind']=='environment':
+        if fm['scope']!='global':
+            raise ExperienceError('INVALID_EXPERIENCE','环境事实只能是全局经验')
+        for key in ('observed_at','source','recheck_after'):
+            if not isinstance(fm.get(key),str) or not fm[key].strip():
+                raise ExperienceError('INVALID_EXPERIENCE',f'环境事实缺少 {key}')
+        for key in ('observed_at','recheck_after'):
+            try: datetime.fromisoformat(fm[key].replace('Z','+00:00'))
+            except ValueError as exc:
+                raise ExperienceError('INVALID_EXPERIENCE',f'{key} 必须是 ISO 时间') from exc
     if not isinstance(fm.get("evidence_refs", []), list):
         raise ExperienceError("INVALID_EXPERIENCE", "evidence_refs 必须是列表")
     try:
@@ -178,6 +191,20 @@ def _reconcile(path: Path, scope: str, cid: str | None) -> dict[str, Any]:
     if fm["scope"] != scope or fm.get("challenge_id") != cid:
         raise ExperienceError("INVALID_EXPERIENCE", "frontmatter 与目录归属不一致")
     eid = fm["id"]
+    prior_head = _head(eid)
+    prior_kind = None
+    if prior_head and prior_head['head_revision_id']:
+        prior_revision = db.query_one('SELECT frontmatter FROM experience_revisions WHERE id=?',
+                                      (prior_head['head_revision_id'],))
+        if prior_revision:
+            prior_kind = json.loads(prior_revision['frontmatter']).get('kind')
+    if fm['kind']=='environment' or prior_kind=='environment':
+        registered = db.query_one(
+            "SELECT 1 FROM experience_revisions WHERE experience_id=? AND full_content=?"
+            " AND operator='system_environment' AND applied=1",(eid,content))
+        if not registered:
+            raise ExperienceError('ENVIRONMENT_READ_ONLY',
+                                  '环境事实只接受系统回执生成的修订；外部文件修改被排除')
     owner = db.query_one("SELECT experience_id FROM experience_heads WHERE file_path=?", (_rel(path),))
     if owner and owner["experience_id"] != eid:
         raise ExperienceError("REVISION_CONFLICT", "经验文件的不可变 ID 已被修改")
@@ -209,6 +236,7 @@ def _reconcile(path: Path, scope: str, cid: str | None) -> dict[str, Any]:
 
 def _display_metadata(fm: dict, head) -> dict:
     fm = dict(fm)
+    fm.setdefault('audience','both')
     if fm["scope"] == "global" and fm["status"] != "retired":
         fm["status"] = "active" if head and head["active_revision_id"] == head["head_revision_id"] else "candidate"
         if fm["status"] == "active":
@@ -239,6 +267,7 @@ def _scan_dir(directory: Path, scope: str, challenge_id: str | None,
             "challenge_id": fm.get("challenge_id") if scope == "challenge" else None,
             "status": fm["status"], "evidence_status": fm["evidence_status"],
             "kind": fm["kind"], "tags": fm.get("tags", []),
+            "audience": fm.get('audience','both'),
             "applicability": fm.get("applicability", ""),
             "evidence_refs": fm.get("evidence_refs", []),
             "expires_at": fm.get("expires_at"),
@@ -257,6 +286,8 @@ def _scan_dir(directory: Path, scope: str, challenge_id: str | None,
 @_locked
 def list_experiences(scope: str | None = None,
                      challenge_id: str | None = None) -> dict[str, Any]:
+    from . import environment_facts
+    environment_facts.expire_due()
     errors: list[dict[str, str]] = []
     items: list[dict[str, Any]] = []
     if challenge_id is not None:
@@ -355,7 +386,18 @@ def save_experience(exp_id: str, frontmatter: dict[str, Any], body_md: str,
     if not isinstance(exp_id, str) or not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,119}", exp_id):
         raise ExperienceError("INVALID_EXPERIENCE", "经验 ID 含非法字符")
     fm = dict(frontmatter)
-    if fm.get("scope") == "global" and fm.get("status") == "active":
+    if fm.get('kind')=='environment':
+        if operator!='system_environment':
+            raise ExperienceError('ENVIRONMENT_READ_ONLY','环境事实只由真实回执自动生成')
+        match = re.fullmatch(r'event:([^:]+):([1-9][0-9]*)',str(fm.get('source','')))
+        source = db.query_one('SELECT type,source FROM events WHERE run_id=? AND seq=?',
+                              (match.group(1),int(match.group(2)))) if match else None
+        if not source or source['source']!='controller' or source['type'] not in (
+                'image_facts.observed','sandbox.environment_observed','environment.host_observed'):
+            raise ExperienceError('INVALID_EVIDENCE','环境事实必须引用真实回执事件')
+        if fm['source'] not in fm.get('evidence_refs',[]):
+            raise ExperienceError('INVALID_EVIDENCE','环境事实证据引用必须包含来源事件')
+    if fm.get("scope") == "global" and fm.get("status") == "active" and fm.get('kind')!='environment':
         fm["status"] = "candidate"  # Only version-bound approval enables global bytes.
     fm["id"] = exp_id
     fm.setdefault("evidence_refs", [])
@@ -380,6 +422,8 @@ def save_experience(exp_id: str, frontmatter: dict[str, Any], body_md: str,
     try:
         existing_path, current_content, prior = _load_current(exp_id)
         prior_fm = prior["frontmatter"]
+        if prior_fm.get('kind')=='environment' and (operator!='system_environment' or fm.get('kind')!='environment'):
+            raise ExperienceError('ENVIRONMENT_READ_ONLY','环境事实不能由用户或代理修改')
         if (fm["scope"], fm.get("challenge_id")) != (prior_fm["scope"], prior_fm.get("challenge_id")):
             raise ExperienceError("INVALID_EXPERIENCE", "普通更新不能改变经验作用域或题目归属")
         current = content_hash(current_content)
@@ -434,7 +478,8 @@ def save_experience(exp_id: str, frontmatter: dict[str, Any], body_md: str,
              parsed["body_md"], content, operator, reason,
              json.dumps(fm.get("evidence_refs", []), ensure_ascii=False), _now(),
              parent["head_revision_id"] if parent else None, operation_id,
-             int(fm["status"] == "active" and (fm["scope"] == "challenge" or creating))))
+             int(fm["status"] == "active" and (fm["scope"] == "challenge" or creating
+                                                  or fm.get('kind')=='environment'))))
     import os as _os
     if creating:
         with existing_path.open("x", encoding="utf-8") as handle:
@@ -454,6 +499,8 @@ def save_experience(exp_id: str, frontmatter: dict[str, Any], body_md: str,
 def approve_experience(exp_id: str, *, expected_revision: str | None = None) -> dict[str, Any]:
     """用户审批通过：candidate → active（全局经验的唯一晋升通道）。"""
     exp = get_experience(exp_id)
+    if exp['frontmatter'].get('kind')=='environment':
+        raise ExperienceError('ENVIRONMENT_READ_ONLY','环境事实待真实回执刷新，不能人工审批')
     if expected_revision is None or expected_revision != exp["revision_id"]:
         raise ExperienceError("REVISION_CONFLICT", "审批版本已改变，请重新审阅", exp)
     with db.transaction() as conn:
@@ -474,6 +521,8 @@ def reject_experience(exp_id: str, note: str, *, expected_revision: str | None =
     if not note.strip():
         raise ExperienceError("INVALID_EXPERIENCE", "驳回必须附批注")
     exp = get_experience(exp_id)
+    if exp['frontmatter'].get('kind')=='environment':
+        raise ExperienceError('ENVIRONMENT_READ_ONLY','环境事实只能由系统回执更新')
     if expected_revision is None or expected_revision != exp["revision_id"]:
         raise ExperienceError("REVISION_CONFLICT", "驳回版本已改变，请重新审阅", exp)
     fm = dict(exp["frontmatter"])
@@ -494,6 +543,7 @@ def active_experiences(challenge_id: str | None = None) -> list[dict[str, Any]]:
     result = []
     for row in rows:
         fm = json.loads(row["frontmatter"])
+        fm.setdefault('audience','both')
         result.append({**fm,"status":"active","revision_id":row["id"],"revision_hash":row["revision_hash"],
                        "current_hash":row["revision_hash"],"body_md":row["body_md"],"full_content":row["full_content"]})
     return result

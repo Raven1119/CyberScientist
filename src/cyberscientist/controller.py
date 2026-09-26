@@ -2877,8 +2877,7 @@ class RunController:
         return row["s"]
 
     def _memory_manifest(self, run: Any, settings: dict[str, Any]) -> list[dict[str, Any]]:
-        context = experience_context.for_trial(run["id"],run["current_trial_id"])
-        return context["items"] if context else experience_context.select(run["challenge_id"])
+        return experience_context.select(run["challenge_id"],role='brain')
 
     @staticmethod
     def _active_trial_id(run: Any) -> str | None:
@@ -3246,6 +3245,7 @@ class RunController:
                   "status": "candidate" if is_global else "active",
                   "evidence_status": proposal.get("evidence_status", "hypothesis"),
                   "kind": kind,
+                  "audience": proposal.get('audience') or (prior['frontmatter'].get('audience','both') if prior else 'both'),
                   "applicability": proposal["applicability"],
                   "evidence_refs": evidence_refs})
             for key in ("tags", "expires_at", "derived_from"):
@@ -3575,7 +3575,7 @@ class RunController:
         run_dir = config.WORKSPACE_DIR / "runs" / run_id
         trial_dir = run_dir / "trials" / trial_id
         trial_dir.mkdir(parents=True, exist_ok=True)
-        context = experience_context.freeze(run_id,trial_id,f"trial:{trial_id}")
+        context = experience_context.freeze(run_id,trial_id,f"trial:{trial_id}",role='executor')
         (trial_dir / "memory_manifest.json").write_text(
             json.dumps(context, ensure_ascii=False, indent=2), encoding="utf-8")
 

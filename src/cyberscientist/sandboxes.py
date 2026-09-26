@@ -388,7 +388,23 @@ def inspect(run_id: str, action: str, sandbox_id: str | None = None) -> dict:
     elif action in ('quota','machine.list','template.list'):
         args=['sandbox',*action.split('.'),'--no-interactive','-o','json']
     else: raise compute.ComputeError('INVALID_ACTION','不支持的只读沙箱操作')
-    return {'status':'ok','receipt':_receipt(compute._native(args))}
+    receipt=compute._native(args)
+    parsed=_body(receipt)
+    if action in ('quota','machine.list','template.list') and receipt.get('ok') and isinstance(parsed,dict):
+        try:
+            from . import environment_facts
+            event=db.append_event(run_id,'controller','sandbox.environment_observed',
+                                  {'action':action,'receipt_sha256':hashlib.sha256(
+                                      (receipt.get('stdout') or '').encode()).hexdigest()})
+            environment_facts.record('sandbox:'+action,'Bohrium 沙箱 '+action,
+                                     _data(parsed),event)
+            host=compute.client_host_overrides(config.load_settings()['bohrium'],wenyon=True)['OPENAPI_HOST']
+            environment_facts.record('sandbox:host','Bohrium 沙箱客户端主机',
+                                     {'host':host,'cli_version':(parsed.get('meta') or {}).get('cli_version')},event)
+        except Exception:
+            import logging
+            logging.getLogger('cyberscientist.sandboxes').exception('Could not record sandbox environment fact')
+    return {'status':'ok' if receipt.get('ok') else 'unknown','receipt':_receipt(receipt)}
 
 
 def cleanup_run(run_id: str) -> list[dict]:

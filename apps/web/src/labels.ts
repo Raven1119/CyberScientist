@@ -194,6 +194,7 @@ export const KIND_LABELS: Record<string, string> = {
   procedure: '流程',
   failure: '失败模式',
   platform: '平台',
+  environment: '环境事实',
 }
 
 export const SUBMISSION_STATUS_LABELS: Record<string, string> = {
