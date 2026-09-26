@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import uuid
 
 import pytest
@@ -45,13 +46,94 @@ def test_create_run_requires_challenge():
     assert exc.value.code == "NOT_FOUND"
 
 
-def test_single_active_run_guard():
+def test_active_run_limit_is_configurable():
     _seed_challenge()
     c = _controller()
-    c.create_run("DEMO_CHALLENGE")
+    for _ in range(3):
+        c.create_run("DEMO_CHALLENGE")
     with pytest.raises(ControllerError) as exc:
         c.create_run("DEMO_CHALLENGE")
     assert exc.value.code == "RUN_ACTIVE"
+    assert '上限 3' in str(exc.value)
+    settings = config.load_settings()
+    settings['run_defaults']['max_active_runs'] = 4
+    config.save_settings(settings)
+    assert c.create_run("DEMO_CHALLENGE")['phase'] == 'created'
+
+
+async def test_three_demo_runs_have_independent_sessions_events_and_controls():
+    _seed_challenge()
+    c = _controller()
+    ids = [c.create_run('DEMO_CHALLENGE')['id'] for _ in range(3)]
+    for rid in ids:
+        c.authorize(rid, 'demo', False, 0, 30, 0, None)
+    await asyncio.gather(*(c.start_async(rid) for rid in ids))
+    assert await _wait_for(lambda: all(rid in c._prime_sessions for rid in ids), 8)
+    assert len({id(c._prime_instances[rid]) for rid in ids}) == 3
+    assert len({c._prime_sessions[rid] for rid in ids}) == 3
+    tokens = db.query("SELECT run_id,token_hash FROM capability_tokens"
+                      " WHERE run_id IN (?,?,?)", tuple(ids))
+    assert {row['run_id'] for row in tokens} == set(ids)
+    assert len({row['token_hash'] for row in tokens}) == len(tokens)
+    assert all(event['run_id'] == rid for rid in ids for event in db.events_after(rid, 0))
+    for rid in ids:
+        if c.run_snapshot(rid)['phase'] == 'running':
+            await c.control(rid, 'pause', None, f'pause-{rid}')
+    assert await _wait_for(lambda: all(c.run_snapshot(rid)['phase'] in ('paused','finished')
+                                      for rid in ids), 8)
+    for rid in ids:
+        if c.run_snapshot(rid)['phase'] == 'paused':
+            await c.control(rid, 'resume', None, f'resume-{rid}')
+    assert await _wait_for(lambda: all(c.run_snapshot(rid)['phase'] == 'finished'
+                                      for rid in ids), 20)
+
+
+def test_startup_reconciles_each_run_despite_one_failure(monkeypatch):
+    _seed_challenge()
+    c = _controller()
+    ids = [c.create_run('DEMO_CHALLENGE')['id'] for _ in range(3)]
+    for rid in ids:
+        db.execute("UPDATE runs SET phase='running' WHERE id=?", (rid,))
+    original = db.append_event_tx
+    def fail_one(conn, run_id, *args, **kwargs):
+        if run_id == ids[0]:
+            raise RuntimeError('synthetic failure')
+        return original(conn, run_id, *args, **kwargs)
+    monkeypatch.setattr(db, 'append_event_tx', fail_one)
+    assert c.reconcile_on_startup() == ids[1:]
+    assert [c.run_snapshot(rid)['phase'] for rid in ids] == [
+        'recovering', 'recovering', 'recovering']
+    assert '对账失败' in c.run_snapshot(ids[0])['block_reason']
+
+
+def test_challenge_model_config_frozen_per_run_and_submission():
+    from cyberscientist import mailboxes
+    _seed_challenge('MODEL_A')
+    _seed_challenge('MODEL_B')
+    choices = [
+        ({'runtime':'codex','model_id':'model-brain-a','reasoning_effort':'xhigh'},
+         {'runtime':'codex','model_id':'model-exec-a','reasoning_effort':'high'}),
+        ({'runtime':'kimi','model_id':'model-brain-b','reasoning_effort':'max'},
+         {'runtime':'kimi','model_id':'model-exec-b','reasoning_effort':'high'}),
+    ]
+    for cid, (brain, executor) in zip(('MODEL_A','MODEL_B'), choices):
+        db.execute('UPDATE challenges SET brain_config_json=?,executor_config_json=? WHERE id=?',
+                   (json.dumps(brain), json.dumps(executor), cid))
+    c = _controller()
+    first, second = [c.create_run(cid)['id'] for cid in ('MODEL_A','MODEL_B')]
+    db.execute("UPDATE challenges SET executor_config_json=? WHERE id='MODEL_A'",
+               (json.dumps({'runtime':'codex','model_id':'later-model',
+                            'reasoning_effort':'low'}),))
+    a = c.run_snapshot(first)['config_snapshot']['settings']
+    b = c.run_snapshot(second)['config_snapshot']['settings']
+    assert (a['brain']['model_id'], a['executor']['model_id']) == (
+        'model-brain-a', 'model-exec-a')
+    assert (b['brain']['model_id'], b['executor']['model_id']) == (
+        'model-brain-b', 'model-exec-b')
+    assert mailboxes._submission_metadata(first)['model'] == 'demo'
+    db.execute("UPDATE runs SET mode='connected' WHERE id IN (?,?)", (first, second))
+    assert mailboxes._submission_metadata(first)['model'] == 'model-exec-a'
+    assert mailboxes._submission_metadata(second)['model'] == 'model-exec-b'
 
 
 async def test_full_demo_loop_to_finished():

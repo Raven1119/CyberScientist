@@ -197,7 +197,7 @@ class KimiBrain:
                         {"sessionId": self.session_id, "modelId": self.model},
                         timeout=15)
                 except ProtocolError as exc:
-                    log.warning("set_model 失败（沿用默认模型）: %s", exc)
+                    raise RuntimeError(f"所选 Kimi 模型不可用：{self.model}") from exc
             if self.effort:
                 # ACP thinking 档位：low|high|max；UI 通用档映射
                 mapped = {"low": "low", "medium": "high", "high": "high",

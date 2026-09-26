@@ -390,6 +390,8 @@ COMPUTE_V2_COLUMNS = {
 CHALLENGE_V2_COLUMNS = {
     "resources_json": "TEXT",
     "platform_snapshot_json": "TEXT",
+    "brain_config_json": "TEXT",
+    "executor_config_json": "TEXT",
 }
 
 _db_lock = threading.RLock()

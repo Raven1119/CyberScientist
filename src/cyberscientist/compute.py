@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import math
 import os
 from pathlib import Path
@@ -24,6 +25,7 @@ DEFAULT_LIMITS = {'max_concurrent_jobs': 2, 'max_cpu': 16, 'max_memory_gb': 16,
                   'max_disk_gb': 10, 'allow_gpu': False}
 _PROJECT_PARSE_ERROR = ('failed to parse config file: json: cannot unmarshal '
                         'string into Go struct field JobJson.project_id of type int')
+log = logging.getLogger('cyberscientist.compute')
 
 
 class ComputeError(Exception):
@@ -409,14 +411,31 @@ def stop(run_id: str, operation_id: str) -> dict:
 
 
 def recover_pending() -> None:
-    with db.transaction() as conn:
-        for row in conn.execute("SELECT * FROM compute_jobs WHERE status IN ('submitting','stopping')").fetchall():
+    rows = db.query("SELECT * FROM compute_jobs WHERE status IN ('submitting','stopping')")
+    for row in rows:
+        try:
+            with db.transaction() as conn:
+                current = conn.execute("SELECT status FROM compute_jobs WHERE operation_id=?",
+                                       (row['operation_id'],)).fetchone()
+                if not current or current['status'] != row['status']:
+                    continue
+                status = 'unknown' if row['status'] == 'submitting' else 'stop_unknown'
+                conn.execute('UPDATE compute_jobs SET status=?,updated_at=? WHERE operation_id=?',
+                             (status, db.utcnow(), row['operation_id']))
+                db.append_event_tx(conn, row['run_id'], 'controller', 'job.recovered',
+                    {'operation_id': row['operation_id'], 'status': status,
+                     'notice': '后端重启；保留占位，仅查询远端，不重发变更'}, trial_id=row['trial_id'])
+        except Exception:
+            log.exception('Job recovery failed for Run %s operation %s',
+                          row['run_id'], row['operation_id'])
+            # Preserve the reservation and refuse to infer create/stop success.
             status = 'unknown' if row['status'] == 'submitting' else 'stop_unknown'
-            conn.execute('UPDATE compute_jobs SET status=?,updated_at=? WHERE operation_id=?',
-                         (status, db.utcnow(), row['operation_id']))
-            db.append_event_tx(conn, row['run_id'], 'controller', 'job.recovered',
-                {'operation_id': row['operation_id'], 'status': status,
-                 'notice': '后端重启；保留占位，仅查询远端，不重发变更'}, trial_id=row['trial_id'])
+            try:
+                db.execute('UPDATE compute_jobs SET status=?,updated_at=?'
+                           ' WHERE operation_id=? AND status=?',
+                           (status, db.utcnow(), row['operation_id'], row['status']))
+            except Exception:
+                log.exception('Job %s recovery fallback failed', row['operation_id'])
 
 
 def cli(run_id: str, args: list[str], cwd: str) -> dict:

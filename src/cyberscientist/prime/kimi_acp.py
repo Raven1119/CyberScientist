@@ -264,7 +264,8 @@ class KimiExecutor:
                 await self._set_option(rpc, sid, "thinking",
                                        _EFFORT_MAP.get(self.effort, self.effort))
             if self.model:
-                await self._set_option(rpc, sid, "model", self.model)
+                if not await self._set_option(rpc, sid, "model", self.model):
+                    raise RuntimeError(f"所选 Kimi 执行模型不可用：{self.model}")
         except BaseException:
             await rpc.stop()
             raise

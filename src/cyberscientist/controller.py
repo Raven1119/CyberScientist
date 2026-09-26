@@ -1,4 +1,4 @@
-"""RunController：进程内单活跃 Run 的研究闭环与状态机。
+"""RunController：按 Run 隔离会话、事件与状态的研究闭环。
 
 事件流是权威记录；控制器只追加。暂停/终止语义按 ARCHITECTURE：
 只有代理确认停下才显示 paused；steer 接受不等于生效。
@@ -23,7 +23,7 @@ from typing import Any
 
 import jsonschema
 
-from . import collab, config, datasets, db, decision as decision_mod, experiences, mailboxes, observation, experience_context
+from . import collab, config, datasets, db, decision as decision_mod, experiences, mailboxes, observation, experience_context, challenge_models
 from . import skills as skills_mod
 from .brains.base import BrainRuntime
 from .brains.codex import CodexBrain
@@ -212,7 +212,6 @@ class RunController:
         self._pumps: dict[str, asyncio.Task] = {}
         self._start_pump: dict[str, Any] = {}
         self._prime_instances: dict[str, Any] = {}
-        self._demo_prime = DemoPrime()
         self._brain_sessions: dict[str, Any] = {}
         # 协作调度：审阅唤醒（内存提示，DB 为权威）与执行器忙闲镜像
         self._review_wake: dict[str, asyncio.Event] = {}
@@ -289,7 +288,7 @@ class RunController:
     def _make_prime(self, settings: dict[str, Any]) -> PrimeRuntime:
         """执行系统三选一：kimi（默认）/ prime / codex；demo 模式仍 DemoPrime。"""
         if settings["app"]["mode"] == "demo":
-            return self._demo_prime
+            return DemoPrime()
         exec_cfg = settings.get("executor") or {}
         runtime = exec_cfg.get("runtime", "kimi")
         if runtime == "prime":
@@ -310,12 +309,14 @@ class RunController:
         """执行器启动参数：工作目录 + 运行时专有配置。"""
         import os
         run = self._require_run(run_id)
-        challenge_dir = config.WORKSPACE_DIR / "challenges" / run["challenge_id"]
-        challenge_dir.mkdir(parents=True, exist_ok=True)
+        # An executor may write relative paths. Give every Run its own cwd,
+        # including when two Runs study the same challenge concurrently.
+        run_dir = config.WORKSPACE_DIR / "runs" / run_id
+        run_dir.mkdir(parents=True, exist_ok=True)
         runtime = (settings.get("executor") or {}).get("runtime", "kimi")
         spec: dict[str, Any] = {
             "run_id": run_id,
-            "working_directory": str(challenge_dir),
+            "working_directory": str(run_dir),
         }
         if runtime == "prime":
             # Prime 专有：项目隔离 session 目录 + 环境 allowlist + 模型选择
@@ -402,6 +403,19 @@ class RunController:
         return spec
 
     # ---------- Run 生命周期 ----------
+    @staticmethod
+    def _check_active_capacity(conn: Any, settings: dict[str, Any]) -> None:
+        limit = settings["run_defaults"].get("max_active_runs", 3)
+        if type(limit) is not int or limit < 1:
+            raise ControllerError("INVALID_ARGUMENT", "max_active_runs 必须为正整数")
+        used = conn.execute(
+            "SELECT COUNT(*) AS n FROM runs WHERE phase NOT IN"
+            " ('finished','failed','cancelled')").fetchone()["n"]
+        if used >= limit:
+            raise ControllerError("RUN_ACTIVE",
+                                  f"活跃 Run 已达上限 {limit}（当前 {used}）；"
+                                  "请结束现有 Run 或提高设置中的 max_active_runs")
+
     def create_run(self, challenge_id: str, mode: str | None = None,
                    shadow_enabled: bool | None = None) -> dict[str, Any]:
         settings = config.load_settings()
@@ -409,14 +423,18 @@ class RunController:
         if mode not in ("demo", "connected"):
             raise ControllerError("INVALID_ARGUMENT", "mode 必须为 demo 或 connected")
         settings["app"]["mode"] = mode
-        challenge = db.query_one("SELECT id FROM challenges WHERE id=?", (challenge_id,))
+        challenge = db.query_one("SELECT * FROM challenges WHERE id=?", (challenge_id,))
         if not challenge:
             raise ControllerError("NOT_FOUND", f"题目不存在: {challenge_id}")
-        active = db.query_one(
-            "SELECT id FROM runs WHERE phase IN ('created','running','pausing','paused')")
-        if active:
-            raise ControllerError("RUN_ACTIVE",
-                                  f"已有活跃 Run {active['id']}；单工作区一次只允许一个")
+        try:
+            selected = challenge_models.from_challenge(challenge, settings)
+        except (ValueError, TypeError, KeyError) as exc:
+            raise ControllerError("INVALID_ARGUMENT", f"题目模型配置无效：{exc}") from exc
+        for role, choice in selected.items():
+            current = settings[role]
+            if current.get("runtime") != choice["runtime"]:
+                current["executable"] = ""  # use that runtime's Linux discovery path
+            current.update(choice)
         run_id = _rid("run")
         # 协作配置在创建时快照化（settings.shadow + 本次开关）
         shadow_cfg = dict(settings.get("shadow") or {})
@@ -427,11 +445,13 @@ class RunController:
                     "challenge_id": challenge_id, "mode": mode,
                     "compute_policy_version": 1, "sparse_brain_version": 1,
                     "lifecycle_version": 2}
-        db.execute(
-            "INSERT INTO runs(id, challenge_id, mode, phase, state_version, intention,"
-            " config_snapshot, created_at) VALUES(?,?,?,?,0,NULL,?,?)",
-            (run_id, challenge_id, mode, "created", json.dumps(snapshot, ensure_ascii=False),
-             db.utcnow()))
+        with config.mutation_lock, db.transaction() as conn:
+            self._check_active_capacity(conn, config.load_settings())
+            conn.execute(
+                "INSERT INTO runs(id, challenge_id, mode, phase, state_version, intention,"
+                " config_snapshot, created_at) VALUES(?,?,?,?,0,NULL,?,?)",
+                (run_id, challenge_id, mode, "created", json.dumps(snapshot, ensure_ascii=False),
+                 db.utcnow()))
         return self.run_snapshot(run_id)
 
     @staticmethod
@@ -598,14 +618,6 @@ class RunController:
             if cur.rowcount != 1:
                 raise ControllerError("INVALID_STATE",
                                       f"当前阶段不能启动（并发或状态已变化）")
-            other = conn.execute(
-                "SELECT id FROM runs WHERE phase IN ('running','pausing','paused')"
-                " AND id<>?", (run_id,)).fetchone()
-            if other:
-                conn.execute("UPDATE runs SET phase='created', started_at=NULL"
-                             " WHERE id=?", (run_id,))
-                conn.commit()
-                raise ControllerError("RUN_ACTIVE", f"已有活跃 Run {other['id']}")
         db.append_event(run_id, "controller", "run.started", {
             "brain": b_health.version or brain.kind,
             "prime": p_health.version or prime.kind,
@@ -685,12 +697,7 @@ class RunController:
             if not text or not text.strip():
                 raise ControllerError("INVALID_ARGUMENT", "重开需要记录原因")
             with db.transaction() as conn:
-                other = conn.execute(
-                    "SELECT id FROM runs WHERE phase IN"
-                    " ('created','running','pausing','paused') AND id<>?",
-                    (run_id,)).fetchone()
-                if other:
-                    raise ControllerError("RUN_ACTIVE", f"已有活跃 Run {other['id']}")
+                self._check_active_capacity(conn, config.load_settings())
                 previous = conn.execute(
                     "SELECT ended_at FROM runs WHERE id=? AND phase='cancelled'",
                     (run_id,)).fetchone()
@@ -724,12 +731,6 @@ class RunController:
             if run["phase"] == "recovering":
                 # 后端重启后的恢复：重建事件循环与大脑/执行器会话，
                 # 以 recovery 生命周期审阅让大脑裁决下一步，不盲目续跑
-                other = db.query_one(
-                    "SELECT id FROM runs WHERE phase IN"
-                    " ('running','pausing','paused') AND id<>?", (run_id,))
-                if other:
-                    raise ControllerError("RUN_ACTIVE",
-                                          f"已有活跃 Run {other['id']}")
                 if not db.record_operation(operation_id, run_id, f"control.{action}",
                                            "accepted", request_summary=action):
                     existing = db.query_one(
@@ -820,26 +821,44 @@ class RunController:
             " WHERE phase IN ('running','pausing','paused')")
         recovered = []
         for z in zombies:
-            inflight = [r["id"] for r in db.query(
-                "SELECT id FROM review_requests WHERE run_id=?"
-                " AND status IN ('pending','running')", (z["id"],))]
-            with db.transaction() as conn:
-                conn.execute(
-                    "UPDATE runs SET phase='recovering', block_reason=?"
-                    " WHERE id=?",
-                    ("后端重启；大脑/执行器会话已随旧进程断开。"
-                     "可恢复（重建会话，大脑重新裁决）或终止", z["id"]))
-                conn.execute(
-                    "UPDATE review_requests SET status='obsolete', updated_at=?"
-                    " WHERE run_id=? AND status IN ('pending','running')",
-                    (db.utcnow(), z["id"]))
-                db.append_event_tx(conn, z["id"], "controller",
-                                   "run.needs_recovery",
-                                   {"from_phase": z["phase"]})
-            for request_id in inflight:
-                # 被重启作废的收尾整理若承载着 finish：直接收尾，不软锁
-                self._maybe_finalize_after_curation(request_id)
-            recovered.append(z["id"])
+            try:
+                inflight = [r["id"] for r in db.query(
+                    "SELECT id FROM review_requests WHERE run_id=?"
+                    " AND status IN ('pending','running')", (z["id"],))]
+                with db.transaction() as conn:
+                    conn.execute(
+                        "UPDATE runs SET phase='recovering', block_reason=?"
+                        " WHERE id=?",
+                        ("后端重启；大脑/执行器会话已随旧进程断开。"
+                         "可恢复（重建会话，大脑重新裁决）或终止", z["id"]))
+                    conn.execute(
+                        "UPDATE review_requests SET status='obsolete', updated_at=?"
+                        " WHERE run_id=? AND status IN ('pending','running')",
+                        (db.utcnow(), z["id"]))
+                    db.append_event_tx(conn, z["id"], "controller",
+                                       "run.needs_recovery",
+                                       {"from_phase": z["phase"]})
+                recovered.append(z["id"])
+                for request_id in inflight:
+                    # Curation failure must not prevent other Runs from recovering.
+                    try:
+                        self._maybe_finalize_after_curation(request_id)
+                    except Exception:
+                        log.exception("Run %s curation recovery failed", z["id"])
+            except Exception:
+                log.exception("Run %s startup recovery failed", z["id"])
+                # Never leave an orphaned Run falsely shown as running. The
+                # failed event transaction rolled back; mark the gate honestly.
+                try:
+                    with db.transaction() as conn:
+                        conn.execute("UPDATE runs SET phase='recovering',block_reason=?"
+                                     " WHERE id=? AND phase IN ('running','pausing','paused')",
+                                     ("后端重启对账失败；请检查服务日志后手动恢复或终止", z["id"]))
+                        conn.execute("UPDATE review_requests SET status='obsolete',updated_at=?"
+                                     " WHERE run_id=? AND status IN ('pending','running')",
+                                     (db.utcnow(), z["id"]))
+                except Exception:
+                    log.exception("Run %s recovery fallback failed", z["id"])
         return recovered
 
     # ---------- 静默监督开关 ----------
@@ -3311,6 +3330,39 @@ class RunController:
             d.pop("config_snapshot", None)
             out.append(d)
         return out
+
+    def active_overview(self) -> list[dict[str, Any]]:
+        """A read-only, Run-scoped operator view for the current round."""
+        has_sandboxes = bool(db.query_one(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='compute_sandboxes'"))
+        rows = db.query(
+            "SELECT r.*,c.title AS challenge_title FROM runs r"
+            " JOIN challenges c ON c.id=r.challenge_id"
+            " WHERE r.phase NOT IN ('finished','failed','cancelled')"
+            " ORDER BY r.created_at DESC")
+        items = []
+        for row in rows:
+            latest = db.query_one(
+                "SELECT score,score_confidence,scored_at FROM submissions"
+                " WHERE run_id=? AND score_status='scored'"
+                " ORDER BY scored_at DESC,id DESC LIMIT 1", (row["id"],))
+            jobs = db.query_one("SELECT COUNT(*) AS n FROM compute_jobs WHERE run_id=?",
+                                (row["id"],))["n"]
+            sandboxes = (db.query_one("SELECT COUNT(*) AS n FROM compute_sandboxes"
+                                      " WHERE run_id=? AND status NOT IN ('deleted','failed')",
+                                      (row["id"],))["n"] if has_sandboxes else 0)
+            attention = bool(row["block_reason"] or row["gate"] in
+                             ("awaiting_budget", "awaiting_user"))
+            items.append({"id": row["id"], "challenge_id": row["challenge_id"],
+                          "challenge_title": row["challenge_title"],
+                          "phase": row["phase"], "gate": row["gate"],
+                          "current_trial_id": row["current_trial_id"],
+                          "latest_score": latest["score"] if latest else None,
+                          "score_confidence": latest["score_confidence"] if latest else None,
+                          "job_count": jobs, "sandbox_count": sandboxes,
+                          "needs_attention": attention,
+                          "attention_reason": row["block_reason"] if attention else None})
+        return items
 
 
 def executor_instruction_suffix() -> str:

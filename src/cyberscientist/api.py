@@ -13,9 +13,9 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-from . import collab, config, db, datasets, experiences, mailboxes, skills, compute
+from . import collab, config, db, datasets, experiences, mailboxes, skills, compute, observation
 from .brains.codex import CodexBrain
 from .brains.demo import DemoBrain
 from .brains.kimi import KimiBrain
@@ -104,6 +104,7 @@ class SecretPut(BaseModel):
 class ConnectionTest(BaseModel):
     kind: str = "inspect"
     confirm_spend: bool = False
+    model_choice: dict[str, Any] | None = None
 
 
 class ChallengeImport(BaseModel):
@@ -112,6 +113,11 @@ class ChallengeImport(BaseModel):
     content: str | None = None
     url: str | None = None
     platform_challenge_id: str | None = None
+    models: dict[str, Any] | None = Field(default=None, alias="model_config")
+
+
+class ChallengeModelsPut(BaseModel):
+    models: dict[str, Any] = Field(alias="model_config")
 
 
 class RunCreate(BaseModel):
@@ -225,7 +231,13 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
         compute.recover_pending()
         db.execute("UPDATE curation_requests SET status='failed',error='后端重启，整理中断；不会自动重复调用模型',updated_at=? WHERE status='running'", (db.utcnow(),))
         for row in db.query("SELECT DISTINCT run_id FROM compute_jobs WHERE status NOT IN ('Finished','Failed','Stopped','not_started')"):
-            await asyncio.to_thread(compute.reconcile, row['run_id'])
+            try:
+                await asyncio.to_thread(compute.reconcile, row['run_id'])
+            except Exception:
+                # Other Runs still need their independent startup recovery.
+                import logging
+                logging.getLogger('cyberscientist.api').exception(
+                    'Job reconciliation failed for Run %s', row['run_id'])
         # 后台评分轮询：提交后进入评分等待，由这里异步拿回分数。
         # 评分器可能长时间排队或抽风（409 scoringInProgress / 5xx），
         # 全部吞掉下一轮再试；轮询失败绝不影响服务本身。
@@ -238,8 +250,13 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
                     result = await asyncio.to_thread(mailboxes.poll_pending_by_challenge)
                     _notify_scores(result)
                     for row in db.query("SELECT DISTINCT run_id FROM compute_jobs WHERE status NOT IN ('Finished','Failed','Stopped','not_started')"):
-                        await asyncio.to_thread(compute.reconcile, row['run_id'])
-                        controller.notify_run_change(row['run_id'])
+                        try:
+                            await asyncio.to_thread(compute.reconcile, row['run_id'])
+                            controller.notify_run_change(row['run_id'])
+                        except Exception:
+                            import logging
+                            logging.getLogger('cyberscientist.api').exception(
+                                'Job polling failed for Run %s', row['run_id'])
                 except Exception:
                     pass
                 try:
@@ -331,6 +348,10 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
             incoming = {k: v for k, v in body.settings.items()
                         if k != "_status"}  # _status 是 GET 响应的瞬态字段，不落盘
             merged.update(incoming)
+            limit = (merged.get("run_defaults") or {}).get("max_active_runs")
+            if type(limit) is not int or not 1 <= limit <= 20:
+                raise HTTPException(422, detail={"code": "INVALID_SETTINGS",
+                                                 "message": "max_active_runs 必须为 1–20 的整数"})
             merged["revision"] = current["revision"] + 1
             config.save_settings(merged)
         _sync_prime_models(merged)  # llm_profiles 可能变化，保持 models.json 同步
@@ -361,6 +382,42 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
               )
     async def test_connection(conn_id: str, body: ConnectionTest) -> dict[str, Any]:
         settings = config.load_settings()
+        if body.kind == "model_selection":
+            if conn_id not in ("brain", "executor"):
+                raise HTTPException(422, detail={"code": "INVALID_CONNECTION",
+                                                 "message": "只支持大脑和执行器模型检查"})
+            from tempfile import TemporaryDirectory
+            from . import challenge_models
+            try:
+                selected = challenge_models.choose(conn_id, body.model_choice, settings)
+            except (ValueError, TypeError, KeyError) as exc:
+                raise HTTPException(422, detail={"code": "INVALID_MODEL_CONFIG",
+                                                 "message": str(exc)}) from exc
+            probe_settings = json.loads(json.dumps(settings))
+            probe_settings["app"]["mode"] = "connected"
+            if probe_settings[conn_id].get("runtime") != selected["runtime"]:
+                probe_settings[conn_id]["executable"] = ""
+            probe_settings[conn_id].update(selected)
+            runtime = (controller._make_brain(probe_settings) if conn_id == "brain"
+                       else controller._make_prime(probe_settings))
+            health = await runtime.inspect()
+            if not health.installed:
+                return {"status": "unavailable", "detail": health.detail,
+                        "model": selected["model_id"]}
+            try:
+                with TemporaryDirectory(prefix="model-check-", dir=config.DATA_DIR) as cwd:
+                    if conn_id == "brain":
+                        session = await runtime.open({"working_directory": cwd})
+                        await runtime.close(session)
+                    else:
+                        session_id = await runtime.start({"working_directory": cwd})
+                        await runtime.close(session_id)
+            except Exception as exc:
+                return {"status": "unavailable", "model": selected["model_id"],
+                        "detail": "模型会话验证失败：" + observation.strip_secrets(
+                            f"{type(exc).__name__}: {str(exc)[:180]}")}
+            return {"status": "ok", "model": selected["model_id"],
+                    "detail": "原生会话接受所选模型；未发起模型 turn"}
         if conn_id != "brain" and body.kind == "model_roundtrip":
             raise HTTPException(501, detail={
                 "code": "NOT_IMPLEMENTED",
@@ -497,10 +554,27 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
     async def import_challenge(body: ChallengeImport) -> dict[str, Any]:
         import hashlib
         import uuid
+        from . import challenge_models
+        try:
+            supplied = body.models or {}
+            if not isinstance(supplied, dict):
+                raise ValueError("模型配置必须为对象")
+            defaults = config.load_settings()
+            models = {role: challenge_models.choose(role, supplied.get(role), defaults)
+                      for role in ("brain", "executor")}
+        except (ValueError, TypeError, KeyError) as exc:
+            raise HTTPException(422, detail={"code": "INVALID_MODEL_CONFIG",
+                                             "message": str(exc)}) from exc
+        def save_models(cid: str) -> None:
+            db.execute("UPDATE challenges SET brain_config_json=?,executor_config_json=?"
+                       " WHERE id=?", (json.dumps(models["brain"]),
+                                        json.dumps(models["executor"]), cid))
         if body.mode == "demo":
             cid = "DEMO_CHALLENGE"
             existing = db.query_one("SELECT id FROM challenges WHERE id=?", (cid,))
             if existing:
+                if body.models is not None:
+                    save_models(cid)
                 return {"challenge": _challenge_dict(cid)}
             content = ("# 演示题目：远程环境与结果包自检\n\n"
                        "这是虚构的演示题目，用于验证 导入→研究→经验→重启可见 的"
@@ -512,6 +586,7 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
                 " VALUES(?,?,?,?,?,?,'unknown',?,1)",
                 (cid, "DEMO_000", "demo://local", content.splitlines()[0].lstrip("# "),
                  content, hashlib.sha256(content.encode()).hexdigest(), db.utcnow()))
+            save_models(cid)
             return {"challenge": _challenge_dict(cid)}
         if body.mode == "manual":
             if not body.title or not body.content:
@@ -526,6 +601,7 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
                 (cid, body.platform_challenge_id, "manual://local", body.title,
                  body.content,
                  hashlib.sha256(body.content.encode()).hexdigest(), db.utcnow()))
+            save_models(cid)
             return {"challenge": _challenge_dict(cid)}
         if body.mode == "url":
             from . import mailbox_platform
@@ -538,6 +614,8 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
                 "SELECT id FROM challenges WHERE platform_challenge_id=?"
                 " AND is_demo=0", (slug,))
             if existing:
+                if body.models is not None:
+                    save_models(existing["id"])
                 return {"challenge": _challenge_dict(existing["id"])}
             settings = config.load_settings()
             pg = settings.get("playground") or {}
@@ -578,6 +656,7 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
                  json.dumps(resources, ensure_ascii=False)
                  if isinstance(resources, list) else None,
                  json.dumps(platform_snapshot, ensure_ascii=False)))
+            save_models(cid)
             if isinstance(resources, list):
                 from . import datasets
                 datasets.register_resources(cid, resources)
@@ -591,6 +670,10 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
             raise HTTPException(404, detail={"code": "NOT_FOUND", "message": "题目不存在"})
         result = dict(row)
         result["platform_snapshot"] = json.loads(result.pop("platform_snapshot_json") or "null")
+        from . import challenge_models
+        result["model_config"] = challenge_models.from_challenge(row, config.load_settings())
+        result.pop("brain_config_json", None)
+        result.pop("executor_config_json", None)
         return result
 
     @app.get("/api/v1/challenges")
@@ -602,6 +685,21 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
 
     @app.get("/api/v1/challenges/{cid}")
     async def get_challenge(cid: str) -> dict[str, Any]:
+        return _challenge_dict(cid)
+
+    @app.put("/api/v1/challenges/{cid}/models")
+    async def put_challenge_models(cid: str, body: ChallengeModelsPut) -> dict[str, Any]:
+        _require_challenge(cid)
+        from . import challenge_models
+        try:
+            settings = config.load_settings()
+            choices = {role: challenge_models.choose(role, body.models.get(role), settings)
+                       for role in ("brain", "executor")}
+        except (ValueError, TypeError, KeyError) as exc:
+            raise HTTPException(422, detail={"code": "INVALID_MODEL_CONFIG",
+                                             "message": str(exc)}) from exc
+        db.execute("UPDATE challenges SET brain_config_json=?,executor_config_json=? WHERE id=?",
+                   (json.dumps(choices["brain"]), json.dumps(choices["executor"]), cid))
         return _challenge_dict(cid)
 
     # ---------------- 技能 ----------------
@@ -676,6 +774,10 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
     @app.get("/api/v1/runs")
     async def list_runs() -> dict[str, Any]:
         return {"items": controller.list_runs()}
+
+    @app.get("/api/v1/runs/overview")
+    async def active_run_overview() -> dict[str, Any]:
+        return {"items": controller.active_overview()}
 
     @app.get("/api/v1/runs/{run_id}")
     async def get_run(run_id: str) -> dict[str, Any]:

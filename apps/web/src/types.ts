@@ -112,12 +112,34 @@ export interface ChallengeSummary {
 
 export interface ChallengeDetail extends ChallengeSummary {
   content?: string
+  model_config?: { brain: ModelChoice; executor: ModelChoice }
   platform_snapshot?: {
     status?: string | null
     roundEndAt?: string | null
     scoring?: { grader_name?: string | null; strategy?: string | null } | null
     fetched_at?: string
   } | null
+}
+
+export interface ModelChoice {
+  runtime: string
+  model_id: string
+  reasoning_effort: ReasoningEffort
+}
+
+export interface RunOverview {
+  id: string
+  challenge_id: string
+  challenge_title: string
+  phase: RunPhase
+  gate: string | null
+  current_trial_id: string | null
+  latest_score: number | null
+  score_confidence: 'provisional' | 'confirmed' | null
+  job_count: number
+  sandbox_count: number
+  needs_attention: boolean
+  attention_reason: string | null
 }
 
 export interface SkillInfo {

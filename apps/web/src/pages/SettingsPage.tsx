@@ -48,16 +48,6 @@ function normalizeEffort(runtime: string, value: ReasoningEffort): ReasoningEffo
   return effortsFor(runtime).some((e) => e.value === value) ? value : DEFAULT_EFFORT
 }
 
-const BRAIN_MODEL_DEFAULTS: Record<string, string> = {
-  kimi: 'kimi-code/k3',
-  codex: 'gpt-6-astra',
-}
-
-const EXECUTOR_MODEL_DEFAULTS: Record<string, string> = {
-  kimi: 'kimi-code/k3-256k',
-  codex: 'gpt-5.6-terra',
-}
-
 const EXECUTOR_RUNTIME_LABELS: Record<string, string> = {
   kimi: 'Kimi Code',
   prime: 'Prime Agent',
@@ -195,6 +185,18 @@ export default function SettingsPage() {
 
       <div className="settings-stack">
         <article className="card">
+          <div className="card-head"><h2>并行运行</h2></div>
+          <div className="card-body">
+            <label htmlFor="max-active-runs">同时活跃的 Run 上限</label>
+            <input id="max-active-runs" type="number" min={1} max={20}
+              value={settings.run_defaults.max_active_runs}
+              onChange={(event) => update((s) => ({ ...s, run_defaults: {
+                ...s.run_defaults, max_active_runs: Number(event.target.value),
+              } }))} />
+            <p className="inline-note">新建、暂停、等待恢复的 Run 均占一个名额；每个 Run 单独授权。</p>
+          </div>
+        </article>
+        <article className="card">
           <div className="card-head">
             <div className="settings-heading">
               <span className="setting-num">01</span>
@@ -219,7 +221,7 @@ export default function SettingsPage() {
                       brain: {
                         ...s.brain,
                         runtime: e.target.value,
-                        model_id: BRAIN_MODEL_DEFAULTS[e.target.value] ?? s.brain.model_id,
+                        model_id: '',
                         reasoning_effort: normalizeEffort(e.target.value, s.brain.reasoning_effort),
                       },
                     }))
@@ -235,7 +237,7 @@ export default function SettingsPage() {
                   id="brain-model"
                   value={settings.brain.model_id}
                   onChange={(e) => update((s) => ({ ...s, brain: { ...s.brain, model_id: e.target.value } }))}
-                  placeholder={BRAIN_MODEL_DEFAULTS[settings.brain.runtime] ?? '留空使用默认'}
+                  placeholder="手动填写该原生运行时的模型 ID"
                 />
               </div>
               <div className="field">
@@ -311,13 +313,13 @@ export default function SettingsPage() {
                       executor: {
                         ...s.executor,
                         runtime: e.target.value,
-                        model_id: EXECUTOR_MODEL_DEFAULTS[e.target.value] ?? s.executor.model_id,
+                        model_id: '',
                         reasoning_effort: normalizeEffort(e.target.value, s.executor.reasoning_effort),
                       },
                     }))
                   }
                 >
-                  <option value="kimi">Kimi Code（默认）</option>
+                  <option value="kimi">Kimi Code</option>
                   <option value="prime">Prime Agent</option>
                   <option value="codex">Codex</option>
                 </select>
@@ -330,7 +332,7 @@ export default function SettingsPage() {
                   onChange={(e) =>
                     update((s) => ({ ...s, executor: { ...s.executor, model_id: e.target.value } }))
                   }
-                  placeholder={EXECUTOR_MODEL_DEFAULTS[settings.executor.runtime] ?? '留空使用默认'}
+                  placeholder="手动填写该原生运行时的模型 ID"
                 />
               </div>
               <div className="field">

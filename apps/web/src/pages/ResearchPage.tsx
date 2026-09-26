@@ -21,10 +21,13 @@ import type {
   ChallengeDetail,
   ChallengeSummary,
   Checkpoint,
+  ModelChoice,
+  RunOverview,
   RunBudget,
   RunDetail,
   RunEvent,
   RunSummary,
+  Settings,
   ReviewRequestResult,
   SkillCatalogResponse,
   Submission,
@@ -59,6 +62,9 @@ export default function ResearchPage() {
   const [challengeId, setChallengeId] = useState<string | null>(null)
   const [challenge, setChallenge] = useState<ChallengeDetail | null>(null)
   const [runs, setRuns] = useState<RunSummary[]>([])
+  const [overview, setOverview] = useState<RunOverview[]>([])
+  const [preferredRunId, setPreferredRunId] = useState<string | null>(null)
+  const [editModelsOpen, setEditModelsOpen] = useState(false)
 
   const [events, setEvents] = useState<RunEvent[]>([])
   const [tab, setTab] = useState<Tab>('events')
@@ -95,10 +101,17 @@ export default function ResearchPage() {
     try {
       const data = await api.get<{ items: RunSummary[] }>('/api/v1/runs')
       setRuns(data.items)
+      const active = await api.get<{ items: RunOverview[] }>('/api/v1/runs/overview')
+      setOverview(active.items)
     } catch (err) {
       toast('加载 Run 列表失败：' + (err instanceof Error ? err.message : String(err)))
     }
   }, [toast])
+
+  useEffect(() => {
+    const timer = window.setInterval(() => void refreshRuns(), 10000)
+    return () => window.clearInterval(timer)
+  }, [refreshRuns])
 
   useEffect(() => {
     void refreshChallenges()
@@ -129,8 +142,10 @@ export default function ResearchPage() {
     const forChallenge = runs
       .filter((r) => r.challenge_id === challengeId)
       .sort((a, b) => (b.created_at ?? '').localeCompare(a.created_at ?? ''))
-    return forChallenge[0] ?? null
-  }, [runs, challengeId])
+    return forChallenge.find((run) => run.id === preferredRunId)
+      ?? forChallenge.find((run) => ACTIVE_PHASES.includes(run.phase))
+      ?? forChallenge[0] ?? null
+  }, [runs, challengeId, preferredRunId])
 
   // A delayed response from a previous selection must never animate this Run.
   const selectedRunId = useRef<string | null>(null)
@@ -378,6 +393,11 @@ export default function ResearchPage() {
         </div>
       </div>
 
+      <RunOverviewPanel items={overview} onSelect={(item) => {
+        setChallengeId(item.challenge_id)
+        setPreferredRunId(item.id)
+      }} />
+
       {challenge ? (
         <div className="challenge-bar">
           <div>
@@ -385,6 +405,7 @@ export default function ResearchPage() {
               {challenge.is_demo ? 'DEMO_CHALLENGE · 非真实竞赛题' : (challenge.platform_challenge_id ?? '本地题目')}
             </div>
             <div className="challenge-title">{challenge.title}</div>
+            <p className="small-text">大脑 {challenge.model_config?.brain.runtime ?? '未配置'} / {challenge.model_config?.brain.model_id ?? '未知'} · 执行器 {challenge.model_config?.executor.runtime ?? '未配置'} / {challenge.model_config?.executor.model_id ?? '未知'}</p>
             {challenge.platform_snapshot && (
               <p className="small-text">
                 平台状态：{challenge.platform_snapshot.status ?? '未知'}
@@ -396,6 +417,7 @@ export default function ResearchPage() {
             )}
           </div>
           <div className="actions">
+            <button type="button" className="btn small" onClick={() => setEditModelsOpen(true)}>编辑本题模型</button>
             <Badge tone={challenge.contract_status === 'verified' ? 'green' : 'neutral'}>
               {CONTRACT_LABELS[challenge.contract_status] ?? challenge.contract_status ?? '契约未验证'}
             </Badge>
@@ -787,6 +809,10 @@ export default function ResearchPage() {
           void refreshChallenges().then(() => setChallengeId(id))
         }}
       />
+
+      <ChallengeModelDialog open={editModelsOpen} challenge={challenge}
+        onClose={() => setEditModelsOpen(false)}
+        onSaved={(updated) => { setChallenge(updated); setEditModelsOpen(false) }} />
 
       <StartDialog
         open={startOpen}
@@ -1230,6 +1256,114 @@ function EventItem({ event }: { event: RunEvent }) {
   )
 }
 
+type SelectedModels = { brain: ModelChoice; executor: ModelChoice }
+
+export function RunOverviewPanel({ items, onSelect }: {
+  items: RunOverview[]
+  onSelect: (item: RunOverview) => void
+}) {
+  return <article className="card" aria-label="本轮总览">
+    <div className="card-head"><h2>本轮总览</h2><span className="small-text">活跃 Run {items.length}</span></div>
+    <div className="card-body">
+      {items.length === 0 ? <p className="sub">当前没有活跃 Run。</p> : <ul className="plain-list">
+        {items.map((item) => <li key={item.id} className="row-item">
+          <button type="button" className="btn" onClick={() => onSelect(item)}>
+            {item.challenge_title} · {item.id.slice(0, 8)}
+          </button>
+          <span>{PHASE_LABELS[item.phase] ?? item.phase} · 门禁 {item.gate ?? '开放'}</span>
+          <span>Trial {item.current_trial_id ?? '无'} · Job {item.job_count} · 沙箱 {item.sandbox_count}</span>
+          <span>最近得分 {item.latest_score ?? '未知'}
+            {item.latest_score !== null && `（${item.score_confidence === 'confirmed' ? '已确认' : '暂定'}）`}</span>
+          {item.needs_attention && <Badge tone="amber">需关注：{item.attention_reason ?? '门禁待处理'}</Badge>}
+        </li>)}
+      </ul>}
+    </div>
+  </article>
+}
+
+function ModelChoicesEditor({ value, onChange, prefix }: {
+  value: SelectedModels
+  onChange: (next: SelectedModels) => void
+  prefix: string
+}) {
+  const { toast } = useApp()
+  const [checking, setChecking] = useState<string | null>(null)
+  async function check(role: 'brain' | 'executor') {
+    setChecking(role)
+    try {
+      const result = await api.post<{ status: string; detail: string }>(
+        `/api/v1/connections/${role}/test`, { kind: 'model_selection', model_choice: value[role] })
+      toast(result.status === 'ok' ? `模型会话可用：${result.detail}` : `模型尚不可用：${result.detail}`)
+    } catch (err) {
+      toast('模型检查失败：' + (err instanceof Error ? err.message : String(err)))
+    } finally { setChecking(null) }
+  }
+  return <div className="fields">
+    {(['brain', 'executor'] as const).map((role) => (
+      <div key={role} className="field">
+        <strong>{role === 'brain' ? '大脑' : '执行器'}模型</strong>
+        <label htmlFor={`${prefix}-${role}-runtime`}>原生运行时</label>
+        <select id={`${prefix}-${role}-runtime`} value={value[role].runtime}
+          onChange={(event) => onChange({ ...value, [role]: {
+            ...value[role], runtime: event.target.value, model_id: '',
+          } })}>
+          <option value="codex">Codex</option><option value="kimi">Kimi Code</option>
+          {role === 'executor' && <option value="prime">Prime Agent</option>}
+        </select>
+        <label htmlFor={`${prefix}-${role}-model`}>模型 ID</label>
+        <input id={`${prefix}-${role}-model`} value={value[role].model_id}
+          onChange={(event) => onChange({ ...value, [role]: {
+            ...value[role], model_id: event.target.value,
+          } })} placeholder="手动填写；连接检查可验证可用性" />
+        <label htmlFor={`${prefix}-${role}-effort`}>思考强度</label>
+        <select id={`${prefix}-${role}-effort`} value={value[role].reasoning_effort}
+          onChange={(event) => onChange({ ...value, [role]: {
+            ...value[role], reasoning_effort: event.target.value as ModelChoice['reasoning_effort'],
+          } })}>
+          {['low', 'medium', 'high', 'xhigh', 'max'].map((effort) =>
+            <option key={effort} value={effort}>{effort}</option>)}
+        </select>
+        <button type="button" className="btn small" disabled={checking !== null || !value[role].model_id.trim()}
+          onClick={() => void check(role)}>检查所选模型会话</button>
+      </div>
+    ))}
+  </div>
+}
+
+function ChallengeModelDialog({ open, challenge, onClose, onSaved }: {
+  open: boolean
+  challenge: ChallengeDetail | null
+  onClose: () => void
+  onSaved: (updated: ChallengeDetail) => void
+}) {
+  const { toast } = useApp()
+  const [models, setModels] = useState<SelectedModels | null>(null)
+  const [busy, setBusy] = useState(false)
+  useEffect(() => {
+    if (open) setModels(challenge?.model_config ?? null)
+  }, [open, challenge?.id])
+  async function save() {
+    if (!challenge || !models) return
+    setBusy(true)
+    try {
+      const updated = await api.put<ChallengeDetail>(`/api/v1/challenges/${challenge.id}/models`,
+        { model_config: models })
+      toast('本题模型已保存；只影响之后创建的 Run。')
+      onSaved(updated)
+    } catch (err) {
+      toast('保存本题模型失败：' + (err instanceof Error ? err.message : String(err)))
+    } finally { setBusy(false) }
+  }
+  return <Modal open={open} onClose={onClose} title="编辑本题模型">
+    <p className="sub">已有 Run 使用创建时冻结的模型配置。</p>
+    {models && <ModelChoicesEditor value={models} onChange={setModels} prefix="challenge-model" />}
+    <div className="modal-actions">
+      <button type="button" className="btn" onClick={onClose}>取消</button>
+      <button type="button" className="btn primary" disabled={busy || !models} onClick={() => void save()}>保存</button>
+    </div>
+  </Modal>
+}
+
 function ImportDialog({
   open,
   onClose,
@@ -1247,11 +1381,27 @@ function ImportDialog({
   const [content, setContent] = useState('')
   const [url, setUrl] = useState('')
   const [busy, setBusy] = useState(false)
+  const [models, setModels] = useState<SelectedModels | null>(null)
+
+  useEffect(() => {
+    if (!open) return
+    api.get<Settings>('/api/v1/settings').then((settings) => setModels({
+      brain: { runtime: settings.brain.runtime, model_id: settings.brain.model_id,
+        reasoning_effort: settings.brain.reasoning_effort },
+      executor: { runtime: settings.executor.runtime, model_id: settings.executor.model_id,
+        reasoning_effort: settings.executor.reasoning_effort },
+    })).catch(() => setModels(null))
+  }, [open])
 
   async function submit() {
     setBusy(true)
     try {
-      const body: Record<string, string> = { mode }
+      const body: Record<string, unknown> = { mode }
+      if (!models || !models.brain.model_id.trim() || !models.executor.model_id.trim()) {
+        toast('请先填写大脑和执行器的模型 ID。')
+        return
+      }
+      body.model_config = models
       if (mode === 'manual') {
         if (!title.trim() || !content.trim()) {
           toast('手动导入需要标题和题面。')
@@ -1329,6 +1479,8 @@ function ImportDialog({
       {demoMode && (
         <p className="inline-note">当前为演示模式，建议优先使用演示题目。</p>
       )}
+      {models ? <ModelChoicesEditor value={models} onChange={setModels} prefix="import-model" />
+        : <LoadingState>正在加载模型默认配置…</LoadingState>}
       <div className="modal-actions">
         <button type="button" className="btn" onClick={onClose}>
           取消
