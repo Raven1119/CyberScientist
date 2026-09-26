@@ -3,7 +3,7 @@ import { api } from '../api'
 import { useApp } from '../app-context'
 import { Badge, Modal } from '../components'
 import { SCORE_STATUS_LABELS, SUBMISSION_STATUS_LABELS } from '../labels'
-import type { Mailbox, MailboxList, Submission } from '../types'
+import type { Mailbox, MailboxList, MailboxUsage, Submission } from '../types'
 
 interface RunSummary {
   id: string
@@ -30,7 +30,6 @@ interface PollingTask {
 const ROLE_LABEL: Record<string, string> = { harvest: '收割', experiment: '实验' }
 const STATUS_LABEL: Record<string, string> = {
   active: '可用',
-  exhausted: '已用尽',
   disabled: '已停用',
 }
 
@@ -42,6 +41,7 @@ function scoreText(s: Submission): string {
 export default function MailboxPage() {
   const { toast, demoMode } = useApp()
   const [mailboxes, setMailboxes] = useState<MailboxList | null>(null)
+  const [usage, setUsage] = useState<MailboxUsage[]>([])
   const [submissions, setSubmissions] = useState<Submission[]>([])
   const [candidates, setCandidates] = useState<Submission[]>([])
   const [currentRun, setCurrentRun] = useState<RunSummary | null>(null)
@@ -69,6 +69,8 @@ export default function MailboxPage() {
     try {
       const mb = await api.get<MailboxList>('/api/v1/mailboxes')
       setMailboxes(mb)
+      const quota = await api.get<{ items: MailboxUsage[] }>('/api/v1/mailboxes/usage')
+      setUsage(quota.items)
       const runs = await api.get<{ items: RunSummary[] }>('/api/v1/runs')
       const run = runs.items[0] ?? null
       setCurrentRun(run)
@@ -240,8 +242,7 @@ export default function MailboxPage() {
           <div className="eyebrow">MAILBOX / SUBMISSION</div>
           <h1>邮箱与提交</h1>
           <p className="sub">
-            实验邮箱是提交主体（每号限 {mailboxes?.items[0]?.submission_limit ?? 10} 次）；
-            收割邮箱只提交实验邮箱验证过的最高分包。
+            实验与收割邮箱均按题目分别计数（每邮箱每题限 {mailboxes?.items[0]?.submission_limit ?? 10} 次）。
             {mailboxes?.platform_is_demo && ' 当前为演示平台，账号与提交均为本地合成。'}
           </p>
         </div>
@@ -306,7 +307,6 @@ export default function MailboxPage() {
               <>
                 <div className="meta-row"><span>邮箱</span><span>{harvest.email}</span></div>
                 <div className="meta-row"><span>凭据</span><span>{harvest.secret_configured ? '已配置' : '缺失'}</span></div>
-                <div className="meta-row"><span>已用提交</span><span>{harvest.submissions_used} / {harvest.submission_limit}</span></div>
                 <div className="actions" style={{ marginTop: 10 }}>
                   <button type="button" className="btn" disabled={busy}
                     onClick={() => void disableMailbox(harvest.id)}>
@@ -361,7 +361,7 @@ export default function MailboxPage() {
                       {m.is_demo ? '（演示）' : ''}
                     </span>
                     <span>
-                      {m.submissions_used}/{m.submission_limit} · {STATUS_LABEL[m.status] ?? m.status}
+                      {STATUS_LABEL[m.status] ?? m.status}
                       {m.status !== 'disabled' && (
                         <button type="button" className="btn" style={{ marginLeft: 8 }}
                           disabled={busy} onClick={() => void disableMailbox(m.id)}>
@@ -372,6 +372,23 @@ export default function MailboxPage() {
                   </li>
                 ))}
               </ul>
+            )}
+          </div>
+        </article>
+
+        <article className="card">
+          <div className="card-head"><h2>题目 × 邮箱用量</h2></div>
+          <div className="card-body">
+            {usage.length === 0 ? <p className="small-text">尚无额度预留。</p> : (
+              <table aria-label="题目邮箱用量"><thead><tr>
+                <th>题目</th><th>邮箱</th><th>角色</th><th>已用 / 上限</th>
+              </tr></thead><tbody>{usage.map((item) => (
+                <tr key={`${item.platform_challenge_id}:${item.mailbox_id}`}>
+                  <td>{item.challenge_title} ({item.platform_challenge_id})</td>
+                  <td>{item.email}</td><td>{ROLE_LABEL[item.role]}</td>
+                  <td>{item.used} / {item.limit}</td>
+                </tr>
+              ))}</tbody></table>
             )}
           </div>
         </article>

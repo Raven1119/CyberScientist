@@ -340,9 +340,8 @@ export interface Mailbox {
   role: 'harvest' | 'experiment'
   email: string
   platform: string
-  status: 'active' | 'exhausted' | 'disabled'
+  status: 'active' | 'disabled'
   submission_limit: number
-  submissions_used: number
   is_demo: number
   secret_configured: boolean
   created_at: string
@@ -352,6 +351,16 @@ export interface MailboxList {
   items: Mailbox[]
   platform: string
   platform_is_demo: boolean
+}
+
+export interface MailboxUsage {
+  mailbox_id: string
+  email: string
+  role: 'harvest' | 'experiment'
+  platform_challenge_id: string
+  challenge_title: string
+  used: number
+  limit: number
 }
 
 export interface Submission {

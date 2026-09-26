@@ -925,6 +925,10 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
     async def list_mailboxes() -> dict[str, Any]:
         return mailboxes.list_mailboxes()
 
+    @app.get("/api/v1/mailboxes/usage")
+    async def mailbox_usage() -> dict[str, Any]:
+        return mailboxes.mailbox_usage()
+
     @app.post("/api/v1/mailboxes/harvest")
     async def add_harvest(request: Request) -> dict[str, Any]:
         body = await request.json()

@@ -26,7 +26,7 @@ def test_unknown_consumes_budget_and_same_operation_checks_payload(monkeypatch):
     monkeypatch.setattr(mailboxes, '_platform', lambda: platform)
     sub = mailboxes.submit_experiment(rid, 'trial_mb1', path, 'lost')
     assert sub['status'] == 'unknown'
-    assert db.query_one('SELECT submissions_used FROM mailboxes')['submissions_used'] == 1
+    assert mailboxes.mailbox_usage()['items'][0]['used'] == 1
     with pytest.raises(mailboxes.MailboxError, match='授权'):
         mailboxes.submit_experiment(rid, 'trial_mb1', path, 'another')
     _make_package(rid, content='changed')

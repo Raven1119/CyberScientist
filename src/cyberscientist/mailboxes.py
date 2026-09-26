@@ -1,7 +1,7 @@
-"""邮箱管理双轨服务：实验邮箱（提交主体，限量）+ 收割邮箱（唯一，手动确认）。
+"""邮箱管理双轨服务：实验邮箱与收割邮箱均按题目预留额度。
 
 事实纪律：分数不知道就是 NULL/unknown；外部调用（适配器）绝不在事务内；
-operation_id 幂等去重；收割提交只接受「实验邮箱已提交且得分最高」的现成包。
+operation_id 幂等去重；额度只从未释放的 submissions 预留计算。
 """
 from __future__ import annotations
 
@@ -40,6 +40,8 @@ def _store_secret(secret_id: str, value: str) -> str:
 def _row(row: sqlite3.Row) -> dict[str, Any]:
     d = dict(row)
     d.pop("secret_ref", None)  # 凭据引用不出服务层
+    d.pop("submissions_used", None)  # 旧全局计数器仅为 schema 兼容保留
+    d["submission_limit"] = config.load_settings()["mailbox"]["submission_limit"]
     d["secret_configured"] = bool(row["secret_ref"]) and \
         config.secret_configured(row["secret_ref"])
     return d
@@ -52,6 +54,37 @@ def list_mailboxes() -> dict[str, Any]:
     return {"items": [_row(r) for r in rows],
             "platform": config.load_settings()["mailbox"]["platform"],
             "platform_is_demo": _platform().is_demo}
+
+
+def mailbox_usage() -> dict[str, Any]:
+    """All registered challenge × mailbox pairs; usage derives from submissions."""
+    limit = config.load_settings()["mailbox"]["submission_limit"]
+    rows = db.query("SELECT m.id AS mailbox_id,m.email,m.role,"
+                    " COALESCE(NULLIF(c.platform_challenge_id,''),'local:'||c.id) AS platform_challenge_id,"
+                    " MIN(c.title) AS challenge_title,COUNT(s.id) AS used"
+                    " FROM challenges c CROSS JOIN mailboxes m"
+                    " LEFT JOIN runs r ON r.challenge_id=c.id"
+                    " LEFT JOIN submissions s ON s.run_id=r.id AND s.mailbox_id=m.id"
+                    " AND s.reservation_released=0"
+                    " GROUP BY m.id,COALESCE(NULLIF(c.platform_challenge_id,''),'local:'||c.id)"
+                    " ORDER BY challenge_title,m.role,m.created_at")
+    return {"items": [dict(row) | {"limit": limit} for row in rows], "limit": limit}
+
+
+def _challenge_key(conn: sqlite3.Connection, run_id: str) -> str:
+    row = conn.execute("SELECT c.id,c.platform_challenge_id FROM runs r"
+                       " JOIN challenges c ON c.id=r.challenge_id WHERE r.id=?", (run_id,)).fetchone()
+    if not row:
+        raise MailboxError("NOT_FOUND", f"Run 不存在: {run_id}")
+    return row["platform_challenge_id"] or "local:" + row["id"]
+
+
+def _used_for(conn: sqlite3.Connection, mailbox_id: str, challenge_key: str) -> int:
+    return conn.execute("SELECT COUNT(*) AS n FROM submissions s"
+        " JOIN runs r ON r.id=s.run_id JOIN challenges c ON c.id=r.challenge_id"
+        " WHERE s.mailbox_id=? AND s.reservation_released=0"
+        " AND COALESCE(NULLIF(c.platform_challenge_id,''),'local:'||c.id)=?",
+        (mailbox_id, challenge_key)).fetchone()["n"]
 
 
 def list_submissions(run_id: str) -> dict[str, Any]:
@@ -402,9 +435,6 @@ def _perform_submission(sid: str, platform: MailboxPlatform, challenge_id: str) 
                       db.utcnow() if status == "submitted" else None,sid))
         if status == "failed" and not current["reservation_released"]:
             conn.execute("UPDATE submissions SET reservation_released=1 WHERE id=?",(sid,))
-            conn.execute("UPDATE mailboxes SET submissions_used=MAX(0,submissions_used-1),"
-                         " status=CASE WHEN status='exhausted' THEN 'active' ELSE status END WHERE id=?",
-                         (row["mailbox_id"],))
         db.append_event_tx(conn,row["run_id"],"controller",f"submission.{status}",
                            {"submission_id":sid,"error":error,"is_demo":platform.is_demo},
                            trial_id=row["trial_id"])
@@ -461,16 +491,18 @@ def submit_experiment(run_id: str, trial_id: str | None,
         dup = _duplicate(conn,operation_id,fingerprint)
         if dup: return dup
         _check_budget(conn,run_id)
-        mb = conn.execute("SELECT * FROM mailboxes WHERE role='experiment' AND status='active'"
-                          " AND submissions_used<submission_limit AND platform=? AND is_demo=?"
-                          " ORDER BY submissions_used,created_at LIMIT 1",
-                          (platform.name,int(platform.is_demo))).fetchone()
+        challenge_key = _challenge_key(conn, run_id)
+        limit = config.load_settings()["mailbox"]["submission_limit"]
+        accounts = conn.execute("SELECT * FROM mailboxes WHERE role='experiment' AND status='active'"
+                                " AND platform=? AND is_demo=? ORDER BY created_at,id",
+                                (platform.name,int(platform.is_demo))).fetchall()
+        available = [(mb, _used_for(conn, mb["id"], challenge_key)) for mb in accounts]
+        available = [(mb, used) for mb, used in available if used < limit]
+        mb = sorted(available, key=lambda item: (item[1] == 0, -item[1], item[0]["created_at"], item[0]["id"]))[0][0] if available else None
         if not mb:
-            raise MailboxError("NO_MAILBOX",f"无可用实验邮箱（平台 {platform.name}）")
+            raise MailboxError("NO_MAILBOX",f"题目 {challenge_key} 的实验邮箱额度已用尽或无可用邮箱（平台 {platform.name}）")
         sid = _rid("sub")
         frozen = _freeze(sid,package,content)
-        conn.execute("UPDATE mailboxes SET submissions_used=submissions_used+1,"
-                     " status=CASE WHEN submissions_used+1>=submission_limit THEN 'exhausted' ELSE status END WHERE id=?",(mb["id"],))
         conn.execute("INSERT INTO submissions(id,run_id,trial_id,mailbox_id,package_path,package_sha256,"
                      " status,operation_id,created_at,request_hash,stage,source_package_sha256,admission_json)"
                      " VALUES(?,?,?,?,?,?,'unknown',?,?,?,'reserved',?,?)",
@@ -725,10 +757,13 @@ def harvest_submit(submission_id: str, operation_id: str,
         dup = _duplicate(conn,operation_id,fingerprint)
         if dup: return dup
         harvest = conn.execute("SELECT * FROM mailboxes WHERE id=? AND status='active'"
-                               " AND submissions_used<submission_limit AND platform=? AND is_demo=?",
+                               " AND platform=? AND is_demo=?",
                                (harvest["id"],platform.name,int(platform.is_demo))).fetchone()
         if not harvest:
-            raise MailboxError("NO_MAILBOX", "收割邮箱无余量或平台不匹配")
+            raise MailboxError("NO_MAILBOX", "收割邮箱已停用或平台不匹配")
+        challenge_key = _challenge_key(conn, src["run_id"])
+        if _used_for(conn, harvest["id"], challenge_key) >= config.load_settings()["mailbox"]["submission_limit"]:
+            raise MailboxError("NO_MAILBOX", f"题目 {challenge_key} 的收割邮箱额度已用尽")
         content = package.read_bytes()
         if hashlib.sha256(content).hexdigest() != src["package_sha256"]:
             raise MailboxError("CONFLICT", "来源包哈希不匹配")
@@ -739,6 +774,4 @@ def harvest_submit(submission_id: str, operation_id: str,
                      " VALUES(?,?,?,?,?,?,'unknown',1,?,?,?,?,'reserved')",
                      (sid,src["run_id"],src["trial_id"],harvest["id"],frozen,src["package_sha256"],
                       submission_id,operation_id,db.utcnow(),fingerprint))
-        conn.execute("UPDATE mailboxes SET submissions_used=submissions_used+1,"
-                     " status=CASE WHEN submissions_used+1>=submission_limit THEN 'exhausted' ELSE status END WHERE id=?",(harvest["id"],))
     return _perform_submission(sid,platform,challenge_id)

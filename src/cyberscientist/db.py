@@ -220,7 +220,7 @@ CREATE TABLE IF NOT EXISTS mailboxes (
     email TEXT NOT NULL,
     platform TEXT NOT NULL,
     secret_ref TEXT,
-    status TEXT NOT NULL DEFAULT 'active',  -- active | exhausted | disabled
+    status TEXT NOT NULL DEFAULT 'active',  -- active | disabled
     submission_limit INTEGER NOT NULL DEFAULT 10,
     submissions_used INTEGER NOT NULL DEFAULT 0,
     is_demo INTEGER NOT NULL DEFAULT 0,
@@ -412,6 +412,10 @@ def init_db() -> None:
         _ensure_columns(conn, "authorizations", AUTHORIZATION_V2_COLUMNS)
         _ensure_columns(conn, "challenges", CHALLENGE_V2_COLUMNS)
         _ensure_columns(conn, "compute_jobs", COMPUTE_V2_COLUMNS)
+        # Exhaustion was previously global to an email. Per-challenge quota is
+        # derived from submissions, so those historical accounts become usable.
+        conn.execute("UPDATE mailboxes SET status='active' WHERE status='exhausted'")
+        conn.commit()
         _migrate_experience_revisions(conn)
         conn.commit()
 

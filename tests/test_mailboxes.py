@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
@@ -37,6 +38,98 @@ def _set_scored(sub_id: str, score: float) -> None:
     """模拟平台已出分（真实拉回属平台适配器，测试直接落定）。"""
     db.execute("UPDATE submissions SET score=?, score_status='scored',"
                " scored_at=? WHERE id=?", (score, db.utcnow(), sub_id))
+
+
+def _extra_run(index: int, *, max_submissions: int = 20) -> str:
+    db.execute("UPDATE runs SET phase='finished' WHERE phase IN ('created','running','pausing','paused')")
+    cid = f'MB_CH_{index}'
+    db.execute("INSERT INTO challenges(id,platform_challenge_id,origin,title,content,"
+               "content_hash,contract_status,imported_at,is_demo)"
+               " VALUES(?,?,?,'Quota task','text','h','unknown',?,1)",
+               (cid, f'platform-{index}', f'demo://{index}', db.utcnow()))
+    controller = RunController()
+    rid = controller.create_run(cid, shadow_enabled=False)['id']
+    controller.authorize(rid, 'demo', True, 10, 30, max_submissions, None)
+    _make_package(rid)
+    return rid
+
+
+def test_quota_is_per_platform_challenge_for_both_mailbox_roles():
+    experiment = mailboxes.register_experiment(1)['items'][0]
+    harvest = mailboxes.add_harvest('harvest@example.com', 'fixture-secret')
+    source = None
+    for index in range(12):
+        rid = _extra_run(index)
+        source = mailboxes.submit_experiment(rid, 'trial_mb1', None, f'quota-exp-{index}')
+        assert source['mailbox_id'] == experiment['id']
+        _set_scored(source['id'], float(index))
+        result = mailboxes.harvest_submit(source['id'], f'quota-harvest-{index}', True)
+        assert result['mailbox_id'] == harvest['id']
+    rows = mailboxes.mailbox_usage()['items']
+    assert len(rows) == 24 and all(row['used'] == 1 for row in rows)
+    for index in range(1, 10):
+        mailboxes.harvest_submit(source['id'], f'quota-repeat-{index}', True)
+    with pytest.raises(mailboxes.MailboxError) as exc:
+        mailboxes.harvest_submit(source['id'], 'quota-eleventh', True)
+    assert exc.value.code == 'NO_MAILBOX' and 'platform-11' in str(exc.value)
+
+
+def test_experiment_sticks_to_used_mailbox_and_other_challenge_keeps_quota():
+    settings = config.load_settings()
+    settings['mailbox']['submission_limit'] = 2
+    config.save_settings(settings)
+    first, second = mailboxes.register_experiment(2)['items']
+    rid_a = _extra_run(100)
+    submissions = [mailboxes.submit_experiment(rid_a, 'trial_mb1', None, f'stick-{i}')
+                   for i in range(3)]
+    assert [item['mailbox_id'] for item in submissions] == [first['id'], first['id'], second['id']]
+    rid_b = _extra_run(101)
+    assert mailboxes.submit_experiment(rid_b, 'trial_mb1', None, 'other-task')['mailbox_id'] == first['id']
+
+
+def test_experiment_ten_on_a_does_not_consume_b():
+    mailbox = mailboxes.register_experiment(1)['items'][0]
+    rid_a = _extra_run(110)
+    for index in range(10):
+        assert mailboxes.submit_experiment(rid_a, 'trial_mb1', None,
+                                           f'ten-a-{index}')['mailbox_id'] == mailbox['id']
+    with pytest.raises(mailboxes.MailboxError) as exc:
+        mailboxes.submit_experiment(rid_a, 'trial_mb1', None, 'eleven-a')
+    assert exc.value.code == 'NO_MAILBOX' and 'platform-110' in str(exc.value)
+    rid_b = _extra_run(111)
+    assert mailboxes.submit_experiment(rid_b, 'trial_mb1', None, 'first-b')['mailbox_id'] == mailbox['id']
+
+
+def test_parallel_last_slot_reserves_once():
+    settings = config.load_settings()
+    settings['mailbox']['submission_limit'] = 1
+    config.save_settings(settings)
+    mailboxes.register_experiment(1)
+    rid = _extra_run(102)
+    def submit(index):
+        try:
+            return mailboxes.submit_experiment(rid, 'trial_mb1', None, f'parallel-{index}')['id']
+        except mailboxes.MailboxError as exc:
+            return exc.code
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(submit, (1, 2)))
+    assert len([value for value in results if value != 'NO_MAILBOX']) == 1
+    assert results.count('NO_MAILBOX') == 1
+    assert mailboxes.mailbox_usage()['items'][0]['used'] == 1
+
+
+def test_exhausted_legacy_mailbox_migrates_without_changing_submissions():
+    _seed_challenge()
+    rid = _make_run()
+    _make_package(rid)
+    mailbox = mailboxes.register_experiment(1)['items'][0]
+    submission = mailboxes.submit_experiment(rid, 'trial_mb1', None, 'legacy-quota')
+    db.execute("UPDATE mailboxes SET status='exhausted' WHERE id=?", (mailbox['id'],))
+    before = dict(db.query_one('SELECT * FROM submissions WHERE id=?', (submission['id'],)))
+    db.init_db()
+    db.init_db()
+    assert db.query_one('SELECT status FROM mailboxes WHERE id=?', (mailbox['id'],))['status'] == 'active'
+    assert dict(db.query_one('SELECT * FROM submissions WHERE id=?', (submission['id'],))) == before
 
 
 def test_default_package_prefers_arm_zip_and_explicit_path_still_wins():
@@ -162,8 +255,7 @@ def test_submit_experiment_quota_budget_dedup():
     r = mailboxes.submit_experiment(rid, "trial_mb1", None, "op-1")
     assert r["status"] == "submitted" and not r["deduplicated"]
     assert (config.WORKSPACE_DIR / r["package_path"]).read_bytes() == (config.WORKSPACE_DIR / pkg).read_bytes()
-    mb = db.query_one("SELECT * FROM mailboxes WHERE role='experiment'")
-    assert mb["submissions_used"] == 1
+    assert mailboxes.mailbox_usage()["items"][0]["used"] == 1
 
     dup = mailboxes.submit_experiment(rid, "trial_mb1", None, "op-1")
     assert dup["deduplicated"] and dup["id"] == r["id"]
@@ -188,7 +280,8 @@ def test_submit_experiment_no_mailbox_available():
     mailboxes.register_experiment(1)
     mailboxes.submit_experiment(rid, "trial_mb1", None, "op-y")
     mb = db.query_one("SELECT * FROM mailboxes WHERE role='experiment'")
-    assert mb["status"] == "exhausted"
+    assert mb["status"] == "active"
+    assert mailboxes.mailbox_usage()["items"][0]["used"] == 1
     with pytest.raises(mailboxes.MailboxError) as exc:
         mailboxes.submit_experiment(rid, "trial_mb1", None, "op-z")
     assert exc.value.code == "NO_MAILBOX"
@@ -298,9 +391,8 @@ def test_submit_demo_challenge_rejected_and_quota_released(monkeypatch):
     r = mailboxes.submit_experiment(rid, "trial_mb1", None, "op-demo-guard")
     assert r["status"] == "failed"
     assert "未关联真实平台" in r["error"]
-    mb = db.query_one(
-        "SELECT submissions_used, status FROM mailboxes WHERE id='mbox_t1'")
-    assert mb["submissions_used"] == 0 and mb["status"] == "active"
+    mb = db.query_one("SELECT status FROM mailboxes WHERE id='mbox_t1'")
+    assert mailboxes.mailbox_usage()["items"][0]["used"] == 0 and mb["status"] == "active"
 
 
 def test_submit_unexpected_exception_retains_reservation(monkeypatch):
@@ -324,9 +416,8 @@ def test_submit_unexpected_exception_retains_reservation(monkeypatch):
     r = mailboxes.submit_experiment(rid, "trial_mb1", None, "op-boom")
     assert r["status"] == "unknown"
     assert "OSError" in r["error"]
-    mb = db.query_one("SELECT submissions_used, status FROM mailboxes"
-                      " WHERE role='experiment'")
-    assert mb["submissions_used"] == 1 and mb["status"] == "active"
+    mb = db.query_one("SELECT status FROM mailboxes WHERE role='experiment'")
+    assert mailboxes.mailbox_usage()["items"][0]["used"] == 1 and mb["status"] == "active"
 
 
 def test_real_platform_skips_demo_mailboxes():
