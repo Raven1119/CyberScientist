@@ -1,7 +1,9 @@
-# 当前状态（2026-09-26）
+# 当前状态（2026-09-27）
 
 ## 已实现
 
+- CS-EV-01b 后续根因修复：旧 bohr 1.1.0 Job 子进程及连接检查默认指向仍提供旧 Job 路由的 `https://openapi.dp.tech`；Wenyon 新客户端保持 `https://open.bohrium.com`。配置仅作用于应用子进程，不改全局 CLI。受控下载现可从 bohr 1.1.0 的 `<job_id>/out.zip` 内有界读取 `results/facts.json` 并登记镜像事实，不解压不可信路径。
+- CS-EV-01b：Job 下载与日志按操作保存最近一次回执，并保留曾成功下载的证据；后续取回失败仍追加失败事件，不覆盖已下载结果的账本汇总。研究帧、轨迹和前端沿用同一汇总语义，旧单字段回执在下一次受控取回时转成分操作记录。
 - CS-EV-01a：非 ZIP 提交也执行同一代理证据门；放弃待处理 Trial 意图后在 running 阶段唤醒大脑；预算等待中保留用户显式审阅并在帧中标明门禁；日志锚点按协议快照的完整修剪行长度判定。Job 账本增加结果取回状态，受控下载/日志操作按实际文件及 SHA-256 留痕，研究帧、轨迹文本和前端远程任务列表显示该状态。
 - CS-EV-01 已接入数据物化登记/独立授权/冻结输入校验、ARM 事件轨迹封存与提交准入、bundle 上传回执闸、Run 生命周期 v2、Job 依赖与镜像事实预检、交付状态保留及大脑审阅指标；前端展示数据、六项信号、预算等待、用户目标状态和交付标签。新增迁移只加表/列，旧 Run 保留 v1 语义。
 - Wenyon 下载可单独选择项目隔离的 bohr 2.7.8 与 Wenyon 1.36.0 扩展，HOME/XDG 会话目录均隔离；现有 Job 客户端保留 bohr 1.1.0。未安装扩展的回执归类为 `WENYON_CLI_UNAVAILABLE`。已识别 v1 公开清单按原文字节哈希、声明文件哈希/大小和总字节数核对，匹配才标 `verified`。测试进程对沙箱 socketpair 唤醒限制做条件兼容，回环监听不可用时明确跳过对应 CLI 测试。
@@ -15,6 +17,10 @@
 
 ## 已实际验证
 
+- CS-EV-01b 根因对照：同一 USCT Job、同一只读 `GET /openapi/v1/job/{id}`，在 `open.bohrium.com` 返回 HTTP 404，响应 `error` 为对象且说明旧路由不匹配；在 `openapi.dp.tech` 返回 HTTP 200、`code=0`。仅覆盖旧 CLI 子进程 host 后，`job download` 返回 `ok=true`，取得 `out.zip`（1,900,228 字节，ZIP 校验通过）；24 个文件条目中 22 个与此前由日志 ZIP 恢复的同名文件 SHA-256 一致，另 2 个旧目录没有。原始脱敏回执及逐项哈希仅存本机 `.package-checks/job-debug-*`。
+- PR-4 Job `23433560` 使用修复后的受控 `compute.cli` 再次取回 `out.zip`（582 字节），账本 `retrieval_status=retrieved`，`image_facts` 已登记；归档内 `results/facts.json` 与 `results/data-proof.json` 均存在且 ZIP 校验通过。`job describe --json` 给出 `statusStr=Finished`、`webStatus=2`、`exitCode=0`、无 `errorInfo`；数据证明引用的物化记录为 `verified`，其内容哈希与本机已登记目录一致。此为文件与运行回执验证，不代替平台评分或科研结论。审计文件留在 `.package-checks/pr4-download-correct-host-20260926T161824Z/` 及忽略的 Run 工作区；未创建新 Job、Run、Attempt，未切换客户端或修改全局认证。
+- CS-EV-01b 根因修复后的最终回归：`.venv/bin/pytest -q` 为 366 passed、0 skipped；定向 `.venv/bin/pytest -q tests/test_compute_gateway.py tests/test_bohrium_connection.py` 为 44 passed；`npm --prefix apps/web test -- --run` 为 12 passed，`npm --prefix apps/web run build` 成功；`.venv/bin/python -m compileall -q src tests` 与 `git diff --check` 均通过。前端命令使用项目 Linux Node 22 路径。本轮没有新模型调用、付费 Job 或比赛 Attempt。
+- CS-EV-01b 联网前置检查：两个 Bohrium 域名均解析成功，`curl -sS -o /dev/null -w '%{http_code}' https://open.bohrium.com` 返回 301。只读 D1 探针选 USCT 接续 Run 的 Finished Job `23424706`，旧目录有 22 个文件；本次仅调用一次 `compute._native(job download)`，进程退出码 0、`ok=false`，stdout 为 `RespErr.error` JSON unmarshal 错误、stderr 为空，新目录 0 文件，无同名文件可作哈希比较。脱敏回执在本机忽略目录 `.package-checks/job-retrieval-probe-net-20260926T160849Z/`；未重试、未新建 Run/Job/Attempt。
 - CS-EV-01a 最终回归：`.venv/bin/pytest -q` 为 355 passed、1 skipped（回环监听受沙箱限制的既有跳过）；`tests/test_ev_upgrade.py tests/test_compute_gateway.py` 定向测试 86 passed；`npm --prefix apps/web test -- --run` 为 12 passed；`npm --prefix apps/web run build`、`.venv/bin/python -m compileall -q src tests` 和 `git diff --check` 均通过。前端测试和构建使用项目 Linux Node 22 路径。
 - CS-EV-01a 迁移前 SQLite 在线备份保存在本机忽略目录 `.package-checks/upgrade-20260926T154308Z/`，随后在本机数据库执行 `db.init_db()`，实际只追加 `compute_jobs.retrieval_status` 一列。获授权的 D1 单次只读旧 USCT Finished Job 下载探针保存在 `.package-checks/job-retrieval-probe-20260926T154546Z/`：bohr 1.1.0 进程退出码 0，后端回执 `ok=false`，输出文件 0 个；脱敏输出明确显示当前沙箱在 DNS 查询时因 socket 权限拒绝，请求未到平台。探针未创建 Job、Run 或 Attempt，也未重试。
 - 提交前将依赖真实 Wenyon 文件/回执的测试改为运行时生成合成样本，并把 8 个未跟踪的真实实验文件移入本机忽略目录 `.package-checks/cs-ev-01-real-fixtures-unpublished/` 后重跑：`.venv/bin/pytest -q` 为 337 passed、1 skipped；前端 `npm --prefix apps/web test -- --run` 为 11 passed，`npm --prefix apps/web run build` 成功。测试和构建未再次访问账号服务或创建 Job/Attempt。
@@ -40,16 +46,14 @@
 
 ## 尚未验证
 
-- D1 的单次探针受沙箱网络权限阻断，未能验证平台对旧 USCT Job 的下载接口；因此 PR-4 是否为单例故障、bohr 1.1.0 是否仍能取回历史结果，均未判定。新取回状态在本轮仅经 fake CLI 和本机文件验证，尚无新生产 Job 的真实结果回执。
-- PR-3 的这个 v1 样本已下载并核对，且本轮经真实 Run 物化与 Job 输入冻结；其他 Wenyon 清单格式及不同数据集的哈希语义未验证。已验证 Job 输入清单和引用，不等于验证远端实际读取。真实平台对封存包的准入结论、镜像事实和科学结果仍未验证。
+- CS-EV-01a 的第一次 D1 探针曾受沙箱网络权限阻断；CS-EV-01b 已定位并修复旧 CLI 的 API host 错配，真实历史 Job 与 PR-4 Job 均已成功取回。仍未验证平台对 PR-4 科学结果的评分或比赛有效性；本卡未创建新的生产 Job。
+- PR-3 的这个 v1 样本已下载并核对，且经真实 Run 物化与 Job 输入冻结；其他 Wenyon 清单格式及不同数据集的哈希语义未验证。已验证输入清单和数据证明，不等于验证所有远端读取行为。真实平台对封存包的准入结论及科学结果仍未验证。
 
-- 本次已执行 Linux 原生模型往返及一个 Bohrium Job；没有比赛提交。远端 Job 的实际退出码、运行环境和产物仍未知。
+- 原 CS-EV-01 验收时仅确认 Job 终态，未确认退出码和产物；本轮已取回 PR-4 产物及远端 `exitCode=0` 回执。远端运行环境的完整状态仍未核实。
 - 经验改动对科研结果的因果效果尚未证明。
 - CS-SB-01 的真实 Kimi/Codex 双会话往返、模型独立判断效果和原生内建工具完全禁用能力尚未验证；本轮按要求未启动真实模型或科研。
 - CS-SB-01 当轮未重跑 CLI 关闭测试，也未验证未经包装的完整 pytest；该轮未修改 UI，故未重跑前端测试与构建。本轮 CS-EV-01 的前端测试与构建结果见上方。
 
 ## 阻塞项
 
-- 下一次真实科研 Run 前，应在允许网络访问的环境中另行核实 Job 结果取回协议或客户端版本；本次唯一获授权的探针已消耗，不能把当前沙箱的 DNS/socket 拒绝记作平台或客户端协议故障。
-- PR-4 唯一 Job 的旧 bohr 1.1.0 `job describe`、`job download` 及 `job_group download` 均报 `json: cannot unmarshal object into Go struct field RespErr.error of type string`，即使进程退出码为 0 也不能视作成功；`job log -o` 未取到文件。隔离的新版 bohr 2.7.8 查询同一旧协议 Job 返回 `RESOURCE_NOT_FOUND`。因此 `facts.json`、`data-proof.json` 未取得，`image_facts` 未登记；本轮上限 1 Job，不重投。
-- 本次登录及其后的单次下载授权已使用；任何额外账号数据访问仍需新授权。本沙箱禁止回环监听，故 CLI SIGTERM/SSE 测试在此环境明确跳过；此前在允许回环监听的环境曾单独通过，当前代码没有在该环境重跑。
+- 此前 PR-3 登录与单次数据下载授权已用完，后续数据服务访问仍须单独授权。本轮只读历史 Job 诊断已完成；未计划额外请求。

@@ -26,7 +26,7 @@ CyberScientist 是一个**单用户科学竞赛工作台**：导入一道题，�
 
 ## 当前状态
 
-**2026-09-26 CS-EV-01 真实验收为部分通过**：Linux connected Run 已完成原生 Codex 大脑/执行器往返、官方 Wenyon 数据核验与唯一 Bohrium CPU Job 的创建和终态对账；Job 产物下载失败，远端脚本执行与镜像事实仍为 unknown，没有比赛 Attempt。结果和边界见 [验收记录](docs/CS_EV_01_REAL_RUN_ACCEPTANCE_2026-09-26.md)。原始任务标识和回执留在本机忽略目录。
+**2026-09-27 CS-EV-01b 修复 Job 结果取回**：Linux connected Run 已完成原生 Codex 大脑/执行器往返、官方 Wenyon 数据核验与唯一 Bohrium CPU Job。旧 bohr 1.1.0 的下载失败源于后端 API host 错配；修正后 PR-4 的结果归档已取回，远端退出码 0，镜像事实已登记，没有比赛 Attempt。修复前的历史验收记录见 [验收记录](docs/CS_EV_01_REAL_RUN_ACCEPTANCE_2026-09-26.md)，当前证据边界见 [STATUS.md](STATUS.md)。原始标识、回执和下载文件留在本机忽略目录。
 
 **2026-09-23 TBMA 运行后升级**：已增加受控 Job 账本/资源准入、密钥环境隔离、工具回执与过期指导处理，以及研究页的指定 Run 经验整理入口。TBMA 保持停止，升级未重新运行科研；功能、验证和边界见 [升级说明](docs/TBMA_UPGRADE_2026-09-23.md)。
 
