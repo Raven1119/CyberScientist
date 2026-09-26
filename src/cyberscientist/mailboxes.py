@@ -310,16 +310,16 @@ def preflight_submission(run_id: str, trial_id: str | None,
     source = package.read_bytes()
     source_hash = hashlib.sha256(source).hexdigest()
     data = _data_inputs(run_id, trial_id)
-    if package.suffix.lower() != ".zip":
-        return {"source_package_sha256": source_hash, "sealed_package_sha256": source_hash,
-                "sealed_bytes": source, "admission": {"verdict": "not_applicable", "signals": {}},
-                "data_inputs": data, "error_code": None}
-    last = db.query_one("SELECT MAX(seq) AS n FROM events WHERE run_id=?", (run_id,))
-    try:
-        sealed, steps = package_seal.seal(source, run_id, trial_id, last["n"] or 0, data)
-    except (KeyError, ValueError, TypeError, sqlite3.Error, OSError, zipfile.BadZipFile) as exc:
-        raise MailboxError("INVALID_PACKAGE", f"ARM 包无法封存：{type(exc).__name__}") from exc
-    report = arm_admission.check(sealed, _protocol_snapshot())
+    is_bundle = package.suffix.lower() == ".zip"
+    sealed, steps = source, []
+    report = {"verdict": "not_applicable", "signals": {}}
+    if is_bundle:
+        last = db.query_one("SELECT MAX(seq) AS n FROM events WHERE run_id=?", (run_id,))
+        try:
+            sealed, steps = package_seal.seal(source, run_id, trial_id, last["n"] or 0, data)
+        except (KeyError, ValueError, TypeError, sqlite3.Error, OSError, zipfile.BadZipFile) as exc:
+            raise MailboxError("INVALID_PACKAGE", f"ARM 包无法封存：{type(exc).__name__}") from exc
+        report = arm_admission.check(sealed, _protocol_snapshot())
     code = None
     if report["verdict"] == "blocked":
         code = "TRACE_ADMISSION_BLOCKED"
@@ -327,7 +327,7 @@ def preflight_submission(run_id: str, trial_id: str | None,
         code = "TRACE_ADMISSION_INDETERMINATE"
     elif data["evidence_class"] == "proxy" and not allow_proxy_evidence:
         code = "PROXY_EVIDENCE"
-    if code is None:
+    if code is None and is_bundle:
         import io
         import zipfile
         from . import job_preflight

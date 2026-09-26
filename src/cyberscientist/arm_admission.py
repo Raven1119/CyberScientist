@@ -132,13 +132,22 @@ def check(bundle_bytes: bytes, protocol: dict[str, Any] | None) -> dict[str, Any
                 "declared cost only; absent costs are not zero", len(costs))
             log_path = execution.get("log_path")
             anchored = False
+            anchor_defaults = {"log_anchor_min_chars": 12, "log_anchor_max_chars": 80,
+                               "log_anchor_fields": ["body", "title", "tool_output"]}
+            for key, value in anchor_defaults.items():
+                if key not in thresholds:
+                    result["notes"].append(f"{key} 使用默认值 {value}")
+            anchor_min = int(thresholds.get("log_anchor_min_chars", 12))
+            anchor_max = int(thresholds.get("log_anchor_max_chars", 80))
+            anchor_fields = thresholds.get("log_anchor_fields", anchor_defaults["log_anchor_fields"])
             if isinstance(log_path, str) and log_path in names:
                 log = archive.read(log_path).decode("utf-8", "replace")
                 for row in typed:
-                    for key in ("body", "title", "tool_output"):
+                    for key in anchor_fields:
                         for line in str(row.get(key) or "").splitlines():
-                            sample = line.strip()[:80]
-                            if len(sample) >= 12 and sample in log:
+                            # Snapshot trace_anti_fraud.admission.thresholds: trimmed line, 12–80 chars.
+                            sample = line.strip()
+                            if anchor_min <= len(sample) <= anchor_max and sample in log:
                                 anchored = True
                                 break
                         if anchored: break

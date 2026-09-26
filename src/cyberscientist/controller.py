@@ -547,10 +547,14 @@ class RunController:
         run = self._require_run(run_id)
         if not self._lifecycle_v2(run) or not run["pending_action_json"]:
             raise ControllerError("INVALID_STATE", "没有待处理的 Trial 意图")
+        pending = json.loads(run["pending_action_json"])
         with db.transaction() as conn:
             conn.execute("UPDATE runs SET pending_action_json=NULL,gate='open' WHERE id=?", (run_id,))
             db.append_event_tx(conn, run_id, "user", "run.pending_intent_dropped",
-                               {"reason": reason[:500]})
+                               {"reason": reason[:500], "pending_intent": pending})
+        if run["phase"] == "running":
+            self._enqueue_lifecycle(run_id, trigger="pending_intent_dropped",
+                                    user_guidance=f"用户放弃意图 {json.dumps(pending, ensure_ascii=False)}；原因：{reason[:500]}")
         return self.run_snapshot(run_id)
 
     async def start_async(self, run_id: str) -> dict[str, Any]:
@@ -1844,7 +1848,9 @@ class RunController:
         run = self._require_run(run_id)
         if run["phase"] != "running":
             return
-        if run["gate"] == "awaiting_budget" and req["trigger"] != "budget_granted":
+        user_review = (req["trigger"] == "user_steer" or req["source"] == "user"
+                       or (req["source"] == "requested" and bool(req["blocking"])))
+        if run["gate"] == "awaiting_budget" and req["trigger"] != "budget_granted" and not user_review:
             self._obsolete_request(req["id"], "等待 Trial 预算；不唤醒大脑")
             return
         if self._run_minutes_exceeded(run):
@@ -2318,6 +2324,7 @@ class RunController:
         packet = {
             "sparse_brain_version": 1 if sparse else 0,
             "run_id": run_id,
+            "gate": run["gate"],
             "state_version": run["state_version"],
             "trigger": trigger,
             "current_intention": run["intention"],
@@ -2479,10 +2486,15 @@ class RunController:
                     return
                 dec = {**dec, "actions": [pending["action"]]}
             with db.transaction() as conn:
-                conn.execute("UPDATE runs SET pending_action_json=NULL WHERE id=?", (run_id,))
+                conn.execute("UPDATE runs SET pending_action_json=NULL,"
+                             " gate=CASE WHEN ?='drop' THEN 'open' ELSE gate END WHERE id=?",
+                             (resolution, run_id))
                 db.append_event_tx(conn, run_id, "brain", "run.pending_intent_resolved",
                                    {"resolution": resolution, "decision_id": dec["decision_id"]})
             if resolution == "drop":
+                if run["phase"] == "running":
+                    self._enqueue_lifecycle(run_id, trigger="pending_intent_dropped",
+                                            user_guidance=f"大脑放弃意图 {json.dumps(pending, ensure_ascii=False)}；Decision: {dec['decision_id']}")
                 return
         current_tid = run["current_trial_id"]
         stalled_tid = None

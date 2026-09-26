@@ -31,7 +31,8 @@ def test_v2_brain_decision_extracted_from_fenced_final_message():
     assert extract_decision(message, {"run_id": "run_1"}) == decision
 
 
-def _bundle(steps: list[dict] | None = None, *, artifacts: list[dict] | None = None) -> bytes:
+def _bundle(steps: list[dict] | None = None, *, artifacts: list[dict] | None = None,
+            log_text: str = "validated long execution line\n") -> bytes:
     manifest = {"arm_version": "1.1", "entrypoint": "src/reproduce.py",
                 "execution": {"log_path": "results/run.log", "ran_at": "2026-09-25T00:00:00Z",
                               "wall_time_s": 20, "artifacts": artifacts or []},
@@ -41,7 +42,7 @@ def _bundle(steps: list[dict] | None = None, *, artifacts: list[dict] | None = N
         archive.writestr("arm_manifest.json", json.dumps(manifest))
         archive.writestr("characterization.json", "{}")
         archive.writestr("src/reproduce.py", "print('fixture')\n")
-        archive.writestr("results/run.log", "validated long execution line\n")
+        archive.writestr("results/run.log", log_text)
         archive.writestr("results/output.txt", "data")
         archive.writestr("traces/trace.jsonl", "\n".join(json.dumps(s) for s in (steps or [])))
     return out.getvalue()
@@ -663,3 +664,160 @@ def test_legacy_run_budget_keeps_v1_global_semantics():
     controller.update_budget(rid, max_trials=4)
     assert config.load_settings()['run_defaults']['max_trials'] == 4
     assert controller.run_snapshot(rid)['budget']['max_trials'] == 4
+
+
+@pytest.mark.parametrize('filename', ['result_package.json', 'submission.csv'])
+def test_nonzip_proxy_gate_precedes_submission_reservation(monkeypatch, filename):
+    resources = [{'dataset_id': 'public-id', 'version_id': '1', 'role': 'task-public-data'}]
+    _, rid = _run(resources=resources)
+    trial = 'nonzip_proxy'
+    base = config.WORKSPACE_DIR / 'runs' / rid / 'trials' / trial
+    base.mkdir(parents=True)
+    (base / filename).write_text('fixture')
+    db.execute('INSERT INTO trials(id,run_id,goal,success_check,created_at) VALUES(?,?,?,?,?)',
+               (trial, rid, 'g', 's', db.utcnow()))
+    platform_calls = []
+    platform = SimpleNamespace(name='fixture', is_demo=False)
+    monkeypatch.setattr(mailboxes, '_platform', lambda: platform)
+    monkeypatch.setattr(mailboxes, '_perform_submission', lambda *a: platform_calls.append(a))
+    db.execute("INSERT INTO mailboxes(id,role,email,platform,secret_ref,status,submission_limit,is_demo,created_at)"
+               " VALUES('proxy_mb','experiment','fixture@example.test','fixture','local:fixture','active',2,0,?)",
+               (db.utcnow(),))
+    assert mailboxes.preflight_submission(rid, trial, None)['admission']['verdict'] == 'not_applicable'
+    assert mailboxes.preflight_submission(rid, trial, None)['error_code'] == 'PROXY_EVIDENCE'
+    with pytest.raises(mailboxes.MailboxError) as error:
+        mailboxes.submit_experiment(rid, trial, None, 'blocked-'+filename)
+    assert error.value.code == 'PROXY_EVIDENCE'
+    assert db.query_one('SELECT COUNT(*) AS n FROM submissions')['n'] == 0
+    assert db.query_one("SELECT submissions_used FROM mailboxes WHERE id='proxy_mb'")[0] == 0
+    assert platform_calls == []
+    mailboxes.submit_experiment(rid, trial, None, 'allowed-'+filename,
+                                allow_proxy_evidence=True)
+    event = db.query_one("SELECT payload FROM events WHERE run_id=? AND type='submission.created' ORDER BY seq DESC LIMIT 1", (rid,))
+    assert json.loads(event['payload'])['allow_proxy_evidence'] is True
+    assert db.query_one('SELECT COUNT(*) AS n FROM submissions')['n'] == 1
+    assert len(platform_calls) == 1
+
+
+def test_nonzip_official_data_and_unknown_follow_bundle_proxy_semantics(monkeypatch):
+    _, rid = _run()
+    base = config.WORKSPACE_DIR / 'runs' / rid / 'trials' / 't'
+    base.mkdir(parents=True)
+    (base / 'result_package.json').write_text('{}')
+    monkeypatch.setattr(mailboxes, '_data_inputs', lambda *a: {'evidence_class': 'official_data', 'materializations': []})
+    assert mailboxes.preflight_submission(rid, 't', None)['error_code'] is None
+    monkeypatch.setattr(mailboxes, '_data_inputs', lambda *a: {'evidence_class': 'unknown', 'materializations': []})
+    assert mailboxes.preflight_submission(rid, 't', None)['error_code'] is None
+
+
+@pytest.mark.parametrize('length,expected', [(11, False), (12, True), (80, True), (81, False)])
+def test_log_anchor_exact_trimmed_line_bounds(length, expected):
+    line = 'x' * length
+    report = arm_admission.check(_bundle([{'step_type': 'observation', 'body': '  '+line+'  '}],
+                                         log_text=line+'\n'), _protocol())
+    assert report['signals']['log_anchor']['ok'] is expected
+
+
+def test_log_anchor_missing_thresholds_notes_defaults():
+    protocol = _protocol()
+    thresholds = protocol['trace_anti_fraud']['admission']['thresholds']
+    for name in ('log_anchor_min_chars', 'log_anchor_max_chars', 'log_anchor_fields'):
+        thresholds.pop(name)
+    report = arm_admission.check(_bundle([{'step_type': 'observation', 'body': 'x'*12}],
+                                         log_text='x'*12), protocol)
+    assert report['signals']['log_anchor']['ok'] is True
+    assert sum('使用默认值' in note for note in report['notes']) == 3
+
+
+def _pending_run(controller, rid):
+    pending = {'decision_id': 'first', 'action': {'op': 'start_trial', 'goal': 'next', 'success_check': 's'},
+               'state_version': 0}
+    db.execute("UPDATE runs SET gate='awaiting_budget',pending_action_json=? WHERE id=?",
+               (json.dumps(pending), rid))
+    return pending
+
+
+def test_drop_pending_intent_wakes_running_brain_and_paused_only_clears():
+    controller, rid = _run()
+    pending = _pending_run(controller, rid)
+    controller.drop_pending_intent(rid, 'user changed direction')
+    snap = controller.run_snapshot(rid)
+    assert snap['gate'] == 'open' and snap['pending_action_json'] is None
+    req = db.query_one("SELECT * FROM review_requests WHERE run_id=? AND trigger='pending_intent_dropped'", (rid,))
+    assert req['status'] == 'pending' and 'user changed direction' in req['frame_json']
+    packet = controller._lifecycle_packet(controller._require_run(rid), 'pending_intent_dropped',
+                                          user_guidance=json.loads(req['frame_json'])['user_guidance'])
+    assert pending['action']['goal'] in packet['user_guidance']
+    db.execute("UPDATE runs SET phase='finished' WHERE id=?", (rid,))
+    controller2 = RunController()
+    rid2 = controller2.create_run('ev_ch', mode='connected')['id']
+    _pending_run(controller2, rid2)
+    db.execute("UPDATE runs SET phase='paused' WHERE id=?", (rid2,))
+    controller2.drop_pending_intent(rid2, 'paused cleanup')
+    assert db.query_one("SELECT COUNT(*) AS n FROM review_requests WHERE run_id=? AND trigger='pending_intent_dropped'", (rid2,))['n'] == 0
+
+
+async def test_pending_drop_review_limit_pauses_instead_of_hanging(monkeypatch):
+    controller, rid = _run()
+    _pending_run(controller, rid)
+    db.execute('UPDATE runs SET brain_reviews_used=? WHERE id=?',
+               (config.load_settings()['run_defaults']['max_brain_reviews'], rid))
+    controller.drop_pending_intent(rid, 'quota')
+    req = db.query_one("SELECT * FROM review_requests WHERE run_id=? AND trigger='pending_intent_dropped'", (rid,))
+    await controller._run_one_review_impl(rid, req, object(), None)
+    assert controller.run_snapshot(rid)['phase'] == 'paused'
+    assert db.query_one("SELECT COUNT(*) AS n FROM events WHERE run_id=? AND type='run.review_limit'", (rid,))['n'] == 1
+    assert db.query_one('SELECT status FROM review_requests WHERE id=?', (req['id'],))['status'] == 'obsolete'
+
+
+async def test_awaiting_budget_user_steer_is_reviewed_and_auto_is_obsolete(monkeypatch):
+    controller, rid = _run()
+    _pending_run(controller, rid)
+    seen = []
+    class Brain:
+        async def review(self, session, packet):
+            seen.append(packet)
+            yield SimpleNamespace(type='decision', payload={'decision': {
+                'schema_version': 2, 'decision_id': 'steer-decision', 'run_id': rid,
+                'observed_state_version': packet['state_version'], 'summary': 'keep gate',
+                'evidence_refs': [], 'actions': [{'op': 'start_trial', 'goal': 'new', 'success_check': 's'}],
+                'pending_intent_resolution': 'revise', 'experience_proposals': []}})
+    auto_id = controller._enqueue_lifecycle(rid, 'trial.stalled')
+    await controller._run_one_review_impl(rid, db.query_one('SELECT * FROM review_requests WHERE id=?', (auto_id,)), Brain(), None)
+    auto = db.query_one('SELECT status,error FROM review_requests WHERE id=?', (auto_id,))
+    assert auto['status'] == 'obsolete' and '预算' in auto['error']
+    user_id = controller._enqueue_lifecycle(rid, 'user_steer', user_guidance='reconsider')
+    await controller._run_one_review_impl(rid, db.query_one('SELECT * FROM review_requests WHERE id=?', (user_id,)), Brain(), None)
+    assert db.query_one('SELECT status FROM review_requests WHERE id=?', (user_id,))['status'] == 'done'
+    assert seen[0]['gate'] == 'awaiting_budget' and seen[0]['pending_intent']['action']['goal'] == 'next'
+    rejected = [json.loads(row['payload']) for row in db.query("SELECT payload FROM events WHERE run_id=? AND type='brain.action_rejected'", (rid,))]
+    assert any('awaiting_budget' in item.get('reason', '') for item in rejected)
+
+
+async def test_awaiting_budget_brain_can_drop_pending_intent(monkeypatch):
+    controller, rid = _run()
+    _pending_run(controller, rid)
+    decision = {'schema_version': 2, 'decision_id': 'drop-while-waiting', 'run_id': rid,
+                'observed_state_version': 0, 'summary': 'drop', 'evidence_refs': [],
+                'pending_intent_resolution': 'drop', 'actions': [{'op': 'wait', 'reason': 'drop'}],
+                'experience_proposals': []}
+    await controller._apply_decision(rid, decision, {}, None, None)
+    snap = controller.run_snapshot(rid)
+    assert snap['pending_action_json'] is None and snap['gate'] == 'open'
+    assert db.query_one("SELECT COUNT(*) AS n FROM events WHERE run_id=? AND type='run.pending_intent_resolved'", (rid,))['n'] == 1
+    assert db.query_one("SELECT COUNT(*) AS n FROM review_requests WHERE run_id=? AND trigger='pending_intent_dropped'", (rid,))['n'] == 1
+
+
+async def test_awaiting_budget_brain_can_finish_with_objective_assessment(monkeypatch):
+    controller, rid = _run()
+    _pending_run(controller, rid)
+    monkeypatch.setattr(controller, '_defer_finish_for_curation', lambda *a: False)
+    decision = {'schema_version': 2, 'decision_id': 'finish-while-waiting', 'run_id': rid,
+                'observed_state_version': 0, 'summary': 'partial result', 'evidence_refs': [],
+                'pending_intent_resolution': 'revise', 'actions': [{'op': 'finish', 'reason': 'done',
+                'objective_assessment': {'status': 'partial', 'evidence_refs': [],
+                                         'remaining_md': 'Further work remains'}}],
+                'experience_proposals': []}
+    await controller._apply_decision(rid, decision, {}, None, None)
+    assert controller.run_snapshot(rid)['phase'] == 'finished'
+    assert controller.run_snapshot(rid)['objective_status'] == 'partial'
