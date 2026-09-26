@@ -14,7 +14,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from cyberscientist import arm_admission, compute, config, datasets, db, job_preflight, mailboxes, package_seal
+from cyberscientist import arm_admission, compute, config, datasets, db, job_preflight, mailboxes, package_seal, trace_selection
 from cyberscientist.controller import RunController
 from cyberscientist.decision_extraction import extract_decision
 from cyberscientist.mailbox_platform import BohriumPlaygroundPlatform, PlatformError
@@ -51,6 +51,130 @@ def _bundle(steps: list[dict] | None = None, *, artifacts: list[dict] | None = N
 def _protocol() -> dict:
     return json.loads((__import__('pathlib').Path(__file__).resolve().parents[1] / 'contracts' /
                        'arm_protocol.json').read_text())
+
+
+@pytest.mark.parametrize('pointer,extras,prefix,expected_rule,expected_members', [
+    ('traces/custom.jsonl', {'traces/custom.jsonl': 'pointer'}, '', 'manifest_pointer', ('traces/custom.jsonl',)),
+    ('missing.jsonl', {'trace/trace.jsonl': 'fallback'}, '', 'directory_scan', ('trace/trace.jsonl',)),
+    ({'files': ['trace/trace.jsonl']}, {'trace/trace.jsonl': 'dict'}, '', 'directory_scan', ('trace/trace.jsonl',)),
+    (None, {'traces/first.jsonl': 'first', 'trace/second.jsonl': 'second'}, '', 'directory_scan', ('traces/first.jsonl',)),
+    (None, {'traces/raw_messages.jsonl': 'excluded', 'trace/trace.jsonl': 'kept'}, '', 'directory_scan', ('trace/trace.jsonl',)),
+    (None, {'traces/trace.json': 'legacy'}, '', 'legacy_json_array', ('traces/trace.json',)),
+    ('traces/custom.jsonl', {'traces/custom.jsonl': 'nested'}, 'bundle/', 'manifest_pointer', ('bundle/traces/custom.jsonl',)),
+    (None, {'trace/trace.jsonl': 'rooted', 'bundle/other.jsonl': 'ignored'}, '', 'directory_scan', ('trace/trace.jsonl',)),
+])
+def test_trace_selection_and_seal_match_protocol(pointer, extras, prefix, expected_rule, expected_members):
+    _, rid = _run()
+    db.append_event(rid, 'prime', 'prime.execution.progress',
+                    {'item_id': 'projected', 'status': 'completed', 'detail': 'Real fixture event'})
+    manifest = {'arm_version': '1.1', 'entrypoint': 'src/reproduce.py',
+                'execution': {'log_path': 'results/run.log'}}
+    if pointer is not None:
+        manifest['trace'] = pointer
+    files = {prefix + 'arm_manifest.json': json.dumps(manifest).encode(),
+             prefix + 'src/reproduce.py': b'print(1)',
+             prefix + 'results/run.log': b'Real fixture event',
+             prefix + 'characterization.json': b'{}'}
+    for name, label in extras.items():
+        row = {'step_type': 'observation', 'title': label}
+        files[prefix + name if prefix else name] = (json.dumps([row]) if name.endswith('.json')
+            else json.dumps(row) + '\n').encode()
+    output = io.BytesIO()
+    with zipfile.ZipFile(output, 'w') as archive:
+        for name, raw in files.items():
+            archive.writestr(name, raw)
+    selection = trace_selection.select(files)
+    assert selection.rule == expected_rule
+    assert selection.selected_members == expected_members
+    assert selection.unresolved_claims == (('missing.jsonl',) if pointer == 'missing.jsonl' else ())
+    assert len(selection.rows) == len(expected_members)
+    assert [row['title'] for row in selection.rows] == [
+        extras[name[len(prefix):] if prefix else name] for name in expected_members]
+    sealed, projected = package_seal.seal(output.getvalue(), rid, None, 100)
+    assert package_seal.seal(output.getvalue(), rid, None, 100)[0] == sealed
+    if pointer == 'missing.jsonl':
+        original_report = arm_admission.check(output.getvalue(), _protocol())
+        assert original_report['verdict'] == 'blocked'
+        assert original_report['trace_selection']['unresolved_claims'] == ['missing.jsonl']
+    with zipfile.ZipFile(io.BytesIO(sealed)) as archive:
+        sealed_files = {name: archive.read(name) for name in archive.namelist() if not name.endswith('/')}
+    after = trace_selection.select(sealed_files)
+    assert after.bundle_root == selection.bundle_root
+    assert selection.bundle_root + package_seal.DATA in sealed_files
+    assert after.rule == 'manifest_pointer'
+    assert after.selected_members == (selection.bundle_root + package_seal.TRACE,)
+    assert after.rows[:len(selection.rows)] == selection.rows
+    assert list(after.rows[len(selection.rows):]) == projected
+    assert all(sealed_files[name] == files[name] for name in files if name != selection.bundle_root + 'arm_manifest.json')
+    report = arm_admission.check(sealed, _protocol())
+    assert report['trace_selection']['selected_members'] == list(after.selected_members)
+    assert report['trace_selection']['rule'] == 'manifest_pointer'
+
+
+def test_unselected_trace_rows_cannot_admit_package():
+    source = io.BytesIO()
+    manifest = {'arm_version': '1.1', 'entrypoint': 'src/reproduce.py',
+                'execution': {'log_path': 'results/run.log'}, 'trace': 'traces/empty.jsonl'}
+    with zipfile.ZipFile(source, 'w') as archive:
+        archive.writestr('arm_manifest.json', json.dumps(manifest))
+        archive.writestr('src/reproduce.py', 'print(1)')
+        archive.writestr('results/run.log', 'a real run')
+        archive.writestr('characterization.json', '{}')
+        archive.writestr('traces/empty.jsonl', '')
+        archive.writestr('traces/other.jsonl', json.dumps({'step_type': 'artifact',
+            'artifact_path': 'src/reproduce.py'}))
+    report = arm_admission.check(source.getvalue(), _protocol())
+    assert report['trace_selection']['selected_members'] == ['traces/empty.jsonl']
+    assert report['verdict'] == 'blocked'
+
+
+def test_directory_archive_members_affect_root_and_reserved_path_is_rejected():
+    _, rid = _run()
+    files = {'bundle/': b'', 'bundle/arm_manifest.json': b'{"arm_version":"1.1"}',
+             'bundle/traces/trace.jsonl': b'{"step_type":"observation","title":"old"}\n',
+             'other/': b''}
+    with pytest.raises(ValueError, match='bundle root'):
+        trace_selection.select(files)
+    files.pop('other/')
+    assert trace_selection.select(files).bundle_root == 'bundle/'
+    files['bundle/traces/cyberscientist_merged.jsonl'] = b'{}\n'
+    output = io.BytesIO()
+    with zipfile.ZipFile(output, 'w') as archive:
+        for name, content in files.items(): archive.writestr(name, content)
+    with pytest.raises(ValueError, match='collision'):
+        package_seal.seal(output.getvalue(), rid, None, 0)
+
+
+def test_prefixed_bundle_projects_declared_real_artifact():
+    _, rid = _run()
+    manifest = {'arm_version': '1.1', 'trace': 'trace/trace.jsonl',
+                'execution': {'artifacts': [{'path': 'results/output.txt'}]}}
+    output = io.BytesIO()
+    with zipfile.ZipFile(output, 'w') as archive:
+        archive.writestr('bundle/arm_manifest.json', json.dumps(manifest))
+        archive.writestr('bundle/trace/trace.jsonl', '')
+        archive.writestr('bundle/results/output.txt', 'real fixture bytes')
+    sealed, steps = package_seal.seal(output.getvalue(), rid, None, 0)
+    assert any(step.get('artifact_path') == 'results/output.txt' for step in steps)
+    with zipfile.ZipFile(io.BytesIO(sealed)) as archive:
+        files = {name: archive.read(name) for name in archive.namelist()}
+    assert any(row.get('artifact_path') == 'results/output.txt'
+               for row in trace_selection.select(files).rows)
+
+
+@pytest.mark.parametrize('manifest', ['not json', json.dumps({'trace': 12}), None])
+def test_invalid_arm_manifest_reports_invalid_package_event(manifest):
+    _, rid = _run()
+    package = config.WORKSPACE_DIR / 'runs' / rid / 'invalid.zip'
+    package.parent.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(package, 'w') as archive:
+        if manifest is not None:
+            archive.writestr('arm_manifest.json', manifest)
+    with pytest.raises(mailboxes.MailboxError) as exc:
+        mailboxes.submit_experiment(rid, None, package.relative_to(config.WORKSPACE_DIR).as_posix(), 'invalid-arm')
+    assert exc.value.code == 'INVALID_PACKAGE'
+    event = db.query_one("SELECT payload FROM events WHERE run_id=? AND type='submission.preflight_failed' ORDER BY seq DESC", (rid,))
+    assert event and json.loads(event['payload'])['code'] == 'INVALID_PACKAGE'
 
 
 def _run(*, resources: list[dict] | None = None, allow_data: bool = False, max_trials: int = 1):

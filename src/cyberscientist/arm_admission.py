@@ -8,6 +8,8 @@ import zipfile
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from . import trace_selection
+
 STEP_TYPES = frozenset({"thought", "tool_call", "tool_result", "artifact",
                         "decision", "error", "observation"})
 SIGNALS = ("log_anchor", "artifact_path", "paired_tool_calls", "declared_cost",
@@ -22,29 +24,6 @@ def _parse_time(value: Any) -> datetime | None:
         return parsed.replace(tzinfo=timezone.utc) if parsed.tzinfo is None else parsed
     except ValueError:
         return None
-
-
-def _trace_rows(archive: zipfile.ZipFile) -> tuple[list[dict[str, Any]], bool]:
-    rows: list[dict[str, Any]] = []
-    readable = True
-    for name in archive.namelist():
-        if not (name == "trace/trace.jsonl" or
-                (name.startswith("traces/") and name.endswith(".jsonl"))):
-            continue
-        raw = archive.read(name).decode("utf-8", "replace")
-        try:
-            parsed = json.loads(raw)
-            items = parsed if isinstance(parsed, list) else [parsed]
-        except json.JSONDecodeError:
-            items = []
-            for line in raw.splitlines():
-                if line.strip():
-                    try:
-                        items.append(json.loads(line))
-                    except json.JSONDecodeError:
-                        readable = False
-        rows.extend(item for item in items if isinstance(item, dict))
-    return rows, readable
 
 
 def _signal(ok: bool | None, detail: str, evidence: Any = None) -> dict[str, Any]:
@@ -65,6 +44,8 @@ def check(bundle_bytes: bytes, protocol: dict[str, Any] | None) -> dict[str, Any
         "typed_steps": 0, "step_types": [],
         "modalities": {"execution": False, "characterization": False, "trace": False},
         "manifest_errors": [], "completeness_estimate": {"kind": "local_estimate", "value": 0.0},
+        "trace_selection": {"bundle_root": "", "selected_members": [],
+                            "rule": "none", "unresolved_claims": []},
         "notes": [],
     }
     if not protocol or not protocol.get("fetched_at") or not protocol.get("source_sha256"):
@@ -72,38 +53,44 @@ def check(bundle_bytes: bytes, protocol: dict[str, Any] | None) -> dict[str, Any
         return result
     try:
         with zipfile.ZipFile(io.BytesIO(bundle_bytes)) as archive:
-            names = set(archive.namelist())
-            if "arm_manifest.json" not in names:
-                result["manifest_errors"].append("arm_manifest.json missing")
-                result["verdict"] = "blocked"
-                return result
-            manifest = json.loads(archive.read("arm_manifest.json"))
+            members = archive.namelist()
+            if len(members) != len(set(members)):
+                raise ValueError("duplicate archive member")
+            files = {name: archive.read(name) for name in members}
+            names = set(files)
+            selected = trace_selection.select(files)
+            root = selected.bundle_root
+            result["trace_selection"] = {"bundle_root": root,
+                "selected_members": list(selected.selected_members), "rule": selected.rule,
+                "unresolved_claims": list(selected.unresolved_claims)}
+            manifest = json.loads(files[root + "arm_manifest.json"])
             if str(manifest.get("arm_version")) not in ("1.0", "1.1"):
                 result["notes"].append("unsupported arm_version")
                 return result
-            rows, readable = _trace_rows(archive)
-            if not readable:
-                result["notes"].append("trace could not be read in full")
+            rows = selected.rows
+            if not selected.readable or selected.unresolved_claims:
+                result["manifest_errors"].append("selected trace unreadable or pointer unresolved")
+                result["verdict"] = "blocked"
                 return result
             typed = [row for row in rows if row.get("step_type") in STEP_TYPES]
             kinds = {row["step_type"] for row in typed}
             result["typed_steps"] = len(typed)
             result["step_types"] = sorted(kinds)
             modalities = result["modalities"]
-            execution = manifest.get("execution") or {}
-            modalities["execution"] = (isinstance(execution, dict)
-                and isinstance(manifest.get("entrypoint"), str)
-                and manifest["entrypoint"] in names
+            execution = manifest.get("execution")
+            execution = execution if isinstance(execution, dict) else {}
+            modalities["execution"] = (isinstance(manifest.get("entrypoint"), str)
+                and root + manifest["entrypoint"] in names
                 and isinstance(execution.get("log_path"), str)
-                and execution["log_path"] in names)
+                and root + execution["log_path"] in names)
             char = manifest.get("characterization") or {}
-            modalities["characterization"] = "characterization.json" in names
+            modalities["characterization"] = root + "characterization.json" in names
             modalities["trace"] = bool(rows)
             result["completeness_estimate"]["value"] = round(sum(modalities.values()) / 3, 3)
 
             artifacts = [r["artifact_path"] for r in typed
                          if r["step_type"] == "artifact" and
-                         isinstance(r.get("artifact_path"), str) and r["artifact_path"] in names]
+                         isinstance(r.get("artifact_path"), str) and root + r["artifact_path"] in names]
             result["signals"]["artifact_path"] = _signal(bool(artifacts),
                 "artifact step references an existing bundle member", artifacts[:5])
             def call_id(row):
@@ -140,8 +127,8 @@ def check(bundle_bytes: bytes, protocol: dict[str, Any] | None) -> dict[str, Any
             anchor_min = int(thresholds.get("log_anchor_min_chars", 12))
             anchor_max = int(thresholds.get("log_anchor_max_chars", 80))
             anchor_fields = thresholds.get("log_anchor_fields", anchor_defaults["log_anchor_fields"])
-            if isinstance(log_path, str) and log_path in names:
-                log = archive.read(log_path).decode("utf-8", "replace")
+            if isinstance(log_path, str) and root + log_path in names:
+                log = files[root + log_path].decode("utf-8", "replace")
                 for row in typed:
                     for key in anchor_fields:
                         for line in str(row.get(key) or "").splitlines():
@@ -177,8 +164,8 @@ def check(bundle_bytes: bytes, protocol: dict[str, Any] | None) -> dict[str, Any
                 result["verdict"] = "blocked"
             if not all(modalities.values()):
                 result["manifest_errors"].append("required modality missing")
-                if result["verdict"] == "admitted": result["verdict"] = "blocked"
+                result["verdict"] = "blocked"
     except (zipfile.BadZipFile, ValueError, KeyError, TypeError) as exc:
-        result["manifest_errors"].append(type(exc).__name__)
+        result["manifest_errors"].append(f"{type(exc).__name__}: {str(exc)[:200]}")
         result["verdict"] = "blocked"
     return result

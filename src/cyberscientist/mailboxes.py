@@ -13,7 +13,7 @@ import zipfile
 from pathlib import Path
 from typing import Any
 
-from . import arm_admission, config, db, experience_context, package_seal
+from . import arm_admission, config, db, experience_context, package_seal, trace_selection
 from .mailbox_platform import (MailboxPlatform, PlatformError, final_score,
                                get_platform, public_feedback)
 
@@ -318,6 +318,10 @@ def preflight_submission(run_id: str, trial_id: str | None,
         try:
             sealed, steps = package_seal.seal(source, run_id, trial_id, last["n"] or 0, data)
         except (KeyError, ValueError, TypeError, sqlite3.Error, OSError, zipfile.BadZipFile) as exc:
+            with db.transaction() as conn:
+                db.append_event_tx(conn, run_id, "controller", "submission.preflight_failed",
+                    {"code": "INVALID_PACKAGE", "reason": str(exc)[:200],
+                     "source_package_sha256": source_hash}, trial_id=trial_id)
             raise MailboxError("INVALID_PACKAGE", f"ARM 包无法封存：{type(exc).__name__}") from exc
         report = arm_admission.check(sealed, _protocol_snapshot())
     code = None
@@ -329,13 +333,16 @@ def preflight_submission(run_id: str, trial_id: str | None,
         code = "PROXY_EVIDENCE"
     if code is None and is_bundle:
         import io
-        import zipfile
         from . import job_preflight
         try:
             with zipfile.ZipFile(io.BytesIO(sealed)) as archive:
-                manifest = json.loads(archive.read("arm_manifest.json"))
-                files = {name: archive.read(name) for name in archive.namelist()
-                         if name.endswith((".py", ".txt")) and archive.getinfo(name).file_size <= 2_000_000}
+                names = archive.namelist()
+                all_files = {name: archive.read(name) for name in names}
+                root = trace_selection.select(all_files).bundle_root
+                manifest = json.loads(all_files[root + "arm_manifest.json"])
+                files = {name[len(root):]: raw for name, raw in all_files.items()
+                         if name.startswith(root) and name.endswith((".py", ".txt"))
+                         and len(raw) <= 2_000_000}
             job_preflight.check_sources(files, entry=manifest.get("entrypoint"))
         except job_preflight.PreflightError as exc:
             code = exc.code
@@ -409,7 +416,10 @@ def _form_trace(package_bytes: bytes) -> list[dict[str, Any]]:
     import zipfile
     try:
         with zipfile.ZipFile(io.BytesIO(package_bytes)) as archive:
-            rows = [json.loads(line) for line in archive.read(package_seal.TRACE).splitlines() if line.strip()]
+            files = {name: archive.read(name) for name in archive.namelist()}
+            selected = trace_selection.select(files)
+            rows = [json.loads(line) for line in files[selected.bundle_root + package_seal.TRACE].splitlines()
+                    if line.strip()]
         return rows[-20:] or [{"step_type": "observation", "title": "Sealed package",
                                "body": "提交封存包 " + hashlib.sha256(package_bytes).hexdigest()}]
     except (KeyError, ValueError, zipfile.BadZipFile):
