@@ -294,7 +294,8 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
                   "INVALID_MESSAGE": 422}.get(exc.code, 400)
         return JSONResponse(status_code=status, content={
             "detail": {"code": exc.code, "message": str(exc),
-                       "recoverable": True, "details_ref": None}})
+                       "recoverable": True, "details_ref": None,
+                       "warnings": exc.warnings}})
 
     # ---------------- 健康 ----------------
 
@@ -1015,7 +1016,7 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
         body = await request.json()
         return await asyncio.to_thread(mailboxes.harvest_submit,
             body.get("submission_id", ""), body.get("operation_id", ""),
-            bool(body.get("confirm")))
+            body.get("confirm") is True, body.get("acknowledge_warnings") is True)
 
     # ---------------- 经验 ----------------
 

@@ -436,10 +436,16 @@ def test_harvest_eligibility_and_happy_path():
         mailboxes.harvest_submit(s2["id"], "op-hv1", True)
     assert exc.value.code == "NO_MAILBOX"
     mailboxes.add_harvest("me@example.com", "s3cret")
-    # 非最高分拒绝
+    # 非最高分先列出警示，再经显式知悉放行
     with pytest.raises(mailboxes.MailboxError) as exc:
         mailboxes.harvest_submit(s1["id"], "op-hv2", True)
-    assert exc.value.code == "INVALID_STATE"
+    assert exc.value.code == "NEEDS_CONFIRM"
+    assert '不是当前最高分' in exc.value.warnings
+    lower = mailboxes.harvest_submit(s1["id"], "op-hv2", True, True)
+    assert lower['source_submission_id'] == s1['id']
+    warning_event = db.query_one("SELECT payload FROM events WHERE run_id=?"
+        " AND type='submission.harvest_reserved' ORDER BY seq DESC", (rid,))
+    assert '不是当前最高分' in json.loads(warning_event['payload'])['warnings']
     # 最高分通过
     r = mailboxes.harvest_submit(s2["id"], "op-hv3", True)
     assert r["status"] == "submitted" and r["is_harvest"] == 1
@@ -455,6 +461,38 @@ def test_harvest_eligibility_and_happy_path():
     with pytest.raises(mailboxes.MailboxError) as exc:
         mailboxes.harvest_submit(s2["id"], "op-hv4", True)
     assert exc.value.code == "CONFLICT"
+
+
+def test_harvest_candidates_include_all_scores_and_provisional_warnings():
+    _seed_challenge()
+    rid = _make_run(max_submissions=3)
+    _make_package(rid)
+    mailboxes.register_experiment(1)
+    mailboxes.add_harvest('choice@example.com', 'fixture-secret')
+    high = mailboxes.submit_experiment(rid, 'trial_mb1', None, 'choice-high')
+    _set_scored(high['id'], 90)
+    low = mailboxes.submit_experiment(rid, 'trial_mb1', None, 'choice-low')
+    _set_scored(low['id'], 80)
+    db.execute("UPDATE submissions SET score_confidence='provisional',"
+               " score_anomaly='workerStatus=error',scorecard_consistent=0 WHERE id=?",
+               (low['id'],))
+    db.append_event(rid, 'controller', 'submission.platform_feedback', {
+        'submission_id':low['id'], 'kind':'score',
+        'response':{'scorecard':{'harbor_score':100,'trace_score':70.525}}})
+    candidates = mailboxes.harvest_candidates('MB_CH')['items']
+    assert [item['id'] for item in candidates] == [high['id'], low['id']]
+    assert candidates[0]['is_highest'] and candidates[0]['warnings'] == []
+    assert candidates[1]['displayScore'] == 80
+    assert (candidates[1]['harbor_score'], candidates[1]['trace_score']) == (100, 70.525)
+    assert len(candidates[1]['warnings']) == 4
+    with pytest.raises(mailboxes.MailboxError) as exc:
+        mailboxes.harvest_submit(low['id'], 'choice-harvest', True)
+    assert exc.value.code == 'NEEDS_CONFIRM' and len(exc.value.warnings) == 4
+    with pytest.raises(mailboxes.MailboxError) as exc:
+        mailboxes.harvest_submit(low['id'], 'choice-harvest', True, 'true')
+    assert exc.value.code == 'INVALID_MESSAGE'
+    accepted = mailboxes.harvest_submit(low['id'], 'choice-harvest', True, True)
+    assert accepted['source_submission_id'] == low['id']
 
 
 def test_harvest_rejects_unknown_score_source():

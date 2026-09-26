@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { api } from '../api'
+import { api, ApiError } from '../api'
 import { useApp } from '../app-context'
 import { Badge, Modal } from '../components'
 import { SCORE_STATUS_LABELS, SUBMISSION_STATUS_LABELS } from '../labels'
@@ -51,6 +51,8 @@ export default function MailboxPage() {
   const [harvestSecret, setHarvestSecret] = useState('')
   const [regCount, setRegCount] = useState(1)
   const [confirming, setConfirming] = useState<Submission | null>(null)
+  const [selectedCandidateId, setSelectedCandidateId] = useState<string | null>(null)
+  const [ackWarnings, setAckWarnings] = useState(false)
   const [pkgPath, setPkgPath] = useState('')
   const [allowProxyEvidence, setAllowProxyEvidence] = useState(false)
   const [allowIndeterminateAdmission, setAllowIndeterminateAdmission] = useState(false)
@@ -199,11 +201,17 @@ export default function MailboxPage() {
         submission_id: confirming.id,
         operation_id: `harvest-${crypto.randomUUID()}`,
         confirm: true,
+        acknowledge_warnings: ackWarnings,
       })
       toast('收割提交已受理。')
       setConfirming(null)
+      setAckWarnings(false)
       await refresh()
     } catch (err) {
+      if (err instanceof ApiError && err.code === 'NEEDS_CONFIRM' && err.warnings?.length) {
+        setConfirming({ ...confirming, warnings: err.warnings })
+        setAckWarnings(false)
+      }
       toast('收割提交失败：' + (err instanceof Error ? err.message : String(err)))
     } finally {
       setBusy(false)
@@ -234,6 +242,7 @@ export default function MailboxPage() {
   const harvest = mailboxes?.items.find((m) => m.role === 'harvest' && m.status !== 'disabled')
   const experiments = mailboxes?.items.filter((m) => m.role === 'experiment') ?? []
   const best = candidates[0] ?? null
+  const selected = candidates.find((item) => item.id === selectedCandidateId) ?? best
 
   return (
     <section aria-label="邮箱与提交">
@@ -316,7 +325,7 @@ export default function MailboxPage() {
               </>
             ) : (
               <>
-                <p className="sub">由你提供，只有一个。只在你手动确认时提交最高分现成包。</p>
+                <p className="sub">由你提供，只有一个。只在你手动确认时提交选中的已出分包。</p>
                 <label htmlFor="harvest-email">邮箱地址</label>
                 <input id="harvest-email" value={harvestEmail}
                   onChange={(e) => setHarvestEmail(e.target.value)}
@@ -401,16 +410,32 @@ export default function MailboxPage() {
           <div className="card-body">
             {best ? (
               <>
-                <p className="sub">最高分现成包（实验邮箱已提交验证）：</p>
-                <div className="meta-row"><span>得分</span><span>{best.score}</span></div>
-                <div className="meta-row"><span>提交邮箱</span><span>{best.mailbox_email}</span></div>
-                <div className="meta-row"><span>包哈希</span><span>{best.package_sha256.slice(0, 16)}…</span></div>
+                <p className="sub">选择任意已出分的实验提交：</p>
+                <ul className="plain-list" aria-label="收割候选列表">
+                  {candidates.map((candidate) => (
+                    <li key={candidate.id}>
+                      <label>
+                        <input type="radio" name="harvest-candidate" value={candidate.id}
+                          checked={selected?.id === candidate.id}
+                          onChange={() => setSelectedCandidateId(candidate.id)} />
+                        {candidate.is_highest ? ' 当前最高分 ·' : ''} 展示分 {candidate.displayScore ?? candidate.score}
+                        {' · '}科学分 {candidate.harbor_score ?? '未知'} · 轨迹分 {candidate.trace_score ?? '未知'}
+                        {' · '}{candidate.score_confidence === 'confirmed' ? '已确认' : '暂定'}
+                      </label>
+                      <div className="small-text">
+                        Trial {candidate.trial_id ?? '未知'} · 提交于 {candidate.submitted_at ?? candidate.created_at}
+                        {' · '}异常 {candidate.score_anomaly ?? '无'}
+                        {' · '}分项一致性 {candidate.scorecard_consistent === 1 ? '一致' : candidate.scorecard_consistent === 0 ? '不一致' : '未知'}
+                      </div>
+                    </li>
+                  ))}
+                </ul>
                 <div className="actions" style={{ marginTop: 10 }}>
                   <button type="button" className="btn primary"
-                    disabled={busy || !harvest}
+                    disabled={busy || !harvest || !selected}
                     title={harvest ? '' : '先配置收割邮箱'}
-                    onClick={() => setConfirming(best)}>
-                    用收割邮箱提交此包
+                    onClick={() => { setAckWarnings(false); setConfirming(selected) }}>
+                    收割选中候选
                   </button>
                 </div>
               </>
@@ -518,8 +543,15 @@ export default function MailboxPage() {
             </p>
             <div className="meta-row"><span>包路径</span><span>{confirming.package_path}</span></div>
             <div className="meta-row"><span>包哈希</span><span>{confirming.package_sha256.slice(0, 24)}…</span></div>
+            {(confirming.warnings ?? []).length > 0 && <>
+              <p>以下警示需要逐项知悉：</p>
+              <ul>{confirming.warnings?.map((warning) => <li key={warning}>{warning}</li>)}</ul>
+              <label><input type="checkbox" checked={ackWarnings}
+                onChange={(event) => setAckWarnings(event.target.checked)} /> 已知悉上述警示</label>
+            </>}
             <div className="actions" style={{ marginTop: 12 }}>
-              <button type="button" className="btn primary" disabled={busy}
+              <button type="button" className="btn primary"
+                disabled={busy || Boolean(confirming.warnings?.length && !ackWarnings)}
                 onClick={() => void harvestSubmit()}>
                 确认提交
               </button>

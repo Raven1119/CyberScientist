@@ -21,9 +21,10 @@ from .mailbox_platform import (MailboxPlatform, PlatformError, final_score,
 
 
 class MailboxError(Exception):
-    def __init__(self, code: str, message: str):
+    def __init__(self, code: str, message: str, *, warnings: list[str] | None = None):
         super().__init__(message)
         self.code = code
+        self.warnings = warnings or []
 
 
 def _rid(prefix: str) -> str:
@@ -838,14 +839,37 @@ def harvest_candidates(challenge_id: str) -> dict[str, Any]:
         " JOIN runs r ON r.id=s.run_id"
         " WHERE r.challenge_id=? AND s.is_harvest=0"
         " AND s.status='submitted' AND s.score_status='scored'"
-        " ORDER BY s.score DESC", (challenge_id,))
-    return {"items": [dict(r) for r in rows]}
+        " ORDER BY s.score DESC,s.created_at ASC,s.id", (challenge_id,))
+    items = _submission_items(rows)
+    highest = items[0]['score'] if items else None
+    for item in items:
+        detail = (item.get('platform_feedback') or {}).get('score', {}).get('response')
+        item['harbor_score'], item['trace_score'] = _score_components(detail)
+        item['displayScore'] = item['score']
+        item['is_highest'] = item['score'] == highest
+        item['warnings'] = _harvest_warnings(item, highest)
+    return {"items": items}
+
+
+def _harvest_warnings(candidate, highest) -> list[str]:
+    warnings = []
+    if candidate['score'] != highest:
+        warnings.append('不是当前最高分')
+    if candidate['score_confidence'] != 'confirmed':
+        warnings.append('分数仍为暂定，尚未确认')
+    if candidate['score_anomaly']:
+        warnings.append('评分异常：' + candidate['score_anomaly'])
+    if candidate['scorecard_consistent'] == 0:
+        warnings.append('展示分与评分分项不一致')
+    return warnings
 
 
 def harvest_submit(submission_id: str, operation_id: str,
-                   confirm: bool) -> dict[str, Any]:
-    """收割提交：只对实验邮箱已提交且得分最高的现成包，必须用户手动确认。"""
-    if not confirm:
+                   confirm: bool, acknowledge_warnings: bool = False) -> dict[str, Any]:
+    """收割任意已出分的实验包；警示必须经显式知悉。"""
+    if type(confirm) is not bool or type(acknowledge_warnings) is not bool:
+        raise MailboxError('INVALID_MESSAGE', '确认标志必须是显式布尔值')
+    if confirm is not True:
         raise MailboxError("NEEDS_CONFIRM", "收割提交需要用户手动确认")
     if not operation_id:
         raise MailboxError("INVALID_MESSAGE", "缺少 operation_id（幂等键）")
@@ -867,17 +891,14 @@ def harvest_submit(submission_id: str, operation_id: str,
             f"来源提交无已知官方得分（status={src['status']},"
             f" score_status={src['score_status']}）；不能收割未知分的包")
     best = db.query_one(
-        "SELECT s.id, s.score FROM submissions s JOIN mailboxes m"
-        " ON m.id=s.mailbox_id JOIN runs r ON r.id=s.run_id"
+        "SELECT MAX(s.score) AS score FROM submissions s JOIN runs r ON r.id=s.run_id"
         " WHERE r.challenge_id=(SELECT challenge_id FROM runs WHERE id=?)"
         " AND s.is_harvest=0 AND s.status='submitted'"
-        " AND s.score_status='scored' ORDER BY s.score DESC LIMIT 1",
+        " AND s.score_status='scored'",
         (src["run_id"],))
-    if not best or best["id"] != submission_id:
-        raise MailboxError(
-            "INVALID_STATE",
-            f"该提交不是最高分（当前最高 {best['score'] if best else '无'}）；"
-            "收割邮箱只提交得分最高的现成包")
+    warnings = _harvest_warnings(src, best['score'] if best else None)
+    if warnings and not acknowledge_warnings:
+        raise MailboxError('NEEDS_CONFIRM', '请知悉全部收割警示后再提交', warnings=warnings)
     harvest = db.query_one(
         "SELECT * FROM mailboxes WHERE role='harvest' AND status='active'")
     if not harvest:
@@ -898,6 +919,18 @@ def harvest_submit(submission_id: str, operation_id: str,
     with db.transaction() as conn:
         dup = _duplicate(conn,operation_id,fingerprint)
         if dup: return dup
+        current_src = conn.execute('SELECT * FROM submissions WHERE id=?',(submission_id,)).fetchone()
+        if (not current_src or current_src['status'] != 'submitted'
+                or current_src['score_status'] != 'scored'):
+            raise MailboxError('INVALID_STATE', '来源提交的已出分状态已变化')
+        best = conn.execute(
+            "SELECT MAX(s.score) AS score FROM submissions s JOIN runs r ON r.id=s.run_id"
+            " WHERE r.challenge_id=(SELECT challenge_id FROM runs WHERE id=?)"
+            " AND s.is_harvest=0 AND s.status='submitted' AND s.score_status='scored'",
+            (src['run_id'],)).fetchone()
+        warnings = _harvest_warnings(current_src, best['score'] if best else None)
+        if warnings and not acknowledge_warnings:
+            raise MailboxError('NEEDS_CONFIRM', '请知悉全部收割警示后再提交', warnings=warnings)
         harvest = conn.execute("SELECT * FROM mailboxes WHERE id=? AND status='active'"
                                " AND platform=? AND is_demo=?",
                                (harvest["id"],platform.name,int(platform.is_demo))).fetchone()
@@ -916,4 +949,8 @@ def harvest_submit(submission_id: str, operation_id: str,
                      " VALUES(?,?,?,?,?,?,'unknown',1,?,?,?,?,'reserved')",
                      (sid,src["run_id"],src["trial_id"],harvest["id"],frozen,src["package_sha256"],
                       submission_id,operation_id,db.utcnow(),fingerprint))
+        db.append_event_tx(conn,src['run_id'],'controller','submission.harvest_reserved',{
+            'submission_id':sid,'source_submission_id':submission_id,
+            'warnings':warnings,'acknowledge_warnings':acknowledge_warnings},
+            trial_id=src['trial_id'])
     return _perform_submission(sid,platform,challenge_id)

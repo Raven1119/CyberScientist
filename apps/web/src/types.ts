@@ -379,6 +379,11 @@ export interface Submission {
   score_confidence?: 'provisional' | 'confirmed' | null
   score_anomaly?: string | null
   scorecard_consistent?: 0 | 1 | null
+  displayScore?: number | null
+  harbor_score?: number | null
+  trace_score?: number | null
+  is_highest?: boolean
+  warnings?: string[]
   is_harvest: number
   platform_ref: string | null
   error: string | null

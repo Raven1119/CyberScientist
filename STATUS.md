@@ -2,6 +2,7 @@
 
 ## 已实现
 
+- CS-UP-01 U1–U4：共享 ARM 轨迹选行、封存合并与准入报告；按邮箱和平台题目 ID 从提交预留计数；评分暂定/确认、异常/分项一致性与赛后复评停止点；任意已出分实验提交的收割选择与逐条警示确认。前端显示题目邮箱用量、评分可信度和收割候选。完整取舍见 `docs/DECISIONS.md` 的 CS-UP-01 节。
 - CS-EV-01b 后续根因修复：旧 bohr 1.1.0 Job 子进程及连接检查默认指向仍提供旧 Job 路由的 `https://openapi.dp.tech`；Wenyon 新客户端保持 `https://open.bohrium.com`。配置仅作用于应用子进程，不改全局 CLI。受控下载现可从 bohr 1.1.0 的 `<job_id>/out.zip` 内有界读取 `results/facts.json` 并登记镜像事实，不解压不可信路径。
 - CS-EV-01b：Job 下载与日志按操作保存最近一次回执，并保留曾成功下载的证据；后续取回失败仍追加失败事件，不覆盖已下载结果的账本汇总。研究帧、轨迹和前端沿用同一汇总语义，旧单字段回执在下一次受控取回时转成分操作记录。
 - CS-EV-01a：非 ZIP 提交也执行同一代理证据门；放弃待处理 Trial 意图后在 running 阶段唤醒大脑；预算等待中保留用户显式审阅并在帧中标明门禁；日志锚点按协议快照的完整修剪行长度判定。Job 账本增加结果取回状态，受控下载/日志操作按实际文件及 SHA-256 留痕，研究帧、轨迹文本和前端远程任务列表显示该状态。
@@ -17,6 +18,8 @@
 
 ## 已实际验证
 
+- CS-UP-01 已在迁移前以 SQLite 在线备份保存本机数据库到忽略目录 `.package-checks/upgrade-20260926T190730Z/`，随后执行两次 `db.init_db()`；新增 7 个评分列，原有 2 条提交按迁移前列逐值保持一致，`exhausted` 邮箱数为 0。首次校验脚本因比较 `tuple` 与 `sqlite3.Row` 而在断言处失败；修正校验类型后通过，迁移本身没有失败。
+- CS-UP-01 最终回归：`.venv/bin/pytest -q` 为 392 passed、1 skipped（沙箱禁止回环监听的既有测试）；`npm --prefix apps/web test -- --run` 为 14 passed；`npm --prefix apps/web run build`、`.venv/bin/python -m compileall -q src tests`、`git diff --check` 均通过。前端命令使用项目 Linux Node 22 路径。此前全套曾得到 385 passed、1 skipped、2 failed；测试对错误包根的断言及迁移事务嵌套均已修正后重跑全套通过。
 - CS-EV-01b 根因对照：同一 USCT Job、同一只读 `GET /openapi/v1/job/{id}`，在 `open.bohrium.com` 返回 HTTP 404，响应 `error` 为对象且说明旧路由不匹配；在 `openapi.dp.tech` 返回 HTTP 200、`code=0`。仅覆盖旧 CLI 子进程 host 后，`job download` 返回 `ok=true`，取得 `out.zip`（1,900,228 字节，ZIP 校验通过）；24 个文件条目中 22 个与此前由日志 ZIP 恢复的同名文件 SHA-256 一致，另 2 个旧目录没有。原始脱敏回执及逐项哈希仅存本机 `.package-checks/job-debug-*`。
 - PR-4 Job `23433560` 使用修复后的受控 `compute.cli` 再次取回 `out.zip`（582 字节），账本 `retrieval_status=retrieved`，`image_facts` 已登记；归档内 `results/facts.json` 与 `results/data-proof.json` 均存在且 ZIP 校验通过。`job describe --json` 给出 `statusStr=Finished`、`webStatus=2`、`exitCode=0`、无 `errorInfo`；数据证明引用的物化记录为 `verified`，其内容哈希与本机已登记目录一致。此为文件与运行回执验证，不代替平台评分或科研结论。审计文件留在 `.package-checks/pr4-download-correct-host-20260926T161824Z/` 及忽略的 Run 工作区；未创建新 Job、Run、Attempt，未切换客户端或修改全局认证。
 - CS-EV-01b 根因修复后的最终回归：`.venv/bin/pytest -q` 为 366 passed、0 skipped；定向 `.venv/bin/pytest -q tests/test_compute_gateway.py tests/test_bohrium_connection.py` 为 44 passed；`npm --prefix apps/web test -- --run` 为 12 passed，`npm --prefix apps/web run build` 成功；`.venv/bin/python -m compileall -q src tests` 与 `git diff --check` 均通过。前端命令使用项目 Linux Node 22 路径。本轮没有新模型调用、付费 Job 或比赛 Attempt。
@@ -46,6 +49,7 @@
 
 ## 尚未验证
 
+- CS-UP-01 的新封存包尚未经真实平台准入验证；真实评分器的复评时间线也未经真实环境验证。本卡未进行真实 Run、模型调用、Job、沙箱、Attempt 或平台账号访问。
 - CS-EV-01a 的第一次 D1 探针曾受沙箱网络权限阻断；CS-EV-01b 已定位并修复旧 CLI 的 API host 错配，真实历史 Job 与 PR-4 Job 均已成功取回。仍未验证平台对 PR-4 科学结果的评分或比赛有效性；本卡未创建新的生产 Job。
 - PR-3 的这个 v1 样本已下载并核对，且经真实 Run 物化与 Job 输入冻结；其他 Wenyon 清单格式及不同数据集的哈希语义未验证。已验证输入清单和数据证明，不等于验证所有远端读取行为。真实平台对封存包的准入结论及科学结果仍未验证。
 

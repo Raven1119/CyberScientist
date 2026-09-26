@@ -6,6 +6,7 @@ export interface ApiErrorBody {
   recoverable: boolean
   details_ref?: string
   details?: unknown
+  warnings?: string[]
 }
 
 export class ApiError extends Error {
@@ -13,6 +14,7 @@ export class ApiError extends Error {
   code: string
   recoverable: boolean
   details?: unknown
+  warnings?: string[]
 
   constructor(status: number, body: ApiErrorBody | null) {
     super(body?.message ?? `请求失败（HTTP ${status}）`)
@@ -20,6 +22,7 @@ export class ApiError extends Error {
     this.code = body?.code ?? 'UNKNOWN'
     this.recoverable = body?.recoverable ?? false
     this.details = body?.details
+    this.warnings = body?.warnings
   }
 }
 
