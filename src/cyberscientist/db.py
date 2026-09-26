@@ -375,6 +375,7 @@ AUTHORIZATION_V2_COLUMNS = {
 COMPUTE_V2_COLUMNS = {
     "data_refs_json": "TEXT NOT NULL DEFAULT '[]'",
     "purpose": "TEXT NOT NULL DEFAULT 'compute'",
+    "retrieval_status": "TEXT NOT NULL DEFAULT 'not_attempted'",
 }
 
 # challenges 表 v2 新增列：平台资源清单（数据集/工具/服务），导入时从

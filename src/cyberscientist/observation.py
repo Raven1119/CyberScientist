@@ -163,7 +163,13 @@ def job_states(run_id: str, through_seq: int) -> list[dict]:
                     'job.stop_requested': 'stopping', 'job.stop_receipt': 'stop_unknown'}
         state['status'] = p.get('status') or statuses.get(e['type'], state.get('status', 'unknown'))
         state['platform_job_id'] = p.get('platform_job_id') or state.get('platform_job_id')
+        if e['type'] == 'job.retrieval_failed':
+            state['retrieval_status'] = 'failed'
+        elif e['type'] == 'job.retrieved':
+            state['retrieval_status'] = 'retrieved'
         state['evidence_ref'] = f"event:{run_id}:{e['seq']}"
+    for state in states.values():
+        state.setdefault('retrieval_status', 'not_attempted')
     return list(states.values())[-30:]
 
 
@@ -284,6 +290,7 @@ def build_frame(run_id: str, *, mode: str, frame_id: str,
         "frame_id": frame_id,
         "mode": mode,
         "run_id": run_id,
+        "gate": run["gate"],
         "trial_id": trial["id"] if trial else None,
         "trial_status": trial["status"] if trial else None,
         "state_version": run["state_version"],

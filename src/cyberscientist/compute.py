@@ -47,6 +47,14 @@ def _json(value):
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(',', ':'))
 
 
+def _file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open('rb') as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b''):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def _project_id(value: object) -> int:
     """Normalize the settings/API value to bohr 1.1.0's integer JobJson field."""
     if type(value) is int and value > 0:
@@ -109,7 +117,8 @@ def _native(args: list[str], *, timeout: int = 90) -> dict:
         out, err = redact(result.stdout, [key]), redact(result.stderr, [key])
         # bohr 1.1.0 can print an error while returning zero.
         success = result.returncode == 0 and not re.search(
-            r'(?im)^\s*(error:|unknown (?:shorthand )?flag|panic:)', out + '\n' + err)
+            r'(?im)^\s*(error:|unknown (?:shorthand )?flag|panic:)|json: cannot unmarshal object into Go struct field RespErr\.error of type string',
+            out + '\n' + err)
         return {'exit_code': result.returncode, 'ok': success,
                 'stdout': out[:2_000_000], 'stderr': err[-12000:],
                 'truncated': len(out) > 2_000_000}
@@ -468,7 +477,39 @@ def cli(run_id: str, args: list[str], cwd: str) -> dict:
             raise ComputeError('INVALID_PATH', '日志/结果下载必须显式指定 -o 工作目录')
         if opts.json:
             command.append('--json')
+        before = ({p.relative_to(dest).as_posix(): (p.stat().st_size, p.stat().st_mtime_ns)
+                   for p in dest.rglob('*') if p.is_file() and not p.is_symlink()}
+                  if args[1] in ('log', 'download') else {})
         receipt = _native(command)
+        if args[1] in ('log', 'download'):
+            key = config.resolve_secret(config.load_settings()['bohrium'].get('access_key_secret_ref', ''))
+            files = []
+            for path in sorted(dest.rglob('*')):
+                if not path.is_file() or path.is_symlink():
+                    continue
+                rel = path.relative_to(dest).as_posix()
+                if before.get(rel) == (path.stat().st_size, path.stat().st_mtime_ns):
+                    continue
+                files.append({'path': redact(rel, [key]), 'sha256': _file_sha256(path),
+                              'bytes': path.stat().st_size})
+            retrieved = bool(receipt.get('ok') and files)
+            status = 'retrieved' if retrieved else 'failed'
+            stored = json.loads(row['receipt_json'] or '{}')
+            stored['retrieval'] = {'operation': args[1], 'status': status,
+                                   'files': files if retrieved else [],
+                                   'exit_code': receipt.get('exit_code')}
+            with db.transaction() as conn:
+                conn.execute('UPDATE compute_jobs SET retrieval_status=?,receipt_json=?,updated_at=?'
+                             ' WHERE operation_id=?', (status, _json(stored), db.utcnow(), row['operation_id']))
+                db.append_event_tx(conn, run_id, 'controller',
+                                   'job.retrieved' if retrieved else 'job.retrieval_failed',
+                                   {'operation_id': row['operation_id'], 'platform_job_id': jid,
+                                    'retrieval_status': status, 'operation': args[1],
+                                    'files': files if retrieved else [],
+                                    'receipt': {'exit_code': receipt.get('exit_code'),
+                                                'ok': receipt.get('ok'),
+                                                'stderr': redact(receipt.get('stderr', '')[:1000], [key])}},
+                                   trial_id=row['trial_id'])
         if args[1] == 'download' and row['purpose'] == 'probe' and receipt.get('ok') and opts.output:
             facts_path = dest / 'results' / 'facts.json'
             try:

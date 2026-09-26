@@ -21,6 +21,12 @@ def project(run_id: str, trial_id: str | None, through_seq: int,
     """Only rows at or before through_seq from this Run can become steps."""
     rows = db.query("SELECT seq,recorded_at,type,payload,trial_id FROM events"
                     " WHERE run_id=? AND seq<=? ORDER BY seq", (run_id, through_seq))
+    retrieval_by_op = {}
+    for event in rows:
+        if event["type"] in ("job.retrieved", "job.retrieval_failed"):
+            value = json.loads(event["payload"])
+            if value.get("operation_id"):
+                retrieval_by_op[value["operation_id"]] = value.get("retrieval_status", "unknown")
     calls: set[str] = set()
     results: set[str] = set()
     steps: list[dict[str, Any]] = []
@@ -56,9 +62,10 @@ def project(run_id: str, trial_id: str | None, through_seq: int,
                                  "title": "Bohrium Job accepted", "code": _safe(spec.get("command"))})
         elif kind == "job.observed" and payload.get("status") in ("Finished", "Failed", "Stopped"):
             op = str(payload.get("operation_id") or "")
+            retrieval = retrieval_by_op.get(op, "not_attempted")
             steps.append(base | {"step_type": "tool_result", "tool_call_id": "job:" + op,
                                  "title": "Bohrium Job terminal state",
-                                 "tool_output": _safe(f"Job {payload.get('platform_job_id')} status {payload.get('status')}; Finished does not prove scientific success")})
+                                 "tool_output": _safe(f"Job {payload.get('platform_job_id')} status {payload.get('status')}; Finished does not prove scientific success; 结果取回：{retrieval}")})
         elif kind in ("job.not_started", "job.unknown"):
             steps.append(base | {"step_type": "error" if kind == "job.not_started" else "observation",
                                  "title": kind, "body": _safe(payload.get("error") or payload.get("reason"))})

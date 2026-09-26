@@ -30,3 +30,13 @@ it('curates the selected paused Run and reuses the operation ID after an uncerta
   expect(first[0]).toBe('/api/v1/runs/run-paused/curation')
   expect(first[1]).toEqual(second[1])
 })
+
+it('shows a finished job whose result retrieval failed', async () => {
+  vi.mocked(api.get).mockImplementation(async path => path.endsWith('/jobs') ? {
+    items: [{ operation_id: 'job-a', platform_job_id: 123, status: 'Finished', retrieval_status: 'failed' }],
+    reserved_jobs: 1, active_or_unknown: 0,
+  } : { state: 'idle' })
+  render(<RunOperations runId="run-a" phase="running" />)
+  expect(await screen.findByText('完成 · 结果未取回')).toBeTruthy()
+  expect(screen.getByText('结果取回：失败')).toBeTruthy()
+})

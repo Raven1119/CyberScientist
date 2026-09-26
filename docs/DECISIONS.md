@@ -261,3 +261,12 @@
 - 本次明确获授权继续真实运行验收和单个 PR-4 Job。Run 限 20 分钟、1 Job、同时 1 个、2 核/2 GB/10 GB、无 GPU，`max_submissions=0`。首次开局 Codex 大脑实际产出合法的 v2 Decision，但 `decision_extraction._extract_json` 只接受 v1，造成误暂停；修复为同时接受 v1/v2，使用同一 Run 的 recovery 控制恢复。实际原始最终消息经修复后提取并通过结构校验，回归测试覆盖 fenced v2 Decision；未改原生代理或授权边界。
 - PR-4 模板原写 `c1_m1_cpu`，本次真实只读机器目录没有该规格，最小 CPU 为 `c2_m2_cpu`，故模板及断言按实际目录修正。唯一 Job 经普通网关提交，`purpose=probe`，其冻结输入和数据引用均指向本轮核验过的物化记录；逐文件哈希和远端创建回执均有本机审计记录。列表对账观察到 `Finished`，但描述和结果下载的旧 CLI 回执均为解析错误；新版 CLI 对该旧协议 Job 返回 404。故运行脚本是否成功、镜像事实和远端数据读取一律为 unknown。未创建第二 Job 或 Attempt。
 - 审计根目录为本机忽略的 `.package-checks/real-acceptance-20260926T073421Z/`，其中保留数据库迁移前备份、授权/启动/物化/Job 回执、输入哈希清单及下载失败回执。执行器检查点和交付包保留在 `workspace/runs/`。可提交的实验结果概述见 `docs/CS_EV_01_REAL_RUN_ACCEPTANCE_2026-09-26.md`；本次不提交原始回执、下载数据、工作区包或经验产物。此处真实失败反馈只说明当前服务/客户端路径不可用于读取旧 Job 产物，不推广为所有 Bohrium Job 的结论。
+
+## CS-EV-01a 修补（2026-09-26）
+
+- F1：轨迹准入只适用于 ZIP bundle，代理证据门适用于所有提交格式。JSON/CSV 保持 `not_applicable` 轨迹结论，但在预留邮箱和调用平台前检查 `evidence_class=proxy`；显式覆盖标志随 `submission.created` 留痕。
+- F2：用户放弃待处理 Trial 意图后，running Run 排入一次生命周期审阅，帧内带原意图与原因；paused Run 等恢复路径处理。额度用尽仍由现有审阅上限路径暂停，避免门禁打开却无人推进。
+- F3：`awaiting_budget` 继续丢弃自动唤醒，但保留 `user_steer` 和显式用户审阅。帧提供当前门禁与待处理意图；Decision 的 `start_trial` 仍受门禁拒绝，合法的结束或放弃意图可执行。
+- F4：`trace_anti_fraud.admission.thresholds` 提供日志锚点参与字段和修剪后整行的长度上下限。本地检查先判范围再匹配，不截断超长行，避免比平台宽松；缺失阈值时用当前默认值并记 notes。
+- D1：`compute_jobs.retrieval_status` 仅追加列；受控 `job download`/`job log` 只有产生新文件且 CLI 回执成功才记 `retrieved` 并记录文件 SHA-256，否则记 `failed` 与脱敏失败事件。研究帧和前端显示取回状态，轨迹只追加终态结果文本，不改配对状态机。迁移前 SQLite 在线备份及真实探针回执均在本机忽略目录。
+- 获授权的一次旧 USCT Finished Job 下载探针使用当前 bohr 1.1.0，进程退出码 0，但后端识别 `ok=false`、无文件；错误是当前沙箱 DNS 查询时 socket 权限拒绝，请求未到平台。该结果只能证明**本环境未能取回**，不能区分 PR-4 单例故障与客户端协议故障，也不能宣称所有 Job 均无法取回。本卡不重试、不切换客户端；下次真实 Run 前应在允许网络访问的环境核实取回链路。

@@ -41,6 +41,58 @@ def remote(rid, status='Running'):
     return receipt(json.dumps([{'id': 123, 'jobName': row['spec']['job_name'], 'status': status}]))
 
 
+@pytest.mark.parametrize('mode', ['cli_error', 'empty_output', 'file'])
+def test_download_records_real_files_or_failure(run, monkeypatch, mode):
+    rid, source = run
+    monkeypatch.setattr(compute, '_native', lambda *a, **k: receipt('JobId: 123'))
+    compute.submit(rid, 'retrieval-fixture', spec(), str(source))
+    destination = source.parent / 'retrieved'
+    def native(args, **kwargs):
+        if mode == 'file':
+            root = Path(args[args.index('-o') + 1])
+            (root / 'output.txt').write_bytes(b'verified fixture')
+            return receipt('download completed')
+        if mode == 'empty_output':
+            return receipt('download completed')
+        return receipt('Error: json: cannot unmarshal object into Go struct field RespErr.error of type string', False)
+    monkeypatch.setattr(compute, '_native', native)
+    compute.cli(rid, ['job', 'download', '-j', '123', '-o', str(destination)], str(source.parent))
+    job = compute.list_jobs(rid)['items'][0]
+    expected = 'retrieved' if mode == 'file' else 'failed'
+    assert job['retrieval_status'] == expected
+    if mode == 'file':
+        assert job['receipt']['retrieval']['files'] == [{
+            'path': 'output.txt', 'bytes': len(b'verified fixture'),
+            'sha256': __import__('hashlib').sha256(b'verified fixture').hexdigest()}]
+    else:
+        assert job['receipt']['retrieval']['files'] == []
+    events = db.query('SELECT type,payload FROM events WHERE run_id=? AND type IN (?,?)',
+                      (rid, 'job.retrieved', 'job.retrieval_failed'))
+    assert len(events) == 1 and events[0]['type'] == ('job.retrieved' if mode == 'file' else 'job.retrieval_failed')
+    assert 'accessKey' not in events[0]['payload']
+
+
+def test_native_zero_exit_unmarshal_error_is_failed_and_redacted(monkeypatch):
+    settings = config.load_settings()
+    settings['bohrium']['access_key_secret_ref'] = 'local:fixture-key'
+    config.save_settings(settings)
+    config.update_secret('fixture-key', 'secret-value-for-test')
+    error = ('Error: json: cannot unmarshal object into Go struct field '
+             'RespErr.error of type string; accessKey=secret-value-for-test')
+    monkeypatch.setattr(compute.subprocess, 'run', lambda *a, **k:
+                        subprocess.CompletedProcess(a, 0, error, ''))
+    result = compute._native(['job', 'download', '-j', '123', '-o', '/tmp/fixture'])
+    assert result['exit_code'] == 0 and result['ok'] is False
+    assert 'secret-value-for-test' not in json.dumps(result)
+
+
+def test_retrieval_column_migration_is_idempotent():
+    db.init_db()
+    db.init_db()
+    columns = db.query('PRAGMA table_info(compute_jobs)')
+    assert [row['name'] for row in columns].count('retrieval_status') == 1
+
+
 def test_create_is_idempotent_and_quota_survives_unknown(run, monkeypatch):
     rid, source = run; calls = []
     monkeypatch.setattr(compute, '_native', lambda args, **k: calls.append(args) or receipt('Error: no response', False))

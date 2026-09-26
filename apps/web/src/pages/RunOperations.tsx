@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api } from '../api'
 
-type Job = { operation_id: string; platform_job_id: number | null; status: string; observed_at: string | null }
+type Job = { operation_id: string; platform_job_id: number | null; status: string; retrieval_status: string; observed_at: string | null }
 type Jobs = { items: Job[]; reserved_jobs: number; active_or_unknown: number }
 type Curation = { state: string; summary?: string; error?: string; proposals_applied?: number }
 const terminal = new Set(['Finished', 'Failed', 'Stopped', 'not_started'])
@@ -44,7 +44,10 @@ export function RunOperations({ runId, phase }: { runId: string; phase: string }
       {jobs && jobs.items.length > 0 && <table><thead><tr><th>任务</th><th>状态</th><th>操作</th></tr></thead>
         <tbody>{jobs.items.map(job => <tr key={job.operation_id}>
           <td>{job.platform_job_id ?? '远端 ID 未知'}<br /><small>{job.operation_id}</small></td>
-          <td>{job.status}{['stopping', 'stop_unknown'].includes(job.status) && '（尚未确认停止）'}</td>
+          <td>{job.status === 'Finished' && job.retrieval_status === 'failed'
+            ? <strong role="alert">完成 · 结果未取回</strong>
+            : <>{job.status}{['stopping', 'stop_unknown'].includes(job.status) && '（尚未确认停止）'}</>}
+            <br /><small>结果取回：{job.retrieval_status === 'retrieved' ? '已取回' : job.retrieval_status === 'failed' ? '失败' : job.retrieval_status === 'unknown' ? '未知' : '尚未尝试'}</small></td>
           <td><button className="btn danger" disabled={busy || !job.platform_job_id || terminal.has(job.status) || ['stopping', 'stop_unknown'].includes(job.status)}
             onClick={() => void act(`/api/v1/runs/${runId}/jobs/${encodeURIComponent(job.operation_id)}/stop`)}>停止此任务</button></td>
         </tr>)}</tbody></table>}
