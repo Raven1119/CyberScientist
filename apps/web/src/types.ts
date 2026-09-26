@@ -178,6 +178,9 @@ export interface RunBudget {
   model_turns: { limit: number; known_cost: number | null; unknown_cost: boolean | number }
   max_submissions: number
   max_jobs: number
+  max_sandboxes: number
+  max_sandbox_minutes: number
+  allow_sandbox_gpu: boolean
 }
 
 export type RunPhase =

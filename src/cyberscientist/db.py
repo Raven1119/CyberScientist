@@ -292,6 +292,30 @@ CREATE TABLE IF NOT EXISTS compute_jobs (
     updated_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_compute_run ON compute_jobs(run_id, status);
+CREATE TABLE IF NOT EXISTS compute_sandboxes (
+    operation_id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL REFERENCES runs(id),
+    trial_id TEXT NOT NULL,
+    sandbox_id TEXT UNIQUE,
+    request_json TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('creating','active','unknown','deleting','deleted','failed')),
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    deleted_at TEXT,
+    receipt_json TEXT NOT NULL DEFAULT '{}',
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_sandbox_run ON compute_sandboxes(run_id,status);
+CREATE TABLE IF NOT EXISTS compute_sandbox_operations (
+    operation_id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL REFERENCES runs(id),
+    sandbox_id TEXT NOT NULL,
+    action TEXT NOT NULL,
+    status TEXT NOT NULL,
+    started_at TEXT NOT NULL,
+    completed_at TEXT,
+    receipt_json TEXT NOT NULL DEFAULT '{}'
+);
 CREATE TABLE IF NOT EXISTS model_rate_limits (
     run_id TEXT NOT NULL REFERENCES runs(id),
     role TEXT NOT NULL CHECK(role IN ('brain','executor')),
@@ -389,6 +413,9 @@ AUTHORIZATION_V2_COLUMNS = {
     "job_limits_json": "TEXT NOT NULL DEFAULT '{}'",
     "allow_data_download": "INTEGER NOT NULL DEFAULT 0",
     "max_trials": "INTEGER",
+    "max_sandboxes": "INTEGER NOT NULL DEFAULT 0",
+    "max_sandbox_minutes": "INTEGER NOT NULL DEFAULT 0",
+    "allow_sandbox_gpu": "INTEGER NOT NULL DEFAULT 0",
 }
 
 COMPUTE_V2_COLUMNS = {

@@ -74,6 +74,17 @@ def project(run_id: str, trial_id: str | None, through_seq: int,
         elif kind in ("job.not_started", "job.unknown"):
             steps.append(base | {"step_type": "error" if kind == "job.not_started" else "observation",
                                  "title": kind, "body": _safe(payload.get("error") or payload.get("reason"))})
+        elif kind == 'sandbox.exec_started' and payload.get('operation_id'):
+            op = str(payload['operation_id'])
+            steps.append(base | {'step_type':'tool_call','tool_call_id':'sandbox:'+op,
+                                 'title':'Bohrium sandbox exec','code':_safe(payload.get('command'))})
+        elif kind == 'sandbox.exec_completed' and payload.get('operation_id'):
+            op = str(payload['operation_id'])
+            steps.append(base | {'step_type':'tool_result','tool_call_id':'sandbox:'+op,
+                                 'title':'Bohrium sandbox exec result',
+                                 'tool_output':_safe(payload.get('output')),
+                                 'exit_code':payload.get('exit_code')
+                                 if type(payload.get('exit_code')) is int else None})
         elif kind == "checkpoint.created":
             steps.append(base | {"step_type": "observation", "title": "Checkpoint " + _safe(payload.get("checkpoint_id")),
                                  "body": _safe(payload.get("report_excerpt"))})

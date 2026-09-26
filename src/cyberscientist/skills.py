@@ -16,12 +16,14 @@ import yaml
 from . import db
 
 SKILL_DIRS: tuple[Path, ...] = (
+    Path(__file__).resolve().parents[2] / 'skills',
     Path.home() / ".kimi-code" / "skills",
     Path.home() / ".agents" / "skills",
     Path.home() / ".codex" / "skills",
 )
 
 _FRONTMATTER_RE = re.compile(r"\A---[ \t]*\n(.*?)\n---[ \t]*\n?", re.DOTALL)
+BUILTIN_EXECUTOR_SKILLS = ('cyberscientist-sandbox', 'cyberscientist-clean-rerun')
 
 
 def _parse_skill_md(path: Path) -> dict[str, str]:
@@ -79,7 +81,8 @@ def scan_catalog(skill_dirs: Iterable[Path] | None = None) -> list[dict[str, Any
 
 def effective_for(conn: sqlite3.Connection, settings: dict[str, Any],
                   challenge_id: str | None,
-                  catalog: list[dict[str, Any]] | None = None
+                  catalog: list[dict[str, Any]] | None = None,
+                  role: str = 'brain'
                   ) -> list[dict[str, Any]]:
     """常驻 ∪ 本题绑定，去重；引用已删除技能的条目静默跳过。"""
     if catalog is None:
@@ -88,7 +91,8 @@ def effective_for(conn: sqlite3.Connection, settings: dict[str, Any],
     always_on = (settings.get("skills") or {}).get("always_on") or []
     bound = db.list_challenge_skills(conn, challenge_id) if challenge_id else []
     ids: list[str] = []
-    for sid in list(always_on) + bound:
+    defaults = BUILTIN_EXECUTOR_SKILLS if role == 'executor' else ()
+    for sid in list(defaults) + list(always_on) + bound:
         if sid in by_id and sid not in ids:
             ids.append(sid)
     return [by_id[sid] for sid in ids]

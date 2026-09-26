@@ -489,23 +489,30 @@ class RunController:
                   max_submissions: int, note: str | None,
                   max_jobs: int = 0, job_limits: dict | None = None,
                   allow_data_download: bool = False,
+                  max_sandboxes: int = 0, max_sandbox_minutes: int = 0,
+                  allow_sandbox_gpu: bool = False,
                   objective: str | None = None) -> dict[str, Any]:
         run = self._require_run(run_id)
         if run["phase"] not in ("created", "blocked"):
             raise ControllerError("INVALID_STATE", f"当前阶段 {run['phase']} 不能授权")
         from .compute import validate_limits
         limits = validate_limits(job_limits)
-        if any(type(v) is not int or v < 0 for v in (max_jobs, max_run_minutes, max_submissions, max_model_turns)):
+        if any(type(v) is not int or v < 0 for v in (max_jobs, max_run_minutes,
+                max_submissions, max_model_turns, max_sandboxes, max_sandbox_minutes)):
             raise ControllerError('INVALID_ARGUMENT', '预算必须为非负整数')
+        if (max_sandboxes == 0) != (max_sandbox_minutes == 0):
+            raise ControllerError('INVALID_ARGUMENT', '沙箱数量与累计分钟数须同时授权')
         auth_id = _rid("auth")
         db.execute(
             "INSERT INTO authorizations(id, run_id, scope, allow_model_calls,"
             " max_model_turns, max_run_minutes, max_submissions, max_jobs,"
-            " granted_at, note, job_limits_json,allow_data_download,max_trials)"
-            " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            " granted_at, note, job_limits_json,allow_data_download,max_trials,"
+            " max_sandboxes,max_sandbox_minutes,allow_sandbox_gpu)"
+            " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (auth_id, run_id, scope, int(allow_model_calls), max_model_turns,
              max_run_minutes, max_submissions, max_jobs, db.utcnow(), note, json.dumps(limits),
-             int(allow_data_download), config.load_settings()["run_defaults"]["max_trials"]))
+             int(allow_data_download), config.load_settings()["run_defaults"]["max_trials"],
+             max_sandboxes,max_sandbox_minutes,int(allow_sandbox_gpu)))
         db.execute("UPDATE runs SET authorization_id=?, block_reason=NULL,objective_md=? WHERE id=?",
                    (auth_id, (objective if objective is not None else note), run_id))
         if run["phase"] == "blocked":
@@ -802,6 +809,12 @@ class RunController:
                 collab.revoke_run_tokens(conn, run_id)
                 db.append_event_tx(conn, run_id, "controller", "run.terminated", {
                     "notice": "证据与历史 Attempt 保留；远程 Job 取消属阶段 2 范围"})
+            try:
+                from . import sandboxes
+                await asyncio.to_thread(sandboxes.cleanup_run, run_id)
+            except Exception as exc:
+                db.append_event(run_id,'controller','sandbox.cleanup_unknown',
+                                {'reason':type(exc).__name__})
             # 执行器会话 best-effort 终止：不留孤儿 CLI 进程
             prime = self._prime_instances.get(run_id)
             sid = self._prime_sessions.get(run_id)
@@ -1546,6 +1559,12 @@ class RunController:
                              " AND phase NOT IN ('finished','failed','cancelled')",(str(exc)[:300],run_id))
                 db.append_event_tx(conn,run_id,"controller","run.runtime_error",
                                    {"error":f"{type(exc).__name__}: {str(exc)[:300]}"})
+            try:
+                from . import sandboxes
+                await asyncio.to_thread(sandboxes.cleanup_run,run_id)
+            except Exception as cleanup_exc:
+                db.append_event(run_id,'controller','sandbox.cleanup_unknown',
+                                {'reason':type(cleanup_exc).__name__})
         finally:
             tasks = [t for t in (self._review_tasks.get(run_id),self._pumps.get(run_id))
                      if t and t is not asyncio.current_task()]
@@ -3040,7 +3059,7 @@ class RunController:
                                        trial_id=trial_id)
                 self._snapshot_memory(run_id, trial_id, settings)
                 enabled_skills = skills_mod.effective_for(
-                    db.get_db(), settings, run["challenge_id"])
+                    db.get_db(), settings, run["challenge_id"], role='executor')
                 task_text = (f"目标：{action['goal']}\n"
                              f"成功判据：{action['success_check']}\n"
                              f"Run ID：{run_id}；Trial ID：{trial_id}。\n"
@@ -3294,6 +3313,12 @@ class RunController:
             collab.revoke_run_tokens(conn, run_id)
             db.append_event_tx(conn, run_id, "controller",
                                "run.finished", {"reason": reason})
+        from . import sandboxes
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(asyncio.to_thread(sandboxes.cleanup_run, run_id))
+        except RuntimeError:
+            sandboxes.cleanup_run(run_id)
         q = self._signals.get(run_id)
         if q:
             q.put_nowait({"type": "terminate"})
@@ -3759,6 +3784,9 @@ class RunController:
                             "note": "原生代理内部调用量尚未完整计量；不能将未知用量视为零"},
             "max_submissions": auth["max_submissions"] if auth else 0,
             "max_jobs": auth["max_jobs"] if auth else 0,
+            "max_sandboxes": auth["max_sandboxes"] if auth else 0,
+            "max_sandbox_minutes": auth["max_sandbox_minutes"] if auth else 0,
+            "allow_sandbox_gpu": bool(auth["allow_sandbox_gpu"]) if auth else False,
         }
 
     def list_runs(self) -> list[dict[str, Any]]:

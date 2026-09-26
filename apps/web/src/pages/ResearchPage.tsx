@@ -1519,6 +1519,9 @@ function StartDialog({
   const [maxRunMinutes, setMaxRunMinutes] = useState(30)
   const [maxSubmissions, setMaxSubmissions] = useState(0)
   const [maxJobs, setMaxJobs] = useState(0)
+  const [maxSandboxes, setMaxSandboxes] = useState(0)
+  const [maxSandboxMinutes, setMaxSandboxMinutes] = useState(0)
+  const [allowSandboxGpu, setAllowSandboxGpu] = useState(false)
   const [note, setNote] = useState('')
   const [objective, setObjective] = useState('')
   const [allowDataDownload, setAllowDataDownload] = useState(false)
@@ -1531,6 +1534,9 @@ function StartDialog({
       setNote('')
       setObjective('')
       setAllowDataDownload(false)
+      setMaxSandboxes(0)
+      setMaxSandboxMinutes(0)
+      setAllowSandboxGpu(false)
       api
         .get<{ run_defaults: { max_model_turns: number; max_run_minutes: number; max_submissions: number; max_jobs: number } }>(
           '/api/v1/settings',
@@ -1560,6 +1566,9 @@ function StartDialog({
         max_run_minutes: maxRunMinutes,
         max_submissions: maxSubmissions,
         max_jobs: maxJobs,
+        max_sandboxes: maxSandboxes,
+        max_sandbox_minutes: maxSandboxMinutes,
+        allow_sandbox_gpu: allowSandboxGpu,
         job_limits: { max_concurrent_jobs: 2, max_cpu: 16, max_memory_gb: 16, max_disk_gb: 10, allow_gpu: false },
         note: note.trim() || undefined,
         objective: objective.trim() || note.trim() || undefined,
@@ -1671,6 +1680,15 @@ function StartDialog({
         </div>
       </div>
       <p className="inline-note">算力授权：最多同时 2 个任务，每个最多 16 核 CPU、16 GB 内存、10 GB 磁盘，无 GPU。失败和未知创建计入 Job 总数，每个 Job 必须设置本轮剩余时长内的超时。</p>
+      <div className="field"><label htmlFor="auth-sandboxes">同时存在的沙箱上限</label>
+        <input id="auth-sandboxes" type="number" min={0} value={maxSandboxes}
+          onChange={(e) => setMaxSandboxes(Number(e.target.value))} /></div>
+      <div className="field"><label htmlFor="auth-sandbox-minutes">沙箱累计存活分钟上限</label>
+        <input id="auth-sandbox-minutes" type="number" min={0} value={maxSandboxMinutes}
+          onChange={(e) => setMaxSandboxMinutes(Number(e.target.value))} /></div>
+      <div className="field checkbox"><input id="auth-sandbox-gpu" type="checkbox"
+        checked={allowSandboxGpu} onChange={(e) => setAllowSandboxGpu(e.target.checked)} />
+        <label htmlFor="auth-sandbox-gpu">单独授权沙箱 GPU</label></div>
       <div className="field checkbox">
         <input id="auth-data-download" type="checkbox" checked={allowDataDownload}
           onChange={(e) => setAllowDataDownload(e.target.checked)} />

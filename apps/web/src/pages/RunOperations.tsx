@@ -3,21 +3,26 @@ import { api } from '../api'
 
 type Job = { operation_id: string; platform_job_id: number | null; status: string; retrieval_status: string; observed_at: string | null }
 type Jobs = { items: Job[]; reserved_jobs: number; active_or_unknown: number }
+type Sandbox = { operation_id: string; sandbox_id: string | null; status: string; expires_at: string;
+  alive_minutes: number; request: { image?: string; template?: string } }
+type Sandboxes = { items: Sandbox[]; active_or_unknown: number; cumulative_minutes: number }
 type Curation = { state: string; summary?: string; error?: string; proposals_applied?: number }
 const terminal = new Set(['Finished', 'Failed', 'Stopped', 'not_started'])
 
 export function RunOperations({ runId, phase }: { runId: string; phase: string }) {
   const [jobs, setJobs] = useState<Jobs | null>(null)
+  const [sandboxes, setSandboxes] = useState<Sandboxes | null>(null)
   const [curation, setCuration] = useState<Curation>({ state: 'idle' })
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [curationOperation, setCurationOperation] = useState<string | null>(null)
   const refresh = useCallback(async () => {
-    const [j, c] = await Promise.all([
+    const [j, c, s] = await Promise.all([
       api.get<Jobs>(`/api/v1/runs/${runId}/jobs`),
       api.get<Curation>(`/api/v1/runs/${runId}/curation`),
+      api.get<Sandboxes>(`/api/v1/runs/${runId}/sandboxes`),
     ])
-    setJobs(j); setCuration(c)
+    setJobs(j); setCuration(c); setSandboxes(s)
   }, [runId])
   useEffect(() => {
     let mounted = true
@@ -50,6 +55,16 @@ export function RunOperations({ runId, phase }: { runId: string; phase: string }
             <br /><small>结果取回：{job.retrieval_status === 'retrieved' ? '已取回' : job.retrieval_status === 'failed' ? '失败' : job.retrieval_status === 'unknown' ? '未知' : '尚未尝试'}</small></td>
           <td><button className="btn danger" disabled={busy || !job.platform_job_id || terminal.has(job.status) || ['stopping', 'stop_unknown'].includes(job.status)}
             onClick={() => void act(`/api/v1/runs/${runId}/jobs/${encodeURIComponent(job.operation_id)}/stop`)}>停止此任务</button></td>
+        </tr>)}</tbody></table>}
+      <p>沙箱：运行中或状态未知 {sandboxes?.active_or_unknown ?? '—'} 个；累计存活 {sandboxes?.cumulative_minutes?.toFixed(1) ?? '—'} 分钟。</p>
+      {(sandboxes?.items ?? []).length > 0 && <table><thead><tr><th>沙箱 / 镜像</th><th>状态 / 到期</th><th>操作</th></tr></thead>
+        <tbody>{sandboxes!.items.map(box => <tr key={box.operation_id}>
+          <td>{box.sandbox_id ?? '远端 ID 未知'}<br /><small>{box.request.image ?? box.request.template ?? '默认镜像'}</small></td>
+          <td>{box.status === 'unknown' ? <strong role="alert">状态未知</strong>
+            : box.status === 'deleting' ? '远端回收中' : box.status}
+            <br /><small>到期：{box.expires_at} · 已存活 {box.alive_minutes.toFixed(1)} 分钟</small></td>
+          <td><button className="btn danger" disabled={busy || !box.sandbox_id || box.status !== 'active'}
+            onClick={() => void act(`/api/v1/runs/${runId}/sandboxes/${encodeURIComponent(box.sandbox_id!)}/delete`)}>删除沙箱</button></td>
         </tr>)}</tbody></table>}
       <p className="sub">整理会调用已配置的大脑，读取本轮事件与检查点。全局经验仍需审批；推导出的经验保留 hypothesis 等级。</p>
       <button className="btn" disabled={busy || !canCurate || curation.state === 'running'} onClick={() => {

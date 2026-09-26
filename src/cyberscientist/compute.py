@@ -127,7 +127,7 @@ def _path(run, value: str) -> Path:
 def _native(args: list[str], *, timeout: int = 90) -> dict:
     settings = config.load_settings()['bohrium']
     key = config.resolve_secret(settings.get('access_key_secret_ref', ''))
-    wenyon = args[:1] == ['wenyon']
+    wenyon = args[:1] in (['wenyon'], ['sandbox'])
     executable = (settings.get('wenyon_executable') if wenyon else None) or settings['executable']
     env = {k: v for k, v in os.environ.items() if not k.startswith(('CS_', 'BOHR_', 'PLAYGROUND_'))
            and k not in ('ACCESS_KEY', 'OPENAPI_HOST', 'TIEFBLUE_HOST')}
@@ -471,6 +471,9 @@ def cli(run_id: str, args: list[str], cwd: str) -> dict:
         raise ComputeError('INVALID_COMMAND', '命令参数格式错误')
     run = _run(run_id)
     work = _path(run, cwd)
+    if args[:1] == ['sandbox']:
+        from . import sandboxes
+        return sandboxes.cli(run_id, args, cwd)
     if args[:3] == ['wenyon', 'dataset', 'download']:
         from . import datasets
         parser = argparse.ArgumentParser(exit_on_error=False, add_help=False)

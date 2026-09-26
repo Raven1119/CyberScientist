@@ -69,6 +69,23 @@ _TOOLS.append({
         "required": ["action"]}})
 
 _TOOLS.append({
+    "name": "research_sandbox",
+    "description": "本 Run 的受控 Bohrium 沙箱：有界创建、执行、文件传输、查询与删除；create/exec/files.write 需稳定 operation_id，结果未知时先对账不重发。",
+    "inputSchema": {"type": "object", "additionalProperties": False,
+        "properties": {"action": {"enum": ["create", "reconcile", "exec", "files.read",
+                                            "files.write", "delete", "list", "describe",
+                                            "quota", "machine.list", "template.list"]},
+                       "operation_id": {"type": "string", "maxLength": 100},
+                       "sandbox_id": {"type": "string"},
+                       "request": {"type": "object"},
+                       "command": {"type": "string"},
+                       "timeout": {"type": "integer"},
+                       "remote_path": {"type": "string"},
+                       "local_path": {"type": "string"},
+                       "content": {"type": "string"}},
+        "required": ["action"]}})
+
+_TOOLS.append({
     "name": "research_package_check",
     "description": "只读检查当前 Trial 的 ARM 封存包，返回六项轨迹准入信号与封存哈希；不提交。",
     "inputSchema": {"type": "object", "additionalProperties": False,
@@ -162,6 +179,8 @@ def _handle(msg: dict) -> dict | None:
                 out = {"error": "submit/stop 需要稳定的 operation_id"}
             else:
                 out = _post("/api/v1/tools/job", args)
+        elif name == "research_sandbox":
+            out = _post("/api/v1/tools/sandbox", args)
         elif name == "research_package_check":
             out = _post("/api/v1/tools/package_check", args)
         elif name == "research_data":

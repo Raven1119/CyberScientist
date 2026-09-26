@@ -15,7 +15,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
-from . import collab, config, db, datasets, experiences, mailboxes, skills, compute, observation
+from . import collab, config, db, datasets, experiences, mailboxes, skills, compute, observation, sandboxes
 from .brains.codex import CodexBrain
 from .brains.demo import DemoBrain
 from .brains.kimi import KimiBrain
@@ -153,6 +153,9 @@ class AuthorizeBody(BaseModel):
     max_run_minutes: int = 30
     max_submissions: int = 0
     max_jobs: int = 0
+    max_sandboxes: int = 0
+    max_sandbox_minutes: int = 0
+    allow_sandbox_gpu: bool = False
     job_limits: dict | None = None
     allow_data_download: bool = False
     objective: str | None = None
@@ -229,6 +232,13 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
         # 重启对账：无事件循环的非终态 Run 如实标记 recovering（AGENTS 进程可靠性）
         controller.reconcile_on_startup()
         compute.recover_pending()
+        bohrium_cfg = config.load_settings()['bohrium']
+        if config.resolve_secret(bohrium_cfg.get('access_key_secret_ref','')):
+            try:
+                await asyncio.to_thread(sandboxes.reconcile_startup)
+            except Exception:
+                import logging
+                logging.getLogger('cyberscientist.api').exception('Sandbox startup reconciliation failed')
         db.execute("UPDATE curation_requests SET status='failed',error='后端重启，整理中断；不会自动重复调用模型',updated_at=? WHERE status='running'", (db.utcnow(),))
         for row in db.query("SELECT DISTINCT run_id FROM compute_jobs WHERE status NOT IN ('Finished','Failed','Stopped','not_started')"):
             try:
@@ -249,6 +259,7 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
                     # 按题目分组轮询，跳过用户在 settings 中中断的题目
                     result = await asyncio.to_thread(mailboxes.poll_pending_by_challenge)
                     _notify_scores(result)
+                    await asyncio.to_thread(sandboxes.reconcile_deletions)
                     for row in db.query("SELECT DISTINCT run_id FROM compute_jobs WHERE status NOT IN ('Finished','Failed','Stopped','not_started')"):
                         try:
                             await asyncio.to_thread(compute.reconcile, row['run_id'])
@@ -268,6 +279,10 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
             import logging
             logger = logging.getLogger('cyberscientist.api')
             while not stop.is_set():
+                try:
+                    await asyncio.to_thread(sandboxes.expire_due)
+                except Exception:
+                    logger.exception('Sandbox expiry cleanup failed')
                 for row in db.query("SELECT id FROM runs WHERE phase='running'"):
                     try:
                         controller.check_liveness(row['id'])
@@ -812,6 +827,9 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
                                     body.max_submissions, body.note,
                                     max_jobs=body.max_jobs, job_limits=body.job_limits,
                                     allow_data_download=body.allow_data_download,
+                                    max_sandboxes=body.max_sandboxes,
+                                    max_sandbox_minutes=body.max_sandbox_minutes,
+                                    allow_sandbox_gpu=body.allow_sandbox_gpu,
                                     objective=body.objective)
 
     @app.put("/api/v1/runs/{run_id}/budget")
@@ -949,6 +967,23 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
         body = await request.json()
         result = await asyncio.to_thread(compute.cli, identity["run_id"], body.get("args"), body.get("cwd", ""))
         controller.notify_run_change(identity["run_id"])
+        return result
+
+    @app.post('/api/v1/tools/sandbox')
+    async def tool_sandbox(request: Request) -> dict:
+        identity = _tool_auth(request)
+        result = await asyncio.to_thread(sandboxes.dispatch, identity['run_id'], await request.json())
+        controller.notify_run_change(identity['run_id'])
+        return result
+
+    @app.get('/api/v1/runs/{run_id}/sandboxes')
+    async def run_sandboxes(run_id: str) -> dict:
+        return sandboxes.list_run(run_id)
+
+    @app.post('/api/v1/runs/{run_id}/sandboxes/{sandbox_id}/delete')
+    async def run_sandbox_delete(run_id: str, sandbox_id: str) -> dict:
+        result = await asyncio.to_thread(sandboxes.delete, run_id, sandbox_id)
+        controller.notify_run_change(run_id)
         return result
 
     @app.post("/api/v1/tools/job")

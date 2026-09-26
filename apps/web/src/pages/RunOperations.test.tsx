@@ -40,3 +40,20 @@ it('shows a finished job whose result retrieval failed', async () => {
   expect(await screen.findByText('完成 · 结果未取回')).toBeTruthy()
   expect(screen.getByText('结果取回：失败')).toBeTruthy()
 })
+
+it('shows a sandbox and deletes only a known active one', async () => {
+  vi.mocked(api.get).mockImplementation(async path => path.endsWith('/jobs') ? {
+    items: [], reserved_jobs: 0, active_or_unknown: 0,
+  } : path.endsWith('/sandboxes') ? {
+    items: [{ operation_id: 'box-a', sandbox_id: 'fixture--box-001', status: 'active',
+      expires_at: '2026-09-27T12:00:00Z', alive_minutes: 2.5,
+      request: { image: 'fixture/image:v1' } }], active_or_unknown: 1, cumulative_minutes: 2.5,
+  } : { state: 'idle' })
+  vi.mocked(api.post).mockResolvedValue({})
+  render(<RunOperations runId="run-a" phase="running" />)
+  expect(await screen.findByText('fixture/image:v1')).toBeTruthy()
+  expect(screen.getByText(/累计存活 2.5 分钟/)).toBeTruthy()
+  fireEvent.click(screen.getByText('删除沙箱'))
+  await waitFor(() => expect(api.post).toHaveBeenCalledWith(
+    '/api/v1/runs/run-a/sandboxes/fixture--box-001/delete', undefined))
+})
