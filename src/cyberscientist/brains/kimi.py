@@ -52,8 +52,8 @@ def _question_prompt(packet: dict[str, Any]) -> str:
         "执行器提出了一个研究问题。它给出的选项仅供参考，你可以同意、否定前提、"
         "给出第三条路线或保留未知。保持独立研究判断，无须刻意反对。"
         "已有高层研究状态与用户约束在输入中。确有需要时可自行调用 research_trace"
-        " 查看本次审阅范围内的公开记录；零读取也可以直接回答。"
-        "只允许该只读工具，不运行 Shell。\n"
+        " 查看本次审阅范围内的公开记录，或调用 platform_scores 查看匿名分布；"
+        "分布只作参考，零读取也可以直接回答。不运行 Shell。\n"
         "只输出一个 JSON 代码块，不要输出其他文字：\n"
         '{"schema_version":1,"message_type":"research_answer",'
         '"request_id":"与输入相同","answer_md":"完整研究判断",'
@@ -375,7 +375,7 @@ class KimiBrain:
                 "说明本次改动和预计 displayScore/harbor_score/trace_score 哪些分量如何变化；"
                 "缺失会被拒绝。可选 prediction_verdicts=[{submission_id,verdict:confirmed|refuted|unclear,note_md}]"
                 "评判帧中的已确认预测，证据不清时用 unclear。\n"
-                + ("只输出一个 JSON 代码块；可按需使用 research_trace，零读取可直接判断。\n\n"
+                + ("只输出一个 JSON 代码块；可按需使用 research_trace 或 platform_scores，零读取可直接判断。\n\n"
                  if packet.get("sparse_brain_version") == 1 else
                  "只输出一个 JSON 代码块，不使用工具。\n\n")
                 + f"ObservationFrame:\n```json\n"
@@ -394,7 +394,7 @@ class KimiBrain:
                 "资源试算、产物及停止条件；不以确认满分可达为启动条件。"
                 "每项判断标明已读来源，外部指导单独归因。\n"
                 if packet.get("trigger") == "run_start" else
-                "不要使用任何工具。\n"
+                "必要时可使用 research_trace 或 platform_scores；分布只作分诊参考，不作优化目标；不要求先读后答。\n"
             ) +
             "根据下面的 ReviewPacket 做出一次判断。只输出一个 JSON 代码块，不要输出其他文字。\n\n"
             "Decision 结构（严格遵守；v2 待处理意图可增加指定条件字段）：\n"

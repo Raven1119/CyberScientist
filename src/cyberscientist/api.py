@@ -1071,6 +1071,12 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
             raise HTTPException(status_code=409, detail={
                 "code": "TRACE_UNAVAILABLE", "message": str(exc)}) from exc
 
+    @app.post('/api/v1/tools/platform_scores')
+    async def tool_platform_scores(request: Request) -> dict[str, Any]:
+        identity=_tool_auth(request,role='brain')
+        from . import platform_scores
+        return await asyncio.to_thread(platform_scores.get,identity['run_id'])
+
     @app.get("/api/v1/runs/{run_id}/checkpoints")
     async def list_checkpoints(run_id: str) -> dict[str, Any]:
         rows = db.query("SELECT * FROM checkpoints WHERE run_id=? ORDER BY created_at",

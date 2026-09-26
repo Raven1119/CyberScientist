@@ -274,7 +274,8 @@ class RunController:
                                  "args": ["-m", "cyberscientist.mcp_bridge"],
                                  "env": [{"name": k, "value": v}
                                          for k, v in variables.items()]}],
-                "instructions": "长期研究会话。仅 research_trace 可按需读取已登记公开记录；"
+                "instructions": "长期研究会话。research_trace 可按需读取已登记公开记录；"
+                                "platform_scores 可只读查看本题匿名分数分布供分诊参考，不能将分布当优化目标。"
                                 "没有读取必要时直接判断。不要使用通用 Shell、写文件或网络工具。"}
 
     def _require_model_authorization(self, run_id: str) -> None:

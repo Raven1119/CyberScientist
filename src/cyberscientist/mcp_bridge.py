@@ -116,6 +116,12 @@ _TRACE_TOOL = {
                        "event_type": {"type": "string", "maxLength": 100}},
         "required": ["action"]}}
 
+_SCORES_TOOL = {
+    "name": "platform_scores",
+    "description": "仅大脑可用：只读查询本题公开尝试的匿名分数分布，供分诊参考；不能把分布当优化目标。",
+    "inputSchema": {"type": "object", "additionalProperties": False,
+                    "properties": {}, "required": []}}
+
 
 def _post(path: str, payload: dict) -> dict:
     url = os.environ.get("CS_API_URL", "http://127.0.0.1:8765") + path
@@ -167,7 +173,7 @@ def _handle(msg: dict) -> dict | None:
     if method == "tools/list":
         role = os.environ.get("CS_TOOL_ROLE", "executor")
         return {"jsonrpc": "2.0", "id": mid, "result": {
-            "tools": [_TRACE_TOOL, _DATA_TOOL] if role == "brain" else _TOOLS}}
+            "tools": [_TRACE_TOOL, _DATA_TOOL, _SCORES_TOOL] if role == "brain" else _TOOLS}}
     if method == "tools/call":
         params = msg.get("params", {})
         name = params.get("name")
@@ -189,6 +195,8 @@ def _handle(msg: dict) -> dict | None:
             out = _post("/api/v1/tools/ack", args)
         elif name == "research_trace":
             out = _post("/api/v1/tools/trace", args)
+        elif name == "platform_scores":
+            out = _post("/api/v1/tools/platform_scores", args)
         else:
             return {"jsonrpc": "2.0", "id": mid, "error": {
                 "code": -32602, "message": f"unknown tool: {name}"}}

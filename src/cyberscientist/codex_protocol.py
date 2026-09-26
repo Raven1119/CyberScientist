@@ -12,7 +12,7 @@ from .jsonrpc_stdio import JsonRpcStdio
 
 CLIENT_INFO = {"name": "cyberscientist", "version": "0.1.0"}
 COLLAB_TOOLS = ("research_checkpoint", "ack_guidance", "research_job")
-BRAIN_TOOLS = ("research_trace",)
+BRAIN_TOOLS = ("research_trace", "platform_scores")
 
 
 # Native authentication stays in Codex's own HOME/CODEX_HOME. This allowlist
