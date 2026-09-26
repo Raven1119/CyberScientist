@@ -371,6 +371,10 @@ class KimiBrain:
                 "kind=submit：结果包已可提交时发出；仅在已有 Run 授权、提交预算"
                 "和去重检查通过后，系统自动用实验邮箱提交（不投递给执行器），"
                 "随后异步等待评分；不扩大正式提交授权。\n"
+                "若 ObservationFrame.submission_prediction_version=1，submit guidance 必须附 prediction_md，"
+                "说明本次改动和预计 displayScore/harbor_score/trace_score 哪些分量如何变化；"
+                "缺失会被拒绝。可选 prediction_verdicts=[{submission_id,verdict:confirmed|refuted|unclear,note_md}]"
+                "评判帧中的已确认预测，证据不清时用 unclear。\n"
                 + ("只输出一个 JSON 代码块；可按需使用 research_trace，零读取可直接判断。\n\n"
                  if packet.get("sparse_brain_version") == 1 else
                  "只输出一个 JSON 代码块，不使用工具。\n\n")
@@ -413,6 +417,8 @@ class KimiBrain:
             "提交建议仅在 requested/shadow 的 ReviewResult 中用 guidance.kind=submit，"
             "经现有授权、预算和去重检查执行实验邮箱提交；不扩大正式提交授权。"
             "不要在当前 Decision 中混入 ReviewResult。\n"
+            "可选 prediction_verdicts=[{submission_id,verdict:confirmed|refuted|unclear,note_md}]，"
+            "依据已确认评分判断帧中的预测。\n"
             "experience_proposals 每项：scope/challenge_id/title/body_md/applicability/"
             "evidence_refs 必填；可选 target_id（更新已有条目，先读库再决定新建/"
             "更新/不变，同主题勿重复新建）与 kind（仅限 "

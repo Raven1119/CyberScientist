@@ -56,6 +56,20 @@ def _extra_run(index: int, *, max_submissions: int = 20) -> str:
     return rid
 
 
+def test_submission_prediction_is_frozen_and_inherited_by_harvest():
+    _seed_challenge()
+    mailboxes.register_experiment(1)
+    mailboxes.add_harvest('harvest-pred@example.com','fixture-secret')
+    rid=_make_run()
+    _make_package(rid)
+    text='调整正则化；预计 harbor_score 增加 5，trace_score 不变'
+    source=mailboxes.submit_experiment(rid,'trial_mb1',None,'prediction-source',prediction_md=text)
+    assert db.query_one('SELECT prediction_md FROM submissions WHERE id=?',(source['id'],))['prediction_md']==text
+    _set_scored(source['id'],80)
+    harvest=mailboxes.harvest_submit(source['id'],'prediction-harvest',True)
+    assert db.query_one('SELECT prediction_md FROM submissions WHERE id=?',(harvest['id'],))['prediction_md']==text
+
+
 def test_quota_is_per_platform_challenge_for_both_mailbox_roles():
     experiment = mailboxes.register_experiment(1)['items'][0]
     harvest = mailboxes.add_harvest('harvest@example.com', 'fixture-secret')
@@ -139,7 +153,8 @@ def test_score_anomaly_then_confirmation_and_post_confirmation_revision(monkeypa
     rid = _make_run()
     _make_package(rid)
     mailboxes.register_experiment(1)
-    sub = mailboxes.submit_experiment(rid, 'trial_mb1', None, 'score-timeline')
+    sub = mailboxes.submit_experiment(rid, 'trial_mb1', None, 'score-timeline',
+                                      prediction_md='预计得分上升')
     platform = mailboxes._platform()
     detail = {'scoringState': {'scoreIsFinal': True, 'displayScore': 0,
                               'state': 'final', 'zeroReason': 'worker_timeout'}}
@@ -168,11 +183,16 @@ def test_score_anomaly_then_confirmation_and_post_confirmation_revision(monkeypa
     assert db.query_one('SELECT score_confidence FROM submissions WHERE id=?',
                         (sub['id'],))['score_confidence'] == 'confirmed'
     assert linked == [85]
+    db.execute("UPDATE submissions SET prediction_verdict='confirmed',"
+               "prediction_note_md='暂时成立' WHERE id=?",(sub['id'],))
     detail['scoringState']['displayScore'] = 84
     at(700)
     mailboxes.poll_scores(rid, manual=True)
     row = db.query_one('SELECT * FROM submissions WHERE id=?', (sub['id'],))
     assert row['score'] == 84 and row['score_confidence'] == 'provisional'
+    assert row['prediction_verdict'] is None and row['prediction_note_md'] is None
+    assert db.query_one("SELECT 1 FROM events WHERE run_id=?"
+                        " AND type='prediction.verdict_invalidated'",(rid,))
     events = db.query("SELECT type,payload FROM events WHERE run_id=?"
                       " AND type IN ('submission.scored','submission.score_corrected','experience.result_retracted')"
                       " ORDER BY seq", (rid,))

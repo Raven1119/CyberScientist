@@ -25,7 +25,7 @@ from typing import Any
 
 import jsonschema
 
-from . import collab, config, datasets, db, decision as decision_mod, experiences, mailboxes, observation, experience_context, challenge_models, model_limits
+from . import collab, config, datasets, db, decision as decision_mod, experiences, mailboxes, observation, experience_context, challenge_models, model_limits, submission_predictions
 from . import skills as skills_mod
 from .brains.base import BrainRuntime
 from .brains.codex import CodexBrain
@@ -459,7 +459,7 @@ class RunController:
                     "shadow": shadow_cfg,
                     "challenge_id": challenge_id, "mode": mode,
                     "compute_policy_version": 1, "sparse_brain_version": 1,
-                    "lifecycle_version": 2}
+                    "lifecycle_version": 2, "submission_prediction_version": 1}
         with config.mutation_lock, db.transaction() as conn:
             self._check_active_capacity(conn, config.load_settings())
             conn.execute(
@@ -2564,6 +2564,13 @@ class RunController:
             db.append_event(run_id, "brain", "brain.review_salvaged",
                             {"review_id": req["id"], "mode": mode,
                              "fixes": salvaged[:6]})
+        if result.get('guidance') and result['guidance'].get('prediction_md'):
+            result={**result,'guidance':{**result['guidance'],
+                'prediction_md':observation.strip_secrets(result['guidance']['prediction_md'])}}
+        if result.get('prediction_verdicts'):
+            result={**result,'prediction_verdicts':[
+                {**item,'note_md':observation.strip_secrets(item['note_md'])}
+                for item in result['prediction_verdicts']]}
         if result["frame_id"] != frame.get("frame_id"):
             self._review_failed(run_id, req, mode,
                                 "frame_id 不匹配；按审阅失败处理")
@@ -2573,6 +2580,13 @@ class RunController:
         if run["phase"] != "running" or self._run_minutes_exceeded(run):
             self._obsolete_request(req["id"],"Run 已关闭受控动作")
             return
+        if (result['disposition']=='intervene' and result['guidance']['kind']=='submit'
+                and json.loads(run['config_snapshot']).get('submission_prediction_version')==1
+                and not str(result['guidance'].get('prediction_md') or '').strip()):
+            db.append_event(run_id,'controller','guidance.rejected',
+                            {'review_id':req['id'],'kind':'submit',
+                             'reason':'本 Run 的实验提交必须提供 prediction_md：说明改了什么及预期分项变化'})
+            result={**result,'disposition':'silent','guidance':None}
         with db.transaction() as conn:
             sup = conn.execute("SELECT * FROM supervision WHERE run_id=?",
                                (run_id,)).fetchone()
@@ -2610,6 +2624,8 @@ class RunController:
                 "disposition": result["disposition"],
                 "frame_id": result["frame_id"],
                 "note_excerpt": result["private_note_md"][:200]})
+            submission_predictions.record_verdicts_tx(
+                conn,run_id,result.get('prediction_verdicts',[]),f"review:{req['id']}")
 
             guidance_id: str | None = None
             if result["disposition"] == "intervene":
@@ -2699,9 +2715,11 @@ class RunController:
         消耗配额的付费动作。提交成功后分数由服务端评分轮询异步拿回。
         """
         try:
+            guidance=db.query_one('SELECT prediction_md FROM guidance WHERE id=?',(guidance_id,))
+            prediction=guidance['prediction_md'] if guidance else None
             res = await asyncio.to_thread(
                 mailboxes.submit_experiment, run_id, trial_id, None,
-                f"auto-{guidance_id}")
+                f"auto-{guidance_id}",**({'prediction_md':prediction} if prediction else {}))
         except Exception as exc:
             code = getattr(exc, "code", None) or type(exc).__name__
             with db.transaction() as conn:
@@ -2985,6 +3003,8 @@ class RunController:
             with db.transaction() as conn:
                 experience_context.adopt_tx(conn,run_id,current_tid,dec.get("experience_uses",[]),
                                            "brain",f"decision:{dec['decision_id']}")
+                submission_predictions.record_verdicts_tx(
+                    conn,run_id,dec.get('prediction_verdicts',[]),f"decision:{dec['decision_id']}")
         except ValueError as exc:
             db.append_event(run_id,"controller","experience.adoption_rejected",{"reason":str(exc)})
 
@@ -3440,7 +3460,8 @@ class RunController:
         return {"scope": "challenge", "challenge_id": challenge_id,
                 "experiences": self._experience_entries_with_bodies(
                     listing["items"]),
-                "usage": self._experience_usage(challenge_id)}
+                "usage": self._experience_usage(challenge_id),
+                "prediction_outcomes": submission_predictions.outcomes(run['id'],limit=30)}
 
     async def curate_global_experience(self, challenge_ids: list[str]) -> dict:
         """手动触发全局经验整理：无 Run 的一次性大脑会话。素材=全局条目

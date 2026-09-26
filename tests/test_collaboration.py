@@ -923,6 +923,9 @@ async def test_t13_submit_guidance_auto_submits_without_executor(monkeypatch):
     _seed_challenge()
     c, brain, ex = _rig(shadow=False)
     rid = c.create_run("COLLAB_CH", shadow_enabled=False)["id"]
+    snap=json.loads(db.query_one('SELECT config_snapshot FROM runs WHERE id=?',(rid,))['config_snapshot'])
+    snap.pop('submission_prediction_version',None)
+    db.execute('UPDATE runs SET config_snapshot=? WHERE id=?',(json.dumps(snap),rid))
     await _start(c, brain, rid)
 
     calls: list[tuple] = []
@@ -974,6 +977,9 @@ async def test_t13b_submit_guidance_failure_marks_failed(monkeypatch):
     _seed_challenge()
     c, brain, ex = _rig(shadow=False)
     rid = c.create_run("COLLAB_CH", shadow_enabled=False)["id"]
+    snap=json.loads(db.query_one('SELECT config_snapshot FROM runs WHERE id=?',(rid,))['config_snapshot'])
+    snap.pop('submission_prediction_version',None)
+    db.execute('UPDATE runs SET config_snapshot=? WHERE id=?',(json.dumps(snap),rid))
     await _start(c, brain, rid)
 
     from cyberscientist import mailboxes
@@ -1004,6 +1010,77 @@ async def test_t13b_submit_guidance_failure_marks_failed(monkeypatch):
     assert ev is not None and "NO_MAILBOX" in ev["payload"] \
         and "无可用实验邮箱" in ev["payload"]
     await c.control(rid, "terminate", None, "op-term-t13b")
+
+
+async def test_new_run_rejects_submit_without_prediction_then_accepts_one(monkeypatch):
+    _seed_challenge()
+    c, brain, ex = _rig(shadow=False)
+    rid = c.create_run('COLLAB_CH',shadow_enabled=False)['id']
+    assert json.loads(db.query_one('SELECT config_snapshot FROM runs WHERE id=?',(rid,))['config_snapshot'])['submission_prediction_version']==1
+    await _start(c,brain,rid)
+    calls=[]
+    def fake_submit(run_id,trial_id,package_path,operation_id,*,prediction_md=None):
+        calls.append(prediction_md)
+        return {'id':'sub_pred','status':'submitted','platform_ref':'123','error':None}
+    monkeypatch.setattr('cyberscientist.controller.mailboxes.submit_experiment',fake_submit)
+    c.request_review(rid)
+    assert await _wait(lambda: any(p.get('protocol')=='review_result' for p in brain.calls))
+    frame=brain.calls[-1]
+    await brain.results.put({'review_result':_review_result(frame['frame_id'],
+        disposition='intervene',guidance=_guidance(kind='submit',intent='continue',text='提交'))})
+    assert await _wait(lambda: db.query_one("SELECT 1 FROM events WHERE run_id=? AND type='guidance.rejected'",(rid,)) is not None)
+    assert calls==[] and db.query_one("SELECT 1 FROM guidance WHERE run_id=?",(rid,)) is None
+    c.request_review(rid)
+    assert await _wait(lambda: len([p for p in brain.calls if p.get('protocol')=='review_result'])>=2)
+    frame=brain.calls[-1]
+    guidance=_guidance(kind='submit',intent='continue',text='提交')
+    secret='w6-test-secret-1234567890'
+    config.update_secret('w6_prediction_test',secret)
+    guidance['prediction_md']='调整滤波；预计 trace_score 上升，harbor_score 不变；误写 '+secret
+    await brain.results.put({'review_result':_review_result(frame['frame_id'],
+        disposition='intervene',guidance=guidance)})
+    assert await _wait(lambda: len(calls)==1)
+    assert secret not in calls[0]
+    assert secret not in db.query_one('SELECT prediction_md FROM guidance WHERE run_id=?',(rid,))['prediction_md']
+    await c.control(rid,'terminate',None,'op-term-pred')
+
+
+async def test_prediction_verdict_reaches_review_and_curation():
+    from cyberscientist import curation, mailboxes
+    _seed_challenge()
+    c, brain, ex = _rig(shadow=False)
+    rid = c.create_run('COLLAB_CH',shadow_enabled=False)['id']
+    await _start(c,brain,rid)
+    mailbox=mailboxes.register_experiment(1)['items'][0]
+    for sid,score,harbor,trace in [('sub_before',70,60,80),('sub_after',80,60,100)]:
+        db.execute("INSERT INTO submissions(id,run_id,mailbox_id,package_path,package_sha256,"
+                   "status,score,score_status,score_confidence,harbor_score,trace_score,"
+                   "prediction_md,created_at) VALUES(?,?,?,?,?,'submitted',?,"
+                   "'scored','confirmed',?,?,?,?)",
+                   (sid,rid,mailbox['id'],'fake','hash',score,harbor,trace,
+                    '预计 trace_score 上升' if sid=='sub_after' else '基线',db.utcnow()))
+    db.append_event(rid,'controller','submission.scored',{'submission_id':'sub_before',
+        'score':70,'harbor_score':60,'trace_score':80,'score_confidence':'confirmed'})
+    db.append_event(rid,'controller','submission.scored',{'submission_id':'sub_after',
+        'score':80,'harbor_score':60,'trace_score':100,'score_confidence':'confirmed'})
+    frame=observation.build_frame(rid,mode='shadow',frame_id='pred-frame',from_seq=1,
+        through_seq=db.query_one('SELECT MAX(seq) AS n FROM events WHERE run_id=?',(rid,))['n'],
+        shadow_cfg={'max_reviews':8})
+    result=next(p for p in frame['prediction_outcomes'] if p['submission_id']=='sub_after')
+    assert result['displayScore']==80 and result['component_changes']=={
+        'displayScore':10,'harbor_score':0,'trace_score':20}
+    assert result in curation.run_evidence(rid)['prediction_outcomes']
+    c.request_review(rid)
+    assert await _wait(lambda: any(p.get('protocol')=='review_result' for p in brain.calls))
+    packet=brain.calls[-1]
+    response=_review_result(packet['frame_id'])
+    response['prediction_verdicts']=[{'submission_id':'sub_after','verdict':'confirmed',
+                                     'note_md':'轨迹分增加 20，科学分不变'}]
+    await brain.results.put({'review_result':response})
+    assert await _wait(lambda: db.query_one('SELECT prediction_verdict FROM submissions WHERE id=?',
+        ('sub_after',))['prediction_verdict']=='confirmed')
+    assert curation.run_evidence(rid)['prediction_outcomes'][-1]['prediction_verdict']=='confirmed'
+    await c.control(rid,'terminate',None,'op-term-verdict')
 
 
 def test_submit_kind_in_contract_schema():

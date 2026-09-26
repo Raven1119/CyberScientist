@@ -166,18 +166,20 @@ def create_guidance(conn: sqlite3.Connection, run_id: str, *,
     items = json.loads(row["content_json"])["items"] if row else []
     context = experience_context.freeze_tx(conn,run_id,target_trial_id,f"guidance:{gid}",items)
     text_md = g["text_md"]
+    from .observation import strip_secrets
+    prediction_md=strip_secrets(g['prediction_md']) if g.get('prediction_md') else None
     if items:
         text_md += "\n冻结经验（采用时回报包与版本）：\n" + experience_context.encode(context)
     conn.execute(
         "INSERT INTO guidance(id, run_id, review_request_id, frame_id, source,"
         " target_trial_id, kind, intent, text_md, reason_md, evidence_refs,"
-        " expected_change_md, revisit_when_md, state_version,"
+        " expected_change_md, revisit_when_md, prediction_md, state_version,"
         " evidence_revision, shadow_epoch, status, created_at, updated_at)"
-        " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'queued',?,?)",
+        " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'queued',?,?)",
         (gid, run_id, review_request_id, frame_id, source, target_trial_id,
          g["kind"], g["intent"], text_md, g["reason_md"],
          json.dumps(g.get("evidence_refs", []), ensure_ascii=False),
-         g["expected_change_md"], g["revisit_when_md"],
+         g["expected_change_md"], g["revisit_when_md"], prediction_md,
          state_version, evidence_revision, shadow_epoch, now, now))
     return gid
 

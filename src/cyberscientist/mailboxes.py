@@ -565,18 +565,28 @@ def _form_trace(package_bytes: bytes) -> list[dict[str, Any]]:
 def submit_experiment(run_id: str, trial_id: str | None,
                       package_path: str | None, operation_id: str,
                       allow_proxy_evidence: bool = False,
-                      allow_indeterminate_admission: bool = False) -> dict[str, Any]:
+                      allow_indeterminate_admission: bool = False,
+                      prediction_md: str | None = None) -> dict[str, Any]:
     if not operation_id:
         raise MailboxError("INVALID_MESSAGE", "缺少 operation_id（幂等键）")
+    if prediction_md is not None and (not isinstance(prediction_md,str) or
+            not prediction_md.strip() or len(prediction_md)>4000):
+        raise MailboxError('INVALID_MESSAGE','prediction_md 必须是有界非空文本')
+    if prediction_md is not None:
+        from .observation import strip_secrets
+        prediction_md=strip_secrets(prediction_md)
     package = _resolve_package(run_id, trial_id, package_path)
     source_content = package.read_bytes()
     source_digest = hashlib.sha256(source_content).hexdigest()
     platform = _platform()
     challenge_id = _run_challenge_id(run_id)
-    fingerprint = _request_hash({"run_id":run_id,"trial_id":trial_id,
+    fingerprint_input = {"run_id":run_id,"trial_id":trial_id,
         "package_path":str(package),"hash":source_digest,"platform":platform.name,
         "challenge":challenge_id,"allow_proxy_evidence":allow_proxy_evidence,
-        "allow_indeterminate_admission":allow_indeterminate_admission})
+        "allow_indeterminate_admission":allow_indeterminate_admission}
+    if prediction_md is not None:
+        fingerprint_input['prediction_md']=prediction_md
+    fingerprint = _request_hash(fingerprint_input)
     with db.transaction() as conn:
         dup = _duplicate(conn, operation_id, fingerprint)
         if dup: return dup
@@ -609,10 +619,10 @@ def submit_experiment(run_id: str, trial_id: str | None,
         sid = _rid("sub")
         frozen = _freeze(sid,package,content)
         conn.execute("INSERT INTO submissions(id,run_id,trial_id,mailbox_id,package_path,package_sha256,"
-                     " status,operation_id,created_at,request_hash,stage,source_package_sha256,admission_json)"
-                     " VALUES(?,?,?,?,?,?,'unknown',?,?,?,'reserved',?,?)",
+                     " status,operation_id,created_at,request_hash,stage,source_package_sha256,admission_json,prediction_md)"
+                     " VALUES(?,?,?,?,?,?,'unknown',?,?,?,'reserved',?,?,?)",
                      (sid,run_id,trial_id,mb["id"],frozen,digest,operation_id,db.utcnow(),fingerprint,
-                      source_digest,json.dumps(check["admission"],ensure_ascii=False)))
+                      source_digest,json.dumps(check["admission"],ensure_ascii=False),prediction_md))
         db.append_event_tx(conn,run_id,"controller","submission.created",
                            {"submission_id":sid,"package_sha256":digest,
                             "source_package_sha256":source_digest,
@@ -742,6 +752,12 @@ def poll_scores(run_id: str | None = None,
                          " score_last_polled_at=? WHERE id=?",
                          (score,now,confidence,first_seen,last_changed,anomaly,consistent,
                           harbor,trace,now,r['id']))
+            if current['prediction_verdict'] and (changed_score or confidence!='confirmed'):
+                conn.execute("UPDATE submissions SET prediction_verdict=NULL,prediction_note_md=NULL"
+                             " WHERE id=?",(r['id'],))
+                db.append_event_tx(conn,r['run_id'],'controller','prediction.verdict_invalidated',
+                                   {'submission_id':r['id'],'reason':'评分变化或不再确认'},
+                                   trial_id=r['trial_id'])
             if current['score_confidence'] == 'confirmed' and confidence != 'confirmed':
                 experience_context.retract_result_tx(conn, r, 'post_confirmation_revision' if correction else 'score_anomaly')
             if meaningful:
@@ -980,10 +996,10 @@ def harvest_submit(submission_id: str, operation_id: str,
         sid = _rid("sub")
         frozen = _freeze(sid,package,content)
         conn.execute("INSERT INTO submissions(id,run_id,trial_id,mailbox_id,package_path,package_sha256,"
-                     " status,is_harvest,source_submission_id,operation_id,created_at,request_hash,stage)"
-                     " VALUES(?,?,?,?,?,?,'unknown',1,?,?,?,?,'reserved')",
+                     " status,is_harvest,source_submission_id,operation_id,created_at,request_hash,stage,prediction_md)"
+                     " VALUES(?,?,?,?,?,?,'unknown',1,?,?,?,?,'reserved',?)",
                      (sid,src["run_id"],src["trial_id"],harvest["id"],frozen,src["package_sha256"],
-                      submission_id,operation_id,db.utcnow(),fingerprint))
+                      submission_id,operation_id,db.utcnow(),fingerprint,src['prediction_md']))
         db.append_event_tx(conn,src['run_id'],'controller','submission.harvest_reserved',{
             'submission_id':sid,'source_submission_id':submission_id,
             'warnings':warnings,'acknowledge_warnings':acknowledge_warnings},

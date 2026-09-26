@@ -6,7 +6,7 @@ from typing import Any
 
 import jsonschema
 
-from . import db, decision, observation
+from . import db, decision, observation, submission_predictions
 from .decision_extraction import _extract_json
 
 
@@ -36,6 +36,7 @@ def prompt(packet: dict) -> str:
         '从真实证据提出适用条件、动作、失效条件；证据不足可提出零条。'
         '引用给定 evidence_ref/checkpoint 引用，不虚构验证、采用或因果收益。'
         '每条提议给出 audience=brain/executor/both；未给时按 both。环境事实只能由真实回执代码生成，不可提议。'
+        '如素材含提交预测与已确认评分，区分预测成立、被否定或证据不清，不臆造分量变化。'
         '全局经验仅为 candidate；本次推导仍是 hypothesis。'
         '仅输出以下 JSON 格式，不含 run_id、状态版本或 actions：\n'
         '{"schema_version":1,"message_type":"curation_result","summary":"...",'
@@ -73,4 +74,5 @@ def run_evidence(run_id: str) -> dict[str, Any]:
             'events': selected, 'checkpoints': cps, 'events_omitted': len(public)-len(selected),
             'externally_assisted': any(e['type'] == 'user.steer.queued' for e in public),
             'evidence_refs': [e['evidence_ref'] for e in selected+cps],
+            'prediction_outcomes':submission_predictions.outcomes(run_id,limit=30),
             'instruction': '暂停不是科研成功；未观测、unknown、外部指导和失败均保留。'}

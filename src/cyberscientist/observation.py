@@ -10,7 +10,7 @@ import json
 import re
 from typing import Any
 
-from . import datasets, db, experience_context
+from . import datasets, db, experience_context, submission_predictions
 
 # 有界投影的尺寸上限（字符）
 _MAX_GOAL = 1500
@@ -318,6 +318,8 @@ def build_frame(run_id: str, *, mode: str, frame_id: str,
         "activity_counts": activity,
         "metrics": score_deltas(events),
         "known_scores":list(known_scores.values()),
+        "submission_prediction_version":json.loads(run['config_snapshot']).get('submission_prediction_version'),
+        "prediction_outcomes":submission_predictions.outcomes(run_id,through_seq=through_seq),
         "experience_context_id": context["id"],
         "brain_private_note_md": note,
         "watchlist": sup["watchlist"][:3],

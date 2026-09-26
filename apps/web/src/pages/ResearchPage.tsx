@@ -1909,6 +1909,8 @@ function SubmissionsPanel({
                 {s.scorecard_consistent === 1 && ' · 分项一致'}
               </div>
               {s.error && <p className="form-error">{s.error}</p>}
+              {s.prediction_md && <p className="small-text">提交预测：{s.prediction_md}</p>}
+              {s.prediction_verdict && <p className="small-text">预测判定：{s.prediction_verdict} · {s.prediction_note_md || '无说明'}</p>}
             </li>
           ))}
         </ul>

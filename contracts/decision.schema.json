@@ -390,6 +390,18 @@
         ]
       }
     },
+    "prediction_verdicts": {
+      "type": "array", "maxItems": 20,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "properties": {
+          "submission_id": {"type": "string", "minLength": 1},
+          "verdict": {"enum": ["confirmed", "refuted", "unclear"]},
+          "note_md": {"type": "string", "minLength": 1, "maxLength": 2000}
+        },
+        "required": ["submission_id", "verdict", "note_md"]
+      }
+    },
     "pending_intent_resolution": {
       "enum": [
         "replay",

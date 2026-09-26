@@ -197,6 +197,10 @@
               "revision_id"
             ]
           }
+        },
+        "prediction_verdicts": {
+          "type": "array", "maxItems": 20,
+          "items": {"$ref": "#/$defs/PredictionVerdict"}
         }
       },
       "required": [
@@ -363,6 +367,9 @@
           "type": "string",
           "minLength": 1,
           "maxLength": 1200
+        },
+        "prediction_md": {
+          "type": "string", "minLength": 1, "maxLength": 4000
         }
       },
       "required": [
@@ -374,6 +381,15 @@
         "expected_change_md",
         "revisit_when_md"
       ]
+    },
+    "PredictionVerdict": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "submission_id": {"type": "string", "minLength": 1},
+        "verdict": {"enum": ["confirmed", "refuted", "unclear"]},
+        "note_md": {"type": "string", "minLength": 1, "maxLength": 2000}
+      },
+      "required": ["submission_id", "verdict", "note_md"]
     }
   }
 }

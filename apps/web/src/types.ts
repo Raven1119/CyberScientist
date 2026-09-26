@@ -411,6 +411,9 @@ export interface Submission {
   displayScore?: number | null
   harbor_score?: number | null
   trace_score?: number | null
+  prediction_md?: string | null
+  prediction_verdict?: 'confirmed' | 'refuted' | 'unclear' | null
+  prediction_note_md?: string | null
   is_highest?: boolean
   warnings?: string[]
   is_harvest: number

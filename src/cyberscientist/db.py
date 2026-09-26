@@ -187,6 +187,7 @@ CREATE TABLE IF NOT EXISTS guidance (
     evidence_refs TEXT NOT NULL DEFAULT '[]',
     expected_change_md TEXT,
     revisit_when_md TEXT,
+    prediction_md TEXT,
     state_version INTEGER,
     evidence_revision INTEGER,
     shadow_epoch INTEGER,
@@ -369,6 +370,9 @@ CREATE TABLE IF NOT EXISTS curation_requests (
 
 # submissions 表 v2 新增列（对既有库做幂等 ALTER）
 SUBMISSION_V2_COLUMNS = {
+    "prediction_md": "TEXT",
+    "prediction_verdict": "TEXT",
+    "prediction_note_md": "TEXT",
     "platform_ref": "TEXT",  # 平台侧 attempt id 等回执引用
     "request_hash": "TEXT",
     "stage": "TEXT NOT NULL DEFAULT 'legacy'",
@@ -385,6 +389,7 @@ SUBMISSION_V2_COLUMNS = {
     "polling_stopped_at": "TEXT",
     "score_last_polled_at": "TEXT",
 }
+GUIDANCE_PREDICTION_COLUMNS = {"prediction_md": "TEXT"}
 
 # checkpoints 表 v2 新增列（对既有库做幂等 ALTER）
 CHECKPOINT_V2_COLUMNS = {
@@ -459,6 +464,7 @@ def init_db() -> None:
         _ensure_columns(conn, "checkpoints", CHECKPOINT_V2_COLUMNS)
         _ensure_columns(conn, "runs", RUN_V2_COLUMNS)
         _ensure_columns(conn, "submissions", SUBMISSION_V2_COLUMNS)
+        _ensure_columns(conn, "guidance", GUIDANCE_PREDICTION_COLUMNS)
         _ensure_columns(conn, "authorizations", AUTHORIZATION_V2_COLUMNS)
         _ensure_columns(conn, "challenges", CHALLENGE_V2_COLUMNS)
         _ensure_columns(conn, "compute_jobs", COMPUTE_V2_COLUMNS)

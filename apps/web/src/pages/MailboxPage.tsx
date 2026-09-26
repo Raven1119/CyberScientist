@@ -514,6 +514,8 @@ export default function MailboxPage() {
                       {s.scorecard_consistent === 0 && ' · 分项不一致'}
                       {s.scorecard_consistent === 1 && ' · 分项一致'}
                       {s.error ? ` · ${s.error.slice(0, 60)}` : ''}
+                      {s.prediction_md && <div className="small-text">提交预测：{s.prediction_md}</div>}
+                      {s.prediction_verdict && <div className="small-text">预测判定：{s.prediction_verdict} · {s.prediction_note_md || '无说明'}</div>}
                       {s.platform_ref && <div className="small-text">Attempt {s.platform_ref}</div>}
                       {s.platform_feedback && Object.keys(s.platform_feedback).length > 0 && (
                         <details>
