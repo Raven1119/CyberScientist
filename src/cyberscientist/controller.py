@@ -17,13 +17,15 @@ import asyncio
 import json
 import logging
 import re
+import time
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 import jsonschema
 
-from . import collab, config, datasets, db, decision as decision_mod, experiences, mailboxes, observation, experience_context, challenge_models
+from . import collab, config, datasets, db, decision as decision_mod, experiences, mailboxes, observation, experience_context, challenge_models, model_limits
 from . import skills as skills_mod
 from .brains.base import BrainRuntime
 from .brains.codex import CodexBrain
@@ -49,6 +51,15 @@ _SPARSE_SHADOW_EVENTS = (
 _RESEARCH_JOB_STATES = frozenset(("Failed", "Stopped", "Finished"))
 _RESEARCH_TRIAL_EVENTS = frozenset((
     "trial.stalled", "trial.done", "trial.reported_complete"))
+
+# Only evidence of work counts as progress. Polls, heartbeat, usage, repeat
+# job-list output, review bookkeeping, and stall notices never move the clock.
+_LIVENESS_PROGRESS = (
+    "run.resumed", "trial.created", "trial.done", "trial.reported_complete",
+    "checkpoint.created", "guidance.delivered", "guidance.acknowledged",
+    "job.accepted", "job.retrieved", "submission.created", "submission.scored",
+    "submission.score_corrected", "run.gate_opened",
+)
 
 
 def _is_sparse_brain_trigger(event_type: str, payload: dict[str, Any],
@@ -213,10 +224,14 @@ class RunController:
         self._start_pump: dict[str, Any] = {}
         self._prime_instances: dict[str, Any] = {}
         self._brain_sessions: dict[str, Any] = {}
+        self._brain_instances: dict[str, BrainRuntime] = {}
         # 协作调度：审阅唤醒（内存提示，DB 为权威）与执行器忙闲镜像
         self._review_wake: dict[str, asyncio.Event] = {}
         self._review_tasks: dict[str, asyncio.Task] = {}
         self._executor_busy: dict[str, bool] = {}
+        self._prime_prompts: dict[str, tuple[str | None, str]] = {}
+        self._prime_guidance_ids: dict[str, str] = {}
+        self._session_restarts: set[tuple[str, str]] = set()
         # 执行器提问（AskUserQuestion）→ 大脑回答的等待句柄：request_id → Future
         self._question_waiters: dict[str, asyncio.Future] = {}
         # 全局经验整理（手动触发、无 Run 的一次性大脑会话）状态
@@ -739,6 +754,7 @@ class RunController:
                     return {"status": existing["status"], "deduplicated": True}
                 db.execute("UPDATE runs SET phase='running', block_reason=NULL"
                            " WHERE id=?", (run_id,))
+                db.execute("DELETE FROM model_rate_limits WHERE run_id=?", (run_id,))
                 db.append_event(run_id, "controller", "run.resumed",
                                 {"via": "recovery"})
                 nq: asyncio.Queue = asyncio.Queue()
@@ -757,7 +773,8 @@ class RunController:
                 existing = db.query_one(
                     "SELECT status FROM operations WHERE operation_id=?", (operation_id,))
                 return {"status": existing["status"], "deduplicated": True}
-            db.execute("UPDATE runs SET phase='running' WHERE id=?", (run_id,))
+            db.execute("UPDATE runs SET phase='running',block_reason=NULL WHERE id=?", (run_id,))
+            db.execute("DELETE FROM model_rate_limits WHERE run_id=?", (run_id,))
             db.append_event(run_id, "controller", "run.resumed", {})
             await q.put({"type": "resume"})
             self._wake(run_id)
@@ -1061,6 +1078,11 @@ class RunController:
                     error_msg = ev.payload.get("message", "")
         except Exception as exc:  # noqa: BLE001
             error_msg = f"{exc.__class__.__name__}: {str(exc)[:300]}"
+        if error_msg and (limit := model_limits.classify(error_msg)):
+            self._record_model_limit(run_id, "brain", limit,
+                                     request_id=req["id"], mode="requested")
+            return
+        self._clear_model_limit(run_id, "brain")
         if answer:
             if ("answer_md" not in answer and isinstance(answer.get("answers"), dict)
                     and answer["answers"]):
@@ -1179,6 +1201,229 @@ class RunController:
         self._maybe_shadow(run_id)
         self._wake(run_id)
 
+    def _liveness_diagnosis(self, run_id: str, run: Any) -> dict[str, Any]:
+        reviews = [dict(row) for row in db.query(
+            "SELECT id,source,status,trigger FROM review_requests WHERE run_id=?"
+            " AND status IN ('pending','running') ORDER BY created_at", (run_id,))]
+        jobs = [dict(row) for row in db.query(
+            "SELECT operation_id,status FROM compute_jobs WHERE run_id=?"
+            " AND status IN ('accepted','Pending','Scheduling','Running')",
+            (run_id,))]
+        guidance = db.query_one(
+            "SELECT COUNT(*) AS n FROM guidance WHERE run_id=?"
+            " AND status IN ('queued','sending','unknown')", (run_id,))["n"]
+        sandbox_exec = 0
+        if db.query_one("SELECT 1 FROM sqlite_master WHERE type='table'"
+                        " AND name='compute_sandbox_operations'"):
+            sandbox_exec = db.query_one(
+                "SELECT COUNT(*) AS n FROM compute_sandbox_operations"
+                " WHERE run_id=? AND status='running'", (run_id,))["n"]
+        trial = db.query_one("SELECT status FROM trials WHERE id=?",
+                             (run["current_trial_id"],)) if run["current_trial_id"] else None
+        return {"trial_id": run["current_trial_id"],
+                "trial_status": trial["status"] if trial else None,
+                "executor_busy": bool(self._executor_busy.get(run_id)),
+                "reviews": reviews, "guidance_pending": guidance,
+                "jobs": jobs, "sandbox_exec_count": sandbox_exec,
+                "gate": run["gate"]}
+
+    def _pause_needs_attention(self, run_id: str, reason: str) -> None:
+        busy = bool(self._executor_busy.get(run_id))
+        with db.transaction() as conn:
+            changed = conn.execute(
+                "UPDATE runs SET phase=?,block_reason=? WHERE id=? AND phase='running'",
+                ("pausing" if busy else "paused", reason, run_id)).rowcount
+            if changed:
+                db.append_event_tx(conn, run_id, "controller", "run.needs_attention",
+                                   {"reason": reason, "phase": "pausing" if busy else "paused"})
+        if changed and busy and run_id in self._signals:
+            self._signals[run_id].put_nowait({"type": "pause"})
+        if changed:
+            self._wake(run_id)
+
+    def check_liveness(self, run_id: str, now: float | None = None) -> str | None:
+        """One bounded, read-mostly watchdog step; returns the action taken."""
+        now = time.time() if now is None else now
+        run = self._require_run(run_id)
+        if run["phase"] != "running" or run["gate"] in (
+                "awaiting_budget", "awaiting_user"):
+            return None
+        if any(item[0] == run_id for item in self._session_restarts):
+            return None
+        defaults = config.load_settings()["run_defaults"]
+        stall_seconds = defaults["stall_seconds"]
+        limit_seconds = defaults["rate_limit_max_seconds"]
+        limited = db.query(
+            "SELECT role,first_at,retry_at FROM model_rate_limits"
+            " WHERE run_id=? AND state='waiting'",
+            (run_id,))
+        limited = [row for row in limited if row["role"] != "brain" or db.query_one(
+            "SELECT 1 FROM review_requests WHERE run_id=?"
+            " AND status IN ('pending','running') LIMIT 1",
+            (run_id,))]
+        if not any(row["role"] == "brain" for row in limited):
+            db.execute("DELETE FROM model_rate_limits WHERE run_id=? AND role='brain'"
+                       " AND state='waiting'", (run_id,))
+        for row in limited:
+            first = _parse_ts(row["first_at"])
+            if first is not None and now - first >= limit_seconds:
+                self._pause_needs_attention(
+                    run_id, f"{row['role']} 模型持续限流超过 {limit_seconds} 秒；"
+                            "请检查额度或稍后恢复")
+                return "rate_limit_attention"
+        if limited:
+            return None  # A scheduled retry is a legitimate wait, not a stall.
+        diagnosis = self._liveness_diagnosis(run_id, run)
+        if diagnosis["jobs"] or diagnosis["sandbox_exec_count"]:
+            return None
+        if any(r["status"] == "running" for r in diagnosis["reviews"]):
+            return None  # worker has its own bounded model-turn timeout
+        marks = ",".join("?" for _ in _LIVENESS_PROGRESS)
+        progress = db.query_one(
+            f"SELECT occurred_at FROM events WHERE run_id=? AND (type IN ({marks})"
+            " OR (type='prime.execution.progress'"
+            " AND COALESCE(json_extract(payload,'$.detail'),'') NOT LIKE '%bohr job list%'"
+            " AND (json_extract(payload,'$.item_id') IS NOT NULL"
+            " OR COALESCE(json_extract(payload,'$.detail'),'') LIKE '工具完成%')))"
+            " ORDER BY seq DESC LIMIT 1", (run_id, *_LIVENESS_PROGRESS))
+        progress_at = _parse_ts(progress["occurred_at"]) if progress else None
+        start_at = _parse_ts(run["started_at"]) or _parse_ts(run["created_at"])
+        baseline = max(x for x in (progress_at, start_at) if x is not None)
+        stall = db.query_one(
+            "SELECT occurred_at FROM events WHERE run_id=?"
+            " AND type='run.stall_detected' ORDER BY seq DESC LIMIT 1", (run_id,))
+        stall_at = _parse_ts(stall["occurred_at"]) if stall else None
+        if stall_at is not None and stall_at < baseline:
+            stall_at = None  # a real action reset the strike count
+        recovery = db.query_one(
+            "SELECT occurred_at FROM events WHERE run_id=?"
+            " AND type IN ('brain.session_restarted','executor.session_restarted')"
+            " ORDER BY seq DESC LIMIT 1", (run_id,))
+        recovery_at = _parse_ts(recovery["occurred_at"]) if recovery else None
+        anchor = max(x for x in (baseline, stall_at, recovery_at)
+                     if x is not None)
+        if now - anchor < stall_seconds:
+            return None
+        strike = 2 if stall_at is not None else 1
+        db.append_event(run_id, "controller", "run.stall_detected",
+                        {"strike": strike, "idle_seconds": int(now - baseline),
+                         "diagnosis": diagnosis})
+        if strike == 2:
+            self._pause_needs_attention(run_id,
+                "连续两次检测到研究无进展；大脑修复后仍未恢复，请检查 Run")
+            return "needs_attention"
+        self._enqueue_lifecycle(run_id, trigger="stall_detected")
+        return "review_queued"
+
+    def _record_model_limit(self, run_id: str, role: str,
+                            info: model_limits.RateLimit,
+                            request_id: str | None = None,
+                            mode: str | None = None,
+                            trial_id: str | None = None) -> None:
+        """Requeue an uncharged model call with a durable retry clock."""
+        now = datetime.now(timezone.utc)
+        previous = db.query_one(
+            "SELECT first_at,attempts FROM model_rate_limits WHERE run_id=? AND role=?",
+            (run_id, role))
+        first_at = previous["first_at"] if previous else now.isoformat()
+        attempts = previous["attempts"] + 1 if previous else 1
+        delay = model_limits.retry_delay(attempts, info)
+        next_at = model_limits.retry_at(now, delay)
+        with db.transaction() as conn:
+            conn.execute(
+                "INSERT INTO model_rate_limits(run_id,role,first_at,attempts,retry_at,state,trial_id)"
+                " VALUES(?,?,?,?,?,'waiting',?) ON CONFLICT(run_id,role) DO UPDATE SET"
+                " attempts=excluded.attempts,retry_at=excluded.retry_at,"
+                " trial_id=excluded.trial_id,state='waiting'",
+                (run_id, role, first_at, attempts, next_at, trial_id))
+            if request_id:
+                conn.execute("UPDATE review_requests SET status='pending',error=NULL,"
+                             " updated_at=? WHERE id=? AND status='running'",
+                             (db.utcnow(), request_id))
+                if mode == "shadow":
+                    conn.execute("UPDATE supervision SET reviews_used=MAX(0,reviews_used-1)"
+                                 " WHERE run_id=?", (run_id,))
+                else:
+                    conn.execute("UPDATE runs SET brain_reviews_used=MAX(0,brain_reviews_used-1)"
+                                 " WHERE id=?", (run_id,))
+            db.append_event_tx(conn, run_id, "controller", "model.rate_limited",
+                               {"role": role, "attempt": attempts,
+                                "reason": info.reason,
+                                "retry_at": next_at, "retry_in_seconds": delay,
+                                "review_id": request_id, "trial_id": trial_id})
+        self._wake(run_id)
+        self.check_liveness(run_id)
+
+    def _clear_model_limit(self, run_id: str, role: str) -> None:
+        db.execute("DELETE FROM model_rate_limits WHERE run_id=? AND role=?",
+                   (run_id, role))
+
+    async def retry_limited_executor(self, run_id: str) -> str | None:
+        """Retry only a confirmed idle native turn, never a remote Job."""
+        row = db.query_one(
+            "SELECT * FROM model_rate_limits WHERE run_id=? AND role='executor'"
+            " AND state='waiting'",
+            (run_id,))
+        if not row or self._require_run(run_id)["phase"] != "running":
+            return None
+        if self.check_liveness(run_id) == "rate_limit_attention":
+            return "needs_attention"
+        if (_parse_ts(row["retry_at"]) or 0) > time.time():
+            return None
+        trial = db.query_one("SELECT id,status FROM trials WHERE id=?"
+                             " AND run_id=?", (row["trial_id"], run_id)) if row["trial_id"] else None
+        if row["trial_id"] and (not trial or trial["status"] not in ("active", "stalled")):
+            self._clear_model_limit(run_id, "executor")
+            return "obsolete"
+        prime = self._prime_instances.get(run_id)
+        session = self._prime_sessions.get(run_id)
+        if prime is None or session is None:
+            return None  # after restart, recovery must reconstruct the session
+        try:
+            state = await asyncio.wait_for(prime.state(session), timeout=30)
+        except Exception:
+            return None
+        if state.get("status") != "idle":
+            return None  # unknown/busy cannot be safely replayed
+        previous_prompt = self._prime_prompts.get(run_id)
+        if previous_prompt is None or previous_prompt[0] != row["trial_id"]:
+            self._pause_needs_attention(run_id,
+                "执行器限流后原始任务上下文不可用；请恢复会话后由大脑重新裁决")
+            return "needs_attention"
+        prompt = previous_prompt[1]
+        receipt = await prime.prompt(session, prompt)
+        if receipt.status == "accepted":
+            with db.transaction() as conn:
+                conn.execute("UPDATE model_rate_limits SET state='in_flight'"
+                             " WHERE run_id=? AND role='executor'", (run_id,))
+                guidance_id = self._prime_guidance_ids.get(run_id)
+                if guidance_id:
+                    conn.execute("UPDATE guidance SET status='sent',delivery_channel='idle_prompt',"
+                                 " operation_id=?,updated_at=? WHERE id=?"
+                                 " AND status IN ('queued','sent')",
+                                 (receipt.operation_id or "", db.utcnow(), guidance_id))
+                    db.append_event_tx(conn, run_id, "controller", "guidance.retry_sent",
+                                       {"guidance_id": guidance_id,
+                                        "operation_id": receipt.operation_id})
+            self._executor_busy[run_id] = True
+            db.append_event(run_id, "controller", "model.retry_started",
+                            {"role": "executor", "trial_id": row["trial_id"],
+                             "operation_id": receipt.operation_id})
+            starter = self._start_pump.get(run_id)
+            if starter:
+                starter()
+            return "retried"
+        info = model_limits.classify(receipt.detail)
+        if info:
+            self._record_model_limit(run_id, "executor", info, trial_id=row["trial_id"])
+            return "rate_limited"
+        self._clear_model_limit(run_id, "executor")
+        db.append_event(run_id, "controller", "model.retry_failed",
+                        {"role": "executor", "status": receipt.status,
+                         "detail": _redact(receipt.detail, 200)})
+        self._enqueue_lifecycle(run_id, trigger="executor_aborted")
+        return "failed"
+
     # ---------- 主循环 ----------
     async def _run_loop(self, run_id: str, q: asyncio.Queue,
                         trigger: str = "run_start") -> None:
@@ -1204,12 +1449,14 @@ class RunController:
                         db.get_db(), settings, run["challenge_id"])],
                 })
             self._brain_sessions[run_id] = b_session
+            self._brain_instances[run_id] = brain
             prime_sid = await prime.start(self._prime_spec(run_id,settings))
             self._prime_sessions[run_id] = prime_sid
             async def prime_event_pump(sid: str) -> None:
                 """每个原生会话常驻且唯一的事件消费者；回合结束不退出。"""
                 try:
-                    async for ev in prime.events(sid):
+                    runtime = self._prime_instances[run_id]
+                    async for ev in runtime.events(sid):
                         await q.put({"type": "prime_event", "event": ev})
                         if ev.get("type") == "session.ended":
                             break
@@ -1256,7 +1503,8 @@ class RunController:
                                     {"notice": "达到授权时长上限；已暂停新增受控操作"})
                     phase = "pausing"
                 if phase == "pausing":
-                    receipt = await prime.abort(self._prime_sessions[run_id])
+                    receipt = await self._prime_instances[run_id].abort(
+                        self._prime_sessions[run_id])
                     if receipt.status == "confirmed":
                         db.execute("UPDATE runs SET phase='paused' WHERE id=?",
                                    (run_id,))
@@ -1268,7 +1516,13 @@ class RunController:
                                       f"不伪造已暂停"})
                     phase = self._require_run(run_id)["phase"]
                     if phase == "pausing":
-                        signal = await q.get()
+                        try:
+                            signal = await asyncio.wait_for(q.get(), timeout=30)
+                        except asyncio.TimeoutError:
+                            db.execute("UPDATE runs SET block_reason=? WHERE id=?"
+                                       " AND phase='pausing'",
+                                       ("执行器暂停确认仍未知；正在继续核对会话，远程任务独立运行", run_id))
+                            continue
                         await self._handle_signal(signal, run_id, q)
                         continue
                 try:
@@ -1282,7 +1536,7 @@ class RunController:
                                     {"detail": "长时间无事件；Run 保持运行，等待新信号"})
                     continue
                 await self._handle_signal(signal, run_id, q,
-                                          prime=prime,
+                                          prime=self._prime_instances[run_id],
                                           prime_sid=self._prime_sessions[run_id])
         except asyncio.CancelledError:
             raise
@@ -1299,7 +1553,10 @@ class RunController:
                 task.cancel()
             if tasks:
                 await asyncio.gather(*tasks,return_exceptions=True)
-            for runtime, session in ((prime,prime_sid),(brain,b_session)):
+            for runtime, session in ((self._prime_instances.get(run_id,prime),
+                                      self._prime_sessions.get(run_id,prime_sid)),
+                                     (self._brain_instances.get(run_id,brain),
+                                      self._brain_sessions.get(run_id,b_session))):
                 if runtime:
                     try:
                         await runtime.close(session)
@@ -1308,8 +1565,9 @@ class RunController:
             with db.transaction() as conn:
                 collab.revoke_run_tokens(conn,run_id)
             for mapping in (self._signals,self._tasks,self._prime_sessions,self._prime_instances,
-                            self._brain_sessions,self._start_pump,self._review_wake,self._review_tasks,
-                            self._executor_busy,self._pumps):
+                            self._brain_sessions,self._brain_instances,self._start_pump,self._review_wake,self._review_tasks,
+                            self._executor_busy,self._prime_prompts,
+                            self._prime_guidance_ids,self._pumps):
                 mapping.pop(run_id,None)
 
     def _recover_review_requests(self, run_id: str) -> None:
@@ -1363,10 +1621,32 @@ class RunController:
                     " AND status IN ('accepted','Running','Pending','Scheduling')"
                     " LIMIT 1", (run_id,)):
                 return  # 有已知活跃远端计算时，事件流安静不等于研究停滞。
+            if etype == "model.rate_limited" or (
+                    etype in ("run.aborted", "error", "executor.turn_completed") and
+                    model_limits.classify(ev.get("error") or ev.get("detail"))):
+                info = (model_limits.classify(ev.get("error") or ev.get("detail"))
+                        or model_limits.RateLimit(ev.get("retry_after_seconds"),
+                                                  ev.get("reason") or "rate_limit"))
+                self._executor_busy[run_id] = False
+                self._record_model_limit(run_id, "executor", info,
+                                         trial_id=self._prime_prompts.get(run_id,
+                                                                          (trial_id, ""))[0])
+                return
             public = _runtime_event_payload(ev)
             public.setdefault("detail", "")
             db.append_event(run_id, "prime", f"prime.{etype}",
                             public, trial_id=trial_id)
+            if etype in ("executor.turn_completed", "trial.completed", "run.aborted",
+                         "session.ended"):
+                self._clear_model_limit(run_id, "executor")
+                self._prime_prompts.pop(run_id, None)
+                self._prime_guidance_ids.pop(run_id, None)
+            if etype == "session.ended" and run["phase"] == "running":
+                if await self._restart_prime_session(run_id):
+                    self._enqueue_lifecycle(run_id, trigger="executor_restarted")
+                else:
+                    self._pause_needs_attention(run_id, "执行器会话失联且重启失败；请检查连接")
+                return
             if self._handle_signal_guarded_pause(run_id):
                 if run["phase"] == "pausing" and etype in ("run.aborted","executor.turn_completed","trial.completed","session.ended"):
                     self._executor_busy[run_id] = False
@@ -1434,9 +1714,16 @@ class RunController:
                 if trial and trial["status"] == "active":
                     state = await ctx["prime"].state(ctx["prime_sid"])
                     if state.get("status") == "idle":
-                        receipt = await ctx["prime"].prompt(
-                            ctx["prime_sid"],
-                            f"继续目标：{trial['goal']}\n成功判据：{trial['success_check']}")
+                        prompt = f"继续目标：{trial['goal']}\n成功判据：{trial['success_check']}"
+                        self._prime_prompts[run_id] = (trial_id, prompt)
+                        self._prime_guidance_ids.pop(run_id, None)
+                        receipt = await ctx["prime"].prompt(ctx["prime_sid"], prompt)
+                        limit = (model_limits.classify(receipt.detail)
+                                 if receipt.status != "accepted" else None)
+                        if limit:
+                            self._record_model_limit(run_id, "executor", limit,
+                                                     trial_id=trial_id)
+                            return
                         self._executor_busy[run_id] = receipt.status == "accepted"
                         db.append_event(run_id, "prime", "prime.task_resumed",
                                         {"status": receipt.status,
@@ -1462,9 +1749,57 @@ class RunController:
         elif stype in ("pause", "terminate"):
             pass  # 状态转换已在 control()/主循环处理
         elif stype == "prime_error":
-            db.append_event(run_id, "prime", "prime.error",
-                            {"message": signal.get("message", "")})
-            self._maybe_shadow(run_id)
+            info = model_limits.classify(signal.get("message"))
+            if info:
+                self._executor_busy[run_id] = False
+                self._record_model_limit(run_id, "executor", info,
+                                         trial_id=self._prime_prompts.get(run_id,
+                                             (self._require_run(run_id)["current_trial_id"], ""))[0])
+            else:
+                self._clear_model_limit(run_id, "executor")
+                db.append_event(run_id, "prime", "prime.error",
+                                {"message": _redact(signal.get("message", ""))})
+                if self._require_run(run_id)["phase"] == "running":
+                    if await self._restart_prime_session(run_id):
+                        self._enqueue_lifecycle(run_id, trigger="executor_restarted")
+                    else:
+                        self._pause_needs_attention(run_id, "执行器会话失联且重启失败；请检查连接")
+
+    async def _restart_prime_session(self, run_id: str) -> bool:
+        self._session_restarts.add((run_id, "executor"))
+        try:
+            return await self._restart_prime_session_impl(run_id)
+        finally:
+            self._session_restarts.discard((run_id, "executor"))
+
+    async def _restart_prime_session_impl(self, run_id: str) -> bool:
+        old, session = self._prime_instances.get(run_id), self._prime_sessions.get(run_id)
+        pump = self._pumps.pop(run_id, None)
+        if pump:
+            pump.cancel()
+            await asyncio.gather(pump, return_exceptions=True)
+        if old is not None and session is not None:
+            try:
+                await asyncio.wait_for(old.close(session), timeout=15)
+            except Exception:
+                log.exception("Run %s old executor session close failed", run_id)
+        try:
+            runtime = self._make_prime(self._runtime_settings(run_id))
+            if isinstance(runtime, KimiExecutor):
+                runtime.ask_handler = lambda _sid, question: self._answer_executor_question(run_id,question)
+            new_session = await asyncio.wait_for(runtime.start(
+                self._prime_spec(run_id, self._runtime_settings(run_id))), timeout=60)
+        except Exception:
+            log.exception("Run %s executor session restart failed", run_id)
+            return False
+        self._prime_instances[run_id] = runtime
+        self._prime_sessions[run_id] = new_session
+        self._executor_busy[run_id] = False
+        db.append_event(run_id, "controller", "executor.session_restarted", {})
+        starter = self._start_pump.get(run_id)
+        if starter:
+            starter()
+        return True
 
     def _blocking_inflight(self, run_id: str) -> Any:
         return db.query_one(
@@ -1538,11 +1873,15 @@ class RunController:
                 f"预期：{g['expected_change_md'] or ''}\n"
                 f"重新讨论条件：{g['revisit_when_md'] or ''}\n"
                 f"请用 ack_guidance 确认 accepted 或 challenged。")
+        self._prime_prompts[run_id] = (g["target_trial_id"], text)
+        self._prime_guidance_ids[run_id] = g["id"]
         try:
             receipt = await prime.prompt(sid, text)
         except Exception as exc:
             from .prime import ActionReceipt
             receipt = ActionReceipt(status="unknown", detail=str(exc)[:200])
+        limit = (model_limits.classify(receipt.detail)
+                 if receipt.status != "accepted" else None)
         with db.transaction() as conn:
             if receipt.status == "accepted":
                 self._executor_busy[run_id] = True
@@ -1560,12 +1899,17 @@ class RunController:
                 # 发送失败不谎报：回滚到 queued 等下一边界
                 conn.execute(
                     "UPDATE guidance SET status=?, updated_at=?"
-                    " WHERE id=?", ("unknown" if receipt.status in ("unknown", "confirmed") else "queued", db.utcnow(), g["id"]))
+                    " WHERE id=?", ("queued" if limit else
+                                   "unknown" if receipt.status in ("unknown", "confirmed") else
+                                   "queued", db.utcnow(), g["id"]))
                 db.append_event_tx(conn, run_id, "controller",
                                    "guidance.send_deferred",
                                    {"guidance_id": g["id"],
-                                    "detail": receipt.detail[:200]},
+                                    "detail": "模型限流，等待重试" if limit else _redact(receipt.detail, 200)},
                                    trial_id=g["target_trial_id"])
+        if limit:
+            self._record_model_limit(run_id, "executor", limit,
+                                     trial_id=g["target_trial_id"])
 
     # ---------- 审阅调度（单飞 worker）----------
     def _enqueue_lifecycle(self, run_id: str, trigger: str,
@@ -1708,6 +2052,21 @@ class RunController:
                 wake.clear()
                 await wake.wait()
                 continue
+            rate_wait = db.query_one(
+                "SELECT retry_at FROM model_rate_limits WHERE run_id=? AND role='brain'",
+                (run_id,))
+            if rate_wait:
+                self.check_liveness(run_id)
+                if self._require_run(run_id)["phase"] != "running":
+                    continue
+                until = (_parse_ts(rate_wait["retry_at"]) or time.time()) - time.time()
+                if until > 0:
+                    wake.clear()
+                    try:
+                        await asyncio.wait_for(wake.wait(), timeout=min(until, 60))
+                    except asyncio.TimeoutError:
+                        pass
+                    continue
             req = self._next_request(run_id)
             if req is None:
                 # 稀疏兜底：有待观察变化时按 max_interval 再检查；
@@ -1723,6 +2082,7 @@ class RunController:
                 except asyncio.TimeoutError:
                     self._maybe_shadow(run_id)
                     self._maybe_periodic_shadow(run_id)
+                    self.check_liveness(run_id)
                 continue
             if req["source"] == "shadow":
                 wait = self._shadow_throttle(run_id, req)
@@ -1739,7 +2099,36 @@ class RunController:
                     except asyncio.TimeoutError:
                         pass
                     continue  # 重新按优先级取（可能有更紧急请求到达）
-            await self._run_one_review(run_id, req, brain, b_session)
+            try:
+                await asyncio.wait_for(
+                    self._run_one_review(run_id, req, brain, b_session),
+                    timeout=config.load_settings()["run_defaults"]["brain_review_timeout_seconds"])
+            except asyncio.TimeoutError:
+                current = db.query_one("SELECT status FROM review_requests WHERE id=?",
+                                       (req["id"],))
+                if current and current["status"] == "running":
+                    self._review_failed(run_id, req,
+                                        "lifecycle" if req["source"] == "lifecycle" else "requested",
+                                        "大脑审阅超时；原生会话将重启")
+            current = db.query_one("SELECT status FROM review_requests WHERE id=?",
+                                   (req["id"],))
+            if current and current["status"] == "error" and self._require_run(run_id)["phase"] == "running":
+                refreshed = await self._restart_brain_session(run_id, brain, b_session)
+                if refreshed is None:
+                    self._pause_needs_attention(run_id, "大脑会话重启失败；请检查连接")
+                else:
+                    brain, b_session = refreshed
+                    if req["trigger"] == "stall_detected":
+                        recent = db.query_one(
+                            "SELECT seq FROM events WHERE run_id=? AND type='run.stall_detected'"
+                            " ORDER BY seq DESC LIMIT 1", (run_id,))
+                        retried = db.query_one(
+                            "SELECT 1 FROM events WHERE run_id=? AND type='brain.session_retried'"
+                            " AND seq>? LIMIT 1", (run_id, recent["seq"] if recent else 0))
+                        if not retried:
+                            db.append_event(run_id, "controller", "brain.session_retried",
+                                            {"review_id": req["id"]})
+                            self._enqueue_lifecycle(run_id, trigger="stall_detected")
             if self._sparse_brain(self._require_run(run_id)):
                 completed = db.query_one(
                     "SELECT status,through_seq FROM review_requests WHERE id=?", (req["id"],))
@@ -1747,6 +2136,34 @@ class RunController:
                     db.execute("UPDATE supervision SET covered_seq=MAX(covered_seq,?)"
                                " WHERE run_id=?", (completed["through_seq"], run_id))
                 self._maybe_shadow(run_id)
+
+    async def _restart_brain_session(self, run_id: str, old_brain: BrainRuntime,
+                                     old_session: Any) -> tuple[BrainRuntime, Any] | None:
+        self._session_restarts.add((run_id, "brain"))
+        try:
+            return await self._restart_brain_session_impl(run_id, old_brain, old_session)
+        finally:
+            self._session_restarts.discard((run_id, "brain"))
+
+    async def _restart_brain_session_impl(self, run_id: str, old_brain: BrainRuntime,
+                                          old_session: Any) -> tuple[BrainRuntime, Any] | None:
+        try:
+            await asyncio.wait_for(old_brain.close(old_session), timeout=15)
+        except Exception:
+            log.exception("Run %s old brain session close failed", run_id)
+        try:
+            new_brain = self._make_brain(self._runtime_settings(run_id))
+            work = config.WORKSPACE_DIR / "runs" / run_id / "brain_view"
+            work.mkdir(parents=True, exist_ok=True)
+            new_session = await asyncio.wait_for(new_brain.open(
+                self._brain_spec(run_id, self._runtime_settings(run_id), work)), timeout=60)
+        except Exception:
+            log.exception("Run %s brain session restart failed", run_id)
+            return None
+        self._brain_instances[run_id] = new_brain
+        self._brain_sessions[run_id] = new_session
+        db.append_event(run_id, "controller", "brain.session_restarted", {})
+        return new_brain, new_session
 
     def _next_request(self, run_id: str) -> Any | None:
         """优先级：显式 blocking → 生命周期 → 用户 → 执行器 async → shadow。"""
@@ -1840,7 +2257,10 @@ class RunController:
             changed = any(e["type"] in ("trial.created", "run.finished", "run.pausing",
                                         "submission.created") for e in events)
             done = next((e["payload"] for e in events if e["type"] == "brain.review_done"), None)
-            outcome = ("error" if not current or current["status"] in ("error", "obsolete", "pending", "running") else
+            rate_wait = db.query_one("SELECT 1 FROM model_rate_limits WHERE run_id=?"
+                                     " AND role='brain' AND state='waiting'", (run_id,))
+            outcome = ("rate_limited" if current and current["status"] == "pending" and rate_wait else
+                       "error" if not current or current["status"] in ("error", "obsolete", "pending", "running") else
                        "decision_direction" if changed else "decision_other" if decision else
                        "guidance" if done and done.get("disposition") == "intervene" else
                        "answer" if req["trigger"] in ("executor_question", "research_question") else "silent")
@@ -2012,6 +2432,12 @@ class RunController:
         if raw_parts:
             db.append_event(run_id, "brain", "brain.raw_output",
                             _runtime_event_payload({"text": "".join(raw_parts)}))
+
+        if error_msg and (limit := model_limits.classify(error_msg)):
+            self._record_model_limit(run_id, "brain", limit,
+                                     request_id=req["id"], mode=mode)
+            return
+        self._clear_model_limit(run_id, "brain")
 
         if error_msg or result is None:
             self._review_failed(run_id, req, mode,
@@ -2411,6 +2837,11 @@ class RunController:
             # 收尾整理：给大脑本题全部经验正文与效果回联（只在此时给，
             # 平时的帧不带——A12）
             packet["curation"] = self._curation_payload(run)
+        if trigger == "stall_detected":
+            stall = db.query_one(
+                "SELECT payload FROM events WHERE run_id=? AND type='run.stall_detected'"
+                " ORDER BY seq DESC LIMIT 1", (run_id,))
+            packet["stall_diagnosis"] = json.loads(stall["payload"]).get("diagnosis") if stall else None
         sup = observation._supervision(run_id)
         feedback = observation.build_frame(run_id,mode="lifecycle",frame_id=_rid("frame"),
             from_seq=sup["covered_seq"]+1,through_seq=self._last_seq(run_id),
@@ -2634,7 +3065,15 @@ class RunController:
                                     {"skills": [s["id"] for s in enabled_skills],
                                      "trial_id": trial_id},
                                     trial_id=trial_id)
+                self._prime_prompts[run_id] = (trial_id, task_text)
+                self._prime_guidance_ids.pop(run_id, None)
                 receipt = await prime.prompt(prime_sid, task_text)
+                limit = (model_limits.classify(receipt.detail)
+                         if receipt.status != "accepted" else None)
+                if limit:
+                    self._record_model_limit(run_id, "executor", limit,
+                                             trial_id=trial_id)
+                    continue
                 self._executor_busy[run_id] = receipt.status == "accepted"
                 db.append_event(run_id, "prime", "prime.task_accepted",
                                 {"status": receipt.status, "detail": receipt.detail},

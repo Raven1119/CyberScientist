@@ -194,6 +194,24 @@ export default function SettingsPage() {
                 ...s.run_defaults, max_active_runs: Number(event.target.value),
               } }))} />
             <p className="inline-note">新建、暂停、等待恢复的 Run 均占一个名额；每个 Run 单独授权。</p>
+            <label htmlFor="stall-seconds">无进展检测（秒）</label>
+            <input id="stall-seconds" type="number" min={1} max={86400}
+              value={settings.run_defaults.stall_seconds}
+              onChange={(event) => update((s) => ({ ...s, run_defaults: {
+                ...s.run_defaults, stall_seconds: Number(event.target.value),
+              } }))} />
+            <label htmlFor="brain-review-timeout">大脑单次审阅超时（秒）</label>
+            <input id="brain-review-timeout" type="number" min={1} max={86400}
+              value={settings.run_defaults.brain_review_timeout_seconds}
+              onChange={(event) => update((s) => ({ ...s, run_defaults: {
+                ...s.run_defaults, brain_review_timeout_seconds: Number(event.target.value),
+              } }))} />
+            <label htmlFor="rate-limit-max">连续模型限流后提醒（秒）</label>
+            <input id="rate-limit-max" type="number" min={1} max={86400}
+              value={settings.run_defaults.rate_limit_max_seconds}
+              onChange={(event) => update((s) => ({ ...s, run_defaults: {
+                ...s.run_defaults, rate_limit_max_seconds: Number(event.target.value),
+              } }))} />
           </div>
         </article>
         <article className="card">

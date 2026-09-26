@@ -292,6 +292,16 @@ CREATE TABLE IF NOT EXISTS compute_jobs (
     updated_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_compute_run ON compute_jobs(run_id, status);
+CREATE TABLE IF NOT EXISTS model_rate_limits (
+    run_id TEXT NOT NULL REFERENCES runs(id),
+    role TEXT NOT NULL CHECK(role IN ('brain','executor')),
+    first_at TEXT NOT NULL,
+    attempts INTEGER NOT NULL,
+    retry_at TEXT NOT NULL,
+    state TEXT NOT NULL DEFAULT 'waiting',
+    trial_id TEXT,
+    PRIMARY KEY(run_id, role)
+);
 CREATE TABLE IF NOT EXISTS data_materializations (
     id TEXT PRIMARY KEY,
     operation_id TEXT NOT NULL UNIQUE,
@@ -385,6 +395,8 @@ COMPUTE_V2_COLUMNS = {
     "retrieval_status": "TEXT NOT NULL DEFAULT 'not_attempted'",
 }
 
+MODEL_RATE_COLUMNS = {"state": "TEXT NOT NULL DEFAULT 'waiting'"}
+
 # challenges 表 v2 新增列：平台资源清单（数据集/工具/服务），导入时从
 # 平台详情 JSON 落库，供大脑 run_start 探查与规划
 CHALLENGE_V2_COLUMNS = {
@@ -421,6 +433,7 @@ def init_db() -> None:
         _ensure_columns(conn, "authorizations", AUTHORIZATION_V2_COLUMNS)
         _ensure_columns(conn, "challenges", CHALLENGE_V2_COLUMNS)
         _ensure_columns(conn, "compute_jobs", COMPUTE_V2_COLUMNS)
+        _ensure_columns(conn, "model_rate_limits", MODEL_RATE_COLUMNS)
         # Exhaustion was previously global to an email. Per-challenge quota is
         # derived from submissions, so those historical accounts become usable.
         conn.execute("UPDATE mailboxes SET status='active' WHERE status='exhausted'")

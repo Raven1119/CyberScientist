@@ -57,6 +57,9 @@ export interface Settings {
     max_model_turns: number
     max_jobs: number
     max_submissions: number
+    stall_seconds: number
+    brain_review_timeout_seconds: number
+    rate_limit_max_seconds: number
   }
   shadow: {
     enabled: boolean

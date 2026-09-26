@@ -24,6 +24,7 @@ from typing import Any, AsyncIterator
 from ..brains.kimi import ACP_PROTOCOL_VERSION, default_executable
 from ..jsonrpc_stdio import JsonRpcStdio, ProtocolError
 from . import ActionReceipt, PrimeHealth, with_stall_watchdog
+from .. import model_limits
 
 log = logging.getLogger("cyberscientist.executor.kimi")
 
@@ -312,11 +313,17 @@ class KimiExecutor:
                     "stop_reason": "unknown",
                     "detail": f"回合结束，stopReason={stop!r}（未知终态，如实记录）"})
         except Exception as exc:  # noqa: BLE001
-            await sess.queue.put({"type": "execution.progress",
-                                  "detail": f"回合异常: {exc.__class__.__name__}: "
-                                            f"{str(exc)[:200]}"})
-            await sess.queue.put({"type": "run.aborted",
-                                  "detail": "回合通信失败"})
+            limited = model_limits.classify(exc)
+            if limited:
+                await sess.queue.put({"type": "model.rate_limited",
+                                      "retry_after_seconds": limited.retry_after_seconds,
+                                      "reason": limited.reason})
+            else:
+                await sess.queue.put({"type": "execution.progress",
+                                      "detail": f"回合异常: {exc.__class__.__name__}: "
+                                                f"{str(exc)[:200]}"})
+                await sess.queue.put({"type": "run.aborted",
+                                      "detail": "回合通信失败"})
         finally:
             sess.busy = False
 

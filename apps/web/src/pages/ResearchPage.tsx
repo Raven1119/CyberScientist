@@ -461,9 +461,9 @@ export default function ResearchPage() {
 
       {challengeId && <ChallengeSkills key={challengeId} challengeId={challengeId} />}
 
-      {phase === 'blocked' && runDetail?.block_reason && (
+      {(phase === 'blocked' || phase === 'paused' || phase === 'pausing') && runDetail?.block_reason && (
         <div className="callout danger" role="alert">
-          <strong>研究被阻塞：</strong>
+          <strong>{phase === 'blocked' ? '研究被阻塞：' : '运行需要关注：'}</strong>
           {runDetail.block_reason}
           <button type="button" className="btn small" onClick={() => setPage('settings')}>
             去连接设置

@@ -264,13 +264,30 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
                 except asyncio.TimeoutError:
                     pass
 
+        async def _watch_loop() -> None:
+            import logging
+            logger = logging.getLogger('cyberscientist.api')
+            while not stop.is_set():
+                for row in db.query("SELECT id FROM runs WHERE phase='running'"):
+                    try:
+                        controller.check_liveness(row['id'])
+                        await controller.retry_limited_executor(row['id'])
+                    except Exception:
+                        logger.exception('Liveness check failed for Run %s', row['id'])
+                try:
+                    await asyncio.wait_for(stop.wait(), 15)
+                except asyncio.TimeoutError:
+                    pass
+
         task = asyncio.create_task(_poll_loop())
+        watch_task = asyncio.create_task(_watch_loop())
         try:
             yield
         finally:
             stop.set()
             task.cancel()
-            await asyncio.gather(task, return_exceptions=True)
+            watch_task.cancel()
+            await asyncio.gather(task, watch_task, return_exceptions=True)
 
     app = FastAPI(title="CyberScientist", docs_url=None, openapi_url=None,
                   lifespan=lifespan)
@@ -352,6 +369,14 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
             if type(limit) is not int or not 1 <= limit <= 20:
                 raise HTTPException(422, detail={"code": "INVALID_SETTINGS",
                                                  "message": "max_active_runs 必须为 1–20 的整数"})
+            for key, lower, upper in (("stall_seconds", 1, 86400),
+                                      ("brain_review_timeout_seconds", 1, 86400),
+                                      ("rate_limit_max_seconds", 1, 86400)):
+                value = (merged.get("run_defaults") or {}).get(key,
+                    config.DEFAULT_SETTINGS["run_defaults"][key])
+                if type(value) is not int or not lower <= value <= upper:
+                    raise HTTPException(422, detail={"code": "INVALID_SETTINGS",
+                                                     "message": f"{key} 必须为 {lower}–{upper} 的整数"})
             merged["revision"] = current["revision"] + 1
             config.save_settings(merged)
         _sync_prime_models(merged)  # llm_profiles 可能变化，保持 models.json 同步

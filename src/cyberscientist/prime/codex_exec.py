@@ -16,6 +16,7 @@ from ..codex_protocol import (deny_requests, initialize, process_environment,
                               thread_params, verify_thread_config)
 from ..jsonrpc_stdio import JsonRpcStdio
 from . import ActionReceipt, PrimeHealth, with_stall_watchdog
+from .. import model_limits
 
 
 @dataclass
@@ -101,8 +102,12 @@ class CodexExecutor:
         except Exception as exc:
             sess.busy = False
             sess.turn_id = None
-            await sess.queue.put({"type": "run.aborted",
-                                  "detail": f"turn/start 失败: {str(exc)[:500]}"})
+            limited = model_limits.classify(exc)
+            await sess.queue.put(
+                {"type": "model.rate_limited",
+                 "retry_after_seconds": limited.retry_after_seconds,
+                 "reason": limited.reason} if limited else
+                {"type": "run.aborted", "detail": f"turn/start 失败: {str(exc)[:500]}"})
 
     async def steer(self, session_id: str, text: str) -> ActionReceipt:
         sess = self._sessions.get(session_id)
@@ -213,13 +218,23 @@ class CodexExecutor:
                                               "stop_reason": "completed",
                                               "detail": "原生 turn 完成；实验交付仍以检查点为准"})
                     else:
-                        await sess.queue.put({"type": "run.aborted",
-                                              "detail": f"turn 终态: {turn.get('status')}",
-                                              "error": turn.get("error")})
+                        limited = model_limits.classify(turn.get("error"))
+                        await sess.queue.put(
+                            {"type": "model.rate_limited",
+                             "retry_after_seconds": limited.retry_after_seconds,
+                             "reason": limited.reason} if limited else
+                            {"type": "run.aborted",
+                             "detail": f"turn 终态: {turn.get('status')}",
+                             "error": turn.get("error")})
         except asyncio.CancelledError:
             raise
         except Exception as exc:
             sess.busy = False
             sess.turn_id = None
-            await sess.queue.put({"type": "run.aborted",
-                                  "detail": f"Codex 协议连接结束: {str(exc)[:500]}"})
+            limited = model_limits.classify(exc)
+            await sess.queue.put(
+                {"type": "model.rate_limited",
+                 "retry_after_seconds": limited.retry_after_seconds,
+                 "reason": limited.reason} if limited else
+                {"type": "run.aborted",
+                 "detail": f"Codex 协议连接结束: {str(exc)[:500]}"})
