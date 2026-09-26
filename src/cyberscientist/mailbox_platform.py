@@ -309,6 +309,17 @@ class BohriumPlaygroundPlatform:
         return public_feedback(body, secret, self.operator_token) \
             if isinstance(body, dict) else None
 
+    def fetch_attempt(self, email: str, secret: str | None,
+                      submission_ref: str) -> dict[str, Any] | None:
+        """Read the attempt receipt; score components live here on the real API."""
+        if not submission_ref or submission_ref.startswith("demo-receipt:"):
+            return None
+        body = self._http(
+            "GET", f"/attempts/{urllib.parse.quote(str(submission_ref), safe='')}",
+            token=secret)
+        return public_feedback(body, secret, self.operator_token) \
+            if isinstance(body, dict) else None
+
 
 def get_platform(name: str) -> MailboxPlatform:
     if name == "demo":

@@ -2,6 +2,7 @@
 
 ## 已实现
 
+- CS-UP-02 W3：评分轮询把 Attempt 回执的分项与评分回执分别脱敏、去重入账；科学分和轨迹分写入提交账本并进入收割候选与审阅帧，缺失时保持 unknown。旧 Job 与新 Wenyon/沙箱客户端的主机覆盖可分别配置，兼容旧平铺配置并保护旧客户端不被误导到新主机。
 - CS-UP-02 W2：后台每 15 秒逐 Run 检查有效研究进展；无活跃 Job/沙箱执行/模型退避时，默认静默 300 秒触发带组件诊断的生命周期审阅，连续两次未恢复进展则记录 `run.needs_attention` 并暂停。大脑审阅有界超时后重建会话，执行器会话失联重建但不重放远端 Job。模型 429/明确限流/额度耗尽按角色落 SQLite 重试状态，遵循 Retry-After 或 60–900 秒指数退避；限流尝试不扣大脑判断额度、不计审阅失败或执行器中止。前端可设置三项时限并显示暂停原因。
 - CS-UP-02 W1：每个 Run 独立的大脑/执行器会话、队列、事件和 Run 目录；活跃 Run 上限由 `run_defaults.max_active_runs` 控制，新安装默认 3，前端可编辑。题目的大脑/执行器运行时、模型 ID 和思考强度可在导入或题目详情中设置，创建 Run 时冻结；前端“本轮总览”按 Run 展示状态、门禁、Trial、最近得分及 Job/沙箱数量。模型可用性可经原生会话检查，不发起模型 turn。
 - CS-UP-01 U1–U4：共享 ARM 轨迹选行、封存合并与准入报告；按邮箱和平台题目 ID 从提交预留计数；评分暂定/确认、异常/分项一致性与赛后复评停止点；任意已出分实验提交的收割选择与逐条警示确认。前端显示题目邮箱用量、评分可信度和收割候选。完整取舍见 `docs/DECISIONS.md` 的 CS-UP-01 节。
@@ -20,6 +21,7 @@
 
 ## 已实际验证
 
+- CS-UP-02 W3：经平台适配器各读取一次公开 Attempt 36189、历史 Attempt 46231 及其 `/score`；36189 的回执中 `harbor_score=100.0`、`trace_score=70.525`、`displayScore=80.0`，分项一致性判为 0。46231 两接口均无科学分/轨迹分，未推断数值。旧客户端第一次受控 `job list` 因无 `/dev/tty` 失败；第二次受控只读 `job list --json` 返回退出码 0、`ok=true`，确认 `openapi.dp.tech` 的列表查询。迁移前备份 14,184,448 字节数据库至本机忽略目录，连续两次 `db.init_db()` 后新增两列，题目 4、Run 7、提交 2 的行数不变。脱敏探针审计存 `.package-checks/cs-up-02-w3-20260926T211157Z/`，未创建 Job。全套 `.venv/bin/pytest -q` 为 414 passed、1 skipped（既有回环监听限制）；前端 15 passed，构建、`compileall`、`git diff --check` 通过。
 - CS-UP-02 W2：迁移前 SQLite 在线备份存本机忽略目录 `.package-checks/cs-up-02-w2-20260926T210140Z/`；`db.init_db()` 重复执行后新增每 Run/角色限流表及 `state` 列，题目 4、Run 7、提交 2 的数量不变。fake 测试覆盖静默唤醒与修复、第二次无进展暂停、Running Job 长时豁免、心跳/usage/重复 job list 不续命、大脑超时重建、执行器失联重建、大脑和执行器连续 429 后成功、超过限流时限暂停，以及非终态阶段唤醒/超时映射。最终 `.venv/bin/pytest -q` 为 410 passed、1 skipped（既有回环监听限制）；前端 15 passed；构建、`compileall` 和 `git diff --check` 通过。
 - CS-UP-02 W1：迁移前 SQLite 在线备份保存于本机忽略目录 `.package-checks/cs-up-02-20260926T202708Z/`；连续两次 `db.init_db()` 后，`challenges` 新增两列，原有题目 4、Run 7、提交 2 的行数均保持不变。fake 运行时 3 个并行 Demo Run 的会话/令牌/事件隔离、暂停/恢复/完成、独立启动恢复、Job 占位恢复失败隔离、模型快照与 modelTag，以及 HTTP/前端总览均有自动化测试。W1 最终 `.venv/bin/pytest -q` 为 399 passed、1 skipped（既有回环监听限制）；前端 15 passed；构建、`compileall` 与 `git diff --check` 通过。
 - CS-UP-01 已在迁移前以 SQLite 在线备份保存本机数据库到忽略目录 `.package-checks/upgrade-20260926T190730Z/`，随后执行两次 `db.init_db()`；新增 7 个评分列，原有 2 条提交按迁移前列逐值保持一致，`exhausted` 邮箱数为 0。首次校验脚本因比较 `tuple` 与 `sqlite3.Row` 而在断言处失败；修正校验类型后通过，迁移本身没有失败。
@@ -53,7 +55,7 @@
 
 ## 尚未验证
 
-- CS-UP-02 W1 的多个真实 Run 并行及真实所选模型的原生会话检查尚未验证；W2 的真实 Codex/Kimi/Prime 错误文案、限流重试效果和长时看门狗仍未在真实 Run 验证。本包没有新模型调用、科研 Run、Job 或 Attempt。W3–W7 尚未实施。
+- CS-UP-02 W1 的多个真实 Run 并行及真实所选模型的原生会话检查尚未验证；W2 的真实 Codex/Kimi/Prime 错误文案、限流重试效果和长时看门狗仍未在真实 Run 验证。W3 的真实 `job submit` 仍未验证；W4–W7 尚未实施。本包没有新模型调用、科研 Run、Job 创建或 Attempt 提交。
 - CS-UP-01 的新封存包尚未经真实平台准入验证；真实评分器的复评时间线也未经真实环境验证。本卡未进行真实 Run、模型调用、Job、沙箱、Attempt 或平台账号访问。
 - CS-EV-01a 的第一次 D1 探针曾受沙箱网络权限阻断；CS-EV-01b 已定位并修复旧 CLI 的 API host 错配，真实历史 Job 与 PR-4 Job 均已成功取回。仍未验证平台对 PR-4 科学结果的评分或比赛有效性；本卡未创建新的生产 Job。
 - PR-3 的这个 v1 样本已下载并核对，且经真实 Run 物化与 Job 输入冻结；其他 Wenyon 清单格式及不同数据集的哈希语义未验证。已验证输入清单和数据证明，不等于验证所有远端读取行为。真实平台对封存包的准入结论及科学结果仍未验证。

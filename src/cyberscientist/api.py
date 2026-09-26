@@ -519,11 +519,7 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
             access_key = access_key or env.get("BOHR_ACCESS_KEY") or env.get("ACCESS_KEY")
             if access_key:
                 env["BOHR_ACCESS_KEY"] = env["ACCESS_KEY"] = access_key
-            env["OPENAPI_HOST"] = compute.LEGACY_JOB_OPENAPI_HOST
-            for name in ("OPENAPI_HOST", "TIEFBLUE_HOST"):
-                value = (bohrium.get("host_overrides") or {}).get(name)
-                if value:
-                    env[name] = value
+            env.update(compute.client_host_overrides(bohrium, wenyon=False))
 
             def _bohr(args: list[str]) -> subprocess.CompletedProcess:
                 cmd = (["cmd", "/c", exe, *args]

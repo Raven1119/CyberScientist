@@ -42,7 +42,7 @@ export interface Settings {
     wenyon_home: string
     access_key_secret_ref: string
     project_id: string | null
-    host_overrides: Record<string, string>
+    host_overrides: Record<string, string | Record<string, string>>
   }
   policy: {
     science_compute: string

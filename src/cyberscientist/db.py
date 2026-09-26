@@ -356,6 +356,8 @@ SUBMISSION_V2_COLUMNS = {
     "score_last_changed_at": "TEXT",
     "score_anomaly": "TEXT",
     "scorecard_consistent": "INTEGER",
+    "harbor_score": "REAL",
+    "trace_score": "REAL",
     "polling_stopped_at": "TEXT",
     "score_last_polled_at": "TEXT",
 }

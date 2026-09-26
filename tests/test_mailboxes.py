@@ -2,12 +2,13 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from cyberscientist import config, db, mailboxes
+from cyberscientist import config, db, mailboxes, observation
 from cyberscientist.controller import RunController
 
 
@@ -188,6 +189,51 @@ def test_scorecard_consistency_uses_display_score(trace, display, expected):
     assert mailboxes._scorecard_consistency(detail, display) == expected
 
 
+def test_attempt_scorecard_from_real_shape_enters_ledger_harvest_and_frame(monkeypatch):
+    fixture = json.loads((Path(__file__).parent / 'fixtures' /
+                          'cs_up_02_attempt_shapes.json').read_text(encoding='utf-8'))
+    attempt = fixture['attempt_36189']['selected_shape']
+    score_shape = fixture['score_46231']['selected_shape']
+    assert 'scorecard' not in score_shape
+    assert mailboxes._scorecard_consistency(attempt, attempt['scoringState']['displayScore']) == 0
+    _seed_challenge()
+    rid = _make_run()
+    _make_package(rid)
+    mailboxes.register_experiment(1)
+    sub = mailboxes.submit_experiment(rid, 'trial_mb1', None, 'attempt-scorecard')
+    # The score-only envelope and the public 36189 numeric scorecard were read
+    # separately; this pairing is a fake poll, not a claimed real Attempt.
+    score = {'score': attempt['score'], 'scoringState': {
+        'scoreIsFinal': True, 'displayScore': attempt['scoringState']['displayScore'],
+        'state': 'final'}}
+    platform = mailboxes._platform()
+    monkeypatch.setattr(platform, 'fetch_attempt', lambda *a: attempt, raising=False)
+    monkeypatch.setattr(platform, 'fetch_score_details', lambda *a: score, raising=False)
+    monkeypatch.setattr(mailboxes, '_platform', lambda: platform)
+    assert mailboxes.poll_scores(rid, manual=True)['updated'] == 1
+    row = db.query_one('SELECT harbor_score,trace_score,scorecard_consistent'
+                       ' FROM submissions WHERE id=?', (sub['id'],))
+    assert (row['harbor_score'], row['trace_score'], row['scorecard_consistent']) == (
+        100.0, 70.525, 0)
+    item = mailboxes.harvest_candidates('MB_CH')['items'][0]
+    assert (item['harbor_score'], item['trace_score']) == (100.0, 70.525)
+    assert item['platform_feedback']['attempt']['response']['scorecard']['trace_score'] == 70.525
+    through = db.query_one('SELECT MAX(seq) AS n FROM events WHERE run_id=?', (rid,))['n']
+    frame = observation.build_frame(rid, mode='lifecycle', frame_id='w3-frame',
+                                    from_seq=1, through_seq=through,
+                                    shadow_cfg=config.load_settings()['shadow'],
+                                    run_defaults=config.load_settings()['run_defaults'], sparse=True)
+    assert frame['known_scores'][0]['harbor_score'] == 100.0
+    assert frame['known_scores'][0]['trace_score'] == 70.525
+    assert frame['known_scores'][0]['scorecard_consistent'] == 0
+    before = len(db.query("SELECT event_id FROM events WHERE run_id=?"
+                          " AND type='submission.platform_feedback'", (rid,)))
+    mailboxes.poll_scores(rid, manual=True)
+    after = len(db.query("SELECT event_id FROM events WHERE run_id=?"
+                         " AND type='submission.platform_feedback'", (rid,)))
+    assert before == after
+
+
 def test_round_end_stops_automatic_poll_but_manual_still_reads(monkeypatch):
     _seed_challenge()
     rid = _make_run()
@@ -319,6 +365,25 @@ def test_score_query_error_is_auditable_without_exception_secrets(monkeypatch):
     feedback = mailboxes.list_submissions(rid)["items"][0]["platform_feedback"]
     assert feedback["score_query_error"]["response"] == {
         "error_type": "TimeoutError", "outcome": "unknown"}
+
+
+def test_attempt_feedback_survives_score_query_failure(monkeypatch):
+    _seed_challenge()
+    rid = _make_run()
+    _make_package(rid)
+    mailboxes.register_experiment(1)
+    mailboxes.submit_experiment(rid, "trial_mb1", None, "attempt-only")
+    platform = mailboxes._platform()
+    monkeypatch.setattr(platform, 'fetch_attempt', lambda *a: {
+        'scorecard': {'harbor_score': 90.0, 'trace_score': 70.0}}, raising=False)
+    monkeypatch.setattr(platform, 'fetch_score_details',
+                        lambda *a: (_ for _ in ()).throw(TimeoutError('secret')),
+                        raising=False)
+    monkeypatch.setattr(mailboxes, '_platform', lambda: platform)
+    assert mailboxes.poll_scores(rid)['errors'] == 1
+    feedback = mailboxes.list_submissions(rid)['items'][0]['platform_feedback']
+    assert feedback['attempt']['response']['scorecard']['harbor_score'] == 90.0
+    assert feedback['score_query_error']['response']['error_type'] == 'TimeoutError'
 
 
 def test_harvest_unique_and_replaceable():

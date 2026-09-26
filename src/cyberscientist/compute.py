@@ -21,6 +21,37 @@ from .bohr_proxy import redact
 
 TERMINAL = {'Finished', 'Failed', 'Stopped'}
 LEGACY_JOB_OPENAPI_HOST = 'https://openapi.dp.tech'
+NEW_OPENAPI_HOST = 'https://open.bohrium.com'
+
+
+def client_host_overrides(bohrium: dict, *, wenyon: bool) -> dict[str, str]:
+    """Project legacy flat and per-client host settings without cross-routing CLIs."""
+    raw = bohrium.get('host_overrides') or {}
+    if not isinstance(raw, dict):
+        raw = {}
+    scope = raw.get('wenyon' if wenyon else 'legacy_job') or {}
+    if not isinstance(scope, dict):
+        scope = {}
+    default = NEW_OPENAPI_HOST if wenyon else LEGACY_JOB_OPENAPI_HOST
+    result = {'OPENAPI_HOST': default, 'TIEFBLUE_HOST': 'https://tiefblue.dp.tech'}
+    for name in ('OPENAPI_HOST', 'TIEFBLUE_HOST'):
+        flat = raw.get(name)
+        scoped = scope.get(name)
+        candidate = scoped if isinstance(scoped, str) and scoped.strip() else flat
+        if not isinstance(candidate, str) or not candidate.strip():
+            continue
+        value = candidate.strip().rstrip('/')
+        if name == 'OPENAPI_HOST':
+            # Flat settings predate two clients. A known new host must never
+            # send bohr 1.1.0 to its incompatible old /openapi/v1/job route.
+            if not wenyon and value.lower() == NEW_OPENAPI_HOST:
+                continue
+            if wenyon and value.lower() == LEGACY_JOB_OPENAPI_HOST:
+                continue
+            if wenyon and candidate is flat and value.lower() != NEW_OPENAPI_HOST:
+                continue  # ambiguous legacy flat custom host belongs to the old CLI
+        result[name] = value
+    return result
 DEFAULT_LIMITS = {'max_concurrent_jobs': 2, 'max_cpu': 16, 'max_memory_gb': 16,
                   'max_disk_gb': 10, 'allow_gpu': False}
 _PROJECT_PARSE_ERROR = ('failed to parse config file: json: cannot unmarshal '
@@ -112,13 +143,8 @@ def _native(args: list[str], *, timeout: int = 90) -> dict:
             directory.mkdir(parents=True, exist_ok=True, mode=0o700)
             env[name] = str(directory)
     env.update(BOHR_ACCESS_KEY=key, ACCESS_KEY=key,
-               PROJECT_ID=str(settings.get('project_id', '')),
-               # bohr 1.1.0's /openapi/v1/job/{id} route still exists here;
-               # open.bohrium.com returns a new 404 object envelope it cannot parse.
-               OPENAPI_HOST=('https://open.bohrium.com' if wenyon
-                             else LEGACY_JOB_OPENAPI_HOST),
-               TIEFBLUE_HOST='https://tiefblue.dp.tech')
-    env.update(settings.get('host_overrides') or {})
+               PROJECT_ID=str(settings.get('project_id', '')))
+    env.update(client_host_overrides(settings, wenyon=wenyon))
     try:
         result = subprocess.run([executable, *args], env=env, capture_output=True,
                                 text=True, errors='replace', timeout=timeout)

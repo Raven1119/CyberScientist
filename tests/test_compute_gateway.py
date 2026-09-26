@@ -152,6 +152,28 @@ def test_job_client_uses_legacy_api_host_without_changing_wenyon(monkeypatch):
                      (['wenyon', 'dataset', 'download', '--help'], 'https://open.bohrium.com')]
 
 
+def test_client_scoped_hosts_and_legacy_flat_new_host_guard(monkeypatch):
+    settings = config.load_settings()
+    settings['bohrium']['host_overrides'] = {
+        'OPENAPI_HOST': 'https://open.bohrium.com',
+        'legacy_job': {'OPENAPI_HOST': 'https://openapi.dp.tech'},
+        'wenyon': {'OPENAPI_HOST': 'https://wenyon.example.test'},
+    }
+    config.save_settings(settings)
+    hosts = []
+    def native(cmd, **kwargs):
+        hosts.append(kwargs['env']['OPENAPI_HOST'])
+        return subprocess.CompletedProcess(cmd, 0, '[]', '')
+    monkeypatch.setattr(compute.subprocess, 'run', native)
+    compute._native(['job', 'list'])
+    compute._native(['wenyon', 'dataset', 'list'])
+    assert hosts == ['https://openapi.dp.tech', 'https://wenyon.example.test']
+    settings['bohrium']['host_overrides'] = {'OPENAPI_HOST': 'https://open.bohrium.com'}
+    config.save_settings(settings)
+    assert compute.client_host_overrides(settings['bohrium'], wenyon=False)[
+        'OPENAPI_HOST'] == 'https://openapi.dp.tech'
+
+
 def test_legacy_single_retrieval_receipt_preserves_download_evidence(run, monkeypatch):
     rid, source = run
     monkeypatch.setattr(compute, '_native', lambda *a, **k: receipt('JobId: 123'))

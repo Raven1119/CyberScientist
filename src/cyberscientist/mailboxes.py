@@ -158,11 +158,14 @@ def _score_anomaly(details: dict[str, Any] | None) -> str | None:
     return '; '.join(dict.fromkeys(reasons)) or None
 
 
-def _score_components(details: dict[str, Any] | None) -> tuple[float | None, float | None]:
-    if not isinstance(details, dict):
-        return None, None
+def _score_components(attempt: dict[str, Any] | None,
+                      score_details: dict[str, Any] | None = None) -> tuple[float | None, float | None]:
+    """Attempt scorecard is authoritative; old /score components are fallback."""
     def find(node, key):
         if isinstance(node, dict):
+            scorecard = node.get('scorecard')
+            if isinstance(scorecard, dict) and key in scorecard:
+                return scorecard[key]
             if key in node: return node[key]
             for child in node.values():
                 found = find(child, key)
@@ -174,11 +177,15 @@ def _score_components(details: dict[str, Any] | None) -> tuple[float | None, flo
         return None
     def finite(value):
         return float(value) if type(value) in (int, float) and math.isfinite(value) else None
-    return finite(find(details, 'harbor_score')), finite(find(details, 'trace_score'))
+    def preferred(key):
+        first = finite(find(attempt, key))
+        return first if first is not None else finite(find(score_details, key))
+    return preferred('harbor_score'), preferred('trace_score')
 
 
-def _scorecard_consistency(details: dict[str, Any] | None, display: float) -> int | None:
-    harbor, trace = _score_components(details)
+def _scorecard_consistency(details: dict[str, Any] | None, display: float,
+                           score_details: dict[str, Any] | None = None) -> int | None:
+    harbor, trace = _score_components(details, score_details)
     if harbor is None or trace is None:
         return None
     expected = harbor * max(0.0, min(1.0, (trace - 30.0) / 40.0))
@@ -655,9 +662,28 @@ def poll_scores(run_id: str | None = None,
             still_unknown += 1  # 无平台回执引用：没有可查的对象，保持 unknown
             continue
         polled += 1
+        attempt = None
         try:
             row_platform = platform if r["platform"] == platform.name else get_platform(r["platform"])
             secret = config.resolve_secret(r["secret_ref"] or "")
+            attempt_query = getattr(row_platform, "fetch_attempt", None)
+            if callable(attempt_query):
+                try:
+                    observed = attempt_query(r["email"], secret, ref)
+                    observed = public_feedback(observed, secret, *config.load_secrets().values())
+                    if isinstance(observed, dict):
+                        attempt = {key: observed[key] for key in
+                                   ("scorecard", "scoringState", "bundleStatus", "updatedAt")
+                                   if key in observed}
+                        with db.transaction() as conn:
+                            if _record_feedback(conn, r, "attempt", attempt):
+                                changed_runs.add(r["run_id"])
+                except Exception as exc:
+                    errors += 1
+                    with db.transaction() as conn:
+                        if _record_feedback(conn, r, "attempt_query_error", {
+                                "error_type": type(exc).__name__, "outcome": "unknown"}):
+                            changed_runs.add(r["run_id"])
             detail_query = getattr(row_platform, "fetch_score_details", None)
             details = None
             if callable(detail_query):
@@ -686,7 +712,8 @@ def poll_scores(run_id: str | None = None,
             still_unknown += 1
             continue
         anomaly = _score_anomaly(details)
-        consistent = _scorecard_consistency(details, score)
+        harbor, trace = _score_components(attempt, details)
+        consistent = _scorecard_consistency(attempt, score, details)
         with db.transaction() as conn:
             current = conn.execute("SELECT * FROM submissions WHERE id=?",(r["id"],)).fetchone()
             # Compare-and-swap: a response requested before another update cannot overwrite it.
@@ -706,12 +733,15 @@ def poll_scores(run_id: str | None = None,
             if current['score_confidence'] == 'confirmed' and not changed_score and not anomaly:
                 confidence = 'confirmed'
             meaningful = (changed_score or confidence != current['score_confidence']
-                or anomaly != current['score_anomaly'] or consistent != current['scorecard_consistent'])
+                or anomaly != current['score_anomaly'] or consistent != current['scorecard_consistent']
+                or harbor != current['harbor_score'] or trace != current['trace_score'])
             conn.execute("UPDATE submissions SET score=?,score_status='scored',status='submitted',"
                          " scored_at=COALESCE(scored_at,?),stage='scored',score_confidence=?,"
                          " score_first_seen_at=?,score_last_changed_at=?,score_anomaly=?,"
-                         " scorecard_consistent=?,score_last_polled_at=? WHERE id=?",
-                         (score,now,confidence,first_seen,last_changed,anomaly,consistent,now,r['id']))
+                         " scorecard_consistent=?,harbor_score=?,trace_score=?,"
+                         " score_last_polled_at=? WHERE id=?",
+                         (score,now,confidence,first_seen,last_changed,anomaly,consistent,
+                          harbor,trace,now,r['id']))
             if current['score_confidence'] == 'confirmed' and confidence != 'confirmed':
                 experience_context.retract_result_tx(conn, r, 'post_confirmation_revision' if correction else 'score_anomaly')
             if meaningful:
@@ -725,6 +755,7 @@ def poll_scores(run_id: str | None = None,
                         'previous_score':current['score'] if correction else None,
                         'score_status':'scored','score_confidence':confidence,
                         'score_anomaly':anomaly,'scorecard_consistent':consistent,
+                        'harbor_score':harbor,'trace_score':trace,
                         'reason':reason,'is_final':True,'platform_ref':r['platform_ref'],
                         'platform_feedback':details},trial_id=r['trial_id'])
                 if confidence == 'confirmed' and current['score_confidence'] != 'confirmed' and not anomaly:
@@ -843,8 +874,12 @@ def harvest_candidates(challenge_id: str) -> dict[str, Any]:
     items = _submission_items(rows)
     highest = items[0]['score'] if items else None
     for item in items:
-        detail = (item.get('platform_feedback') or {}).get('score', {}).get('response')
-        item['harbor_score'], item['trace_score'] = _score_components(detail)
+        feedback = item.get('platform_feedback') or {}
+        attempt = feedback.get('attempt', {}).get('response')
+        detail = feedback.get('score', {}).get('response')
+        harbor, trace = _score_components(attempt, detail)
+        item['harbor_score'] = harbor if harbor is not None else item.get('harbor_score')
+        item['trace_score'] = trace if trace is not None else item.get('trace_score')
         item['displayScore'] = item['score']
         item['is_highest'] = item['score'] == highest
         item['warnings'] = _harvest_warnings(item, highest)

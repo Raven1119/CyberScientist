@@ -167,6 +167,20 @@ def test_score_details_retain_failure_and_eligibility_without_credentials():
     assert p.fetch_score("a", "asp_x", "9") is None
 
 
+def test_fetch_attempt_reads_scorecard_and_redacts_credentials():
+    body = {"scorecard": {"harbor_score": 100.0, "trace_score": 70.525},
+            "scoringState": {"displayScore": 80.0},
+            "bundleStatus": "ready", "updatedAt": "fixture-time",
+            "token": "asp_secret", "detail": "used asp_x"}
+    p, calls = _platform({("GET", "/attempts/9"): body})
+    feedback = p.fetch_attempt("a", "asp_x", "9")
+    assert feedback["scorecard"] == body["scorecard"]
+    assert feedback["scoringState"]["displayScore"] == 80.0
+    assert "token" not in feedback and "asp_x" not in json.dumps(feedback)
+    assert calls.calls == [{"method": "GET", "path": "/attempts/9", "token": "asp_x",
+                           "json_body": None, "form_fields": None, "form_files": []}]
+
+
 @pytest.mark.parametrize("state,score", [("false", 1), (True, "NaN"), (True, True)])
 def test_score_requires_boolean_finality_and_finite_number(state, score):
     p, _ = _platform({("GET", "/attempts/9/score"): {
