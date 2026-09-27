@@ -64,6 +64,8 @@ CS-EV-01 新增的持久字段：`runs.objective_md/objective_status/end_reason/
 
 CS-UP-03 W1 可选轨迹叙述位于当前 Trial 的 `trace_narrative.jsonl`，每行至少有 `step_type`、非空标题/正文/代码之一、`timestamp` 和 `cs_refs`。引用仅接受本 Run 截止序号内的 `run_id#seq`；工具 ID、输出、退出码、时间、包内 artifact 哈希与费用均须与持久事件或提交包逐项吻合。事后注释标 `annotation: true`，使用文件写作时间，不能冒充工具动作。`research_trace_narrative_check` 对大脑和执行器提供只读校验、合并轨迹与准入报告；叙述无效时正式预检返回 `INVALID_TRACE_NARRATIVE` 和逐条原因。叙述存在时，封存轨迹由叙述步骤与未覆盖的事件投影步骤组成；不存在时沿用原封存逻辑。`POST /api/v1/submissions/{source_submission_id}/trace-variants` 只接受已确认评分的实验提交，重新封存前冻结来源包及其非轨迹成员 SHA-256，逐文件核对后才使用现有实验邮箱授权与额度提交；新行记录 `source_submission_id`、`variant_of`、叙述哈希和科学产物哈希一致性。
 
+CS-UP-03 W2 科学评分器放在 `workspace/challenges/<challenge_id>/scorer/`；`scorer.json` 声明 `entrypoint`（根目录 Python 文件）、`image`、人工版本 `version` 和 `contract_version:1`。全部文件按相对路径逐个 SHA-256 后再导出 `scorer_version`；评分脚本只在同 Run/Trial、镜像匹配的 Bohrium 沙箱中执行，接收剔除轨迹并移除 manifest trace 指针的科学输入 ZIP 路径，并在 stdout 返回一个 JSON 对象：`score`（0–100）、`components`、`confidence`（high/medium/low/unknown）、`notes`、`scorer_version`（必须等于代码计算值）。`research_local_score` 与 `POST /api/v1/runs/{id}/local-scores` 复用受控沙箱网关；失败或未知不入分数账本。`local_scores` 记录科学分、轨迹特征预测、预测展示分及版本；提交最终封存时，只在非轨迹文件字节与除 trace 指针外的 manifest 相同的前提下，复用科学结果并为新的封存包 SHA 生成一条预测。`score_calibration` 只在平台分数 confirmed 且封存包 SHA 完全匹配时有效；三项偏差均定义为本地预测减平台分数。`prediction_md` 可用 `local_score:<id>` 指向本地记录，最终封存后自动追踪其派生记录。
+
 Job 提交 `preflight` 与 `spec` 平级，不透传给 bohr。入口/本地导入/联网安装在预留前检查；显式 API 检查缺少镜像事实时返回 `IMAGE_FACTS_MISSING` 和最小探针模板，真实探针仍需现有 Job 授权。`GET /api/v1/runs/{id}` 的 Trial 增加按 `trial.reported_complete` 事件计算的 `delivered`，已交付后终止不改写交付状态。
 
 ### 事件

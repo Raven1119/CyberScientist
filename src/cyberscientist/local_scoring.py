@@ -1,0 +1,371 @@
+"""Challenge-scoped science scoring through an owned Bohrium sandbox.
+
+The host only validates files, extracts text features, and records comparisons.
+The challenge scorer itself runs in the declared image through sandboxes.
+"""
+from __future__ import annotations
+
+import hashlib
+import io
+import json
+import math
+import re
+import shlex
+import uuid
+import zipfile
+from pathlib import Path
+from typing import Any
+
+from . import config, db, mailboxes, sandboxes, trace_selection
+from .observation import strip_secrets
+
+FEATURE_VERSION = 'trace-features-v1'
+MODEL_VERSION = 'trace-placeholder-v1'
+_OPERATION = re.compile(r'[A-Za-z0-9_-]{1,70}\Z')
+_ENTRYPOINT = re.compile(r'[A-Za-z0-9_-]+\.py\Z')
+_SCORE_REF = re.compile(r'(?<![A-Za-z0-9_])local_score:([A-Za-z0-9_]+)')
+
+
+class LocalScoreError(ValueError):
+    def __init__(self, code: str, message: str):
+        super().__init__(message)
+        self.code = code
+
+
+def _canonical(value: Any) -> str:
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(',', ':'))
+
+
+def scorer_manifest(challenge_id: str) -> dict[str, Any]:
+    if not db.query_one('SELECT 1 FROM challenges WHERE id=?', (challenge_id,)):
+        raise LocalScoreError('NOT_FOUND', '题目不存在')
+    workspace_challenges = (config.WORKSPACE_DIR / 'challenges').resolve()
+    challenge_root = (workspace_challenges / challenge_id).resolve()
+    base = (challenge_root / 'scorer').resolve()
+    if (workspace_challenges not in challenge_root.parents
+            or challenge_root not in base.parents or not base.is_dir()):
+        raise LocalScoreError('SCORER_MISSING', '题目缺少 scorer/ 目录')
+    files: dict[str, bytes] = {}
+    total = 0
+    for path in sorted(base.rglob('*')):
+        if path.is_symlink():
+            raise LocalScoreError('INVALID_SCORER', '评分器含符号链接')
+        if path.is_dir():
+            continue
+        if not path.is_file() or base not in path.resolve().parents:
+            raise LocalScoreError('INVALID_SCORER', '评分器含符号链接或越界文件')
+        relative = path.relative_to(base).as_posix()
+        if len(files) >= 100:
+            raise LocalScoreError('INVALID_SCORER', '评分器文件超过 100 个')
+        size = path.stat().st_size
+        total += size
+        if total > 10_000_000:
+            raise LocalScoreError('INVALID_SCORER', '评分器文件总量超过 10 MB')
+        files[relative] = path.read_bytes()
+    try:
+        manifest = json.loads(files['scorer.json'])
+    except (KeyError, ValueError, UnicodeDecodeError) as exc:
+        raise LocalScoreError('INVALID_SCORER', 'scorer.json 缺失或无法解析') from exc
+    if not isinstance(manifest, dict) or set(manifest) != {'entrypoint', 'image', 'version', 'contract_version'}:
+        raise LocalScoreError('INVALID_SCORER', 'scorer.json 字段必须为 entrypoint/image/version/contract_version')
+    entry, image = manifest['entrypoint'], manifest['image']
+    if (not isinstance(entry, str) or not _ENTRYPOINT.fullmatch(entry)
+            or entry not in files or not isinstance(image, str) or not image.strip()
+            or not isinstance(manifest['version'], str) or not manifest['version'].strip()
+            or len(manifest['version']) > 80
+            or type(manifest['contract_version']) is not int or manifest['contract_version'] != 1):
+        raise LocalScoreError('INVALID_SCORER', '评分器入口、镜像或契约版本无效')
+    hashes = {name: hashlib.sha256(raw).hexdigest() for name, raw in files.items()}
+    version = hashlib.sha256(_canonical(hashes).encode()).hexdigest()
+    return {'entrypoint': entry, 'image': image, 'version': manifest['version'], 'contract_version': 1,
+            'scorer_version': version, 'file_hashes': hashes, 'files': files}
+
+
+def predict_trace(sealed: bytes) -> dict[str, Any]:
+    with zipfile.ZipFile(io.BytesIO(sealed)) as archive:
+        files = {name: archive.read(name) for name in archive.namelist()}
+    selected = trace_selection.select(files)
+    if not selected.readable:
+        raise LocalScoreError('INVALID_TRACE', '封存包轨迹不可读')
+    rows = selected.rows
+    counts = {kind: sum(row.get('step_type') == kind for row in rows)
+              for kind in ('thought', 'decision', 'tool_call', 'tool_result',
+                           'observation', 'error', 'artifact')}
+    anchors = sum(bool(row.get('cs_ref') or row.get('cs_refs')) for row in rows)
+    features = {'steps': len(rows), 'type_counts': counts,
+                'narrative_chars': sum(len(str(row.get(field) or ''))
+                                       for row in rows for field in ('title', 'body', 'code')),
+                'tool_output_steps': sum(bool(row.get('tool_output')) for row in rows),
+                'artifact_steps': counts['artifact'],
+                'error_repair_pairs': sum(
+                    row.get('step_type') == 'error' and
+                    any(later.get('step_type') in ('decision', 'tool_call', 'observation')
+                        for later in rows[index + 1:])
+                    for index, row in enumerate(rows)),
+                'anchored_fraction': anchors / len(rows) if rows else 0.0}
+    # W2 has no controlled scores yet. The baseline is deliberately low-confidence.
+    score = 70.0
+    return {'trace_score': score, 'at_least_70': score >= 70,
+            'at_least_80': score >= 80, 'confidence': 'low',
+            'feature_version': FEATURE_VERSION, 'model_version': MODEL_VERSION,
+            'features': features, 'notes': '占位预测；待受控提交校准'}
+
+
+def _score_output(receipt: dict[str, Any], version: str) -> dict[str, Any]:
+    try:
+        wrapper = json.loads(receipt['receipt']['stdout'])
+        data = wrapper.get('data', wrapper)
+        output = json.loads(data['stdout'])
+    except (AttributeError, KeyError, ValueError, TypeError) as exc:
+        raise LocalScoreError('INVALID_SCORE_OUTPUT', '沙箱未返回单个有效评分 JSON') from exc
+    try:
+        serialized = json.dumps(output, ensure_ascii=False, allow_nan=False)
+    except (TypeError, ValueError) as exc:
+        raise LocalScoreError('INVALID_SCORE_OUTPUT', '评分 JSON 含非有限数或不可序列化字段') from exc
+    if not isinstance(output, dict) or set(output) != {
+            'score', 'components', 'confidence', 'notes', 'scorer_version'}:
+        raise LocalScoreError('INVALID_SCORE_OUTPUT', '评分结果字段不符合固定契约')
+    score = output['score']
+    if (type(score) not in (int, float) or not math.isfinite(score)
+            or not 0 <= score <= 100 or not isinstance(output['components'], dict)
+            or output['confidence'] not in ('high', 'medium', 'low', 'unknown')
+            or not isinstance(output['notes'], str) or len(output['notes']) > 4000
+            or len(serialized) > 12000
+            or strip_secrets(serialized) != serialized
+            or output['scorer_version'] != version):
+        raise LocalScoreError('INVALID_SCORE_OUTPUT', '评分值、置信度、备注或版本不符合契约')
+    return output
+
+
+def _archive(files: dict[str, bytes]) -> bytes:
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, 'w', compression=zipfile.ZIP_DEFLATED) as archive:
+        for name in sorted(files):
+            info = zipfile.ZipInfo(name, (1980, 1, 1, 0, 0, 0))
+            info.compress_type = zipfile.ZIP_DEFLATED
+            archive.writestr(info, files[name])
+    return buffer.getvalue()
+
+
+def _manifest_science_sha(sealed: bytes) -> str:
+    with zipfile.ZipFile(io.BytesIO(sealed)) as archive:
+        names = archive.namelist()
+        root = trace_selection.bundle_root({name: b'' for name in names})
+        manifest = json.loads(archive.read(root + 'arm_manifest.json'))
+    if not isinstance(manifest, dict):
+        raise LocalScoreError('INVALID_PACKAGE', 'ARM manifest 不是对象')
+    manifest.pop('trace', None)
+    return hashlib.sha256(_canonical(manifest).encode()).hexdigest()
+
+
+def _science_package(sealed: bytes) -> bytes:
+    """Give the science scorer no trace bytes, so later trace-only reuse is sound."""
+    with zipfile.ZipFile(io.BytesIO(sealed)) as archive:
+        names = archive.namelist()
+        if len(names) != len(set(names)):
+            raise LocalScoreError('INVALID_PACKAGE', 'ARM 包有同名 ZIP 成员')
+        if any(name.startswith('/') or '\\' in name or '..' in Path(name).parts for name in names):
+            raise LocalScoreError('INVALID_PACKAGE', 'ARM 包成员路径越界')
+        root = trace_selection.bundle_root({name: b'' for name in names})
+        manifest_name = root + 'arm_manifest.json'
+        manifest = json.loads(archive.read(manifest_name))
+        if not isinstance(manifest, dict):
+            raise LocalScoreError('INVALID_PACKAGE', 'ARM manifest 不是对象')
+        manifest.pop('trace', None)
+        files = {name: archive.read(name) for name in names
+                 if not name.endswith('/') and name != manifest_name
+                 and not name.startswith(root + 'traces/')
+                 and not name.startswith(root + 'trace/')
+                 and name != root + 'trace.json'}
+        files[manifest_name] = _canonical(manifest).encode()
+    return _archive(files)
+
+
+def evaluate(run_id: str, trial_id: str, sandbox_id: str,
+             operation_id: str, package_path: str | None = None) -> dict[str, Any]:
+    if not isinstance(operation_id, str) or not _OPERATION.fullmatch(operation_id):
+        raise LocalScoreError('INVALID_OPERATION', '需要有界的稳定评分 operation_id')
+    existing = db.query_one('SELECT * FROM local_scores WHERE sandbox_operation_id=?', (operation_id,))
+    if existing:
+        if existing['run_id'] != run_id or existing['trial_id'] != trial_id:
+            raise LocalScoreError('OPERATION_CONFLICT', '评分 operation_id 已绑定其他 Run/Trial')
+        return dict(existing) | {'deduplicated': True}
+    run = db.query_one('SELECT challenge_id,current_trial_id,phase,gate FROM runs WHERE id=?', (run_id,))
+    if not run or run['current_trial_id'] != trial_id or run['phase'] != 'running' or run['gate'] != 'open':
+        raise LocalScoreError('RUN_NOT_RUNNING', '本地评分需要当前运行中的 Trial')
+    manifest = scorer_manifest(run['challenge_id'])
+    sandbox = db.query_one('SELECT * FROM compute_sandboxes WHERE run_id=? AND sandbox_id=?',
+                           (run_id, sandbox_id))
+    if (not sandbox or sandbox['trial_id'] != trial_id or sandbox['status'] != 'active'
+            or json.loads(sandbox['request_json']).get('image') != manifest['image']):
+        raise LocalScoreError('SCORER_IMAGE_MISMATCH', '需要当前 Trial 在评分器声明镜像中的活跃沙箱')
+    check = mailboxes.preflight_submission(run_id, trial_id, package_path)
+    if check['error_code']:
+        raise LocalScoreError(check['error_code'], '封存包未通过本地准入')
+    sealed = check['sealed_bytes']
+    package_sha = hashlib.sha256(sealed).hexdigest()
+    science_hashes = mailboxes._science_artifact_hashes(sealed)
+    manifest_science_sha = _manifest_science_sha(sealed)
+    trial_dir = config.WORKSPACE_DIR / 'runs' / run_id / 'trials' / trial_id
+    stage = trial_dir / 'local_scorer' / operation_id
+    stage.mkdir(parents=True, exist_ok=True)
+    package_file, scorer_file = stage / 'science_package.zip', stage / 'scorer.zip'
+    scorer_bytes = _archive(manifest['files'])
+    for path, raw in ((package_file, _science_package(sealed)), (scorer_file, scorer_bytes)):
+        if path.exists() and path.read_bytes() != raw:
+            raise LocalScoreError('OPERATION_CONFLICT', '评分操作 ID 对应的本地输入已变化')
+        if not path.exists():
+            with path.open('xb') as stream:
+                stream.write(raw)
+    remote = f'/tmp/cs-local-scorer-{operation_id}'
+    commands = [
+        ('mkdir', lambda: sandboxes.execute(run_id, sandbox_id,
+            'mkdir -p ' + shlex.quote(remote), 30, operation_id + '-mkdir')),
+        ('scorer', lambda: sandboxes.transfer(run_id, 'write', sandbox_id,
+            remote + '/scorer.zip', local_path=str(scorer_file),
+            operation_id=operation_id + '-scorer')),
+        ('package', lambda: sandboxes.transfer(run_id, 'write', sandbox_id,
+            remote + '/package.zip', local_path=str(package_file),
+            operation_id=operation_id + '-package')),
+    ]
+    for name, action in commands:
+        result = action()
+        if result['status'] != 'completed':
+            raise LocalScoreError('SCORE_EXECUTION_UNKNOWN', f'沙箱 {name} 阶段未确认完成')
+    command = ('cd ' + shlex.quote(remote) + ' && python3 -m zipfile -e scorer.zip scorer'
+               + ' && CS_SCORER_VERSION=' + shlex.quote(manifest['scorer_version'])
+               + ' python3 ' + shlex.quote('scorer/' + manifest['entrypoint']) + ' package.zip')
+    result = sandboxes.execute(run_id, sandbox_id, command, 120, operation_id + '-run')
+    if result['status'] != 'completed':
+        raise LocalScoreError('SCORE_EXECUTION_UNKNOWN', '沙箱评分执行未确认成功')
+    science = _score_output(result, manifest['scorer_version'])
+    trace = predict_trace(sealed)
+    predicted = science['score'] * max(0.0, min(1.0, (trace['trace_score'] - 30.0) / 40.0))
+    score_id = 'ls_' + uuid.uuid4().hex[:12]
+    with db.transaction() as conn:
+        conn.execute('INSERT INTO local_scores(id,challenge_id,run_id,trial_id,package_sha256,'
+                     'science_artifact_hashes_json,manifest_science_sha256,science_score,science_result_json,'
+                     'trace_prediction_json,predicted_display_score,scorer_version,scorer_file_hashes_json,'
+                     'feature_version,model_version,sandbox_operation_id,created_at)'
+                     ' VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+                     (score_id,run['challenge_id'],run_id,trial_id,package_sha,
+                      _canonical(science_hashes),manifest_science_sha,science['score'],_canonical(science),
+                      _canonical(trace),predicted,manifest['scorer_version'],
+                      _canonical(manifest['file_hashes']),
+                      FEATURE_VERSION,MODEL_VERSION,operation_id,db.utcnow()))
+    return dict(db.query_one('SELECT * FROM local_scores WHERE id=?', (score_id,)))
+
+
+def bind_submission_tx(conn, submission_id: str, sealed: bytes) -> str | None:
+    """Reuse a sandbox science result only when its exact science inputs match."""
+    submission = conn.execute('SELECT * FROM submissions WHERE id=?', (submission_id,)).fetchone()
+    if not submission or submission['is_harvest']:
+        return None
+    match = conn.execute('SELECT * FROM local_scores WHERE run_id=? AND trial_id=?'
+                         ' AND package_sha256=? ORDER BY created_at DESC,id DESC LIMIT 1',
+                         (submission['run_id'],submission['trial_id'],submission['package_sha256'])).fetchone()
+    if match:
+        return match['id']
+    if not sealed.startswith(b'PK\x03\x04') or not conn.execute(
+            'SELECT 1 FROM local_scores WHERE run_id=? AND trial_id=? LIMIT 1',
+            (submission['run_id'],submission['trial_id'])).fetchone():
+        return None
+    science_hashes = _canonical(mailboxes._science_artifact_hashes(sealed))
+    manifest_hash = _manifest_science_sha(sealed)
+    reference = _SCORE_REF.search(submission['prediction_md'] or '')
+    if reference:
+        source = conn.execute('SELECT * FROM local_scores WHERE id=? AND run_id=? AND trial_id=?',
+                              (reference.group(1),submission['run_id'],submission['trial_id'])).fetchone()
+    else:
+        source = conn.execute('SELECT * FROM local_scores WHERE run_id=? AND trial_id=?'
+                              ' AND science_artifact_hashes_json=? AND manifest_science_sha256=?'
+                              ' AND science_score IS NOT NULL ORDER BY created_at DESC,id DESC LIMIT 1',
+                              (submission['run_id'],submission['trial_id'],science_hashes,manifest_hash)).fetchone()
+    if (not source or source['science_artifact_hashes_json'] != science_hashes
+            or source['manifest_science_sha256'] != manifest_hash
+            or source['science_score'] is None):
+        return None
+    trace = predict_trace(sealed)
+    predicted = source['science_score'] * max(0.0, min(1.0,
+        (trace['trace_score'] - 30.0) / 40.0))
+    score_id = 'ls_' + uuid.uuid4().hex[:12]
+    conn.execute('INSERT INTO local_scores(id,challenge_id,run_id,trial_id,package_sha256,'
+                 'science_artifact_hashes_json,manifest_science_sha256,source_local_score_id,'
+                 'science_score,science_result_json,trace_prediction_json,predicted_display_score,'
+                 'scorer_version,scorer_file_hashes_json,feature_version,model_version,created_at)'
+                 ' VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+                 (score_id,source['challenge_id'],source['run_id'],source['trial_id'],
+                  submission['package_sha256'],science_hashes,manifest_hash,source['id'],
+                  source['science_score'],source['science_result_json'],_canonical(trace),predicted,
+                  source['scorer_version'],source['scorer_file_hashes_json'],
+                  FEATURE_VERSION,MODEL_VERSION,db.utcnow()))
+    return score_id
+
+
+def calibrate_tx(conn, submission_id: str) -> None:
+    submission = conn.execute('SELECT s.*,r.challenge_id FROM submissions s JOIN runs r'
+                              ' ON r.id=s.run_id WHERE s.id=?', (submission_id,)).fetchone()
+    if not submission:
+        return
+    if submission['score_confidence'] != 'confirmed' or submission['score_status'] != 'scored':
+        conn.execute('UPDATE score_calibration SET valid=0 WHERE submission_id=?', (submission_id,))
+        return
+    reference = _SCORE_REF.search(submission['prediction_md'] or '')
+    if reference:
+        local = conn.execute('SELECT * FROM local_scores WHERE id=? AND run_id=? AND trial_id=?'
+                             ' AND package_sha256=?',
+                             (reference.group(1),submission['run_id'],submission['trial_id'],
+                              submission['package_sha256'])).fetchone()
+        if not local:
+            local = conn.execute('SELECT * FROM local_scores WHERE source_local_score_id=?'
+                                 ' AND run_id=? AND trial_id=? AND package_sha256=?'
+                                 ' ORDER BY created_at DESC,id DESC LIMIT 1',
+                                 (reference.group(1),submission['run_id'],submission['trial_id'],
+                                  submission['package_sha256'])).fetchone()
+    else:
+        local = conn.execute('SELECT * FROM local_scores WHERE challenge_id=? AND package_sha256=?'
+                             ' ORDER BY created_at DESC,id DESC LIMIT 1',
+                             (submission['challenge_id'],submission['package_sha256'])).fetchone()
+    if not local:
+        return
+    trace = json.loads(local['trace_prediction_json'])['trace_score']
+    predicted = local['predicted_display_score']
+    actual = submission['score']
+    harbor = submission['harbor_score']
+    actual_trace = submission['trace_score']
+    conn.execute('INSERT INTO score_calibration(submission_id,local_score_id,package_sha256,'
+                 'predicted_display_score,platform_display_score,display_delta,'
+                 'predicted_science_score,platform_science_score,science_delta,'
+                 'predicted_trace_score,platform_trace_score,trace_delta,valid,confirmed_at)'
+                 ' VALUES(?,?,?,?,?,?,?,?,?,?,?,?,1,?)'
+                 ' ON CONFLICT(submission_id) DO UPDATE SET local_score_id=excluded.local_score_id,'
+                 'package_sha256=excluded.package_sha256,predicted_display_score=excluded.predicted_display_score,'
+                 'platform_display_score=excluded.platform_display_score,display_delta=excluded.display_delta,'
+                 'predicted_science_score=excluded.predicted_science_score,'
+                 'platform_science_score=excluded.platform_science_score,science_delta=excluded.science_delta,'
+                 'predicted_trace_score=excluded.predicted_trace_score,'
+                 'platform_trace_score=excluded.platform_trace_score,trace_delta=excluded.trace_delta,'
+                 'valid=1,confirmed_at=excluded.confirmed_at',
+                 (submission_id,local['id'],submission['package_sha256'],predicted,actual,
+                  predicted-actual if predicted is not None and actual is not None else None,
+                  local['science_score'],harbor,
+                  local['science_score']-harbor if harbor is not None else None,
+                  trace,actual_trace,trace-actual_trace if actual_trace is not None else None,
+                  db.utcnow()))
+
+
+def list_challenge(challenge_id: str) -> dict[str, Any]:
+    manifest = None
+    try:
+        descriptor = scorer_manifest(challenge_id)
+        manifest = {key: descriptor[key] for key in ('entrypoint', 'image', 'version', 'contract_version',
+                                                     'scorer_version', 'file_hashes')}
+    except LocalScoreError as exc:
+        if exc.code != 'SCORER_MISSING':
+            raise
+    scores = [dict(row) for row in db.query('SELECT * FROM local_scores WHERE challenge_id=?'
+                                            ' ORDER BY created_at DESC', (challenge_id,))]
+    calibrations = [dict(row) for row in db.query(
+        'SELECT c.* FROM score_calibration c JOIN local_scores l ON l.id=c.local_score_id'
+        ' WHERE l.challenge_id=? ORDER BY c.confirmed_at DESC', (challenge_id,))]
+    return {'scorer': manifest, 'local_scores': scores, 'calibrations': calibrations}

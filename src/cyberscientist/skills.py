@@ -42,8 +42,9 @@ def _parse_skill_md(path: Path) -> dict[str, str]:
     if not isinstance(fm, dict):
         return {}
     out: dict[str, str] = {}
-    for key in ("name", "description"):
-        value = fm.get(key)
+    metadata = fm.get("metadata") if isinstance(fm.get("metadata"), dict) else {}
+    for key in ("name", "description", "audience"):
+        value = metadata.get("audience") if key == "audience" else fm.get(key)
         if isinstance(value, str) and value.strip():
             # 描述用于单行注入提示文本，折叠内部换行
             out[key] = " ".join(value.split())
@@ -74,6 +75,7 @@ def scan_catalog(skill_dirs: Iterable[Path] | None = None) -> list[dict[str, Any
                 "id": sub.name,
                 "name": fm.get("name") or sub.name,
                 "description": fm.get("description", ""),
+                "audience": fm.get("audience", "both"),
                 "source": str(root),
             }
     return [found[k] for k in sorted(found)]
@@ -95,7 +97,8 @@ def effective_for(conn: sqlite3.Connection, settings: dict[str, Any],
     for sid in list(defaults) + list(always_on) + bound:
         if sid in by_id and sid not in ids:
             ids.append(sid)
-    return [by_id[sid] for sid in ids]
+    return [by_id[sid] for sid in ids
+            if by_id[sid].get("audience", "both") in ("both", role)]
 
 
 def prompt_segment(skills_: list[dict[str, Any]]) -> str:

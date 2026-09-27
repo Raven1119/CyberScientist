@@ -15,7 +15,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
-from . import collab, config, db, datasets, experiences, mailboxes, skills, compute, observation, sandboxes
+from . import collab, config, db, datasets, experiences, mailboxes, skills, compute, observation, sandboxes, local_scoring
 from .brains.codex import CodexBrain
 from .brains.demo import DemoBrain
 from .brains.kimi import KimiBrain
@@ -347,6 +347,12 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
             "detail": {"code": exc.code, "message": str(exc),
                        "recoverable": True, "details_ref": None,
                        "warnings": exc.warnings}})
+
+    @app.exception_handler(local_scoring.LocalScoreError)
+    async def local_score_error(_: Request, exc: local_scoring.LocalScoreError):
+        return JSONResponse(status_code=404 if exc.code == 'NOT_FOUND' else 409,
+                            content={"detail": {"code": exc.code, "message": str(exc),
+                                                "recoverable": True, "details_ref": None}})
 
     # ---------------- 健康 ----------------
 
@@ -1026,6 +1032,28 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
         body = await request.json()
         return await asyncio.to_thread(mailboxes.inspect_trace_narrative,
             identity["run_id"], body.get("trial_id"), body.get("package_path"))
+
+    @app.post("/api/v1/tools/local_score")
+    async def tool_local_score(request: Request) -> dict:
+        from . import local_scoring
+        identity = _tool_auth(request)
+        body = await request.json()
+        return await asyncio.to_thread(local_scoring.evaluate,
+            identity['run_id'], body.get('trial_id'), body.get('sandbox_id'),
+            body.get('operation_id'), body.get('package_path'))
+
+    @app.get("/api/v1/challenges/{challenge_id}/local-scores")
+    async def challenge_local_scores(challenge_id: str) -> dict:
+        from . import local_scoring
+        return await asyncio.to_thread(local_scoring.list_challenge, challenge_id)
+
+    @app.post("/api/v1/runs/{run_id}/local-scores")
+    async def run_local_score(run_id: str, request: Request) -> dict:
+        from . import local_scoring
+        body = await request.json()
+        return await asyncio.to_thread(local_scoring.evaluate,
+            run_id, body.get('trial_id'), body.get('sandbox_id'),
+            body.get('operation_id'), body.get('package_path'))
 
     @app.get("/api/v1/runs/{run_id}/jobs")
     async def run_jobs(run_id: str) -> dict:

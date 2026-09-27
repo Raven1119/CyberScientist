@@ -95,6 +95,17 @@ def test_effective_for_merge_dedupe_and_skip_missing(tmp_path):
         [catalog_by_id(catalog, "grill")]
 
 
+def test_effective_for_respects_skill_audience(tmp_path):
+    root = tmp_path / 'skills'
+    for name, audience in [('scorer', 'both'), ('trace', 'executor')]:
+        _make_skill(root, name, f'---\nname: {name}\ndescription: test\nmetadata:\n  audience: {audience}\n---\n')
+    catalog = skills.scan_catalog(skill_dirs=[root])
+    settings = {'skills': {'always_on': ['scorer', 'trace']}}
+    conn = db.get_db()
+    assert [x['id'] for x in skills.effective_for(conn, settings, None, catalog, role='brain')] == ['scorer']
+    assert [x['id'] for x in skills.effective_for(conn, settings, None, catalog, role='executor')] == ['scorer', 'trace']
+
+
 def catalog_by_id(catalog, sid):
     return next(s for s in catalog if s["id"] == sid)
 

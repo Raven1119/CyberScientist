@@ -1785,6 +1785,12 @@ function SubmissionsPanel({
 }) {
   const { toast } = useApp()
   const [items, setItems] = useState<Submission[] | null>(null)
+  const [localScoring, setLocalScoring] = useState<{
+    scorer: { scorer_version: string; version: string; image: string } | null
+    calibrations: { submission_id: string; predicted_display_score: number | null;
+      platform_display_score: number | null; display_delta: number | null;
+      science_delta: number | null; trace_delta: number | null; valid: number }[]
+  } | null>(null)
   const [busy, setBusy] = useState(false)
   const [packagePath, setPackagePath] = useState('')
   const [preflight, setPreflight] = useState<{
@@ -1821,6 +1827,12 @@ function SubmissionsPanel({
     void load()
   }, [load, refreshKey])
 
+  useEffect(() => {
+    void api.get<typeof localScoring>(
+      `/api/v1/challenges/${encodeURIComponent(challengeId)}/local-scores`,
+    ).then(setLocalScoring).catch(() => setLocalScoring(null))
+  }, [challengeId, refreshKey])
+
   async function poll() {
     setBusy(true)
     try {
@@ -1828,6 +1840,8 @@ function SubmissionsPanel({
         '/api/v1/submissions/poll', runId ? { run_id: runId } : {})
       toast(`评分轮询：检查 ${res.polled}，新出分 ${res.updated}，等待中 ${res.still_unknown}。`)
       await load()
+      setLocalScoring(await api.get<typeof localScoring>(
+        `/api/v1/challenges/${encodeURIComponent(challengeId)}/local-scores`))
     } catch (err) {
       toast('轮询失败：' + (err instanceof Error ? err.message : String(err)))
     } finally {
@@ -1851,6 +1865,12 @@ function SubmissionsPanel({
   if (items === null) return <LoadingState />
   return (
     <div>
+      <div className="callout" style={{ marginBottom: 12 }}>
+        <strong>本地评分器</strong>
+        <p className="small-text">{localScoring?.scorer
+          ? `版本 ${localScoring.scorer.version} (${localScoring.scorer.scorer_version.slice(0, 12)}) · 镜像 ${localScoring.scorer.image}`
+          : '本题尚未配置本地科学评分器'}</p>
+      </div>
       {runId && <div className="callout" style={{ marginBottom: 12 }}>
         <strong>提交包只读预检</strong>
         <div className="field"><label htmlFor="preflight-package-path">工作区相对包路径（留空用当前 Trial 的 result_package.zip）</label>
@@ -1910,6 +1930,15 @@ function SubmissionsPanel({
               </div>
               {s.error && <p className="form-error">{s.error}</p>}
               {s.prediction_md && <p className="small-text">提交预测：{s.prediction_md}</p>}
+              {localScoring?.calibrations.filter((item) => item.submission_id === s.id).map((item) => (
+                <p className="small-text" key={item.submission_id}>
+                  本地预测 {item.predicted_display_score ?? '未知'} / 平台 {item.platform_display_score ?? '未知'}
+                  {' · '}展示分偏差 {item.display_delta ?? '未知'}
+                  {' · '}科学分偏差 {item.science_delta ?? '未知'}
+                  {' · '}轨迹分偏差 {item.trace_delta ?? '未知'}
+                  {item.valid === 0 && ' · 配对已失效'}
+                </p>
+              ))}
               {s.prediction_verdict && <p className="small-text">预测判定：{s.prediction_verdict} · {s.prediction_note_md || '无说明'}</p>}
             </li>
           ))}

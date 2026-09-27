@@ -102,6 +102,16 @@ _NARRATIVE_TOOL = {
         "required": []}}
 _TOOLS.append(_NARRATIVE_TOOL)
 
+_TOOLS.append({
+    "name": "research_local_score",
+    "description": "在当前 Trial 已授权、镜像匹配的 Bohrium 沙箱中运行题目本地科学评分器，记录封存包哈希和轨迹预测；不提交。",
+    "inputSchema": {"type": "object", "additionalProperties": False,
+        "properties": {"trial_id": {"type": "string"},
+                       "sandbox_id": {"type": "string"},
+                       "operation_id": {"type": "string"},
+                       "package_path": {"type": "string"}},
+        "required": ["trial_id", "sandbox_id", "operation_id"]}})
+
 _DATA_TOOL = {
     "name": "research_data",
     "description": "查询或按本 Run 独立授权物化题目公开数据。request 需要 operation_id。",
@@ -200,6 +210,8 @@ def _handle(msg: dict) -> dict | None:
             out = _post("/api/v1/tools/package_check", args)
         elif name == "research_trace_narrative_check":
             out = _post("/api/v1/tools/trace_narrative_check", args)
+        elif name == "research_local_score":
+            out = _post("/api/v1/tools/local_score", args)
         elif name == "research_data":
             out = _post("/api/v1/tools/data", args)
         elif name == "ack_guidance":

@@ -735,6 +735,8 @@ def submit_experiment(run_id: str, trial_id: str | None,
                       variant_context['narrative_sha256'] if variant_context else None,
                       json.dumps(science_hashes,sort_keys=True) if science_hashes is not None else None,
                       1 if science_hashes is not None else None))
+        from . import local_scoring
+        local_scoring.bind_submission_tx(conn, sid, content)
         db.append_event_tx(conn,run_id,"controller","submission.created",
                            {"submission_id":sid,"package_sha256":digest,
                             "source_package_sha256":source_digest,
@@ -980,6 +982,8 @@ def poll_scores(run_id: str | None = None,
                         'platform_feedback':details},trial_id=r['trial_id'])
                 if confidence == 'confirmed' and current['score_confidence'] != 'confirmed' and not anomaly:
                     experience_context.link_result_tx(conn,r,score,event['seq'])
+            from . import local_scoring
+            local_scoring.calibrate_tx(conn, r['id'])
         if meaningful:
             updated += 1
             changed_runs.add(r['run_id'])

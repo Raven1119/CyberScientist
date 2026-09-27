@@ -368,6 +368,48 @@ CREATE TABLE IF NOT EXISTS curation_requests (
 );
 """
 
+SCHEMA_LOCAL_SCORING = """
+CREATE TABLE IF NOT EXISTS local_scores (
+    id TEXT PRIMARY KEY,
+    challenge_id TEXT NOT NULL REFERENCES challenges(id),
+    run_id TEXT NOT NULL REFERENCES runs(id),
+    trial_id TEXT NOT NULL,
+    package_sha256 TEXT NOT NULL,
+    science_artifact_hashes_json TEXT NOT NULL,
+    manifest_science_sha256 TEXT NOT NULL,
+    source_local_score_id TEXT,
+    science_score REAL,
+    science_result_json TEXT,
+    trace_prediction_json TEXT NOT NULL,
+    predicted_display_score REAL,
+    scorer_version TEXT NOT NULL,
+    scorer_file_hashes_json TEXT NOT NULL,
+    feature_version TEXT NOT NULL,
+    model_version TEXT NOT NULL,
+    sandbox_operation_id TEXT,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_local_scores_package ON local_scores(package_sha256,created_at);
+CREATE INDEX IF NOT EXISTS idx_local_scores_challenge ON local_scores(challenge_id,created_at);
+CREATE TABLE IF NOT EXISTS score_calibration (
+    submission_id TEXT PRIMARY KEY REFERENCES submissions(id),
+    local_score_id TEXT NOT NULL REFERENCES local_scores(id),
+    package_sha256 TEXT NOT NULL,
+    predicted_display_score REAL,
+    platform_display_score REAL,
+    display_delta REAL,
+    predicted_science_score REAL,
+    platform_science_score REAL,
+    science_delta REAL,
+    predicted_trace_score REAL,
+    platform_trace_score REAL,
+    trace_delta REAL,
+    valid INTEGER NOT NULL DEFAULT 1,
+    confirmed_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_score_calibration_local ON score_calibration(local_score_id);
+"""
+
 # submissions 表 v2 新增列（对既有库做幂等 ALTER）
 SUBMISSION_V2_COLUMNS = {
     "variant_of": "TEXT",
@@ -394,6 +436,7 @@ SUBMISSION_V2_COLUMNS = {
     "score_last_polled_at": "TEXT",
 }
 GUIDANCE_PREDICTION_COLUMNS = {"prediction_md": "TEXT"}
+LOCAL_SCORE_V2_COLUMNS = {"scorer_file_hashes_json": "TEXT NOT NULL DEFAULT '{}'"}
 
 # checkpoints 表 v2 新增列（对既有库做幂等 ALTER）
 CHECKPOINT_V2_COLUMNS = {
@@ -465,9 +508,11 @@ def init_db() -> None:
         conn.executescript(SCHEMA)
         conn.executescript(SCHEMA_V2_TABLES)
         conn.executescript(SCHEMA_RELIABILITY)
+        conn.executescript(SCHEMA_LOCAL_SCORING)
         _ensure_columns(conn, "checkpoints", CHECKPOINT_V2_COLUMNS)
         _ensure_columns(conn, "runs", RUN_V2_COLUMNS)
         _ensure_columns(conn, "submissions", SUBMISSION_V2_COLUMNS)
+        _ensure_columns(conn, "local_scores", LOCAL_SCORE_V2_COLUMNS)
         _ensure_columns(conn, "guidance", GUIDANCE_PREDICTION_COLUMNS)
         _ensure_columns(conn, "authorizations", AUTHORIZATION_V2_COLUMNS)
         _ensure_columns(conn, "challenges", CHALLENGE_V2_COLUMNS)
