@@ -42,22 +42,22 @@ MP-R 的 `final/answer.json` 共 19 个展开后的标量字段。前五次 62.6
 
 USCT 的四次封存输出均有 640×640 声速和衰减图；高轨迹分和低轨迹分的输出文件名均能在对应上传轨迹中找到，文件哈希匹配数分别为 5/5、5/6、5/5、5/5。仅检查“轨迹是否提到结果文件”不足以解释高低分，更无法解释科学分全 0。现有资料没有隐藏参考值或每项误差；不应把图像精度、数据类型或某一步命令直接指认为零分原因。
 
-## 补证：62 份未遮蔽的历史评分回执
+## 补证：63 份未遮蔽的历史评分回执
 
-进一步只读扫描 AgentMaster 的本地 `grader.raw.json`，发现另有 **62 份**不同 Attempt 的 `resultsJson` 未遮蔽；与前述 71 份不重叠。它们均有同 ID 的 `submission/submission.json`、`grader/grader.json`（`status=scored`）、提交命令与科学/轨迹分，展示分与 `grader.json` 一致。59 份提交命令指向仍存在、且位于封存迭代目录内的原始上传轨迹；其余 3 份命令指向已经不存在的旧工作区轨迹路径，不能把封存副本当成已证实的实际上传字节。可重建审计：
+进一步只读扫描 AgentMaster 的本地 `grader.raw.json`，发现另有 **63 份**不同 Attempt 的 `resultsJson` 未遮蔽；与前述 71 份不重叠。其中 62 份在 `iterations/`，1 份单独位于 `harvest/`。它们均有同 ID 的 `submission/submission.json`、`grader/grader.json`（`status=scored`）、提交命令与科学/轨迹分，展示分与 `grader.json` 一致。60 份提交命令指向仍存在的轨迹文件；其中 **57 份**的文件 SHA-256 与上传回执的 `native_trace_sha256` 一致。其余 6 份不能直接信任命令路径：3 份当前文件哈希不同，3 份原路径已消失。用回执哈希在 AgentMaster 的封存 `raw.jsonl`/`raw.upload.jsonl` 建索引后，3 份可从同一迭代副本、3 份可从另一迭代副本逐字节找回。最终 **63/63** 的回执原生轨迹哈希均有匹配文件，但后 6 份的文件来源必须单独标明。前述旧组 71/71 的上传副本也与各自回执原生轨迹哈希一致，两组合计 134 份不同 Attempt 的原生上传轨迹字节可核对；平台评分前是否还做内部投影仍未知。AgentMaster 本地共有 148 个不同 Attempt 提交记录；剩余 14 个中，13 个没有本地 grader，1 个是赛后 `late_scored` 通用回执，不具备同类历史双分项可供本分析。`harvest/` 这 1 份没有封存输出目录，只能核对当前仍在的 `--outputs` 路径，不能与另 62 份相同地证明输出快照。可重建审计：
 
 ```bash
-.venv/bin/python checks/audit_agentmaster_grader_diagnostics.py --agentmaster ../AgentMaster --output-dir .package-checks/agentmaster-grader-diagnostics-20260928
+.venv/bin/python checks/audit_agentmaster_grader_diagnostics.py --agentmaster ../AgentMaster --older-pairs .package-checks/agentmaster-pairs-20260928/pairs.jsonl --output-dir .package-checks/agentmaster-grader-diagnostics-20260928
 ```
 
-逐 Attempt 诊断只留本机忽略目录；`diagnostics.jsonl` SHA-256 `32048fb117afb921a17f9ab4d94a96748475b122d9242d3921fa1822ce3e3297`，脱敏 `summary.json` SHA-256 `c817944f59e4327fd6eb6b83cd283a2bae01d5a3f865ab6baadcb012b7ebf39b`。62 份回执的 `trace_score_engine` 都是 `trace-score-cli/0.3.0-beta.1+evidence-checklist-v8-process-evidence-sufficiency`。这只证明**这些历史评分**的行为，不保证当前平台沿用同一版本。
+逐 Attempt 诊断只留本机忽略目录；`diagnostics.jsonl` SHA-256 `fda45839c7fa5c6b9a130778ffe8c4661e0aa6b97a4b1af09f62efdb9d14e26b`，脱敏 `summary.json` SHA-256 `a64532ccb93b2d022f9df96a08e9c828919bf503a4663f418387d86cceda5cda`。63 份回执的 `trace_score_engine` 都是 `trace-score-cli/0.3.0-beta.1+evidence-checklist-v8-process-evidence-sufficiency`。这只证明**这些历史评分**的行为，不保证当前平台沿用同一版本。
 
-最直接的规则在回执中明确给出：`trace_decision=accept` 的 25 份 `trace_factor=1`，轨迹分范围 74.175–98.25；`review` 的 20 份 `trace_factor=trace_score/100`，范围 32.125–69；`block` 的 17 份 `trace_factor=0`，范围 0–29。`block` 中 10 份恰为 29，另 7 份更低，因此 29 是常见档位，不能说所有被阻断轨迹都固定得 29。逐条因子误差为 0，`score_percent = harbor_score × trace_factor` 的最大数值误差约 `1×10⁻⁷`。62 份的 `harbor_score = 100 × harbor_reward` 也逐条精确成立，`harbor_errors` 均为 0；但 `harbor_reward` 如何由科学产物产生仍不可见。所以这批数据能直接确认的是**奖励值换算与判定类别到展示分的系数**。没有样本落在 (29,32.125) 或 (69,74.175)，不能仅由观察值定出准确数值边界；也不能从系数反推轨迹内容如何得到 `trace_score` 和 `trace_decision`。
+最直接的规则在回执中明确给出：`trace_decision=accept` 的 26 份 `trace_factor=1`，轨迹分范围 74.175–98.25；`review` 的 20 份 `trace_factor=trace_score/100`，范围 32.125–69；`block` 的 17 份 `trace_factor=0`，范围 0–29。`block` 中 10 份恰为 29，另 7 份更低，因此 29 是常见档位，不能说所有被阻断轨迹都固定得 29。逐条因子误差为 0，`score_percent = harbor_score × trace_factor` 的最大数值误差约 `1×10⁻⁷`。63 份的 `harbor_score = 100 × harbor_reward` 也逐条精确成立，`harbor_errors` 均为 0；但 `harbor_reward` 如何由科学产物产生仍不可见。所以这批数据能直接确认的是**奖励值换算与判定类别到展示分的系数**。没有样本落在 (29,32.125) 或 (69,74.175)，不能仅由观察值定出准确数值边界；也不能从系数反推轨迹内容如何得到 `trace_score` 和 `trace_decision`。
 
 先前 58 条最终分的回执未给出 `trace_decision`，但用已观察到的类别区间构造暂定分段 `≤29→0、30–<70→trace_score/100、≥70→1`，58/58 展示分与之相符（最大误差 `4.8×10⁻⁵`）；其中 18 条科学分为 0，无法区分系数。这个跨样本吻合解释了此前 10 条与任务卡 `(trace_score−30)/40` 公式冲突的低分记录，**不等于证明旧回执的隐藏判定类别或精确阈值**。主办方告知的规则及冲突仍原样保留在[历史逆向核查](SCORER_REVERSE_ENGINEERING.md)。
 
-回执列出可见的低分原因代码和 `score_effect`，最常见的是输出缺少因果支撑 `N11`（18 次，−6 或 −15）、无有意义执行证据 `N09`（12 次，−30）、以替代/回退方法代替目标方法 `N14`（8 次，−8）、工具调用与结果不成对 `N08`（7 次，−18）。跨任务逐字复用轨迹 `N01` 和无效轨迹结构 `N04` 的效果均记为 −100；过程证据不足 `N18` 的单项效果记为 0，但出现的 4 次里有 3 次 `block`、1 次 `review`。这些代码是平台**回执中的诊断**，并非完整可执行公式：17 份 `accept` 没有低分原因，但分数仍分布在 83.375–98.25；12 份标有 `N09` 且上传轨迹可核对的记录里，12 份都有至少一次退出码 0 的命令，最多 29 次。故“执行证据”不是简单地数成功 shell 命令，代码效果也不能直接从 100 逐项相减复刻总分。
+回执列出可见的低分原因代码和 `score_effect`，最常见的是输出缺少因果支撑 `N11`（19 次，−6 或 −15）、无有意义执行证据 `N09`（12 次，−30）、以替代/回退方法代替目标方法 `N14`（8 次，−8）、工具调用与结果不成对 `N08`（7 次，−18）。跨任务逐字复用轨迹 `N01` 和无效轨迹结构 `N04` 的效果均记为 −100；过程证据不足 `N18` 的单项效果记为 0，但出现的 4 次里有 3 次 `block`、1 次 `review`。回执原生轨迹哈希显示 **3 组跨题逐字复用**，与 3 条 `N01` 诊断相符。这些代码是平台**回执中的诊断**，并非完整可执行公式：17 份 `accept` 没有低分原因，但分数仍分布在 83.375–98.25；12 份标有 `N09` 的记录均已按回执哈希找回原生轨迹，且每份都有至少一次退出码 0 的命令，最多 29 次。故“执行证据”不是简单地数成功 shell 命令，代码效果也不能直接从 100 逐项相减复刻总分。
 
-科学分还有一个不能忽略的反例：62 份提交的 `--outputs` 目录与各自封存输出逐文件一致，按题目及输出树哈希分组得 48 组，其中 1 组的科学分不一致。同一 FigQA 题的 10 次提交，封存 `outputs/answer.txt` 字节相同，历史 `harbor_score` 却有 1 次为 0、其余 9 次为 100；题目快照哈希相同。62 个上传 bundle 哈希各不相同，因此**这不是同包重复评分**。这说明**仅凭答案文件字节不能解释全部历史科学分**。现有回执无法区分是平台读取了其他提交内容、过程/准入条件、评分时的状态差异，还是单次评分异常；不能据此断言科学评分器必然读取轨迹，也不能用该题训练“答案文件→科学分”的确定性模型。
+科学分还有一个不能忽略的反例：`iterations/` 的 62 份提交，其 `--outputs` 目录与各自封存输出逐文件一致，按题目及输出树哈希分组得 48 组，其中 1 组的科学分不一致。同一 FigQA 题的 10 次提交，封存 `outputs/answer.txt` 字节相同，历史 `harbor_score` 却有 1 次为 0、其余 9 次为 100；题目快照哈希相同。新增组的 63 个上传 bundle 哈希各不相同，因此**这不是同包重复评分**。这说明**仅凭答案文件字节不能解释全部历史科学分**。现有回执无法区分是平台读取了其他提交内容、过程/准入条件、评分时的状态差异，还是单次评分异常；不能据此断言科学评分器必然读取轨迹，也不能用该题训练“答案文件→科学分”的确定性模型。
 
 下一步最有价值的证据是平台逐项科学验算、轨迹评分器的完整评分细项及最终归一化轨迹，或经授权的**固定同一封存包重复评分**来估计噪声，再做只改一个答案字段、其余科学文件和轨迹均冻结的对照。目前可以复刻上述历史组的展示分合成系数，但不能发布从**输入内容**预测逐题科学分或轨迹分的经过验证版本。

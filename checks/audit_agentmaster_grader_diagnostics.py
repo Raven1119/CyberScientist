@@ -32,7 +32,16 @@ def output_index(root: Path) -> dict[str, str]:
     return files
 
 
-def audit_receipt(raw_path: Path) -> dict | None:
+def native_trace_index(t0: Path) -> dict[str, list[Path]]:
+    index = defaultdict(list)
+    for name in ("raw.jsonl", "raw.upload.jsonl"):
+        paths = list(t0.glob(f"*/iterations/*/{name}")) + list(t0.glob(f"*/harvest/{name}"))
+        for path in sorted(paths):
+            index[sha256(path)].append(path)
+    return index
+
+
+def audit_receipt(raw_path: Path, trace_index: dict[str, list[Path]] | None = None) -> dict | None:
     raw = json.loads(raw_path.read_text())
     detail = raw.get("detail") or {}
     result = detail.get("resultsJson")
@@ -54,16 +63,20 @@ def audit_receipt(raw_path: Path) -> dict | None:
             str(submit_receipt.get("attempt_id")) != attempt_id or
             submission.get("status") != "submitted" or grade.get("status") != "scored" or
             not submit_receipt.get("bundle_sha256") or
+            not (submit_receipt.get("bundle_response") or {}).get("native_trace_sha256") or
             argv.count("--challenge-id") != 1 or argv.count("--trace") != 1 or
             argv.count("--outputs") != 1 or
             argv[argv.index("--challenge-id") + 1] != challenge_id or
             abs(float(grade["score"]) - float(result["score_percent"])) > 0.001):
         raise ValueError(f"receipt, submission, command or grade mismatch: {raw_path}")
     live_outputs = output_index(Path(argv[argv.index("--outputs") + 1]))
-    sealed_outputs = output_index(iteration / "workspace_snapshot/outputs")
-    if live_outputs != sealed_outputs:
-        raise ValueError(f"live outputs differ from sealed snapshot: {raw_path}")
-    output_tree_hash = hashlib.sha256(json.dumps(sealed_outputs, sort_keys=True).encode()).hexdigest()
+    sealed_path = iteration / "workspace_snapshot/outputs"
+    snapshot_verified = sealed_path.is_dir()
+    if snapshot_verified:
+        sealed_outputs = output_index(sealed_path)
+        if live_outputs != sealed_outputs:
+            raise ValueError(f"live outputs differ from sealed snapshot: {raw_path}")
+    output_tree_hash = hashlib.sha256(json.dumps(live_outputs, sort_keys=True).encode()).hexdigest()
     trace_path = Path(argv[argv.index("--trace") + 1])
     trace_exact = trace_path.is_file() and trace_path.resolve() in {
         (iteration / "raw.jsonl").resolve(),
@@ -73,7 +86,19 @@ def audit_receipt(raw_path: Path) -> dict | None:
     trace_hash = None
     if trace_exact:
         trace_hash = sha256(trace_path)
-        events = [json.loads(line) for line in trace_path.read_text().splitlines() if line.strip()]
+    receipt_trace_hash = submit_receipt["bundle_response"]["native_trace_sha256"]
+    trace_receipt_match = trace_exact and trace_hash == receipt_trace_hash
+    candidates = (trace_index or {}).get(receipt_trace_hash, [])
+    source = trace_path if trace_receipt_match else next(
+        (path for path in candidates if path.parent == iteration),
+        candidates[0] if candidates else None)
+    source_kind = ("command" if trace_receipt_match else
+                   "same_iteration_snapshot" if source is not None and source.parent == iteration else
+                   "other_iteration" if source is not None else "unavailable")
+    if source is not None:
+        if sha256(source) != receipt_trace_hash:
+            raise ValueError(f"indexed native trace changed: {source}")
+        events = [json.loads(line) for line in source.read_text().splitlines() if line.strip()]
         completed = [e.get("item") for e in events if e.get("type") == "item.completed"
                      and isinstance(e.get("item"), dict)]
         commands = [item for item in completed if item.get("type") == "command_execution"]
@@ -99,9 +124,14 @@ def audit_receipt(raw_path: Path) -> dict | None:
             "reasons": [{"code": reason["code"], "score_effect": reason["score_effect"]}
                         for reason in reasons],
             "missing_evidence_count": len(result.get("trace_missing_evidence") or []),
-            "exact_trace_input_available": trace_exact,
-            "trace_sha256": trace_hash, "trace_features": features,
-            "output_tree_sha256": output_tree_hash, "output_file_count": len(sealed_outputs),
+            "command_trace_path_available": trace_exact,
+            "trace_receipt_match": trace_receipt_match,
+            "native_trace_content_available": source is not None,
+            "native_trace_source_kind": source_kind,
+            "command_trace_sha256": trace_hash,
+            "native_trace_sha256": receipt_trace_hash, "trace_features": features,
+            "output_tree_sha256": output_tree_hash, "output_file_count": len(live_outputs),
+            "output_snapshot_verified": snapshot_verified,
             "bundle_sha256": submit_receipt["bundle_sha256"],
             "receipt_sha256": sha256(raw_path), "command_sha256": sha256(command_path),
             "grade_sha256": sha256(grade_path)}
@@ -114,15 +144,24 @@ def summarize(rows: list[dict]) -> dict:
     reason_counts = Counter(reason["code"] for row in rows for reason in row["reasons"])
     output_groups = defaultdict(list)
     bundle_groups = defaultdict(list)
+    native_trace_groups = defaultdict(list)
     for row in rows:
         output_groups[(row["challenge_id"], row["output_tree_sha256"])].append(row)
         bundle_groups[(row["challenge_id"], row["bundle_sha256"])].append(row)
+        native_trace_groups[row["native_trace_sha256"]].append(row)
     effects = defaultdict(set)
     for row in rows:
         for reason in row["reasons"]:
             effects[reason["code"]].add(reason["score_effect"])
     return {"count": len(rows),
-            "exact_trace_input_count": sum(row["exact_trace_input_available"] for row in rows),
+            "sealed_output_count": sum(row["output_snapshot_verified"] for row in rows),
+            "command_trace_path_count": sum(row["command_trace_path_available"] for row in rows),
+            "trace_receipt_match_count": sum(row["trace_receipt_match"] for row in rows),
+            "native_trace_content_count": sum(row["native_trace_content_available"] for row in rows),
+            "native_trace_source_kinds": dict(Counter(row["native_trace_source_kind"] for row in rows)),
+            "cross_task_native_trace_reuse_groups": sum(
+                len({row["challenge_id"] for row in group}) > 1
+                for group in native_trace_groups.values()),
             "distinct_output_trees": len(output_groups),
             "distinct_bundles": len(bundle_groups),
             "same_bundle_different_science_groups": sum(
@@ -143,32 +182,53 @@ def summarize(rows: list[dict]) -> dict:
             "reason_counts": dict(sorted(reason_counts.items())),
             "reason_effects": {code: sorted(values) for code, values in sorted(effects.items())},
             "no_execution_reason_with_successful_commands": sum(
-                row["exact_trace_input_available"] and
+                row["native_trace_content_available"] and
                 row["trace_features"]["successful_commands"] > 0 and
                 any(reason["code"] == "N09_NO_EXECUTION_EVIDENCE" for reason in row["reasons"])
                 for row in rows)}
 
 
+def verify_older_pairs(path: Path) -> dict:
+    pairs = [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+    valid = [pair for pair in pairs if pair["valid_join"]]
+    matched = 0
+    for pair in valid:
+        receipt = json.loads((Path(pair["iteration"]) / "submission/stdout.log").read_text())
+        native_sha = (receipt.get("bundle_response") or {}).get("native_trace_sha256")
+        upload = pair["files"]["raw.upload.jsonl"]
+        if (upload and sha256(Path(upload["path"])) == upload["sha256"] and
+                native_sha == upload["sha256"]):
+            matched += 1
+    return {"pairs_sha256": sha256(path), "valid_joins": len(valid),
+            "native_trace_receipt_matches": matched}
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--agentmaster", type=Path, required=True)
+    parser.add_argument("--older-pairs", type=Path)
     parser.add_argument("--output-dir", type=Path, required=True)
     args = parser.parse_args()
     output = args.output_dir.resolve()
     if not output.is_relative_to((Path.cwd() / ".package-checks").resolve()):
         raise ValueError("output must remain under .package-checks")
-    paths = sorted((args.agentmaster / "store/T0").glob(
-        "*/iterations/*/grader/grader.raw.json"))
-    rows = [row for path in paths if (row := audit_receipt(path)) is not None]
+    t0 = args.agentmaster / "store/T0"
+    paths = sorted(list(t0.glob("*/iterations/*/grader/grader.raw.json")) +
+                   list(t0.glob("*/harvest/grader/grader.raw.json")))
+    trace_index = native_trace_index(t0)
+    rows = [row for path in paths if (row := audit_receipt(path, trace_index)) is not None]
     if not rows:
         raise ValueError("no unredacted grader diagnostics")
     summary = summarize(rows)
+    if args.older_pairs is not None:
+        summary["older_pairs"] = verify_older_pairs(args.older_pairs)
     output.mkdir(parents=True, exist_ok=True)
     (output / "diagnostics.jsonl").write_text(
         "".join(json.dumps(row, sort_keys=True) + "\n" for row in rows))
     (output / "summary.json").write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n")
     print(json.dumps({"count": summary["count"],
-                      "exact_trace_input_count": summary["exact_trace_input_count"],
+                      "trace_receipt_match_count": summary["trace_receipt_match_count"],
+                      "native_trace_content_count": summary["native_trace_content_count"],
                       "max_factor_error": summary["max_factor_error"],
                       "max_display_error": summary["max_display_error"]}, sort_keys=True))
 
