@@ -2,6 +2,7 @@
 
 ## 已实现
 
+- 增补 AgentMaster 历史评分诊断审计器 `checks/audit_agentmaster_grader_diagnostics.py`：只读核对未遮蔽的本地评分回执、提交命令、封存输出和原始轨迹路径，逐 Attempt 证据留在本机忽略目录；脱敏结论并入 `docs/HISTORICAL_SCORER_PATTERN_AUDIT_2026-09-28.md`。
 - 历史评分规律审计：新增只读脚本 `checks/analyze_agentmaster_trace_scores.py` 和 `checks/audit_agentmaster_science_outputs.py`，在本机忽略目录中保存哈希核对后的结构特征、按题留出结果及科学输出清单；脱敏结论见 `docs/HISTORICAL_SCORER_PATTERN_AUDIT_2026-09-28.md`。未修改产品预测器、评分器或经验。
 - CS-UP-03R AgentMaster 本地补证：新增 `checks/match_agentmaster_traces.py`，按精确 Attempt ID、提交状态、题目参数和 `--trace` 路径配对历史评分表与 AgentMaster 封存迭代；分别记录原始事件、CLI 上传副本和本地投影轨迹的哈希及结构计数。逐 Attempt 对照仅写入本机忽略目录，脱敏汇总见 `docs/AGENTMASTER_TRACE_SCORE_PAIRS_2026-09-28.md`。
 - CS-UP-03R 全账号轨迹审计：新增只读离线分析器 `checks/analyze_owned_traces.py`，对本人账号列表、API 轨迹、直接代理视图和 bundle 的本机原始文件逐个核对 SHA-256，分开统计列表声称、实际取回、包内选中行与分数配对；不输出原始轨迹正文或凭据。完整结论见 `docs/OWNED_TRACE_ANALYSIS_2026-09-28.md`。
@@ -41,6 +42,7 @@
 
 ## 已实际验证
 
+- 本机另有与先前 71 条不重叠的 62 份已评分 AgentMaster 回执，直接含 `trace_decision`、`trace_factor`、原因代码和引擎版本；59 份可逐字节核对命令所指上传轨迹，3 份原命令路径已不存在。62 份 `--outputs` 与封存快照逐文件一致；62/62 的历史因子为 `accept→1`、`review→trace_score/100`、`block→0`，展示分乘法最大误差约 `1×10⁻⁷`。48 个同题输出树组中 1 组同字节答案出现 0 与 100 两种科学分，原因未知。`.venv/bin/python -m pytest -q` 为 `515 passed, 1 skipped`，定向 fake 测试 `3 passed`，前端 `18 passed` 且构建通过，所改 Python 文件 `compileall` 和 `git diff --check` 通过。
 - 本轮只读审计对 71 条 AgentMaster 提交逐文件核对 `--outputs` 与封存科学输出，71/71 一致；58 条具有最终双分项。轨迹事件数与失败命令数的单特征阈值在整题留出时，≥70 和 ≥80 的普通准确率均未超过训练折多数类。`.venv/bin/python -m pytest -q` 为 `512 passed, 1 skipped`；脚本定向测试 `5 passed`，前端 `npm --prefix apps/web test -- --run` 为 `18 passed`，前端构建和所改 Python 文件 `compileall` 通过。当前 shell 初次未找到 `npm`，随后仅为本次命令把已安装 Linux Node 22 的 bin 加入 PATH 后成功；没有改全局配置。
 - CS-UP-03R 配对代码验证：`.venv/bin/pytest -q` 为 507 passed、1 skipped；`PATH="$HOME/.local/bin:$PATH" npm --prefix apps/web test -- --run` 为 18 passed，`PATH="$HOME/.local/bin:$PATH" npm --prefix apps/web run build`、`.venv/bin/python -m compileall -q src checks tests`、`git diff --check` 通过。配对表 `pairs.jsonl` SHA-256 为 `71fa7fad213fc4855b039d3dee5436d70b5f5f1a7268fa0fce73234a9fe5ba9a`，汇总 `summary.json` 为 `463474755db98db2abecbc8f61069295c92aabbeab6a9dac88dc867d7680670d`；二者仅本机忽略保存。
 - CS-UP-03R 经验校正：本机 SQLite 在线备份 22,241,280 字节到 `.package-checks/agentmaster-pairs-20260928/pre-experience.db` 后，通过系统原生 `experiences.save_experience` 修订既有全局候选 `exp_cs_up03r_pair_before_fit_20260927`，加入本地 71 条配对及 58 条最终分证据；回读仍为 `candidate`，未激活。
@@ -107,6 +109,7 @@
 
 ## 尚未验证
 
+- 62 份未遮蔽回执可确认历史展示分合成系数和若干诊断代码，但不能复刻从输入轨迹到 `trace_score/trace_decision` 的完整引擎，也不能确认当前平台仍沿用 `trace-score-cli/0.3.0-beta.1`。3 份旧提交命令所指轨迹路径已消失，封存副本是否与上传时字节相同未证实。FigQA 同输出不同科学分的成因缺逐项验算/提交包内容回执，仍未知。
 - AgentMaster 上传输入由官方 CLI 如何归一化、平台最终对哪几行打分，当前不可从旧 Attempt 的 API 轨迹或 bundle 复核。58 条最终分已做探索性的整题留出结构特征检查，但特征是看过样本后选择，不能当作独立前瞻验证；连续轨迹分预测误差和同轨迹重复噪声仍未知。另 4 条旧分项没有在 AgentMaster 本地提交记录中找到精确配对。
 - CS-UP-03R 全账号轨迹扩查：9 条列表有轨迹却读到空数组的记录是否能由代理本人 token 或平台后台归档恢复，未知；当前项目凭据库没有这些代理的直接 token。`GET /attempts` 不提供 total，不能确认私有草稿完整性。API 轨迹与包内选中轨迹的差异已确认，但平台对每条旧提交实际采用哪个输入评分、以及重复包的评分噪声，仍无可配对最终回执。75 条旧轨迹分缺内容，≥70/≥80 预测误差不可计算。
 - CS-UP-03R：上述 72 条旧提交在平台后台是否另有仅代理本人可读的归档，本轮不能判定；三个历史代理的直接 token 不在项目现有密钥库。30–70 轨迹因子门槛由主办方告知（用户转述），但这批历史分数中的 10 条低分段冲突尚无权威解释；分段替代计算只是样本内描述。
@@ -129,7 +132,7 @@
 
 ## 阻塞项
 
-- CS-UP-03R 评分器剩余阻塞：AgentMaster 本地已找回 71 条旧分项提交的 CLI 上传输入和逐文件核对的科学输出，其中 58 条有最终双分项，原“全机无配对”阻塞已解除。但平台归一化后的最终评分轨迹和逐项科学验算不可读、同包重复噪声未知；探索性的整题留出未支持简单结构预测器，不能发布已验证的 ≥70/≥80 或逐题科学预测器。另 4 条旧分项当前没有 AgentMaster 本地精确配对。
+- CS-UP-03R 评分器剩余阻塞：AgentMaster 两组已找回 71 条旧分项提交输入和 62 份未遮蔽历史诊断，其中旧组 58 条有最终双分项，新组 59 条仍有精确上传路径。历史展示分合成系数已可核对；但平台归一化后的最终评分轨迹、完整轨迹打分公式及逐项科学验算不可读，同包评分噪声未知；探索性的整题留出未支持简单结构预测器，不能发布已验证的从内容预测 ≥70/≥80 或逐题科学分的模型。另 4 条旧分项当前没有 AgentMaster 本地精确配对。
 - CS-UP-03 W3–W5 的目标评分契约当前不可重现实测：主选与指定备选题均已过轮次，晚交回执采用通用 ARM 评分；当前协议无法给出任务卡要求的独立 `harbor_score` / `trace_score` 及其 ≥70/≥80 轨迹阈值。公开历史双分项和本轮通用分不可混合作受控拟合；任务卡要求的同包双基线、W4 对照和 W5 留出标准尚未达到。继续在备选 MCM 付费计算或提交不能解决该契约缺口，需有能产生目标分项的当前平台轮次/契约，或明确变更研究目标。
 - CS-UP-03 当前 Run 授权最多 2 次实验提交，原未知创建与 H7 已提交各占 1 次；在原创建的远端副作用无法权威确认前，不能释放其预留。即使 H7 得分确认，本 Run 的同包原样重交仍受授权上限阻止；后续须在产品授权边界内另行安排，不能直接改账本或重复未知意图。
 - CS-UP-03 H3 原 `sub_5f0ec08d05` 仍是 `unknown/create_sent`，无 Attempt ID、无 confirmed 分且预留未释放。带失败邮箱凭据的 `GET /attempts?author=<own-id>` 与匿名结果一致，均未包含私有 draft；公开列表不能充当权威对账。需平台按原账号、题目和创建时间确认是否产生私有 draft，才可对原意图释放预留或重试。H5/H6 的明确无存储回执仅适用于各自请求；H7 成功也不能为 H3 对账。额外 CPU Job 对此无诊断价值。
