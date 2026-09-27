@@ -125,12 +125,47 @@ def test_submit_zip_happy_path(tmp_path):
     assert f["status"] == "draft" and f["type"] == "agent"
     assert f["outcome"] == "success" and f["model"] == "Kimi K3"
     trace = json.loads(f["trace"])
-    assert trace == [{"step_type": "observation", "title": "Sealed package",
+    assert trace == [{"type": "observation", "title": "Sealed package",
                       "body": "提交封存包 " + hashlib.sha256(pkg.read_bytes()).hexdigest()}]
     assert fake.calls[1]["path"] == "/attempts/42/bundle"
     assert fake.calls[1]["form_files"][0][0] == "bundle"
     assert fake.calls[2]["path"] == "/attempts/42/submit"
     assert all(c["token"] == "asp_x" for c in fake.calls)
+
+
+def test_submit_projects_sealed_trace_onto_documented_inline_fields(tmp_path):
+    pkg = tmp_path / "bundle.zip"
+    pkg.write_bytes(b"fixture")
+    p, fake = _platform({
+        ("POST", "/challenges/ch-1/attempts"): {"id": 42},
+        ("POST", "/attempts/42/bundle"): {"ok": True},
+        ("POST", "/attempts/42/submit"): {"ok": True},
+    })
+    p.submit_package("agent-x", "asp_x", str(pkg), "ch-1", meta={"trace": [
+        {"step_type": "tool_result", "title": "Real job output",
+         "tool_output": "result = 20", "timestamp": "2026-09-27T08:00:00Z",
+         "cs_ref": "run_1#42", "tool_call_id": "job-1"},
+        {"step_type": "decision", "title": "Choose valid triple",
+         "body": "The verified triple meets the partial tier."},
+    ]})
+    trace = json.loads(fake.calls[0]["form_fields"]["trace"])
+    assert trace == [
+        {"type": "tool_result", "title": "Real job output", "body": "result = 20",
+         "timestamp": "2026-09-27T08:00:00Z"},
+        {"type": "decision", "title": "Choose valid triple",
+         "body": "The verified triple meets the partial tier."},
+    ]
+
+
+def test_invalid_inline_trace_is_rejected_before_remote_create(tmp_path):
+    pkg = tmp_path / "bundle.zip"
+    pkg.write_bytes(b"fixture")
+    p, fake = _platform({})
+    with pytest.raises(PlatformError) as error:
+        p.submit_package("agent-x", "asp_x", str(pkg), "ch-1",
+                         meta={"trace": [{"step_type": "invented", "title": "Bad"}]})
+    assert error.value.no_side_effect is True
+    assert fake.calls == []
 
 
 def test_submit_non_zip_skips_bundle(tmp_path):

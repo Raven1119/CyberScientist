@@ -2,7 +2,7 @@
 
 ## 已实现
 
-- CS-UP-03 W3：新增已确认普通实验基线的原样重交入口，冻结包逐字节复用、记录 `replay_of`，沿用 Run 提交预算、邮箱额度、幂等与校准绑定；前端标出重交来源。明确声明无输入的 abc 题面不再因平台额外登记的公开资源被误判为代理证据；其他需数据题仍保留原门禁。平台适配器后续 HTTP 拒绝会保存截断、脱敏的响应原因，仍不自行判定无副作用。
+- CS-UP-03 W3：新增已确认普通实验基线的原样重交入口，冻结包逐字节复用、记录 `replay_of`，沿用 Run 提交预算、邮箱额度、幂等与校准绑定；前端标出重交来源。明确声明无输入的 abc 题面不再因平台额外登记的公开资源被误判为代理证据；其他需数据题仍保留原门禁。平台适配器后续 HTTP 拒绝会保存截断、脱敏的响应原因，仍不自行判定无副作用；创建 Attempt 的行内轨迹现从 ARM `step_type` 映射到平台文档的 `type`，完整封存轨迹不变。
 - CS-UP-03 W2：题目 `scorer/` 的 `scorer.json` 声明 Python 入口、镜像与契约版本，全部文件哈希导出评分器版本。当前 Run/Trial 镜像匹配的 Bohrium 沙箱网关执行科学评分，固定 JSON 结果入 `local_scores`；本地只提取封存轨迹结构特征，轨迹分暂用低置信度占位模型，展示分按已观察公式计算。最终实验提交封存 SHA 若因轨迹事件变化，会在非轨迹字节和评分相关 manifest 一致时派生本地记录。平台分数 confirmed 后按最终封存 SHA 自动写 `score_calibration`，预测文本可引用 `local_score:<id>`；修订为非 confirmed 时配对失效。题目页显示当前评分器版本、每次提交的本地预测与平台分数偏差。新增 `cyberscientist-local-scorer`（both）和 `cyberscientist-trace-writing`（executor）两个项目 skill。
 - CS-UP-03 W1：Trial 可写 `trace_narrative.jsonl`；封存前逐行校验本 Run 事件引用、工具 ID、原文输出、退出码、时间、包内 artifact 哈希及费用，返回 `INVALID_TRACE_NARRATIVE` 的逐条原因。合法叙述与未覆盖的事件投影合并；大脑和执行器有只读 MCP 预检。已确认的实验提交可生成仅改轨迹的变体；来源包按哈希冻结，非轨迹成员逐文件比较，新提交记录来源、叙述哈希和科学产物一致性；前端提交列表显示变体来源和一致性。
 - CS-UP-03 W0：活跃 Trial 的执行器原生 usage、reasoning、消息片段会维持“正在思考”的活性窗口，私有正文不写公开事件，高频片段限频记无正文标记；超过 `stall_seconds` 完全无原生事件时排队重建执行器会话，不自动重放提示词或远程任务。带时长的大脑 `wait` 按设置上限保护等待窗口，到期恢复检测；无时长按默认静默窗口处理。无活跃 Trial 的空闲 Run 继续接受原有检测。前端可编辑 `max_brain_wait_seconds`。
@@ -29,6 +29,7 @@
 
 ## 已实际验证
 
+- CS-UP-03 W3 行内轨迹协议修正：公开 Agent API 文档列出 Attempt 创建表单步骤必填字段 `type`/`title`；本次真实失败包原适配器送出的末 20 步约 19,882 字节且只有 `step_type`。改动后同一冻结包的本地投影仍为 20 个真实步骤、17,614 字节，均有 `type` 且无 `step_type`；封存包未改。`tests/test_mailbox_platform.py tests/test_submission_integrity.py` 定向 33 passed；全套 `.venv/bin/pytest -q` 为 468 passed、1 skipped；前端 18 passed、构建通过，`compileall` 和 `git diff --check` 通过。未对平台再次 POST，故不能把字段差异断言为原 HTTP 400 根因。
 - CS-UP-03 W3：真实主选题 `local_a619cdef`、Run `run_b1ba85d4fb`，大脑与执行器均为已检查可用的 `gpt-6-sol/xhigh`；授权 180 分钟、最多 5 CPU Job、1 个沙箱累计 120 分钟、2 次实验提交、无 GPU/数据下载/收割。实际创建 1 个 CPU Job `23436974`，状态 `Finished`，受控下载 `out.zip` 1573 字节且 SHA-256 为 `ad53cde5b87b58b8724ff2c07faa97719edd0ca2fcc75f3bb3eb32aee54f2bad`；0 沙箱、0 本地科学评分、0 收割。原包默认预检 `admitted`、`not_applicable`、`error_code=null`。大脑指导的第 1 次实验提交 `sub_5f0ec08d05` 在平台创建 Attempt 时收到 HTTP 400；本地为 `unknown/create_sent`，无远端 ID、无分数，保留预留。执行器只读核对可见非草稿列表未发现匹配记录，不能排除私有草稿；大脑先暂停同一 Run，后端升级重启后的 recovery 审阅决定等待权威对账，没有重试、没有第二个 Job/Attempt。真实计费金额未知，原始回执和包仅留在忽略的 `workspace/`。W3 迁移前 SQLite 备份 14,254,080 字节于忽略目录 `.package-checks/cs-up-03-w3-20260927T075649Z/`，`replay_of` 列已存在。fake 回归覆盖原样重交、无输入门禁及 HTTP 400 详情脱敏；最终 `.venv/bin/pytest -q` 为 466 passed、1 skipped；前端首次 Vitest 进程段错误，重跑两次均 18 passed，`npm --prefix apps/web run build`、`compileall`、`git diff --check` 通过。
 - CS-UP-03 W2：迁移前本机 SQLite 备份 14,213,120 字节于忽略目录 `.package-checks/cs-up-03-w2-20260927T074036Z/`；连续两次 `db.init_db()` 后两张新表存在，随后新增评分器文件哈希列并再次重复迁移，题目 4、Run 7、提交 2、Job 28 行不变。fake 题目镜像/沙箱验收覆盖评分器文件变化引起版本变化、镜像不符时不触远端、固定格式评分入账、轨迹预测确定性、封存 SHA 变化后的科学结果派生、科学文件变化后禁止派生、平台两次评分观察 confirmed 后自动校准及撤销确认。两份项目 skill 经 `.venv/bin/python /home/wmywb/.codex/skills/.system/skill-creator/scripts/quick_validate.py` 验证。定向 `tests/test_local_scoring.py tests/test_mailboxes.py tests/test_polling.py` 为 46 passed；全套 `.venv/bin/pytest -q` 为 463 passed、1 skipped（既有回环监听限制）；`npm --prefix apps/web test -- --run` 为 18 passed，`npm --prefix apps/web run build`、`compileall`、`git diff --check` 通过。
 - CS-UP-03 W1：迁移前本机 SQLite 备份 14,213,120 字节于忽略目录 `.package-checks/cs-up-03-w1-20260927T0725Z/`；连续两次 `db.init_db()` 后新增四列，题目 4、Run 7、提交 2、Job 28 行不变。fake 测试覆盖八种指定违规加缺失引用、确定性合并、只读预检、变体非轨迹逐文件字节一致、幂等与双角色 MCP。定向 `.venv/bin/pytest -q tests/test_trace_narrative.py tests/test_mailboxes.py tests/test_submission_integrity.py tests/test_ev_upgrade.py` 为 126 passed；全套 `.venv/bin/pytest -q` 为 457 passed、1 skipped（既有回环监听限制）。`npm --prefix apps/web test -- --run` 为 18 passed，`npm --prefix apps/web run build`、`.venv/bin/python -m compileall -q src tests`、`git diff --check` 通过。
@@ -72,7 +73,7 @@
 
 ## 尚未验证
 
-- CS-UP-03 的科学评分器尚未在真实 Bohrium 沙箱运行；轨迹预测器只有占位值与低置信度。W3 已发生真实 Run、Job 和一次未确认的实验提交请求，但没有 `confirmed` 基线及原包重交；W4 的受控轨迹对照、W5 的留出验证与校准均未执行，不能声称达到第三阶段退出标准。
+- CS-UP-03 的科学评分器尚未在真实 Bohrium 沙箱运行；轨迹预测器只有占位值与低置信度。W3 已发生真实 Run、Job 和一次未确认的实验提交请求，但没有 `confirmed` 基线及原包重交；新行内轨迹映射尚未经真实平台验证。W4 的受控轨迹对照、W5 的留出验证与校准均未执行，不能声称达到第三阶段退出标准。
 - CS-UP-03 W1 的叙述变体尚未在真实平台提交与评分；包内科学产物哈希一致不等于平台科学分必然一致。本包没有模型调用、科研 Run、Job 创建或 Attempt 提交。
 - CS-UP-02 W1 的多个真实 Run 并行及真实所选模型的原生会话检查尚未验证；W2 的真实 Codex/Kimi/Prime 错误文案、限流重试效果和长时看门狗仍未在真实 Run 验证。W3 的真实 `job submit` 仍未验证。W4 沙箱在真实科研中的用途与平台实际计费单位/金额未验证；W5 的真实环境事实自动采集尚未通过新的外部回执验收。W6 的真实预测与评分因果效果尚未验证；W7 的当前平台真实分页与长期缓存行为尚未实测。本包没有新模型调用、科研 Run、Job 创建或 Attempt 提交。
 - CS-UP-01 的新封存包尚未经真实平台准入验证；真实评分器的复评时间线也未经真实环境验证。本卡未进行真实 Run、模型调用、Job、沙箱、Attempt 或平台账号访问。

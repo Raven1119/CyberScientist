@@ -134,6 +134,32 @@ def _encode_multipart(fields: dict[str, str],
     return b"".join(parts), f"multipart/form-data; boundary={boundary}"
 
 
+def _inline_trace(steps: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Project sealed ARM steps onto the documented Attempt trace form schema."""
+    allowed = {"thought", "tool_call", "tool_result", "artifact",
+               "decision", "error", "observation"}
+    if not isinstance(steps, list) or not steps:
+        raise PlatformError("行内轨迹必须是非空步骤列表，未发送", no_side_effect=True)
+    projected = []
+    for step in steps:
+        if not isinstance(step, dict):
+            raise PlatformError("行内轨迹步骤必须是对象，未发送", no_side_effect=True)
+        kind = step.get("type") or step.get("step_type")
+        title = step.get("title")
+        if not isinstance(kind, str) or kind not in allowed \
+                or not isinstance(title, str) or not title.strip():
+            raise PlatformError("行内轨迹缺少有效 type/title，未发送", no_side_effect=True)
+        item = {"type": kind, "title": title}
+        for field in ("body", "code", "duration_s", "cost_usd", "timestamp", "tokens"):
+            if field in step:
+                item[field] = step[field]
+        if "body" not in item and kind == "tool_result" \
+                and isinstance(step.get("tool_output"), str):
+            item["body"] = step["tool_output"]
+        projected.append(item)
+    return projected
+
+
 class BohriumPlaygroundPlatform:
     """Bohrium Playground 真实适配器（端点形状见模块 docstring 来源）。
 
@@ -243,7 +269,7 @@ class BohriumPlaygroundPlatform:
             "status": "draft",
             "outcome": meta.get("outcome") or "partial",
             "harness": meta.get("harness") or "CyberScientist",
-            "trace": json.dumps(trace, ensure_ascii=False),
+            "trace": json.dumps(_inline_trace(trace), ensure_ascii=False),
         }
         if meta.get("model"):
             fields["model"] = meta["model"]
