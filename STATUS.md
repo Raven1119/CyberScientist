@@ -2,6 +2,7 @@
 
 ## 已实现
 
+- CS-UP-03R 全账号轨迹审计：新增只读离线分析器 `checks/analyze_owned_traces.py`，对本人账号列表、API 轨迹、直接代理视图和 bundle 的本机原始文件逐个核对 SHA-256，分开统计列表声称、实际取回、包内选中行与分数配对；不输出原始轨迹正文或凭据。完整结论见 `docs/OWNED_TRACE_ANALYSIS_2026-09-28.md`。
 - CS-UP-03R 补充：只读历史评分审计新增预设 70 分界的分段展示分候选核查，输出误差及能区分公式的相邻轨迹分范围；生产预测器和评分契约未改。
 - CS-UP-03R W3–W5：新增历史展示分双公式核查和轨迹证据充分性检查，均从 W2 的哈希核验数据表重建本机审计结果。`score_calibration.source` 以只加列迁移区分 `realtime` / `historical`，受控校准写入可指定来源，前端显示来源；两个项目 skill 与一条待审批全局经验候选记录本轮配对证据边界。真实历史数据缺同包本地评分，所以未创建新题目评分器或轨迹预测器权重，也未伪造校准行。
 - CS-UP-03R W2：`checks/build_scorer_dataset.py` 从本机忽略目录内逐文件 SHA-256 核验的回执、题目快照与 bundle 重建 `dataset.jsonl`；按轮次窗口、状态和评分字段区分历史双分项、赛后通用评分及未确认评分。轨迹选行复用生产 `trace_selection`，科学产物仅摘要及哈希入表。匿名背景分数另建 `background.jsonl`，逐页校验总数、字节数、哈希和字段白名单；两张表均不提交。
@@ -38,6 +39,7 @@
 
 ## 已实际验证
 
+- CS-UP-03R 全账号扩查（2026-09-28）：当前操作者 `/auth/me` 与 `/agent/register` 核验 15 个关联代理，数据库为 1 个实验、0 个收割邮箱；已确认作者列表共 89 条可见提交。89 次 `/trace` GET 均有 HTTP 成功响应，17 条列表声称有轨迹，实际用现有身份取回 8 条、165 步；9 条声称有却返回空数组，逐条 `/export-arm` 均 HTTP 403，详情无其他内容字段。直接实验邮箱取回 3 条轨迹共 147 步与 3 个 bundle，另一代理可下载 2 个 bundle；合计 5 包、4 个不同 SHA。`PYTHONPATH=src .venv/bin/python checks/analyze_owned_traces.py --root .package-checks/trace-all-20260928` 输出 75 条旧轨迹分、0 条有轨迹内容配对。新分析器合成测试 4 passed；全套 `.venv/bin/pytest -q` 为 504 passed、1 skipped，前端 `npm --prefix apps/web test -- --run` 为 18 passed，前端构建、`compileall`、`git diff --check` 通过。原始文件、失败回执及 SHA-256 清单仅在忽略目录，未建 Run、模型、Job、沙箱、Attempt 或平台写请求。
 - CS-UP-03R 本人轨迹复查（2026-09-28）：只读获取当前 `GET /api/docs/dev/AGENT_API.md` 46,268 字节，官方列出 `GET /attempts/{id}/trace`。既有实验邮箱 3 条提交的轨迹曾取回 10、6、131 步；本轮以其直接凭据再取其中一条，HTTP 200、10 步。对操作者已确认关联的 3 个历史代理，当前操作者凭据逐条只读查 72 条详情，72 次 HTTP 200、`traceCount>0` 为 0、内容非空为 0、bundle/raw messages 可用为 0。每个代理各抽 1 条：匿名与操作者 `/trace` 均 HTTP 200、0 步；操作者 `/bundle` 和 `/export-arm` 均 HTTP 403。审计汇总 SHA-256 为 `9b9a24799ce83c42cb1528240ec3b0ab542aed5880c3a94b217e2660a4ad2be2`，原始回执只在本机忽略目录 `.package-checks/trace-self-20260928/`。仅发生官方文档与已确认本人提交的 GET，无模型、Job、Run、Attempt 或平台写请求。
 - CS-UP-03R 分数层补充核查：`PYTHONPATH=src .venv/bin/python checks/analyze_historical_scores.py --root .package-checks/scorer-re-20260927T132218Z` 对本人 58 条完整实时记录试算 70 分界下的替代分段计算，0 条误差大于 0.001，最大绝对误差约 0.000048；可区分的低分样本最高为 69，高分样本最低为 75.925。70 分界来自主办方告知，样本不能独立验证它；替代计算不能解释 10 条记录为何违反告知的 30–70 规则。`.venv/bin/pytest -q` 为 500 passed、1 skipped；`PATH="$HOME/.local/bin:$PATH" npm --prefix apps/web test -- --run` 为 18 passed，`PATH="$HOME/.local/bin:$PATH" npm --prefix apps/web run build`、`.venv/bin/python -m compileall -q src checks tests` 和 `git diff --check` 通过。没有新 Run、模型、Job、沙箱、Attempt 或平台写请求。
 - CS-UP-03R 补充核查：同一批 71 条实时双分项回执的 `harbor_reward` 与 `harbor_score` 全部满足 `harbor_score=100×harbor_reward`，最大绝对误差 0；71 条的回执字段 `harbor_replay_executed` 均为 1。`checks/analyze_historical_scores.py` 已将此关系逐条核验并保留本机审计结果，合成反例测试确认不匹配会被计数。它只证明奖励值到百分制分数的换算，不证明从缺失的科学产物计算奖励值的规则。本次 `.venv/bin/pytest -q` 为 499 passed、1 skipped；前端 18 passed、构建成功，`compileall` 和 `git diff --check` 通过。
@@ -99,6 +101,7 @@
 
 ## 尚未验证
 
+- CS-UP-03R 全账号轨迹扩查：9 条列表有轨迹却读到空数组的记录是否能由代理本人 token 或平台后台归档恢复，未知；当前项目凭据库没有这些代理的直接 token。`GET /attempts` 不提供 total，不能确认私有草稿完整性。API 轨迹与包内选中轨迹的差异已确认，但平台对每条旧提交实际采用哪个输入评分、以及重复包的评分噪声，仍无可配对最终回执。75 条旧轨迹分缺内容，≥70/≥80 预测误差不可计算。
 - CS-UP-03R：上述 72 条旧提交在平台后台是否另有仅代理本人可读的归档，本轮不能判定；三个历史代理的直接 token 不在项目现有密钥库。30–70 轨迹因子门槛由主办方告知（用户转述），但这批历史分数中的 10 条低分段冲突尚无权威解释；分段替代计算只是样本内描述。
 - CS-UP-03R W3–W5：10 条旧实时展示分为何违反主办方告知的公式，现有回执无法判定；所有逐题科学评分器和轨迹预测器的外部验证仍缺原始配对输入。下一实时轮次的同包重复、单因素对照和留出实验尚未执行；全局经验候选也未获用户审批。
 - CS-UP-03R W2：71 条实时轮次双分项记录中可取得的原始 bundle、轨迹和科学文件数为 0；3 个可下载 bundle 属赛后通用评分或待复核。创建表单的行内 trace 未见于已收回的详情或本地提交账本，保持 `unavailable_not_in_receipt`。因此当前数据尚不能验证逐题科学评分器或轨迹特征对分数的预测；W3/W4 只分析可核对的分数关系及缺证边界。
@@ -119,6 +122,7 @@
 
 ## 阻塞项
 
+- CS-UP-03R 轨迹评分器验证：扩查全部当前可见本人账号后，75 条历史 0–100 轨迹分仍没有可取回的对应轨迹；另外 8 条可读轨迹无旧分项。当前无法计算内容到旧轨迹分的误差或阈值准确率。恢复途径需要本人代理的有效直接凭据、平台支持的操作者归档读取，或未来保留完整源轨迹的新实时轮次；本轮未重新生成 token 或发起平台写请求。
 - CS-UP-03 W3–W5 的目标评分契约当前不可重现实测：主选与指定备选题均已过轮次，晚交回执采用通用 ARM 评分；当前协议无法给出任务卡要求的独立 `harbor_score` / `trace_score` 及其 ≥70/≥80 轨迹阈值。公开历史双分项和本轮通用分不可混合作受控拟合；任务卡要求的同包双基线、W4 对照和 W5 留出标准尚未达到。继续在备选 MCM 付费计算或提交不能解决该契约缺口，需有能产生目标分项的当前平台轮次/契约，或明确变更研究目标。
 - CS-UP-03 当前 Run 授权最多 2 次实验提交，原未知创建与 H7 已提交各占 1 次；在原创建的远端副作用无法权威确认前，不能释放其预留。即使 H7 得分确认，本 Run 的同包原样重交仍受授权上限阻止；后续须在产品授权边界内另行安排，不能直接改账本或重复未知意图。
 - CS-UP-03 H3 原 `sub_5f0ec08d05` 仍是 `unknown/create_sent`，无 Attempt ID、无 confirmed 分且预留未释放。带失败邮箱凭据的 `GET /attempts?author=<own-id>` 与匿名结果一致，均未包含私有 draft；公开列表不能充当权威对账。需平台按原账号、题目和创建时间确认是否产生私有 draft，才可对原意图释放预留或重试。H5/H6 的明确无存储回执仅适用于各自请求；H7 成功也不能为 H3 对账。额外 CPU Job 对此无诊断价值。
