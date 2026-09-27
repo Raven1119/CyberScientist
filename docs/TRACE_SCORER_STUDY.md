@@ -50,3 +50,5 @@ H7 的真实 scorecard 返回 `executability=0.0`、`output_coverage=0.0`、`pac
 2026-09-27 的独立 Run `run_ed3e28c12a` 复用 H1 已取回并核验的纪录三元组科学产物，在当前 Trial 重新封存，产品预检通过；题目声明镜像中的 CPU 沙箱运行项目版 `abc-rubric-1` 评分器并写入 `local_scores.id=ls_cc04d41aabb1`。记录的封存 SHA-256 为 `a9def16e7de7f3a6cdab088a775dad7eacedeeea78b295b7e5ac0a3bf75f2703`，评分器哈希版本为 `83c33775ee2e8b33c8241e117492e6aa03d31e583268986e22fae25523f3a071`；结果 `radical=15042`、`q≈1.6299116841`、题面科学分 **20**，置信度 medium。沙箱删除经只读对账确认为回收。此 Run 没有 Job、数据下载或 Attempt；回执与包仅在忽略的 Trial 目录。
 
 这个结果验证了项目本地科学评分器对一条已知有效样本的执行链路，不是对平台当前展示分的校准。H7 的 41.43 属晚交通用 ARM 评分、使用不同的最终封存包，而且没有 `harbor_score`/`trace_score`；因此 `score_calibration` 仍没有可用的双分项配对。轨迹模型保持低置信度占位，W4 的因子效果、≥70/≥80 判定、留出误差和 W5 退出标准均无法计算。
+
+2026-09-27 12:11 UTC 再以无凭据公开 GET 核对：两题仍在同一已结束轮次、采用 `arm_v1_1_generic` 且无专属 grader；当前晚交样本仍只有通用五维 scorecard。H7 Attempt `46889` 本身及 `/score` 回执也没有旧 `harbor_score`/`trace_score`。公开协议的轨迹分档说明仍位于 `trace_anti_fraud.scoring`，其 0/0.5/1 的 `trace_quality` 不能代替旧轨迹分。字段级脱敏摘要及 SHA-256 见本机忽略目录 `.package-checks/cs-up-03-contract-refresh-20260927T121144Z/summary.json`；没有新增实验提交或科研计算。W3–W5 的原退出标准保持不变，当前仍未达到。
