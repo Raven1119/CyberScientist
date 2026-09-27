@@ -24,6 +24,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -153,11 +154,50 @@ def _inline_trace(steps: list[dict[str, Any]]) -> list[dict[str, Any]]:
         for field in ("body", "code", "duration_s", "cost_usd", "timestamp", "tokens"):
             if field in step:
                 item[field] = step[field]
+        if len(title) > 300:
+            # The create form limits title to 300 characters. Keep the full
+            # wording in body; the sealed ARM trace itself is unchanged.
+            item["title"] = title[:297] + "..."
+            body = item.get("body")
+            item["body"] = title + ("\n\n" + body if isinstance(body, str) and body else "")
+        if "timestamp" in item:
+            value = item["timestamp"]
+            if not isinstance(value, str):
+                raise PlatformError("行内轨迹 timestamp 必须是时间字符串，未发送",
+                                    no_side_effect=True)
+            try:
+                instant = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            except ValueError as exc:
+                raise PlatformError("行内轨迹 timestamp 无效，未发送",
+                                    no_side_effect=True) from exc
+            if instant.tzinfo is None or instant.utcoffset() is None:
+                raise PlatformError("行内轨迹 timestamp 缺少时区，未发送",
+                                    no_side_effect=True)
+            if len(value) > 30:
+                value = instant.astimezone(timezone.utc).isoformat(
+                    timespec="microseconds").replace("+00:00", "Z")
+                if len(value) > 30:
+                    raise PlatformError("行内轨迹 timestamp 超过平台长度上限，未发送",
+                                        no_side_effect=True)
+                item["timestamp"] = value
         if "body" not in item and kind == "tool_result" \
                 and isinstance(step.get("tool_output"), str):
             item["body"] = step["tool_output"]
         projected.append(item)
     return projected
+
+
+def explicit_create_rejection(error: str | None) -> bool:
+    """A narrow server statement proving an Attempt create stored nothing."""
+    if not error or not re.match(
+            r"^平台接口 POST /challenges/[^/]+/attempts 返回 HTTP 400：", error):
+        return False
+    try:
+        detail = json.loads(error.split("：", 1)[1])
+    except (ValueError, IndexError):
+        return False
+    return (isinstance(detail, dict) and isinstance(detail.get("error"), str)
+            and detail["error"].endswith("; nothing was stored"))
 
 
 class BohriumPlaygroundPlatform:
@@ -206,10 +246,9 @@ class BohriumPlaygroundPlatform:
             safe_detail = public_feedback(parsed_detail, token, self.operator_token)
             detail = (json.dumps(safe_detail, ensure_ascii=False)
                       if isinstance(safe_detail, (dict, list)) else str(safe_detail))[:300]
-            raise PlatformError(
-                f"平台接口 {method} {path} 返回 HTTP {exc.code}"
-                + (f"：{detail}" if detail else "")
-            ) from exc
+            message = (f"平台接口 {method} {path} 返回 HTTP {exc.code}"
+                       + (f"：{detail}" if detail else ""))
+            raise PlatformError(message, no_side_effect=explicit_create_rejection(message)) from exc
         except urllib.error.URLError as exc:
             raise PlatformError(
                 f"平台接口 {method} {path} 网络失败: {exc.reason}") from exc

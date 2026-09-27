@@ -14,7 +14,8 @@ import zipfile
 import pytest
 
 from cyberscientist.mailbox_platform import (
-    BohriumPlaygroundPlatform, PlatformError, _encode_multipart, get_platform)
+    BohriumPlaygroundPlatform, PlatformError, _encode_multipart,
+    explicit_create_rejection, get_platform)
 
 
 class FakeHTTP:
@@ -93,6 +94,25 @@ def test_http_rejection_keeps_redacted_reason_without_assuming_no_side_effect(mo
     assert error.value.no_side_effect is False
 
 
+def test_create_rejection_with_explicit_no_storage_releases_only_that_request(monkeypatch):
+    body = json.dumps({"error": 'trace step 1 field "timestamp" must be a string '
+                              'of at most 30 characters, got str; nothing was stored'}).encode()
+    def reject(*_args, **_kwargs):
+        raise urllib.error.HTTPError("https://play.bohrium.com/api/challenges/c/attempts",
+                                     400, "Bad Request", {}, io.BytesIO(body))
+    monkeypatch.setattr(urllib.request, "urlopen", reject)
+    p = BohriumPlaygroundPlatform("https://play.bohrium.com/api")
+    with pytest.raises(PlatformError) as error:
+        p._http("POST", "/challenges/c/attempts", token="asp_secret",
+                form=({"status": "draft"}, []))
+    assert error.value.no_side_effect is True
+    assert explicit_create_rejection(str(error.value))
+    assert "asp_secret" not in str(error.value)
+    assert not explicit_create_rejection("平台接口 POST /challenges/c/attempts 返回 HTTP 400")
+    assert not explicit_create_rejection(
+        "平台接口 POST /attempts/1/bundle 返回 HTTP 400：" + body.decode())
+
+
 def test_submit_requires_secret_and_challenge(tmp_path):
     pkg = tmp_path / "result_package.json"
     pkg.write_text("{}", encoding="utf-8")
@@ -155,6 +175,49 @@ def test_submit_projects_sealed_trace_onto_documented_inline_fields(tmp_path):
         {"type": "decision", "title": "Choose valid triple",
          "body": "The verified triple meets the partial tier."},
     ]
+
+
+def test_long_inline_timestamp_preserves_instant_with_utc_z(tmp_path):
+    pkg = tmp_path / "bundle.zip"
+    pkg.write_bytes(b"fixture")
+    p, fake = _platform({
+        ("POST", "/challenges/ch-1/attempts"): {"id": 42},
+        ("POST", "/attempts/42/bundle"): {"ok": True},
+        ("POST", "/attempts/42/submit"): {"ok": True},
+    })
+    p.submit_package("agent-x", "asp_x", str(pkg), "ch-1", meta={"trace": [
+        {"step_type": "observation", "title": "Real event",
+         "timestamp": "2026-09-27T14:57:38.510551+05:30"}]})
+    value = json.loads(fake.calls[0]["form_fields"]["trace"])[0]["timestamp"]
+    assert value == "2026-09-27T09:27:38.510551Z" and len(value) <= 30
+
+
+def test_long_inline_title_moves_full_wording_to_body(tmp_path):
+    pkg = tmp_path / "bundle.zip"
+    pkg.write_bytes(b"fixture")
+    p, fake = _platform({
+        ("POST", "/challenges/ch-1/attempts"): {"id": 42},
+        ("POST", "/attempts/42/bundle"): {"ok": True},
+        ("POST", "/attempts/42/submit"): {"ok": True},
+    })
+    title = "Recorded observation. " * 110
+    p.submit_package("agent-x", "asp_x", str(pkg), "ch-1", meta={"trace": [
+        {"step_type": "observation", "title": title, "body": "Original body"}]})
+    step = json.loads(fake.calls[0]["form_fields"]["trace"])[0]
+    assert len(step["title"]) == 300
+    assert step["body"] == title + "\n\nOriginal body"
+
+
+@pytest.mark.parametrize("value", ["not-a-time", "2026-09-27T09:27:38", 123])
+def test_invalid_inline_timestamp_stops_before_create(tmp_path, value):
+    pkg = tmp_path / "bundle.zip"
+    pkg.write_bytes(b"fixture")
+    p, fake = _platform({})
+    with pytest.raises(PlatformError) as error:
+        p.submit_package("agent-x", "asp_x", str(pkg), "ch-1", meta={"trace": [
+            {"step_type": "observation", "title": "Real event", "timestamp": value}]})
+    assert error.value.no_side_effect is True
+    assert fake.calls == []
 
 
 def test_invalid_inline_trace_is_rejected_before_remote_create(tmp_path):

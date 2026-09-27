@@ -2,7 +2,7 @@
 
 ## 状态与证据边界
 
-本文件先登记实验设计；截至 2026-09-27，**没有可用于本实验的 confirmed 基线**。主选 abc 题目的 `run_b1ba85d4fb` 只有一次创建 Attempt 返回 HTTP 400 的 `unknown/create_sent` 记录，远端 ID 和评分均未知。用户要求停止等待后，同一 Run 完成只读 H4 契约审计，大脑因私有草稿无法权威对账而暂停 Run；审计结论见 `docs/DECISIONS.md`。以下表格是预定对照，不是已执行结果。只有 W3 的正常封存包及原包逐字节重交都得到 confirmed 平台分后，才开始 W4 变体和拟合。
+本文件先登记实验设计；截至 2026-09-27 10:00 UTC，**没有可用于本实验的 confirmed 双基线**。主选 abc 题目的 `run_b1ba85d4fb` 历经创建接口协议诊断后，H7 已得到真实 Attempt `46889`、bundle `ready`、正式提交和平台 `scoreIsFinal=true` 的展示分 41.43；本地账本只完成首次观察，仍标 provisional。原 H3 创建请求仍为 `unknown/create_sent`；H5/H6 的拒绝明确 `nothing was stored`，已按证据记为 failed。H7 的 Attempt 状态为 `late_scored`，执行器记录它不计入轮次或赛季总分。以下对照表中的 W4 变体均未执行；只有 W3 的正常封存包及原包逐字节重交都得到 confirmed 平台分后，才开始拟合。
 
 所有提交走实验邮箱，收割邮箱使用次数为零。总实验提交不超过任务卡的 30 次；同一道题每个邮箱最多 10 次。平台创建、bundle 上传、正式 submit、最终评分及参赛有效性分别看回执，不以本地准入代替平台评分。任一创建请求状态为 unknown 且缺少 Attempt ID 时，不以新幂等键对同一意图重试。
 
@@ -38,7 +38,7 @@ V1–V8 一次只变一个因素；无法保持其他因素相同时不把分差
 
 | 组 | Submission / 包 SHA-256 | 预先预测 | harbor_score | trace_score | displayScore | 结果判定 |
 |---|---|---|---:|---:|---:|---|
-| B0 | 尚无 confirmed 来源 | 未冻结 | unknown | unknown | unknown | 未执行 |
+| B0 候选 | `sub_2d30d5b21d` / `11b3264299e4cf7af1c706b27f1b834bd42b9cd15f7c0d7c605b51ac415025fa` | 预计创建更可能通过；分数方向 unknown | unknown | unknown | 41.43（平台 final；本地 provisional） | Attempt `46889`，bundle ready，submitted，late_scored；待二次观察确认 |
 | B0r | 等 B0 confirmed 后原包重交 | 未冻结 | unknown | unknown | unknown | 未执行 |
 
-当前无法计算噪声、因素效应、阈值准确率或 W5 退出容差。主选题创建 Attempt 的 HTTP 400 原因与私有草稿状态仍 unknown，故未执行任何 W4 变体，也没有用公开他人的提交替代受控实验。
+H7 的真实 scorecard 返回 `executability=0.0`、`output_coverage=0.0`、`packaging=0.67`、`result_fidelity=1.0`、`trace_quality=1.0`；评分接口没有独立 `harbor_score` 或 `trace_score`。不能把 `trace_quality` 直接当作任务卡所设想的 0–100 轨迹分，也不能倒推出科学分 × 轨迹因子。预登记的两因子分析须先核实当前 abc 评分契约是否提供可辨识的分项。当前也无法计算重复噪声、因素效应、阈值准确率或 W5 退出容差。原 H3 的 HTTP 400 具体原因与私有草稿状态仍 unknown；未执行 W4 变体，也没有用公开他人的提交替代受控实验。

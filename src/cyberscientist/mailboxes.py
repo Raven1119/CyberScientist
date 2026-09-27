@@ -18,7 +18,7 @@ from typing import Any
 
 from . import arm_admission, config, datasets, db, experience_context, package_seal, trace_narrative, trace_selection
 from .mailbox_platform import (MailboxPlatform, PlatformError, final_score,
-                               get_platform, public_feedback)
+                               explicit_create_rejection, get_platform, public_feedback)
 
 
 class MailboxError(Exception):
@@ -631,6 +631,26 @@ def _perform_submission(sid: str, platform: MailboxPlatform, challenge_id: str) 
                            {"submission_id":sid,"error":error,"is_demo":platform.is_demo},
                            trial_id=row["trial_id"])
     return dict(db.query_one("SELECT * FROM submissions WHERE id=?",(sid,))) | {"deduplicated":False}
+
+
+def reconcile_explicit_create_rejection(submission_id: str) -> dict[str, Any]:
+    """Release only a create reservation with a persisted server no-storage claim."""
+    with db.transaction() as conn:
+        row = conn.execute("SELECT * FROM submissions WHERE id=?", (submission_id,)).fetchone()
+        if row is None:
+            raise MailboxError("NOT_FOUND", "提交不存在")
+        if (row["status"] != "unknown" or row["stage"] != "create_sent"
+                or row["platform_ref"] is not None or row["reservation_released"]
+                or not explicit_create_rejection(row["error"])):
+            raise MailboxError("RECONCILIATION_NOT_PROVEN",
+                               "没有明确的创建未存储回执，保留 unknown 与预留")
+        conn.execute("UPDATE submissions SET status='failed',reservation_released=1 WHERE id=?",
+                     (submission_id,))
+        db.append_event_tx(conn, row["run_id"], "controller", "submission.failed",
+                           {"submission_id": submission_id,
+                            "reason": "platform_create_nothing_stored",
+                            "reconciled": True}, trial_id=row["trial_id"])
+    return dict(db.query_one("SELECT * FROM submissions WHERE id=?", (submission_id,)))
 
 
 def _form_trace(package_bytes: bytes) -> list[dict[str, Any]]:

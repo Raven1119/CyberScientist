@@ -68,6 +68,34 @@ def _extra_run(index: int, *, max_submissions: int = 20) -> str:
     return rid
 
 
+def test_reconcile_only_explicit_create_nothing_stored():
+    _seed_challenge()
+    mailboxes.register_experiment(1)
+    rid = _make_run(max_submissions=2)
+    _make_package(rid)
+    first = mailboxes.submit_experiment(rid, 'trial_mb1', None, 'unknown-create')
+    second = mailboxes.submit_experiment(rid, 'trial_mb1', None, 'rejected-create')
+    db.execute("UPDATE submissions SET status='unknown',stage='create_sent',"
+               "platform_ref=NULL,reservation_released=0,error=? WHERE id=?",
+               ('平台接口 POST /challenges/MB/attempts 返回 HTTP 400', first['id']))
+    db.execute("UPDATE submissions SET status='unknown',stage='create_sent',"
+               "platform_ref=NULL,reservation_released=0,error=? WHERE id=?",
+               ('平台接口 POST /challenges/MB/attempts 返回 HTTP 400：'
+                '{"error": "trace step 1 field \\"timestamp\\" must be short; '
+                'nothing was stored"}', second['id']))
+    with pytest.raises(mailboxes.MailboxError, match='没有明确'):
+        mailboxes.reconcile_explicit_create_rejection(first['id'])
+    result = mailboxes.reconcile_explicit_create_rejection(second['id'])
+    assert result['status'] == 'failed' and result['reservation_released'] == 1
+    assert db.query_one('SELECT reservation_released FROM submissions WHERE id=?',
+                        (first['id'],))['reservation_released'] == 0
+    with pytest.raises(mailboxes.MailboxError, match='没有明确'):
+        mailboxes.reconcile_explicit_create_rejection(second['id'])
+    event = db.query_one("SELECT payload FROM events WHERE run_id=? AND type='submission.failed'"
+                         " ORDER BY seq DESC LIMIT 1", (rid,))
+    assert json.loads(event['payload'])['reason'] == 'platform_create_nothing_stored'
+
+
 def test_submission_prediction_is_frozen_and_inherited_by_harvest():
     _seed_challenge()
     mailboxes.register_experiment(1)
