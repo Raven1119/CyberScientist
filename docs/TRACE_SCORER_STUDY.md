@@ -52,3 +52,5 @@ H7 的真实 scorecard 返回 `executability=0.0`、`output_coverage=0.0`、`pac
 这个结果验证了项目本地科学评分器对一条已知有效样本的执行链路，不是对平台当前展示分的校准。H7 的 41.43 属晚交通用 ARM 评分、使用不同的最终封存包，而且没有 `harbor_score`/`trace_score`；因此 `score_calibration` 仍没有可用的双分项配对。轨迹模型保持低置信度占位，W4 的因子效果、≥70/≥80 判定、留出误差和 W5 退出标准均无法计算。
 
 2026-09-27 12:11 UTC 再以无凭据公开 GET 核对：两题仍在同一已结束轮次、采用 `arm_v1_1_generic` 且无专属 grader；当前晚交样本仍只有通用五维 scorecard。H7 Attempt `46889` 本身及 `/score` 回执也没有旧 `harbor_score`/`trace_score`。公开协议的轨迹分档说明仍位于 `trace_anti_fraud.scoring`，其 0/0.5/1 的 `trace_quality` 不能代替旧轨迹分。字段级脱敏摘要及 SHA-256 见本机忽略目录 `.package-checks/cs-up-03-contract-refresh-20260927T121144Z/summary.json`；没有新增实验提交或科研计算。W3–W5 的原退出标准保持不变，当前仍未达到。
+
+进一步核对本机 H7 两份评分回执的字段路径：旧双分项既不在 Attempt 的嵌套 `scorecard`，也不在 `/score` 或 `scoring_details`；后者只有参赛资格、可评分性、来源和文字摘要等字段。另以无凭据 GET 检查三个当前开放题目，分别观察到 `human_review_only` 与 `llm_judge_topic_markdown`（后者声明通用 ARM 回退）；开放状态本身并不代表旧双分项可用。这些检查没有创建 Run、Job 或 Attempt。已通过项目原生经验存储新增全局候选 `exp_cs_up03_scoring_contract_20260927`，记录“先核对当前策略及真实分项，再决定能否拟合”的适用边界；候选未获用户审批，不会作为全局 active 经验注入。
