@@ -42,6 +42,7 @@
 
 ## 已实际验证
 
+- 本轮离线复核 63 份历史双分项回执及 AgentMaster 封存输出：剔除错包后，FigQA-0177 的 10 份 B 答案科学分均为 100、1 份 C 答案为 0；separable-covariance 的 5 份结构有效答案均给出 `1/35`，科学分仍有 62/70/78 三档。三组跨题同 SHA-256 原生轨迹的分数各不相同，且每组较晚的 Attempt 都有 `N01` 诊断。只做历史文件读取，未调用模型、平台、Job 或 Attempt；推断边界见 `docs/HISTORICAL_SCORER_PATTERN_AUDIT_2026-09-28.md`。
 - 本轮用 `python` 对 AgentMaster 148 份已有 `submission/stdout.log` 做只读包哈希与题目标识交叉核对：145 份生成/接收哈希及目标一致，3 份同时发生哈希与清单题目错配；三条可读科学分均为 0。两份错配的接收哈希逐字节等于另一道题同期 Attempt 的生成哈希。完整依据及限制见 `docs/HISTORICAL_SCORER_PATTERN_AUDIT_2026-09-28.md`；本轮未访问平台或创建 Run/Job/Attempt。
 - 本机另有与先前 71 条不重叠的 63 份已评分 AgentMaster 回执，直接含 `trace_decision`、`trace_factor`、原因代码和引擎版本；其中 1 份在单独 `harvest/` 目录。旧组 71/71 上传副本与回执原生轨迹哈希一致；新组 57 份命令所指文件直接匹配，3 份从同迭代副本、3 份从其他迭代副本按哈希找回，故两组共 134 份原生轨迹字节可核对，文件来源差异单列。回执哈希确认 3 组跨题复用，和 3 条 `N01` 诊断相符。新组 62 份 `--outputs` 与封存快照逐文件一致，`harvest/` 那份无输出快照；63/63 的历史因子为 `accept→1`、`review→trace_score/100`、`block→0`，展示分乘法最大误差约 `1×10⁻⁷`。封存组 48 个同题输出树组中 1 组同字节答案出现 0 与 100 两种科学分，原因未知。本次 `.venv/bin/python -m pytest -q` 为 `518 passed, 1 skipped`，前端 `18 passed` 且构建通过，定向 fake 测试为 `6 passed`，所改 Python 文件 `compileall` 与 `git diff --check` 通过。
 - 本轮只读审计对 71 条 AgentMaster 提交逐文件核对 `--outputs` 与封存科学输出，71/71 一致；58 条具有最终双分项。轨迹事件数与失败命令数的单特征阈值在整题留出时，≥70 和 ≥80 的普通准确率均未超过训练折多数类。`.venv/bin/python -m pytest -q` 为 `512 passed, 1 skipped`；脚本定向测试 `5 passed`，前端 `npm --prefix apps/web test -- --run` 为 `18 passed`，前端构建和所改 Python 文件 `compileall` 通过。当前 shell 初次未找到 `npm`，随后仅为本次命令把已安装 Linux Node 22 的 bin 加入 PATH 后成功；没有改全局配置。
