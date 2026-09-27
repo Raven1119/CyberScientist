@@ -2,6 +2,8 @@
 
 ## 已实现
 
+- CS-UP-03R W3–W5：新增历史展示分双公式核查和轨迹证据充分性检查，均从 W2 的哈希核验数据表重建本机审计结果。`score_calibration.source` 以只加列迁移区分 `realtime` / `historical`，受控校准写入可指定来源，前端显示来源；两个项目 skill 与一条待审批全局经验候选记录本轮配对证据边界。真实历史数据缺同包本地评分，所以未创建新题目评分器或轨迹预测器权重，也未伪造校准行。
+- CS-UP-03R W2：`checks/build_scorer_dataset.py` 从本机忽略目录内逐文件 SHA-256 核验的回执、题目快照与 bundle 重建 `dataset.jsonl`；按轮次窗口、状态和评分字段区分历史双分项、赛后通用评分及未确认评分。轨迹选行复用生产 `trace_selection`，科学产物仅摘要及哈希入表。匿名背景分数另建 `background.jsonl`，逐页校验总数、字节数、哈希和字段白名单；两张表均不提交。
 - CS-UP-03R W1：新增 `checks/inventory_own_attempts.py`，只对已核验作者列表执行 GET；缺账号专属凭据时严格只保存公开分数和元数据，带直接凭据时逐条保存详情、评分、轨迹及可用 bundle；账户计数、内容缺项、本地 Submission 关联和每个原始文件 SHA-256 写入本机清单。测试使用 fake 响应核对作者隔离和内容门禁。
 - CS-UP-03 abc 科学评分器：项目内 `challenges/local_a619cdef/scorer/` 按题面验算三元组、素因子、radical 与分档；超出确定性素性或数值精度范围时返回未验证错误，不伪造 0 分。项目源码优先于历史工作区评分器，生成的 `__pycache__`/字节码不参与文件哈希或版本。Codex 执行器白名单现包含产品已实现的沙箱、包预检、本地评分、叙述预检和数据工具；这些入口仍受后端 Run 能力令牌与授权门禁约束。
 - CS-UP-03 沙箱评分链路修复：`cpu` 规格在创建前校验为 `2c4g` 形态；明确的 HTTP 400 `INVALID_ARGUMENTS` 记为失败，历史此类 unknown 只有在原 request ID 查询为 404 时才释放预留。MCP 桥对可能持续执行的沙箱/评分调用延长等待且不自动重放；网关在沙箱执行或文件传输未完成时拒绝删除，并在执行/传输登记时重新核对 active 状态。
@@ -35,6 +37,8 @@
 
 ## 已实际验证
 
+- CS-UP-03R W3–W5：71 条实时双分项中 58 条有完整展示分；按误差 ≤0.001，30 条仅符合任务卡公式、18 条同时符合两种公式、10 条仅符合 `harbor × trace/100`，其余 13 条缺展示分。实时组可配对原始科学包和轨迹均为 0，故科学评分器及 ≥70/≥80 轨迹预测的验证误差不可计算；同包重复噪声 unknown。匿名背景 3406 条有轨迹分，2004 条低于 70。迁移前 SQLite 在线备份 22,241,280 字节于本机忽略目录，`db.init_db()` 重复两次后来源列仅 1 个、校准行仍 0。原生经验接口写入的全局候选回读为 `candidate`，未审批激活。最终 `.venv/bin/pytest -q` 为 498 passed、1 skipped；前端 18 passed、构建成功，`.venv/bin/python -m compileall -q src checks tests` 与 `git diff --check` 通过。本轮无新科研 Run、模型、Job、沙箱、Attempt 或平台写请求。
+- CS-UP-03R W2：`PYTHONPATH=src .venv/bin/python checks/build_scorer_dataset.py --root .package-checks/scorer-re-20260927T132218Z` 从哈希核验的本机原始资料生成 75 条本人记录和 3809 条独立匿名背景记录，模式计数为实时双分项 71、轮次外历史分项 1、晚交通用 2、待复核 1；实时组分布于 7 题且可取回 bundle 为 0。本人表 SHA-256 为 `f4186803bb61838af62e67adb8021c112451a24c0f37c5f2ee441392f6e531fe`，背景表 SHA-256 为 `3d329d73a5fa8b8d602bd6badd2001240d26c5c922da64604543e52bff6b4260`。fake 数据集重建测试 4 passed；全套 `.venv/bin/pytest -q` 为 493 passed、1 skipped，前端 18 passed 且构建成功，`.venv/bin/python -m compileall -q src checks tests` 和 `git diff --check` 通过。仅发生匿名与本人授权的只读 GET，没有新 Run、模型、Job、沙箱、Attempt 或平台写请求。
 - CS-UP-03R W1：官方 Agent API 文档只读核对了 Attempt/score/trace/bundle GET；本机 4 个指定范围账号由 `/auth/me` 或操作者已确认的关联清单核验。作者过滤列表共 75 条：有直接凭据的 1 个账号 3 条、3 个无直接凭据的历史账号 72 条；后者内容为 unavailable。已发现的 10 道题公开分页总数逐页核对，0 页错误、0 已知题目内作者计数差异。直接凭据账号的 3 个 bundle 均取回，详情/评分/轨迹无失败；历史账号的 72 条公开详情元数据和评分回执也全部 GET 成功。忽略目录 `.package-checks/scorer-re-20260927T132218Z/` 的 `inventory.json` 记录 173 个原始文件 SHA-256，回算全部一致，清单自身 SHA-256 为 `b2a35bc035aacf40c1bc72f90bdcc131983417e0e82b80d4036fc3b80988fc2e`。本包 0 新 Run/Job/沙箱/Attempt、0 模型调用、0 平台写请求。
 - CS-UP-03R W1 回归：`.venv/bin/pytest -q` 为 489 passed、1 skipped；`PATH="$HOME/.local/bin:$PATH" npm --prefix apps/web test -- --run` 为 18 passed，`PATH="$HOME/.local/bin:$PATH" npm --prefix apps/web run build`、`.venv/bin/python -m compileall -q src/cyberscientist checks/inventory_own_attempts.py tests/test_inventory_own_attempts.py` 和 `git diff --check` 通过。首次无 PATH 前缀的 npm 命令因 shell 找不到 npm 退出 127，随后仅在命令内补 Linux 路径并通过，没有改全局配置。
 - CS-UP-03 进一步排查：本机 H7 两份回执的嵌套字段也无旧 `harbor_score`/`trace_score`；无凭据 GET 的三个当前开放题目分别采用人工评审或题目专用 LLM 评分（可回退通用 ARM），`open` 不保证旧契约。经 `experiences.save_experience` 原生写入全局经验候选 `exp_cs_up03_scoring_contract_20260927`，回读状态 `candidate`，审批前不注入；写入前 SQLite 备份仅在忽略目录 `.package-checks/cs-up-03-experience-backup-20260927/`。本次未建 Run、Job、沙箱、数据下载或 Attempt。
@@ -91,6 +95,8 @@
 
 ## 尚未验证
 
+- CS-UP-03R W3–W5：旧实时评分的两种展示分公式为何交替出现，现有回执无法判定；所有逐题科学评分器和轨迹预测器的外部验证仍缺原始配对输入。下一实时轮次的同包重复、单因素对照和留出实验尚未执行；全局经验候选也未获用户审批。
+- CS-UP-03R W2：71 条实时轮次双分项记录中可取得的原始 bundle、轨迹和科学文件数为 0；3 个可下载 bundle 属赛后通用评分或待复核。创建表单的行内 trace 未见于已收回的详情或本地提交账本，保持 `unavailable_not_in_receipt`。因此当前数据尚不能验证逐题科学评分器或轨迹特征对分数的预测；W3/W4 只分析可核对的分数关系及缺证边界。
 - CS-UP-03R W1：作者过滤接口没有返回平台全局 `total`，当前 75 条只能证明与已发现题目的公开分页一致，不能证明没有其他题目或私有草稿。72 条旧双分项记录缺原始轨迹与科学文件，后续 W3/W4 的可验证性须在规范化数据集后单独判定。
 - CS-UP-03 H7：Attempt `46889` 的展示分 41.43 已按两次同值观察确认为 `confirmed`；但平台没有返回独立 harbor/trace 分项。H7 原 Run 没有本地评分记录；后续独立验收 Run 已在真实沙箱记录题面科学分 20，但没有与 H7 相同的最终封存 SHA，也没有可比的双分项平台回执，因此不能把 20 和 41.43 当作一对校准样本。同包重复噪声、W4 对照和 W5 留出验证仍未得到。
 - CS-UP-03 H4 原请求：真实 wire 字节、HTTP 400 正文和服务端 request ID 均未留存；离线重建只能证明字段契约不符，不能证明原 400 的唯一根因。后续 H7 已被平台接收并评分，但不能据此判定原 H3 的远端副作用；W3 的两条 confirmed 基线、W4 对照和 W5 留出验证仍未完成。
