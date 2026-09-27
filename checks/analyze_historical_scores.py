@@ -35,11 +35,20 @@ def classify_formula(row: dict[str, Any], *, tolerance: float = 0.001) -> dict[s
 def analyze(rows: list[dict[str, Any]]) -> dict[str, Any]:
     live = [row for row in rows if row.get("scoring_mode") == "live_task_grader"]
     counts: Counter[str] = Counter()
+    reward_errors: list[float] = []
+    replay_executed_count = 0
     by_challenge: dict[str, dict[str, Any]] = defaultdict(
         lambda: {"sample_count": 0, "complete_score_count": 0,
                  "science_artifact_count": 0, "formula_classes": Counter()})
     anomalies = []
     for row in live:
+        card = row.get("scorecard") or {}
+        if not isinstance(card, dict):
+            card = {}
+        reward, harbor = card.get("harbor_reward"), row.get("harbor_score")
+        if (type(reward) in (int, float) and type(harbor) in (int, float)):
+            reward_errors.append(abs(harbor - 100 * reward))
+        replay_executed_count += card.get("harbor_replay_executed") == 1
         result = classify_formula(row)
         kind = result["class"]
         counts[kind] += 1
@@ -57,6 +66,12 @@ def analyze(rows: list[dict[str, Any]]) -> dict[str, Any]:
                               "override_in_effect": row.get("override_in_effect"),
                               "score_is_final": row.get("score_is_final")})
     return {"live_count": len(live), "formula_classes": dict(counts),
+            "harbor_reward_x100": {
+                "paired_count": len(reward_errors),
+                "max_abs_error": max(reward_errors) if reward_errors else None,
+                "mismatch_count_at_1e_6": sum(error > 1e-6 for error in reward_errors),
+                "replay_executed_count": replay_executed_count,
+            },
             "by_challenge": {cid: {**value, "formula_classes": dict(value["formula_classes"])}
                              for cid, value in sorted(by_challenge.items())},
             "anomalies": anomalies}
@@ -79,6 +94,7 @@ def main() -> None:
     (root / "score_analysis.json").write_text(json.dumps(result, ensure_ascii=False, indent=2))
     print(json.dumps({"live_count": result["live_count"],
                       "formula_classes": result["formula_classes"],
+                      "harbor_reward_x100": result["harbor_reward_x100"],
                       "challenge_count": len(result["by_challenge"]),
                       "live_with_science_artifacts": sum(
                           item["science_artifact_count"] for item in result["by_challenge"].values())},

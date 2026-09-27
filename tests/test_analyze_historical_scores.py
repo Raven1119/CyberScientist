@@ -38,3 +38,19 @@ def test_analysis_only_uses_live_rows_and_preserves_anomalies():
     assert result["formula_classes"] == {"formula_b": 1}
     assert result["by_challenge"]["topic"]["science_artifact_count"] == 0
     assert result["anomalies"][0]["attempt_id"] == "a"
+
+
+def test_reward_scaling_is_checked_without_inferring_science_inputs():
+    rows = [
+        {"scoring_mode": "live_task_grader", "challenge_id": "topic",
+         "attempt_id": "a", "harbor_score": 60, "trace_score": 69,
+         "display_score": 41.4, "scorecard": {
+             "harbor_reward": 0.6, "harbor_replay_executed": 1}},
+        {"scoring_mode": "live_task_grader", "challenge_id": "topic",
+         "attempt_id": "b", "harbor_score": 70, "trace_score": 80,
+         "display_score": 70, "scorecard": {
+             "harbor_reward": 0.5, "harbor_replay_executed": 1}},
+    ]
+    result = analysis.analyze(rows)["harbor_reward_x100"]
+    assert result == {"paired_count": 2, "max_abs_error": 20.0,
+                      "mismatch_count_at_1e_6": 1, "replay_executed_count": 2}
