@@ -54,3 +54,23 @@ def test_reward_scaling_is_checked_without_inferring_science_inputs():
     result = analysis.analyze(rows)["harbor_reward_x100"]
     assert result == {"paired_count": 2, "max_abs_error": 20.0,
                       "mismatch_count_at_1e_6": 1, "replay_executed_count": 2}
+
+
+def test_gate70_hypothesis_counts_held_boundary_as_unobserved():
+    rows = [
+        {"scoring_mode": "live_task_grader", "challenge_id": "topic",
+         "attempt_id": "below", "harbor_score": 60, "trace_score": 69,
+         "display_score": 41.4},
+        {"scoring_mode": "live_task_grader", "challenge_id": "topic",
+         "attempt_id": "above", "harbor_score": 60, "trace_score": 76,
+         "display_score": 60},
+        {"scoring_mode": "live_task_grader", "challenge_id": "topic",
+         "attempt_id": "missing", "harbor_score": 60, "trace_score": 70,
+         "display_score": None},
+    ]
+    assert analysis.analyze(rows)["gate70_hypothesis"] == {
+        "complete_count": 2, "max_abs_error": 0.0,
+        "mismatch_count_at_0_001": 0,
+        "max_distinguishable_below": 69.0,
+        "min_distinguishable_above": 76.0,
+    }

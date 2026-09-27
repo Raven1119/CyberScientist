@@ -2,6 +2,7 @@
 
 ## 已实现
 
+- CS-UP-03R 补充：只读历史评分审计新增预设 70 分界的分段展示分候选核查，输出误差及能区分公式的相邻轨迹分范围；生产预测器和评分契约未改。
 - CS-UP-03R W3–W5：新增历史展示分双公式核查和轨迹证据充分性检查，均从 W2 的哈希核验数据表重建本机审计结果。`score_calibration.source` 以只加列迁移区分 `realtime` / `historical`，受控校准写入可指定来源，前端显示来源；两个项目 skill 与一条待审批全局经验候选记录本轮配对证据边界。真实历史数据缺同包本地评分，所以未创建新题目评分器或轨迹预测器权重，也未伪造校准行。
 - CS-UP-03R W2：`checks/build_scorer_dataset.py` 从本机忽略目录内逐文件 SHA-256 核验的回执、题目快照与 bundle 重建 `dataset.jsonl`；按轮次窗口、状态和评分字段区分历史双分项、赛后通用评分及未确认评分。轨迹选行复用生产 `trace_selection`，科学产物仅摘要及哈希入表。匿名背景分数另建 `background.jsonl`，逐页校验总数、字节数、哈希和字段白名单；两张表均不提交。
 - CS-UP-03R W1：新增 `checks/inventory_own_attempts.py`，只对已核验作者列表执行 GET；缺账号专属凭据时严格只保存公开分数和元数据，带直接凭据时逐条保存详情、评分、轨迹及可用 bundle；账户计数、内容缺项、本地 Submission 关联和每个原始文件 SHA-256 写入本机清单。测试使用 fake 响应核对作者隔离和内容门禁。
@@ -37,6 +38,7 @@
 
 ## 已实际验证
 
+- CS-UP-03R 分数层补充核查：`PYTHONPATH=src .venv/bin/python checks/analyze_historical_scores.py --root .package-checks/scorer-re-20260927T132218Z` 对本人 58 条完整实时记录的 70 分界候选得 0 条误差大于 0.001，最大绝对误差约 0.000048；可区分的低分样本最高为 69，高分样本最低为 75.925，精确门槛未由数据确定。`.venv/bin/pytest -q` 为 500 passed、1 skipped；`PATH="$HOME/.local/bin:$PATH" npm --prefix apps/web test -- --run` 为 18 passed，`PATH="$HOME/.local/bin:$PATH" npm --prefix apps/web run build`、`.venv/bin/python -m compileall -q src checks tests` 和 `git diff --check` 通过。没有新 Run、模型、Job、沙箱、Attempt 或平台写请求。
 - CS-UP-03R 补充核查：同一批 71 条实时双分项回执的 `harbor_reward` 与 `harbor_score` 全部满足 `harbor_score=100×harbor_reward`，最大绝对误差 0；71 条的回执字段 `harbor_replay_executed` 均为 1。`checks/analyze_historical_scores.py` 已将此关系逐条核验并保留本机审计结果，合成反例测试确认不匹配会被计数。它只证明奖励值到百分制分数的换算，不证明从缺失的科学产物计算奖励值的规则。本次 `.venv/bin/pytest -q` 为 499 passed、1 skipped；前端 18 passed、构建成功，`compileall` 和 `git diff --check` 通过。
 - CS-UP-03R W3–W5：71 条实时双分项中 58 条有完整展示分；按误差 ≤0.001，30 条仅符合任务卡公式、18 条同时符合两种公式、10 条仅符合 `harbor × trace/100`，其余 13 条缺展示分。实时组可配对原始科学包和轨迹均为 0，故科学评分器及 ≥70/≥80 轨迹预测的验证误差不可计算；同包重复噪声 unknown。匿名背景 3406 条有轨迹分，2004 条低于 70。迁移前 SQLite 在线备份 22,241,280 字节于本机忽略目录，`db.init_db()` 重复两次后来源列仅 1 个、校准行仍 0。原生经验接口写入的全局候选回读为 `candidate`，未审批激活。最终 `.venv/bin/pytest -q` 为 498 passed、1 skipped；前端 18 passed、构建成功，`.venv/bin/python -m compileall -q src checks tests` 与 `git diff --check` 通过。本轮无新科研 Run、模型、Job、沙箱、Attempt 或平台写请求。
 - CS-UP-03R W2：`PYTHONPATH=src .venv/bin/python checks/build_scorer_dataset.py --root .package-checks/scorer-re-20260927T132218Z` 从哈希核验的本机原始资料生成 75 条本人记录和 3809 条独立匿名背景记录，模式计数为实时双分项 71、轮次外历史分项 1、晚交通用 2、待复核 1；实时组分布于 7 题且可取回 bundle 为 0。本人表 SHA-256 为 `f4186803bb61838af62e67adb8021c112451a24c0f37c5f2ee441392f6e531fe`，背景表 SHA-256 为 `3d329d73a5fa8b8d602bd6badd2001240d26c5c922da64604543e52bff6b4260`。fake 数据集重建测试 4 passed；全套 `.venv/bin/pytest -q` 为 493 passed、1 skipped，前端 18 passed 且构建成功，`.venv/bin/python -m compileall -q src checks tests` 和 `git diff --check` 通过。仅发生匿名与本人授权的只读 GET，没有新 Run、模型、Job、沙箱、Attempt 或平台写请求。
