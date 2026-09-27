@@ -31,6 +31,7 @@
 
 ## 已实际验证
 
+- CS-UP-03 当前评分契约只读复核（2026-09-27 10:15 UTC）：对主选 abc、备选 MCM 各调用一次题目详情及公开尝试首页，并读取一次 `/api/protocol`，只保存无作者信息的字段摘要到本机忽略目录 `.package-checks/cs-up-03-score-contract-20260927T101535Z/contract-summary.json`（3874 字节，SHA-256 `0ae71dadb4c9bda97b7b732187e29652f43afd99ce8451537df716ea59f5feb4`）。两题轮次均于 2026-08-29 12:30 UTC 结束，当前策略同为 `arm_v1_1_generic`、无题目专属 grader；公开晚交样本的 scorecard 字段只有通用五项，无独立 harbor/trace 分项。当前协议说明 `trace_quality` 在轨迹提取后按步骤数取 0/0.5/1，不等于旧 0–100 轨迹分。未创建新 Run、Job、沙箱、数据下载或 Attempt。
 - CS-UP-03 经验：大脑在 `run_b1ba85d4fb` 结束前按原生生命周期更新题内经验 `exp_a8640e677f`；结束后经原生 `POST /api/v1/runs/{id}/curation` 的请求 `curation_5dac77f2f9` 作一次整理，状态 `done`、1 条题内修订已应用。分数二次观察确认后再次原生整理 `curation_0ce224953c`，状态 `done`、同一经验修订 1 次，最新文本仍标 `hypothesis`，引用本 Run 的检查点和事件，并把 41.43 写为本地 `confirmed`。经验明确区分外部适配器修复、执行器动作、历史 provisional 与当前 confirmed、原 H3 unknown，不把经验采用归因为得分提升。没有提议或自动批准全局经验；原始回执和实验包没有写入经验文本。
 - CS-UP-03 W3 H5–H7：同一 Run `run_b1ba85d4fb`、同一科学来源包 `9c0ade1ec556b90890dc6e69b1996f1ada20a860e6b67fa83f665c006b16d5ba`。H5 创建 HTTP 400 指出轨迹 `timestamp` 超过 30 字符且 `nothing was stored`；备份本机 SQLite 至忽略目录 `.package-checks/cs-up-03-h5-reconcile-20260927T093742Z/before.db` 后，仅将 `sub_b8c82e4cc9` 对账为 `failed` 并释放预留。H6 创建 HTTP 400 指出第 3 步 `title` 超过 300 字符且 `nothing was stored`，新分类器自动将 `sub_1064e20791` 记为 `failed` 并释放预留。H7 新意图 `sub_2d30d5b21d` 经平台创建 Attempt `46889`、bundle 回执 `ready`、submit 成功；平台首次返回 `scoreIsFinal=true`、41.43，本地先记 provisional，10 分钟后同值第二次只读观察将其确认为 `confirmed`。三个 Trial 的脱敏审计与原始产物只在忽略的 `workspace/`；没有新增 Bohrium Job、沙箱、数据下载或收割。原 `sub_5f0ec08d05` 仍为 `unknown/create_sent`、无远端 ID、预留未释放。H7 后全套 `.venv/bin/pytest -q` 为 477 passed、1 skipped；前端 18 passed、构建通过，`compileall` 与 `git diff --check` 通过。
 - CS-UP-03 W3 H4 诊断：用户要求停止等待后，通过现有 Run 的 `control/steer` 立即唤醒大脑；大脑新建只读诊断 Trial `trial_4773fb7c9e`，执行器完成字段审计和检查点 `cp_13cae7e0b3`，大脑随后决定暂停 Run。原历史适配器会把 ARM `step_type` 原样放进 Attempt 创建表单的 20 条行内轨迹；官方表单要求 `type`，离线重建显示 20 条都缺该字段。当前适配器对同一 20 条步骤的离线字段检查为 0 错，但未重新 POST。原包的 ARM trace-step schema 为 0 错，manifest 与 characterization 共 10 项官方 JSON Schema 错误；这些内容在创建失败时尚未上传，不能解释创建阶段的 HTTP 400。诊断 Trial 在本机忽略目录保存脚本、回执摘要、报告和仅修正元数据的交付包；修正包的官方 schema 离线检查为 0 错。本次未创建新 Job、沙箱、Run 或 Attempt，原 1 个 CPU Job 已完成并取回，真实计费金额未知。
@@ -95,6 +96,7 @@
 
 ## 阻塞项
 
+- CS-UP-03 W3–W5 的目标评分契约当前不可重现实测：主选与指定备选题均已过轮次，晚交回执采用通用 ARM 评分；当前协议无法给出任务卡要求的独立 `harbor_score` / `trace_score` 及其 ≥70/≥80 轨迹阈值。公开历史双分项和本轮通用分不可混合作受控拟合；任务卡要求的同包双基线、W4 对照和 W5 留出标准尚未达到。继续在备选 MCM 付费计算或提交不能解决该契约缺口，需有能产生目标分项的当前平台轮次/契约，或明确变更研究目标。
 - CS-UP-03 当前 Run 授权最多 2 次实验提交，原未知创建与 H7 已提交各占 1 次；在原创建的远端副作用无法权威确认前，不能释放其预留。即使 H7 得分确认，本 Run 的同包原样重交仍受授权上限阻止；后续须在产品授权边界内另行安排，不能直接改账本或重复未知意图。
 - CS-UP-03 H3 原 `sub_5f0ec08d05` 仍是 `unknown/create_sent`，无 Attempt ID、无 confirmed 分且预留未释放。带失败邮箱凭据的 `GET /attempts?author=<own-id>` 与匿名结果一致，均未包含私有 draft；公开列表不能充当权威对账。需平台按原账号、题目和创建时间确认是否产生私有 draft，才可对原意图释放预留或重试。H5/H6 的明确无存储回执仅适用于各自请求；H7 成功也不能为 H3 对账。额外 CPU Job 对此无诊断价值。
 - CS-UP-03 W3–W5：H7 已得到一次真实平台展示分，但当前 abc 回执只有五项 scorecard，没有任务卡假设的独立 harbor/trace 分项，且本 Run 因原 unknown 预留已用满两次提交额度并结束。W3 的原包重交及 W4–W5 的受控评分实验尚不能在这个 Run 内继续；备选 MCM 需要另行明确数据物化与 Run 授权边界，不能由本次 abc 回执推断其评分契约。
