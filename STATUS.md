@@ -1,4 +1,4 @@
-# 当前状态（2026-09-27）
+# 当前状态（2026-09-28）
 
 ## 已实现
 
@@ -38,7 +38,8 @@
 
 ## 已实际验证
 
-- CS-UP-03R 分数层补充核查：`PYTHONPATH=src .venv/bin/python checks/analyze_historical_scores.py --root .package-checks/scorer-re-20260927T132218Z` 对本人 58 条完整实时记录的 70 分界候选得 0 条误差大于 0.001，最大绝对误差约 0.000048；可区分的低分样本最高为 69，高分样本最低为 75.925，精确门槛未由数据确定。`.venv/bin/pytest -q` 为 500 passed、1 skipped；`PATH="$HOME/.local/bin:$PATH" npm --prefix apps/web test -- --run` 为 18 passed，`PATH="$HOME/.local/bin:$PATH" npm --prefix apps/web run build`、`.venv/bin/python -m compileall -q src checks tests` 和 `git diff --check` 通过。没有新 Run、模型、Job、沙箱、Attempt 或平台写请求。
+- CS-UP-03R 本人轨迹复查（2026-09-28）：只读获取当前 `GET /api/docs/dev/AGENT_API.md` 46,268 字节，官方列出 `GET /attempts/{id}/trace`。既有实验邮箱 3 条提交的轨迹曾取回 10、6、131 步；本轮以其直接凭据再取其中一条，HTTP 200、10 步。对操作者已确认关联的 3 个历史代理，当前操作者凭据逐条只读查 72 条详情，72 次 HTTP 200、`traceCount>0` 为 0、内容非空为 0、bundle/raw messages 可用为 0。每个代理各抽 1 条：匿名与操作者 `/trace` 均 HTTP 200、0 步；操作者 `/bundle` 和 `/export-arm` 均 HTTP 403。审计汇总 SHA-256 为 `9b9a24799ce83c42cb1528240ec3b0ab542aed5880c3a94b217e2660a4ad2be2`，原始回执只在本机忽略目录 `.package-checks/trace-self-20260928/`。仅发生官方文档与已确认本人提交的 GET，无模型、Job、Run、Attempt 或平台写请求。
+- CS-UP-03R 分数层补充核查：`PYTHONPATH=src .venv/bin/python checks/analyze_historical_scores.py --root .package-checks/scorer-re-20260927T132218Z` 对本人 58 条完整实时记录试算 70 分界下的替代分段计算，0 条误差大于 0.001，最大绝对误差约 0.000048；可区分的低分样本最高为 69，高分样本最低为 75.925。70 分界来自主办方告知，样本不能独立验证它；替代计算不能解释 10 条记录为何违反告知的 30–70 规则。`.venv/bin/pytest -q` 为 500 passed、1 skipped；`PATH="$HOME/.local/bin:$PATH" npm --prefix apps/web test -- --run` 为 18 passed，`PATH="$HOME/.local/bin:$PATH" npm --prefix apps/web run build`、`.venv/bin/python -m compileall -q src checks tests` 和 `git diff --check` 通过。没有新 Run、模型、Job、沙箱、Attempt 或平台写请求。
 - CS-UP-03R 补充核查：同一批 71 条实时双分项回执的 `harbor_reward` 与 `harbor_score` 全部满足 `harbor_score=100×harbor_reward`，最大绝对误差 0；71 条的回执字段 `harbor_replay_executed` 均为 1。`checks/analyze_historical_scores.py` 已将此关系逐条核验并保留本机审计结果，合成反例测试确认不匹配会被计数。它只证明奖励值到百分制分数的换算，不证明从缺失的科学产物计算奖励值的规则。本次 `.venv/bin/pytest -q` 为 499 passed、1 skipped；前端 18 passed、构建成功，`compileall` 和 `git diff --check` 通过。
 - CS-UP-03R W3–W5：71 条实时双分项中 58 条有完整展示分；按误差 ≤0.001，30 条仅符合任务卡公式、18 条同时符合两种公式、10 条仅符合 `harbor × trace/100`，其余 13 条缺展示分。实时组可配对原始科学包和轨迹均为 0，故科学评分器及 ≥70/≥80 轨迹预测的验证误差不可计算；同包重复噪声 unknown。匿名背景 3406 条有轨迹分，2004 条低于 70。迁移前 SQLite 在线备份 22,241,280 字节于本机忽略目录，`db.init_db()` 重复两次后来源列仅 1 个、校准行仍 0。原生经验接口写入的全局候选回读为 `candidate`，未审批激活。最终 `.venv/bin/pytest -q` 为 498 passed、1 skipped；前端 18 passed、构建成功，`.venv/bin/python -m compileall -q src checks tests` 与 `git diff --check` 通过。本轮无新科研 Run、模型、Job、沙箱、Attempt 或平台写请求。
 - CS-UP-03R W2：`PYTHONPATH=src .venv/bin/python checks/build_scorer_dataset.py --root .package-checks/scorer-re-20260927T132218Z` 从哈希核验的本机原始资料生成 75 条本人记录和 3809 条独立匿名背景记录，模式计数为实时双分项 71、轮次外历史分项 1、晚交通用 2、待复核 1；实时组分布于 7 题且可取回 bundle 为 0。本人表 SHA-256 为 `f4186803bb61838af62e67adb8021c112451a24c0f37c5f2ee441392f6e531fe`，背景表 SHA-256 为 `3d329d73a5fa8b8d602bd6badd2001240d26c5c922da64604543e52bff6b4260`。fake 数据集重建测试 4 passed；全套 `.venv/bin/pytest -q` 为 493 passed、1 skipped，前端 18 passed 且构建成功，`.venv/bin/python -m compileall -q src checks tests` 和 `git diff --check` 通过。仅发生匿名与本人授权的只读 GET，没有新 Run、模型、Job、沙箱、Attempt 或平台写请求。
@@ -98,7 +99,8 @@
 
 ## 尚未验证
 
-- CS-UP-03R W3–W5：旧实时评分的两种展示分公式为何交替出现，现有回执无法判定；所有逐题科学评分器和轨迹预测器的外部验证仍缺原始配对输入。下一实时轮次的同包重复、单因素对照和留出实验尚未执行；全局经验候选也未获用户审批。
+- CS-UP-03R：上述 72 条旧提交在平台后台是否另有仅代理本人可读的归档，本轮不能判定；三个历史代理的直接 token 不在项目现有密钥库。30–70 轨迹因子门槛由主办方告知（用户转述），但这批历史分数中的 10 条低分段冲突尚无权威解释；分段替代计算只是样本内描述。
+- CS-UP-03R W3–W5：10 条旧实时展示分为何违反主办方告知的公式，现有回执无法判定；所有逐题科学评分器和轨迹预测器的外部验证仍缺原始配对输入。下一实时轮次的同包重复、单因素对照和留出实验尚未执行；全局经验候选也未获用户审批。
 - CS-UP-03R W2：71 条实时轮次双分项记录中可取得的原始 bundle、轨迹和科学文件数为 0；3 个可下载 bundle 属赛后通用评分或待复核。创建表单的行内 trace 未见于已收回的详情或本地提交账本，保持 `unavailable_not_in_receipt`。因此当前数据尚不能验证逐题科学评分器或轨迹特征对分数的预测；W3/W4 只分析可核对的分数关系及缺证边界。
 - CS-UP-03R W1：作者过滤接口没有返回平台全局 `total`，当前 75 条只能证明与已发现题目的公开分页一致，不能证明没有其他题目或私有草稿。72 条旧双分项记录缺原始轨迹与科学文件，后续 W3/W4 的可验证性须在规范化数据集后单独判定。
 - CS-UP-03 H7：Attempt `46889` 的展示分 41.43 已按两次同值观察确认为 `confirmed`；但平台没有返回独立 harbor/trace 分项。H7 原 Run 没有本地评分记录；后续独立验收 Run 已在真实沙箱记录题面科学分 20，但没有与 H7 相同的最终封存 SHA，也没有可比的双分项平台回执，因此不能把 20 和 41.43 当作一对校准样本。同包重复噪声、W4 对照和 W5 留出验证仍未得到。
