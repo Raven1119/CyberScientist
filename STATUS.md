@@ -42,6 +42,7 @@
 
 ## 已实际验证
 
+- 本轮用 `python` 对 AgentMaster 148 份已有 `submission/stdout.log` 做只读包哈希与题目标识交叉核对：145 份生成/接收哈希及目标一致，3 份同时发生哈希与清单题目错配；三条可读科学分均为 0。两份错配的接收哈希逐字节等于另一道题同期 Attempt 的生成哈希。完整依据及限制见 `docs/HISTORICAL_SCORER_PATTERN_AUDIT_2026-09-28.md`；本轮未访问平台或创建 Run/Job/Attempt。
 - 本机另有与先前 71 条不重叠的 63 份已评分 AgentMaster 回执，直接含 `trace_decision`、`trace_factor`、原因代码和引擎版本；其中 1 份在单独 `harvest/` 目录。旧组 71/71 上传副本与回执原生轨迹哈希一致；新组 57 份命令所指文件直接匹配，3 份从同迭代副本、3 份从其他迭代副本按哈希找回，故两组共 134 份原生轨迹字节可核对，文件来源差异单列。回执哈希确认 3 组跨题复用，和 3 条 `N01` 诊断相符。新组 62 份 `--outputs` 与封存快照逐文件一致，`harvest/` 那份无输出快照；63/63 的历史因子为 `accept→1`、`review→trace_score/100`、`block→0`，展示分乘法最大误差约 `1×10⁻⁷`。封存组 48 个同题输出树组中 1 组同字节答案出现 0 与 100 两种科学分，原因未知。本次 `.venv/bin/python -m pytest -q` 为 `518 passed, 1 skipped`，前端 `18 passed` 且构建通过，定向 fake 测试为 `6 passed`，所改 Python 文件 `compileall` 与 `git diff --check` 通过。
 - 本轮只读审计对 71 条 AgentMaster 提交逐文件核对 `--outputs` 与封存科学输出，71/71 一致；58 条具有最终双分项。轨迹事件数与失败命令数的单特征阈值在整题留出时，≥70 和 ≥80 的普通准确率均未超过训练折多数类。`.venv/bin/python -m pytest -q` 为 `512 passed, 1 skipped`；脚本定向测试 `5 passed`，前端 `npm --prefix apps/web test -- --run` 为 `18 passed`，前端构建和所改 Python 文件 `compileall` 通过。当前 shell 初次未找到 `npm`，随后仅为本次命令把已安装 Linux Node 22 的 bin 加入 PATH 后成功；没有改全局配置。
 - CS-UP-03R 配对代码验证：`.venv/bin/pytest -q` 为 507 passed、1 skipped；`PATH="$HOME/.local/bin:$PATH" npm --prefix apps/web test -- --run` 为 18 passed，`PATH="$HOME/.local/bin:$PATH" npm --prefix apps/web run build`、`.venv/bin/python -m compileall -q src checks tests`、`git diff --check` 通过。配对表 `pairs.jsonl` SHA-256 为 `71fa7fad213fc4855b039d3dee5436d70b5f5f1a7268fa0fce73234a9fe5ba9a`，汇总 `summary.json` 为 `463474755db98db2abecbc8f61069295c92aabbeab6a9dac88dc867d7680670d`；二者仅本机忽略保存。
@@ -109,7 +110,7 @@
 
 ## 尚未验证
 
-- 63 份未遮蔽回执可确认历史展示分合成系数和若干诊断代码，但不能复刻从输入轨迹到 `trace_score/trace_decision` 的完整引擎，也不能确认当前平台仍沿用 `trace-score-cli/0.3.0-beta.1`。其中 6 份命令路径当前不能证明输入字节，但已由回执哈希在其他封存副本中找到相同内容；评分器内部投影仍不可见。`harvest/` 回执没有可核对的封存输出快照。FigQA 同输出不同科学分的成因缺逐项验算/提交包内容回执，仍未知。
+- 63 份未遮蔽回执可确认历史展示分合成系数和若干诊断代码，但不能复刻从输入轨迹到 `trace_score/trace_decision` 的完整引擎，也不能确认当前平台仍沿用 `trace-score-cli/0.3.0-beta.1`。其中 6 份命令路径当前不能证明输入字节，但已由回执哈希在其他封存副本中找到相同内容；评分器内部投影仍不可见。`harvest/` 回执没有可核对的封存输出快照。FigQA 同本地答案不同科学分的异常已发现接收包错配，具体零分机制缺逐项科学验算仍未知；共享可变包路径是否由并发竞态导致也未证实。
 - AgentMaster 上传输入由官方 CLI 如何归一化、平台最终对哪几行打分，当前不可从旧 Attempt 的 API 轨迹或 bundle 复核。58 条最终分已做探索性的整题留出结构特征检查，但特征是看过样本后选择，不能当作独立前瞻验证；连续轨迹分预测误差和同轨迹重复噪声仍未知。另 4 条旧分项没有在 AgentMaster 本地提交记录中找到精确配对。
 - CS-UP-03R 全账号轨迹扩查：9 条列表有轨迹却读到空数组的记录是否能由代理本人 token 或平台后台归档恢复，未知；当前项目凭据库没有这些代理的直接 token。`GET /attempts` 不提供 total，不能确认私有草稿完整性。API 轨迹与包内选中轨迹的差异已确认，但平台对每条旧提交实际采用哪个输入评分、以及重复包的评分噪声，仍无可配对最终回执。75 条旧轨迹分缺内容，≥70/≥80 预测误差不可计算。
 - CS-UP-03R：上述 72 条旧提交在平台后台是否另有仅代理本人可读的归档，本轮不能判定；三个历史代理的直接 token 不在项目现有密钥库。30–70 轨迹因子门槛由主办方告知（用户转述），但这批历史分数中的 10 条低分段冲突尚无权威解释；分段替代计算只是样本内描述。
