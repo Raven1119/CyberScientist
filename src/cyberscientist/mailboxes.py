@@ -8,6 +8,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import re
 import sqlite3
 import uuid
 import zipfile
@@ -477,7 +478,7 @@ def _narrative_for_trial(run_id: str, trial_id: str | None) -> tuple[bytes | Non
 def preflight_submission(run_id: str, trial_id: str | None,
                          package_path: str | None, *, allow_proxy_evidence: bool = False,
                          allow_indeterminate_admission: bool = False,
-                         narrative_snapshot: tuple[bytes, str, int] | None = None,
+                         narrative_snapshot: tuple[bytes | None, str | None, int] | None = None,
                          data_inputs_override: dict[str, Any] | None = None) -> dict[str, Any]:
     if type(allow_proxy_evidence) is not bool or type(allow_indeterminate_admission) is not bool:
         raise MailboxError("INVALID_ARGUMENT", "提交准入覆盖标志必须是显式布尔值")
@@ -747,20 +748,26 @@ def submit_experiment(run_id: str, trial_id: str | None,
 def submit_trace_variant(source_submission_id: str, operation_id: str,
                          prediction_md: str | None, *,
                          allow_proxy_evidence: bool = False,
-                         allow_indeterminate_admission: bool = False) -> dict[str, Any]:
+                         allow_indeterminate_admission: bool = False,
+                         projection_only: bool = False) -> dict[str, Any]:
     """Resubmit frozen science bytes with a new, reference-checked narrative."""
     import io
 
+    if type(projection_only) is not bool:
+        raise MailboxError('INVALID_ARGUMENT', 'projection_only 必须是显式布尔值')
     source = db.query_one("SELECT * FROM submissions WHERE id=?", (source_submission_id,))
     if not source or source['is_harvest'] or source['score_confidence'] != 'confirmed':
         raise MailboxError('INVALID_STATE', '轨迹变体来源必须是已确认评分的实验提交')
     run_id, trial_id = source['run_id'], source['trial_id']
     if not trial_id or not operation_id:
         raise MailboxError('INVALID_MESSAGE', '轨迹变体需要来源 Trial 与 operation_id')
-    narrative_bytes, written_at = _narrative_for_trial(run_id, trial_id)
-    if narrative_bytes is None or written_at is None:
-        raise MailboxError('INVALID_TRACE_NARRATIVE', '来源 Trial 缺少 trace_narrative.jsonl')
-    narrative_hash = hashlib.sha256(narrative_bytes).hexdigest()
+    if projection_only:
+        narrative_bytes, written_at, narrative_hash = None, None, None
+    else:
+        narrative_bytes, written_at = _narrative_for_trial(run_id, trial_id)
+        if narrative_bytes is None or written_at is None:
+            raise MailboxError('INVALID_TRACE_NARRATIVE', '来源 Trial 缺少 trace_narrative.jsonl')
+        narrative_hash = hashlib.sha256(narrative_bytes).hexdigest()
     previous = db.query_one('SELECT * FROM submissions WHERE operation_id=?', (operation_id,))
     if previous:
         if (previous['variant_of'] != source_submission_id or
@@ -785,9 +792,29 @@ def submit_trace_variant(source_submission_id: str, operation_id: str,
         root = trace_selection.bundle_root(files)
         if root + package_seal.TRACE not in files:
             raise ValueError('source is not a sealed ARM bundle')
+        frozen_rows = [json.loads(line) for line in files[root + package_seal.TRACE].splitlines()
+                       if line.strip()]
+        source_refs = [ref for row in frozen_rows if isinstance(row, dict)
+                       for ref in ([row.get('cs_ref')] + (row.get('cs_refs') or []))
+                       if isinstance(ref, str)]
+        prefix = re.compile(rf'{re.escape(run_id)}#([1-9][0-9]*)\Z')
+        cutoff = max((int(match.group(1)) for ref in source_refs
+                      if (match := prefix.fullmatch(ref))), default=None)
+        if cutoff is None:
+            raise ValueError('source trace has no durable event reference')
         data_inputs = json.loads(files.pop(root + package_seal.DATA))
         files.pop(root + package_seal.TRACE)
         files.pop(root + 'traces/trace_narrative.jsonl', None)
+        if projection_only:
+            files = {name: raw for name, raw in files.items()
+                     if not name.startswith((root + 'traces/', root + 'trace/'))
+                     and name != root + 'trace.json'}
+            manifest_name = root + 'arm_manifest.json'
+            manifest = json.loads(files[manifest_name])
+            manifest['trace'] = 'traces/trace.jsonl'
+            files[manifest_name] = json.dumps(manifest, ensure_ascii=False,
+                sort_keys=True, separators=(',', ':')).encode()
+            files[root + 'traces/trace.jsonl'] = b''
     except (KeyError, ValueError, TypeError, zipfile.BadZipFile) as exc:
         raise MailboxError('INVALID_PACKAGE', '来源冻结包不可用于轨迹变体') from exc
     base_buffer = io.BytesIO()
@@ -806,8 +833,7 @@ def submit_trace_variant(source_submission_id: str, operation_id: str,
         with variant_path.open('xb') as stream:
             stream.write(base)
     relative = variant_path.relative_to(config.WORKSPACE_DIR).as_posix()
-    last = db.query_one('SELECT MAX(seq) AS n FROM events WHERE run_id=?', (run_id,))
-    snapshot = (narrative_bytes, written_at, last['n'] or 0)
+    snapshot = (narrative_bytes, written_at, cutoff)
     expected = _science_artifact_hashes(frozen)
     check = preflight_submission(
         run_id, trial_id, relative,

@@ -141,6 +141,9 @@ def test_trace_variant_preserves_science_bytes_and_records_provenance(monkeypatc
     source = mailboxes.submit_experiment(rid, tid, None, 'source-baseline',
                                          prediction_md='预计基线总分为 20')
     _set_scored(source['id'], 20)
+    later = db.append_event(rid, 'prime', 'prime.execution.progress',
+                            {'item_id': 'later', 'status': 'completed',
+                             'detail': 'after baseline'}, trial_id=tid)
     (trial_dir / 'trace_narrative.jsonl').write_bytes(_raw(rows))
     variant = mailboxes.submit_trace_variant(source['id'], 'variant-one',
                                              '增加真实工具叙述，预计轨迹分上升')
@@ -159,6 +162,9 @@ def test_trace_variant_preserves_science_bytes_and_records_provenance(monkeypatc
         science_names = {name for name in science_names
                          if not name.startswith('traces/') and not name.startswith('trace/')}
         assert all(original.read(name) == changed.read(name) for name in science_names)
+        merged = [json.loads(line) for line in changed.read(package_seal.TRACE).splitlines()
+                  if line.strip()]
+        assert all(row.get('cs_ref') != f"{rid}#{later['seq']}" for row in merged)
     assert mailboxes.submit_trace_variant(source['id'], 'variant-one',
         '增加真实工具叙述，预计轨迹分上升')['deduplicated'] is True
     rows[0]['title'] = 'different factual wording'
@@ -167,6 +173,59 @@ def test_trace_variant_preserves_science_bytes_and_records_provenance(monkeypatc
         mailboxes.submit_trace_variant(source['id'], 'variant-one',
                                        '增加真实工具叙述，预计轨迹分上升')
     assert error.value.code == 'CONFLICT'
+
+
+def test_projection_only_variant_freezes_source_events_and_science(monkeypatch):
+    rid, tid, package, files, rows, first, second, extra, trial_dir = _fixture()
+    mailboxes.register_experiment(1)
+    monkeypatch.setattr(mailboxes.arm_admission, 'check',
+                        lambda *_: {'verdict': 'admitted', 'signals': {}})
+    source = mailboxes.submit_experiment(rid, tid, None, 'projection-source',
+                                         prediction_md='原包基线预测')
+    _set_scored(source['id'], 20)
+    later = db.append_event(rid, 'prime', 'prime.execution.progress',
+                            {'item_id': 'late-tool', 'status': 'completed',
+                             'detail': 'after baseline'}, trial_id=tid)
+    variant = mailboxes.submit_trace_variant(
+        source['id'], 'projection-only', '只保留真实事件投影，预计轨迹分改变',
+        projection_only=True)
+    assert variant['variant_of'] == source['id']
+    assert variant['narrative_sha256'] is None
+    assert variant['science_artifact_match'] == 1
+    original = (config.WORKSPACE_DIR / source['package_path']).read_bytes()
+    changed = (config.WORKSPACE_DIR / variant['package_path']).read_bytes()
+    assert mailboxes._science_artifact_hashes(original) == mailboxes._science_artifact_hashes(changed)
+    with zipfile.ZipFile(io.BytesIO(changed)) as archive:
+        projected = [json.loads(line) for line in archive.read(package_seal.TRACE).splitlines()
+                     if line.strip()]
+        assert archive.read('traces/trace.jsonl') == b''
+    assert projected and all(row.get('title') != 'original' for row in projected)
+    assert all(row.get('cs_ref') != f"{rid}#{later['seq']}" for row in projected)
+    assert mailboxes.submit_trace_variant(source['id'], 'projection-only',
+        '只保留真实事件投影，预计轨迹分改变', projection_only=True)['deduplicated'] is True
+
+
+async def test_projection_only_variant_api_uses_same_submission_gate(monkeypatch):
+    from httpx import ASGITransport, AsyncClient
+    from cyberscientist.api import create_app
+
+    rid, tid, *_ = _fixture()
+    mailboxes.register_experiment(1)
+    monkeypatch.setattr(mailboxes.arm_admission, 'check',
+                        lambda *_: {'verdict': 'admitted', 'signals': {}})
+    source = mailboxes.submit_experiment(rid, tid, None, 'api-projection-source',
+                                         prediction_md='原包基线预测')
+    _set_scored(source['id'], 20)
+    async with AsyncClient(transport=ASGITransport(app=create_app()),
+                           base_url='http://testserver') as client:
+        response = await client.post(f"/api/v1/submissions/{source['id']}/trace-variants",
+            json={'operation_id': 'api-projection-only', 'projection_only': True,
+                  'prediction_md': '只保留投影，预计轨迹分变化'})
+    assert response.status_code == 200
+    variant = response.json()
+    assert variant['variant_of'] == source['id']
+    assert variant['narrative_sha256'] is None
+    assert variant['science_artifact_match'] == 1
 
 
 async def test_narrative_preview_tool_is_read_only_for_brain_and_executor(monkeypatch):

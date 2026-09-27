@@ -1174,7 +1174,8 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
             mailboxes.submit_trace_variant, submission_id,
             body.get('operation_id', ''), body.get('prediction_md'),
             allow_proxy_evidence=body.get('allow_proxy_evidence', False),
-            allow_indeterminate_admission=body.get('allow_indeterminate_admission', False))
+            allow_indeterminate_admission=body.get('allow_indeterminate_admission', False),
+            projection_only=body.get('projection_only', False))
 
     @app.post("/api/v1/submissions/{submission_id}/exact-replay")
     async def submit_exact_replay(submission_id: str, request: Request) -> dict[str, Any]:
