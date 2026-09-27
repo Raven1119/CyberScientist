@@ -257,7 +257,7 @@ CREATE TABLE IF NOT EXISTS submissions (
     score REAL,                              -- 不知道就是 NULL
     score_status TEXT NOT NULL DEFAULT 'unknown',  -- unknown|pending|scored|failed
     is_harvest INTEGER NOT NULL DEFAULT 0,
-    source_submission_id TEXT,               -- 收割提交引用的实验提交
+    source_submission_id TEXT,               -- 收割或轨迹变体引用的实验提交
     operation_id TEXT UNIQUE,                -- 幂等去重
     error TEXT,
     created_at TEXT NOT NULL,
@@ -370,6 +370,10 @@ CREATE TABLE IF NOT EXISTS curation_requests (
 
 # submissions 表 v2 新增列（对既有库做幂等 ALTER）
 SUBMISSION_V2_COLUMNS = {
+    "variant_of": "TEXT",
+    "narrative_sha256": "TEXT",
+    "science_artifact_hashes_json": "TEXT",
+    "science_artifact_match": "INTEGER",
     "prediction_md": "TEXT",
     "prediction_verdict": "TEXT",
     "prediction_note_md": "TEXT",

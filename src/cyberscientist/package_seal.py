@@ -6,14 +6,16 @@ import json
 import zipfile
 from typing import Any
 
-from . import trace_projection, trace_selection
+from . import trace_narrative, trace_projection, trace_selection
 
 TRACE = "traces/cyberscientist_merged.jsonl"
 DATA = "provenance/data_inputs.json"
 
 
 def seal(source: bytes, run_id: str, trial_id: str | None, through_seq: int,
-         data_inputs: dict[str, Any] | None = None) -> tuple[bytes, list[dict[str, Any]]]:
+         data_inputs: dict[str, Any] | None = None, *,
+         narrative_bytes: bytes | None = None,
+         narrative_written_at: str | None = None) -> tuple[bytes, list[dict[str, Any]]]:
     with zipfile.ZipFile(io.BytesIO(source)) as archive:
         names = archive.namelist()
         if len(names) != len(set(names)):
@@ -32,7 +34,18 @@ def seal(source: bytes, run_id: str, trial_id: str | None, through_seq: int,
     relative_files = {name[len(selected.bundle_root):]: raw for name, raw in files.items()
                       if name.startswith(selected.bundle_root)}
     steps = trace_projection.project(run_id, trial_id, through_seq, relative_files)
-    merged = [*selected.rows, *steps]
+    if narrative_bytes is None:
+        merged = [*selected.rows, *steps]
+    else:
+        narrative_name = root + "traces/trace_narrative.jsonl"
+        if narrative_name in files:
+            raise trace_narrative.InvalidTraceNarrative(
+                ["提交包已包含保留的 traces/trace_narrative.jsonl 路径"])
+        narrative_rows, uncovered = trace_narrative.validate(
+            narrative_bytes, run_id, through_seq, relative_files, steps,
+            narrative_written_at)
+        merged = [*narrative_rows, *uncovered]
+        files[narrative_name] = narrative_bytes
     files[trace_name] = ("\n".join(json.dumps(s, ensure_ascii=False, sort_keys=True,
                       separators=(",", ":")) for s in merged) + "\n").encode()
     files[data_name] = json.dumps(data_inputs or {"evidence_class": "unknown", "materializations": []},
@@ -47,4 +60,4 @@ def seal(source: bytes, run_id: str, trial_id: str | None, through_seq: int,
             info.compress_type = zipfile.ZIP_STORED if name.endswith('/') else zipfile.ZIP_DEFLATED
             info.external_attr = (0o755 if name.endswith('/') else 0o644) << 16
             archive.writestr(info, files[name])
-    return output.getvalue(), steps
+    return output.getvalue(), merged if narrative_bytes is not None else steps

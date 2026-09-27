@@ -535,6 +535,8 @@ export default function MailboxPage() {
                       {s.score_anomaly && ` · 异常 ${s.score_anomaly}`}
                       {s.scorecard_consistent === 0 && ' · 分项不一致'}
                       {s.scorecard_consistent === 1 && ' · 分项一致'}
+                      {s.variant_of && ` · 轨迹变体，来源 ${s.variant_of}`}
+                      {s.science_artifact_match === 1 && ' · 科学产物哈希一致'}
                       {s.error ? ` · ${s.error.slice(0, 60)}` : ''}
                       {s.prediction_md && <div className="small-text">提交预测：{s.prediction_md}</div>}
                       {s.prediction_verdict && <div className="small-text">预测判定：{s.prediction_verdict} · {s.prediction_note_md || '无说明'}</div>}

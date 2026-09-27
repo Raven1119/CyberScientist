@@ -15,7 +15,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from . import arm_admission, config, db, experience_context, package_seal, trace_selection
+from . import arm_admission, config, db, experience_context, package_seal, trace_narrative, trace_selection
 from .mailbox_platform import (MailboxPlatform, PlatformError, final_score,
                                get_platform, public_feedback)
 
@@ -407,6 +407,22 @@ def _freeze(sid: str, package: Path, content: bytes) -> str:
     return frozen.relative_to(config.WORKSPACE_DIR).as_posix()
 
 
+def _science_artifact_hashes(bundle: bytes) -> dict[str, str]:
+    """Exact byte hashes for every non-trace, non-manifest bundle member."""
+    import io
+    with zipfile.ZipFile(io.BytesIO(bundle)) as archive:
+        names = archive.namelist()
+        if len(names) != len(set(names)):
+            raise MailboxError('INVALID_PACKAGE', '来源包存在同名 ZIP 成员')
+        root = trace_selection.bundle_root({name: b'' for name in names})
+        return {name[len(root):]: hashlib.sha256(archive.read(name)).hexdigest()
+                for name in names if name.startswith(root)
+                and not name.endswith('/') and name != root + 'arm_manifest.json'
+                and not name.startswith(root + 'traces/')
+                and not name.startswith(root + 'trace/')
+                and name != root + 'trace.json'}
+
+
 def _protocol_snapshot() -> dict[str, Any] | None:
     path = Path(__file__).resolve().parents[2] / "contracts" / "arm_protocol.json"
     try:
@@ -439,22 +455,60 @@ def _data_inputs(run_id: str, trial_id: str | None) -> dict[str, Any]:
             "materializations": materializations}
 
 
+def _narrative_for_trial(run_id: str, trial_id: str | None) -> tuple[bytes | None, str | None]:
+    if not trial_id:
+        return None, None
+    trial = db.query_one("SELECT 1 FROM trials WHERE id=? AND run_id=?", (trial_id, run_id))
+    if not trial:
+        return None, None
+    root = config.WORKSPACE_DIR.resolve()
+    base = (root / "runs" / run_id / "trials" / trial_id).resolve()
+    if root not in base.parents:
+        raise MailboxError("INVALID_TRACE_NARRATIVE", "叙述文件路径越界")
+    path = base / "trace_narrative.jsonl"
+    if not path.exists():
+        return None, None
+    if path.is_symlink() or path.resolve().parent != base or not path.is_file():
+        raise MailboxError("INVALID_TRACE_NARRATIVE", "叙述文件必须是当前 Trial 内的普通文件")
+    from datetime import datetime, timezone
+    written_at = datetime.fromtimestamp(path.stat().st_mtime, timezone.utc).isoformat()
+    return path.read_bytes(), written_at
+
+
 def preflight_submission(run_id: str, trial_id: str | None,
                          package_path: str | None, *, allow_proxy_evidence: bool = False,
-                         allow_indeterminate_admission: bool = False) -> dict[str, Any]:
+                         allow_indeterminate_admission: bool = False,
+                         narrative_snapshot: tuple[bytes, str, int] | None = None,
+                         data_inputs_override: dict[str, Any] | None = None) -> dict[str, Any]:
     if type(allow_proxy_evidence) is not bool or type(allow_indeterminate_admission) is not bool:
         raise MailboxError("INVALID_ARGUMENT", "提交准入覆盖标志必须是显式布尔值")
     package = _resolve_package(run_id, trial_id, package_path)
     source = package.read_bytes()
     source_hash = hashlib.sha256(source).hexdigest()
-    data = _data_inputs(run_id, trial_id)
+    data = data_inputs_override if data_inputs_override is not None else _data_inputs(run_id, trial_id)
     is_bundle = package.suffix.lower() == ".zip"
     sealed, steps = source, []
     report = {"verdict": "not_applicable", "signals": {}}
     if is_bundle:
-        last = db.query_one("SELECT MAX(seq) AS n FROM events WHERE run_id=?", (run_id,))
+        if narrative_snapshot is None:
+            last = db.query_one("SELECT MAX(seq) AS n FROM events WHERE run_id=?", (run_id,))
+            through_seq = last["n"] or 0
+            narrative_bytes, narrative_written_at = _narrative_for_trial(run_id, trial_id)
+        else:
+            narrative_bytes, narrative_written_at, through_seq = narrative_snapshot
         try:
-            sealed, steps = package_seal.seal(source, run_id, trial_id, last["n"] or 0, data)
+            sealed, steps = package_seal.seal(
+                source, run_id, trial_id, through_seq, data,
+                narrative_bytes=narrative_bytes,
+                narrative_written_at=narrative_written_at)
+        except trace_narrative.InvalidTraceNarrative as exc:
+            with db.transaction() as conn:
+                db.append_event_tx(conn, run_id, "controller", "submission.preflight_failed",
+                    {"code": "INVALID_TRACE_NARRATIVE", "reasons": exc.reasons[:50],
+                     "source_package_sha256": source_hash}, trial_id=trial_id)
+            raise MailboxError("INVALID_TRACE_NARRATIVE",
+                               "轨迹叙述校验失败：" + "; ".join(exc.reasons),
+                               warnings=exc.reasons) from exc
         except (KeyError, ValueError, TypeError, sqlite3.Error, OSError, zipfile.BadZipFile) as exc:
             with db.transaction() as conn:
                 db.append_event_tx(conn, run_id, "controller", "submission.preflight_failed",
@@ -492,6 +546,39 @@ def preflight_submission(run_id: str, trial_id: str | None,
             "data_inputs": data, "allow_proxy_evidence": allow_proxy_evidence,
             "allow_indeterminate_admission": allow_indeterminate_admission,
             "error_code": code}
+
+
+def inspect_trace_narrative(run_id: str, trial_id: str | None,
+                            package_path: str | None) -> dict[str, Any]:
+    """Read-only preview of exactly the narrative merge and local admission."""
+    package = _resolve_package(run_id, trial_id, package_path)
+    trial_root = (config.WORKSPACE_DIR.resolve() / "runs" / run_id / "trials" / (trial_id or "")).resolve()
+    if not trial_id or trial_root not in package.parents or not db.query_one(
+            "SELECT 1 FROM trials WHERE id=? AND run_id=?", (trial_id, run_id)):
+        return {"valid": False, "reasons": ["提交包必须位于当前 Run 的 Trial 目录"]}
+    if package.suffix.lower() != ".zip":
+        return {"valid": False, "reasons": ["轨迹叙述需要 ARM ZIP 提交包"]}
+    narrative_bytes, written_at = _narrative_for_trial(run_id, trial_id)
+    if narrative_bytes is None:
+        return {"valid": False, "reasons": ["当前 Trial 没有 trace_narrative.jsonl"]}
+    source = package.read_bytes()
+    last = db.query_one("SELECT MAX(seq) AS n FROM events WHERE run_id=?", (run_id,))
+    try:
+        sealed, merged = package_seal.seal(
+            source, run_id, trial_id, last["n"] or 0,
+            _data_inputs(run_id, trial_id), narrative_bytes=narrative_bytes,
+            narrative_written_at=written_at)
+    except trace_narrative.InvalidTraceNarrative as exc:
+        return {"valid": False, "error_code": "INVALID_TRACE_NARRATIVE",
+                "reasons": exc.reasons}
+    except (ValueError, TypeError, KeyError, zipfile.BadZipFile) as exc:
+        return {"valid": False, "error_code": "INVALID_PACKAGE",
+                "reasons": [f"ARM 包无法封存：{type(exc).__name__}"]}
+    return {"valid": True, "error_code": None, "reasons": [],
+            "source_package_sha256": hashlib.sha256(source).hexdigest(),
+            "sealed_package_sha256": hashlib.sha256(sealed).hexdigest(),
+            "merged_trace": merged,
+            "admission": arm_admission.check(sealed, _protocol_snapshot())}
 
 
 def _perform_submission(sid: str, platform: MailboxPlatform, challenge_id: str) -> dict:
@@ -566,7 +653,8 @@ def submit_experiment(run_id: str, trial_id: str | None,
                       package_path: str | None, operation_id: str,
                       allow_proxy_evidence: bool = False,
                       allow_indeterminate_admission: bool = False,
-                      prediction_md: str | None = None) -> dict[str, Any]:
+                      prediction_md: str | None = None, *,
+                      variant_context: dict[str, Any] | None = None) -> dict[str, Any]:
     if not operation_id:
         raise MailboxError("INVALID_MESSAGE", "缺少 operation_id（幂等键）")
     if prediction_md is not None and (not isinstance(prediction_md,str) or
@@ -593,13 +681,24 @@ def submit_experiment(run_id: str, trial_id: str | None,
         "allow_indeterminate_admission":allow_indeterminate_admission}
     if prediction_md is not None:
         fingerprint_input['prediction_md']=prediction_md
+    if variant_context is not None:
+        fingerprint_input['variant_of'] = variant_context['source_submission_id']
+        fingerprint_input['narrative_sha256'] = variant_context['narrative_sha256']
     fingerprint = _request_hash(fingerprint_input)
     with db.transaction() as conn:
         dup = _duplicate(conn, operation_id, fingerprint)
         if dup: return dup
     check = preflight_submission(run_id, trial_id, package_path,
         allow_proxy_evidence=allow_proxy_evidence,
-        allow_indeterminate_admission=allow_indeterminate_admission)
+        allow_indeterminate_admission=allow_indeterminate_admission,
+        narrative_snapshot=variant_context['narrative_snapshot'] if variant_context else None,
+        data_inputs_override=variant_context['data_inputs'] if variant_context else None)
+    science_hashes = None
+    if variant_context is not None:
+        science_hashes = _science_artifact_hashes(check['sealed_bytes'])
+        if science_hashes != variant_context['science_artifact_hashes']:
+            raise MailboxError('SCIENCE_ARTIFACT_CHANGED',
+                               '轨迹变体的非轨迹文件与来源冻结包不一致')
     if check["error_code"]:
         with db.transaction() as conn:
             db.append_event_tx(conn, run_id, "controller", "submission.preflight_failed",
@@ -626,16 +725,114 @@ def submit_experiment(run_id: str, trial_id: str | None,
         sid = _rid("sub")
         frozen = _freeze(sid,package,content)
         conn.execute("INSERT INTO submissions(id,run_id,trial_id,mailbox_id,package_path,package_sha256,"
-                     " status,operation_id,created_at,request_hash,stage,source_package_sha256,admission_json,prediction_md)"
-                     " VALUES(?,?,?,?,?,?,'unknown',?,?,?,'reserved',?,?,?)",
+                     " status,operation_id,created_at,request_hash,stage,source_package_sha256,admission_json,prediction_md,"
+                     " source_submission_id,variant_of,narrative_sha256,science_artifact_hashes_json,science_artifact_match)"
+                     " VALUES(?,?,?,?,?,?,'unknown',?,?,?,'reserved',?,?,?,?,?,?,?,?)",
                      (sid,run_id,trial_id,mb["id"],frozen,digest,operation_id,db.utcnow(),fingerprint,
-                      source_digest,json.dumps(check["admission"],ensure_ascii=False),prediction_md))
+                      source_digest,json.dumps(check["admission"],ensure_ascii=False),prediction_md,
+                      variant_context['source_submission_id'] if variant_context else None,
+                      variant_context['source_submission_id'] if variant_context else None,
+                      variant_context['narrative_sha256'] if variant_context else None,
+                      json.dumps(science_hashes,sort_keys=True) if science_hashes is not None else None,
+                      1 if science_hashes is not None else None))
         db.append_event_tx(conn,run_id,"controller","submission.created",
                            {"submission_id":sid,"package_sha256":digest,
                             "source_package_sha256":source_digest,
                             "allow_proxy_evidence":allow_proxy_evidence,
                             "allow_indeterminate_admission":allow_indeterminate_admission},trial_id=trial_id)
     return _perform_submission(sid,platform,challenge_id)
+
+
+def submit_trace_variant(source_submission_id: str, operation_id: str,
+                         prediction_md: str | None, *,
+                         allow_proxy_evidence: bool = False,
+                         allow_indeterminate_admission: bool = False) -> dict[str, Any]:
+    """Resubmit frozen science bytes with a new, reference-checked narrative."""
+    import io
+
+    source = db.query_one("SELECT * FROM submissions WHERE id=?", (source_submission_id,))
+    if not source or source['is_harvest'] or source['score_confidence'] != 'confirmed':
+        raise MailboxError('INVALID_STATE', '轨迹变体来源必须是已确认评分的实验提交')
+    run_id, trial_id = source['run_id'], source['trial_id']
+    if not trial_id or not operation_id:
+        raise MailboxError('INVALID_MESSAGE', '轨迹变体需要来源 Trial 与 operation_id')
+    narrative_bytes, written_at = _narrative_for_trial(run_id, trial_id)
+    if narrative_bytes is None or written_at is None:
+        raise MailboxError('INVALID_TRACE_NARRATIVE', '来源 Trial 缺少 trace_narrative.jsonl')
+    narrative_hash = hashlib.sha256(narrative_bytes).hexdigest()
+    previous = db.query_one('SELECT * FROM submissions WHERE operation_id=?', (operation_id,))
+    if previous:
+        if (previous['variant_of'] != source_submission_id or
+                previous['narrative_sha256'] != narrative_hash or
+                (previous['prediction_md'] or None) != (prediction_md.strip() if prediction_md else None)):
+            raise MailboxError('CONFLICT', '轨迹变体幂等键已用于不同来源、叙述或预测')
+        return dict(previous) | {'deduplicated': True}
+    frozen_path = (config.WORKSPACE_DIR / source['package_path']).resolve()
+    if config.WORKSPACE_DIR.resolve() not in frozen_path.parents:
+        raise MailboxError('INVALID_PACKAGE', '来源冻结包路径越界')
+    frozen = frozen_path.read_bytes()
+    if hashlib.sha256(frozen).hexdigest() != source['package_sha256']:
+        raise MailboxError('INVALID_PACKAGE', '来源冻结包哈希不匹配')
+    if frozen_path.suffix.lower() != '.zip':
+        raise MailboxError('INVALID_PACKAGE', '只有已封存 ARM ZIP 可以生成轨迹变体')
+    try:
+        with zipfile.ZipFile(io.BytesIO(frozen)) as archive:
+            names = archive.namelist()
+            if len(names) != len(set(names)):
+                raise ValueError('duplicate ZIP member')
+            files = {name: archive.read(name) for name in names}
+        root = trace_selection.bundle_root(files)
+        if root + package_seal.TRACE not in files:
+            raise ValueError('source is not a sealed ARM bundle')
+        data_inputs = json.loads(files.pop(root + package_seal.DATA))
+        files.pop(root + package_seal.TRACE)
+        files.pop(root + 'traces/trace_narrative.jsonl', None)
+    except (KeyError, ValueError, TypeError, zipfile.BadZipFile) as exc:
+        raise MailboxError('INVALID_PACKAGE', '来源冻结包不可用于轨迹变体') from exc
+    base_buffer = io.BytesIO()
+    with zipfile.ZipFile(base_buffer, 'w', compression=zipfile.ZIP_DEFLATED) as archive:
+        for name in sorted(files):
+            archive.writestr(name, files[name])
+    base = base_buffer.getvalue()
+    base_hash = hashlib.sha256(base).hexdigest()
+    variant_dir = config.WORKSPACE_DIR / 'runs' / run_id / 'trials' / trial_id / 'trace_variants'
+    variant_dir.mkdir(parents=True, exist_ok=True)
+    variant_path = variant_dir / (base_hash + '.zip')
+    if variant_path.exists():
+        if variant_path.read_bytes() != base:
+            raise MailboxError('CONFLICT', '同名变体基础包内容不一致')
+    else:
+        with variant_path.open('xb') as stream:
+            stream.write(base)
+    relative = variant_path.relative_to(config.WORKSPACE_DIR).as_posix()
+    last = db.query_one('SELECT MAX(seq) AS n FROM events WHERE run_id=?', (run_id,))
+    snapshot = (narrative_bytes, written_at, last['n'] or 0)
+    expected = _science_artifact_hashes(frozen)
+    check = preflight_submission(
+        run_id, trial_id, relative,
+        allow_proxy_evidence=allow_proxy_evidence,
+        allow_indeterminate_admission=allow_indeterminate_admission,
+        narrative_snapshot=snapshot, data_inputs_override=data_inputs)
+    if _science_artifact_hashes(check['sealed_bytes']) != expected:
+        raise MailboxError('SCIENCE_ARTIFACT_CHANGED',
+                           '轨迹变体的非轨迹文件与来源冻结包不一致')
+    if check['error_code']:
+        raise MailboxError(check['error_code'], '轨迹变体未通过本地提交准入')
+    result = submit_experiment(
+        run_id, trial_id, relative, operation_id,
+        allow_proxy_evidence=allow_proxy_evidence,
+        allow_indeterminate_admission=allow_indeterminate_admission,
+        prediction_md=prediction_md,
+        variant_context={'source_submission_id': source_submission_id,
+                         'narrative_sha256': narrative_hash,
+                         'science_artifact_hashes': expected,
+                         'data_inputs': data_inputs,
+                         'narrative_snapshot': snapshot})
+    db.append_event(run_id, 'controller', 'submission.trace_variant_created', {
+        'submission_id': result['id'], 'source_submission_id': source_submission_id,
+        'variant_of': source_submission_id, 'science_artifact_match': True,
+        'science_artifact_hashes': expected}, trial_id=trial_id)
+    return result
 
 
 def poll_scores(run_id: str | None = None,

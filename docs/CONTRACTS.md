@@ -62,6 +62,8 @@ CS-EV-01 新增的持久字段：`runs.objective_md/objective_status/end_reason/
 
 提交接口：`POST /api/v1/runs/{id}/submissions/preflight` 只读返回源包与封存包 SHA-256、六项信号和 `error_code`。提交使用同一份封存字节，源包哈希与 admission 报告保存在提交行；proxy 证据默认阻断，只有用户显式传 `allow_proxy_evidence=true` 才允许继续。`research_package_check` 是执行器的只读 MCP 入口。平台 bundle 上传后若状态为 needs_review/incomplete/failed 或回执含轨迹准入阻断，stage 为 `bundle_blocked`，不调用 `/submit`，远端 draft 与本地额度均保留。
 
+CS-UP-03 W1 可选轨迹叙述位于当前 Trial 的 `trace_narrative.jsonl`，每行至少有 `step_type`、非空标题/正文/代码之一、`timestamp` 和 `cs_refs`。引用仅接受本 Run 截止序号内的 `run_id#seq`；工具 ID、输出、退出码、时间、包内 artifact 哈希与费用均须与持久事件或提交包逐项吻合。事后注释标 `annotation: true`，使用文件写作时间，不能冒充工具动作。`research_trace_narrative_check` 对大脑和执行器提供只读校验、合并轨迹与准入报告；叙述无效时正式预检返回 `INVALID_TRACE_NARRATIVE` 和逐条原因。叙述存在时，封存轨迹由叙述步骤与未覆盖的事件投影步骤组成；不存在时沿用原封存逻辑。`POST /api/v1/submissions/{source_submission_id}/trace-variants` 只接受已确认评分的实验提交，重新封存前冻结来源包及其非轨迹成员 SHA-256，逐文件核对后才使用现有实验邮箱授权与额度提交；新行记录 `source_submission_id`、`variant_of`、叙述哈希和科学产物哈希一致性。
+
 Job 提交 `preflight` 与 `spec` 平级，不透传给 bohr。入口/本地导入/联网安装在预留前检查；显式 API 检查缺少镜像事实时返回 `IMAGE_FACTS_MISSING` 和最小探针模板，真实探针仍需现有 Job 授权。`GET /api/v1/runs/{id}` 的 Trial 增加按 `trial.reported_complete` 事件计算的 `delivered`，已交付后终止不改写交付状态。
 
 ### 事件

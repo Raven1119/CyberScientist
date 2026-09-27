@@ -340,7 +340,9 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
         status = {"NOT_FOUND": 404, "CONFLICT": 409, "INVALID_STATE": 409,
                   "NEEDS_AUTHORIZATION": 403, "NEEDS_CONFIRM": 400,
                   "MISSING_CREDENTIAL": 400, "NO_MAILBOX": 400,
-                  "INVALID_MESSAGE": 422, "PREDICTION_REQUIRED": 422}.get(exc.code, 400)
+                  "INVALID_MESSAGE": 422, "PREDICTION_REQUIRED": 422,
+                  "INVALID_TRACE_NARRATIVE": 422,
+                  "SCIENCE_ARTIFACT_CHANGED": 409}.get(exc.code, 400)
         return JSONResponse(status_code=status, content={
             "detail": {"code": exc.code, "message": str(exc),
                        "recoverable": True, "details_ref": None,
@@ -911,7 +913,7 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
 
     # ---------------- 协作工具桥（能力令牌鉴权）----------------
 
-    def _tool_auth(request: Request, role: str = "executor") -> dict[str, Any]:
+    def _tool_auth(request: Request, role: str | None = "executor") -> dict[str, Any]:
         auth = request.headers.get("authorization", "")
         token = auth[7:] if auth.startswith("Bearer ") else ""
         row = collab.validate_token(token)
@@ -919,7 +921,7 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
             raise HTTPException(status_code=401, detail={
                 "code": "INVALID_TOKEN",
                 "message": "能力令牌无效/过期/已撤销"})
-        if row["role"] != role:
+        if role is not None and row["role"] != role:
             raise HTTPException(status_code=403, detail={
                 "code": "WRONG_ROLE", "message": "此能力令牌不能调用该工具"})
         return row
@@ -1017,6 +1019,13 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
         result.pop("sealed_bytes", None)
         result.pop("projected_steps", None)
         return result
+
+    @app.post("/api/v1/tools/trace_narrative_check")
+    async def tool_trace_narrative_check(request: Request) -> dict:
+        identity = _tool_auth(request, role=None)
+        body = await request.json()
+        return await asyncio.to_thread(mailboxes.inspect_trace_narrative,
+            identity["run_id"], body.get("trial_id"), body.get("package_path"))
 
     @app.get("/api/v1/runs/{run_id}/jobs")
     async def run_jobs(run_id: str) -> dict:
@@ -1129,6 +1138,15 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
             body.get("allow_proxy_evidence", False),
             body.get("allow_indeterminate_admission", False),
             body.get("prediction_md"))
+
+    @app.post("/api/v1/submissions/{submission_id}/trace-variants")
+    async def submit_trace_variant(submission_id: str, request: Request) -> dict[str, Any]:
+        body = await request.json()
+        return await asyncio.to_thread(
+            mailboxes.submit_trace_variant, submission_id,
+            body.get('operation_id', ''), body.get('prediction_md'),
+            allow_proxy_evidence=body.get('allow_proxy_evidence', False),
+            allow_indeterminate_admission=body.get('allow_indeterminate_admission', False))
 
     @app.post("/api/v1/runs/{run_id}/submissions/preflight")
     async def preflight_submission(run_id: str, request: Request) -> dict[str, Any]:

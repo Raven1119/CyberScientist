@@ -93,6 +93,15 @@ _TOOLS.append({
                        "trial_id": {"type": "string"}},
         "required": []}})
 
+_NARRATIVE_TOOL = {
+    "name": "research_trace_narrative_check",
+    "description": "只读校验当前 Trial 的 trace_narrative.jsonl 引用、合并轨迹与本地准入；不封存或提交。",
+    "inputSchema": {"type": "object", "additionalProperties": False,
+        "properties": {"package_path": {"type": "string"},
+                       "trial_id": {"type": "string"}},
+        "required": []}}
+_TOOLS.append(_NARRATIVE_TOOL)
+
 _DATA_TOOL = {
     "name": "research_data",
     "description": "查询或按本 Run 独立授权物化题目公开数据。request 需要 operation_id。",
@@ -173,7 +182,7 @@ def _handle(msg: dict) -> dict | None:
     if method == "tools/list":
         role = os.environ.get("CS_TOOL_ROLE", "executor")
         return {"jsonrpc": "2.0", "id": mid, "result": {
-            "tools": [_TRACE_TOOL, _DATA_TOOL, _SCORES_TOOL] if role == "brain" else _TOOLS}}
+            "tools": [_TRACE_TOOL, _DATA_TOOL, _SCORES_TOOL, _NARRATIVE_TOOL] if role == "brain" else _TOOLS}}
     if method == "tools/call":
         params = msg.get("params", {})
         name = params.get("name")
@@ -189,6 +198,8 @@ def _handle(msg: dict) -> dict | None:
             out = _post("/api/v1/tools/sandbox", args)
         elif name == "research_package_check":
             out = _post("/api/v1/tools/package_check", args)
+        elif name == "research_trace_narrative_check":
+            out = _post("/api/v1/tools/trace_narrative_check", args)
         elif name == "research_data":
             out = _post("/api/v1/tools/data", args)
         elif name == "ack_guidance":

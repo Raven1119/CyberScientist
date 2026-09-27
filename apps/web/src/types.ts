@@ -402,6 +402,9 @@ export interface Submission {
   package_path: string
   package_sha256: string
   source_package_sha256?: string | null
+  source_submission_id?: string | null
+  variant_of?: string | null
+  science_artifact_match?: 0 | 1 | null
   admission_json?: string | null
   status: string
   score: number | null

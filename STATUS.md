@@ -2,6 +2,7 @@
 
 ## 已实现
 
+- CS-UP-03 W1：Trial 可写 `trace_narrative.jsonl`；封存前逐行校验本 Run 事件引用、工具 ID、原文输出、退出码、时间、包内 artifact 哈希及费用，返回 `INVALID_TRACE_NARRATIVE` 的逐条原因。合法叙述与未覆盖的事件投影合并；大脑和执行器有只读 MCP 预检。已确认的实验提交可生成仅改轨迹的变体；来源包按哈希冻结，非轨迹成员逐文件比较，新提交记录来源、叙述哈希和科学产物一致性；前端提交列表显示变体来源和一致性。
 - CS-UP-03 W0：活跃 Trial 的执行器原生 usage、reasoning、消息片段会维持“正在思考”的活性窗口，私有正文不写公开事件，高频片段限频记无正文标记；超过 `stall_seconds` 完全无原生事件时排队重建执行器会话，不自动重放提示词或远程任务。带时长的大脑 `wait` 按设置上限保护等待窗口，到期恢复检测；无时长按默认静默窗口处理。无活跃 Trial 的空闲 Run 继续接受原有检测。前端可编辑 `max_brain_wait_seconds`。
 - CS-UP-02 W7：大脑专用 `platform_scores` MCP 工具通过无凭据公开 GET 分页聚合本题尝试总数、作者数、displayScore 分档、harbor/trace 分位数、前 10 成绩和本机已确认最佳分数；10 分钟缓存，分页不完整或请求失败返回 unknown。后端拒绝执行器令牌，原始作者和提交内容不进入工具输出。
 - CS-UP-02 W6：新 Run 的 submit 指导和手动实验提交均要求预测并持久化到指导与提交；收割继承预测。已确认评分在下一审阅帧与预测配对，提供可得的 displayScore、harbor_score、trace_score 和相对前次确认成绩的变化；大脑可记录 confirmed/refuted/unclear 判定，评分修订时当前判定失效。前端手动提交表单要求填写预测，提交列表展示预测与判定，整理输入包含配对。旧 Run 不受预测准入限制。
@@ -26,6 +27,7 @@
 
 ## 已实际验证
 
+- CS-UP-03 W1：迁移前本机 SQLite 备份 14,213,120 字节于忽略目录 `.package-checks/cs-up-03-w1-20260927T0725Z/`；连续两次 `db.init_db()` 后新增四列，题目 4、Run 7、提交 2、Job 28 行不变。fake 测试覆盖八种指定违规加缺失引用、确定性合并、只读预检、变体非轨迹逐文件字节一致、幂等与双角色 MCP。定向 `.venv/bin/pytest -q tests/test_trace_narrative.py tests/test_mailboxes.py tests/test_submission_integrity.py tests/test_ev_upgrade.py` 为 126 passed；全套 `.venv/bin/pytest -q` 为 457 passed、1 skipped（既有回环监听限制）。`npm --prefix apps/web test -- --run` 为 18 passed，`npm --prefix apps/web run build`、`.venv/bin/python -m compileall -q src tests`、`git diff --check` 通过。
 - CS-UP-03 W0：fake 回合覆盖 20 分钟持续原生活动、不泄露思考正文、完全静默后只排一次会话重启、显式 1800 秒等待到期、无活跃 Trial 仍触发检查；原运行时证据用例更新为“240 秒流告警不提前裁决”。`.venv/bin/pytest -q` 为 444 passed、1 skipped（既有回环监听限制）；`npm --prefix apps/web test -- --run` 为 18 passed，`npm --prefix apps/web run build` 通过。尚未用真实 Codex/Kimi/Prime 回合验证这一边界。
 - CS-UP-02 W6 后续验收修正：临时数据库与 fake 平台覆盖新 Run 的手动提交空预测被拒且不预留、有效预测经 API 保存、旧 Run 可继续空预测；前端覆盖必填提示和预测传递。定向 `.venv/bin/pytest -q tests/test_mailboxes.py tests/test_submission_integrity.py tests/test_learning_integrity.py tests/test_ev_upgrade.py tests/test_polling.py` 为 125 passed；全量 `.venv/bin/pytest -q` 为 438 passed、1 skipped（既有回环监听限制）；`npm --prefix apps/web test -- --run` 为 18 passed；`npm --prefix apps/web run build`、`.venv/bin/python -m compileall -q src tests` 和 `git diff --check` 通过。前端首次构建发现测试断言使用了不支持的 `exact` 参数，改为锚定正则后重跑通过。所有验证均未调用真实模型、创建 Job 或提交 Attempt。
 - CS-UP-02 W7：本机保存的官方 API 文档列出尝试列表 `page`、`limit`、`sort` 参数，历史公开回执示例含 `attempts`、`total`、`scorecard` 和 `scoringState`。fake 分页测试覆盖分档、分位数、匿名、缓存、平台失败与执行器拒绝；`.venv/bin/pytest -q` 为 436 passed、1 skipped（既有回环监听限制），前端 17 passed、构建通过，`compileall` 与 `git diff --check` 通过。
@@ -66,6 +68,7 @@
 
 ## 尚未验证
 
+- CS-UP-03 W1 的叙述变体尚未在真实平台提交与评分；包内科学产物哈希一致不等于平台科学分必然一致。本包没有模型调用、科研 Run、Job 创建或 Attempt 提交。
 - CS-UP-02 W1 的多个真实 Run 并行及真实所选模型的原生会话检查尚未验证；W2 的真实 Codex/Kimi/Prime 错误文案、限流重试效果和长时看门狗仍未在真实 Run 验证。W3 的真实 `job submit` 仍未验证。W4 沙箱在真实科研中的用途与平台实际计费单位/金额未验证；W5 的真实环境事实自动采集尚未通过新的外部回执验收。W6 的真实预测与评分因果效果尚未验证；W7 的当前平台真实分页与长期缓存行为尚未实测。本包没有新模型调用、科研 Run、Job 创建或 Attempt 提交。
 - CS-UP-01 的新封存包尚未经真实平台准入验证；真实评分器的复评时间线也未经真实环境验证。本卡未进行真实 Run、模型调用、Job、沙箱、Attempt 或平台账号访问。
 - CS-EV-01a 的第一次 D1 探针曾受沙箱网络权限阻断；CS-EV-01b 已定位并修复旧 CLI 的 API host 错配，真实历史 Job 与 PR-4 Job 均已成功取回。仍未验证平台对 PR-4 科学结果的评分或比赛有效性；本卡未创建新的生产 Job。
