@@ -95,7 +95,7 @@ ReviewPacket 包含 `run_id / state_version / trigger / current_intention / tria
 |---|---|
 | `start_trial` | 开始下一轮，包含目标与成功判据；不得同时有其他活跃 Trial |
 | `steer` | 给当前 Prime 排队指导，记录收据 |
-| `wait` | 等待新的外部事件，不立即再次唤醒自己 |
+| `wait` | 等待新的外部事件，不立即再次唤醒自己；可带 `duration_seconds`，不带时按 `stall_seconds` 等待，上限由 `max_brain_wait_seconds` 控制 |
 | `pause` | 请求安全暂停并给出原因 |
 | `refresh_platform` | 触发只读核对，仍尊重频率限制 |
 | `request_submission` | 保留旧 Schema 兼容；当前明确拒绝并记录 `brain.action_rejected`，不执行提交。`bundle_manifest_ref` 尚无冻结包解析契约，不能视作 `package_path` |

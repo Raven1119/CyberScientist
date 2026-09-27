@@ -58,6 +58,7 @@ export interface Settings {
     max_jobs: number
     max_submissions: number
     stall_seconds: number
+    max_brain_wait_seconds: number
     brain_review_timeout_seconds: number
     rate_limit_max_seconds: number
   }

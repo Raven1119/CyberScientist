@@ -200,6 +200,12 @@ export default function SettingsPage() {
               onChange={(event) => update((s) => ({ ...s, run_defaults: {
                 ...s.run_defaults, stall_seconds: Number(event.target.value),
               } }))} />
+            <label htmlFor="max-brain-wait">大脑明确等待上限（秒）</label>
+            <input id="max-brain-wait" type="number" min={1} max={86400}
+              value={settings.run_defaults.max_brain_wait_seconds}
+              onChange={(event) => update((s) => ({ ...s, run_defaults: {
+                ...s.run_defaults, max_brain_wait_seconds: Number(event.target.value),
+              } }))} />
             <label htmlFor="brain-review-timeout">大脑单次审阅超时（秒）</label>
             <input id="brain-review-timeout" type="number" min={1} max={86400}
               value={settings.run_defaults.brain_review_timeout_seconds}

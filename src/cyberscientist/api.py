@@ -385,6 +385,7 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
                 raise HTTPException(422, detail={"code": "INVALID_SETTINGS",
                                                  "message": "max_active_runs 必须为 1–20 的整数"})
             for key, lower, upper in (("stall_seconds", 1, 86400),
+                                      ("max_brain_wait_seconds", 1, 86400),
                                       ("brain_review_timeout_seconds", 1, 86400),
                                       ("rate_limit_max_seconds", 1, 86400)):
                 value = (merged.get("run_defaults") or {}).get(key,

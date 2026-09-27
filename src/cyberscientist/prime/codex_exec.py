@@ -207,6 +207,12 @@ class CodexExecutor:
                         })
                 elif method == "thread/tokenUsage/updated":
                     await sess.queue.put({"type": "usage.updated", "usage": params.get("tokenUsage")})
+                elif (method == "item/updated" or
+                      (method.startswith(("item/reasoning/", "item/agentMessage/"))
+                       and "delta" in method.lower())):
+                    # Keep native turn liveness without storing private thought
+                    # or high-frequency message fragments in the public trace.
+                    await sess.queue.put({"type": "native.activity"})
                 elif method == "turn/completed":
                     turn = params.get("turn", {})
                     if sess.turn_id and turn.get("id") != sess.turn_id:

@@ -92,6 +92,11 @@
               "reason": {
                 "type": "string",
                 "minLength": 1
+              },
+              "duration_seconds": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 86400
               }
             },
             "required": [

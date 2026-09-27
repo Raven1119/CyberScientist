@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 from datetime import datetime, timedelta, timezone
 
@@ -28,6 +29,118 @@ def _run() -> tuple[RunController, str]:
 def _types(rid: str) -> list[str]:
     return [row['type'] for row in db.query('SELECT type FROM events WHERE run_id=? ORDER BY seq',
                                              (rid,))]
+
+
+def _active_trial(controller: RunController, rid: str) -> str:
+    tid = 'trial_w0'
+    db.execute("INSERT INTO trials(id,run_id,goal,success_check,status,created_at)"
+               " VALUES(?,?,? ,?,'active',?)",
+               (tid, rid, 'fixture', 'done', db.utcnow()))
+    db.execute('UPDATE runs SET current_trial_id=? WHERE id=?', (tid, rid))
+    controller._executor_busy[rid] = True
+    return tid
+
+
+async def test_active_executor_native_thinking_prevents_false_stall():
+    controller, rid = _run()
+    _active_trial(controller, rid)
+    now = time.time()
+    start = datetime.fromtimestamp(now - 1200, timezone.utc).isoformat()
+    db.execute('UPDATE runs SET started_at=? WHERE id=?', (start, rid))
+    db.append_event(rid, 'prime', 'prime.task_accepted', {'status': 'accepted'})
+    db.execute("UPDATE events SET occurred_at=? WHERE run_id=? AND type='prime.task_accepted'",
+               (start, rid))
+    for age in (900, 600, 300, 60):
+        await controller._handle_signal(
+            {'type': 'prime_event', 'event': {'type': 'reasoning',
+                                            'detail': 'private thought'}},
+            rid, asyncio.Queue())
+        row = db.query_one("SELECT MAX(seq) AS seq FROM events WHERE run_id=?", (rid,))
+        db.execute('UPDATE events SET occurred_at=? WHERE run_id=? AND seq=?',
+                   (datetime.fromtimestamp(now-age, timezone.utc).isoformat(), rid, row['seq']))
+        assert controller.check_liveness(rid, now=now-age+1) is None
+    assert controller.check_liveness(rid, now=now) is None
+    assert 'run.stall_detected' not in _types(rid)
+    assert 'private thought' not in json.dumps([dict(r) for r in db.query(
+        "SELECT payload FROM events WHERE run_id=? AND type='prime.native_activity'", (rid,))])
+
+
+async def test_silent_busy_executor_queues_one_session_restart(monkeypatch):
+    controller, rid = _run()
+    _active_trial(controller, rid)
+    q = asyncio.Queue()
+    controller._signals[rid] = q
+    old = (datetime.now(timezone.utc) - timedelta(minutes=20)).isoformat()
+    db.append_event(rid, 'prime', 'prime.task_accepted', {'status': 'accepted'})
+    db.execute("UPDATE events SET occurred_at=? WHERE run_id=? AND type='prime.task_accepted'",
+               (old, rid))
+    await controller._handle_signal(
+        {'type': 'prime_event', 'event': {'type': 'trial.stalled', 'detail': 'no native events'}},
+        rid, q)
+    assert db.query_one("SELECT status FROM trials WHERE run_id=?", (rid,))['status'] == 'active'
+    assert controller._executor_busy[rid]
+    assert controller.check_liveness(rid) == 'executor_restart_queued'
+    assert controller.check_liveness(rid) is None
+    calls = []
+    async def restart(_rid):
+        calls.append(_rid)
+        controller._executor_busy[_rid] = False
+        db.append_event(_rid, 'controller', 'executor.session_restarted', {})
+        return True
+    monkeypatch.setattr(controller, '_restart_prime_session', restart)
+    await controller._handle_signal(q.get_nowait(), rid, q)
+    assert calls == [rid]
+    assert 'run.stall_detected' not in _types(rid)
+    assert db.query_one("SELECT trigger FROM review_requests WHERE run_id=?"
+                        " ORDER BY rowid DESC LIMIT 1", (rid,))['trigger'] == 'executor_restarted'
+
+
+async def test_brain_wait_duration_respected_then_stall_resumes():
+    controller, rid = _run()
+    run = controller._require_run(rid)
+    dec = {'schema_version': 2, 'decision_id': 'wait-1800', 'run_id': rid,
+           'observed_state_version': run['state_version'], 'summary': '等待远端证据',
+           'evidence_refs': [], 'actions': [{'op': 'wait', 'reason': '等待结果',
+                                            'duration_seconds': 1800}],
+           'experience_proposals': []}
+    await controller._apply_decision(rid, dec, {}, DemoBrain(), SessionRef('demo', 'brain'))
+    wait = db.query_one("SELECT payload,occurred_at FROM events WHERE run_id=?"
+                        " AND type='brain.wait'", (rid,))
+    assert json.loads(wait['payload'])['duration_seconds'] == 1800
+    wait_at = datetime.fromisoformat(wait['occurred_at']).timestamp()
+    assert controller.check_liveness(rid, now=wait_at+1799) is None
+    assert controller.check_liveness(rid, now=wait_at+1800) == 'review_queued'
+
+
+def test_explicit_wait_defers_executor_restart_until_its_deadline():
+    controller, rid = _run()
+    _active_trial(controller, rid)
+    q = asyncio.Queue()
+    controller._signals[rid] = q
+    old = (datetime.now(timezone.utc) - timedelta(minutes=20)).isoformat()
+    db.append_event(rid, 'prime', 'prime.task_accepted', {'status': 'accepted'})
+    db.execute("UPDATE events SET occurred_at=? WHERE run_id=? AND type='prime.task_accepted'",
+               (old, rid))
+    db.append_event(rid, 'brain', 'brain.wait', {'reason': '等待', 'duration_seconds': 1800})
+    wait_at = datetime.fromisoformat(db.query_one(
+        "SELECT occurred_at FROM events WHERE run_id=? AND type='brain.wait'",
+        (rid,))['occurred_at']).timestamp()
+    assert controller.check_liveness(rid, now=wait_at+1799) is None
+    assert q.empty()
+    assert controller.check_liveness(rid, now=wait_at+1800) == 'executor_restart_queued'
+
+
+def test_unbounded_brain_wait_is_rejected_by_schema():
+    from cyberscientist import decision
+    from test_decision import valid_decision
+    assert decision.validate_structure(valid_decision(actions=[
+        {'op': 'wait', 'reason': 'too long', 'duration_seconds': 86401}]))
+
+
+def test_idle_run_still_stalls_even_if_executor_busy_flag_is_stale():
+    controller, rid = _run()
+    controller._executor_busy[rid] = True
+    assert controller.check_liveness(rid) == 'review_queued'
 
 
 async def test_silent_run_wakes_fake_brain_and_recovers_with_trial():

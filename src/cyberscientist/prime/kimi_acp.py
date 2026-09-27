@@ -405,6 +405,7 @@ class KimiExecutor:
                 u = msg["params"].get("update", {})
                 kind = u.get("sessionUpdate")
                 if kind in ("agent_message_chunk", "agent_thought_chunk"):
+                    await sess.queue.put({"type": "native.activity"})
                     content = u.get("content", {})
                     if isinstance(content, dict):
                         thought_buf.append(content.get("text", ""))

@@ -406,7 +406,7 @@ class KimiBrain:
             "actions 中每个元素只能是以下形状之一（1-3 个，最多一个主动作）：\n"
             '- {"op":"start_trial","goal":"...","success_check":"..."}\n'
             '- {"op":"steer","trial_id":"当前 Trial","message":"..."}\n'
-            '- {"op":"wait","reason":"..."}\n'
+            '- {"op":"wait","reason":"...","duration_seconds":1800}（时长可省略，最长由设置限制）\n'
             '- {"op":"pause","reason":"..."}\n'
             '- {"op":"promote_experience","experience_id":"...","revision_hash":"...",'
             '"reason":"...","evidence_refs":["..."]}（仅题内；全局由用户审批，勿用）\n'

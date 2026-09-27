@@ -299,7 +299,9 @@ class PrimeRpc:
                 elif etype == "auto_retry_start":
                     yield {"type": "execution.progress",
                            "detail": f"自动重试第 {ev.get('attempt')} 次"}
-                # message_* 高频增量不映射，保留在原始协议日志
+                elif etype.startswith("message_"):
+                    yield {"type": "native.activity"}
+                # Message text remains in the native protocol log, not the public trace.
         return with_stall_watchdog(normalize(), self.stall_timeout)
 
     async def respond_ui(self, session_id: str, req_id: str, **fields: Any) -> None:

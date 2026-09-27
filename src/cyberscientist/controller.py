@@ -229,6 +229,8 @@ class RunController:
         self._review_wake: dict[str, asyncio.Event] = {}
         self._review_tasks: dict[str, asyncio.Task] = {}
         self._executor_busy: dict[str, bool] = {}
+        self._native_arrival_at: dict[str, float] = {}
+        self._last_native_marker_at: dict[str, float] = {}
         self._prime_prompts: dict[str, tuple[str | None, str]] = {}
         self._prime_guidance_ids: dict[str, str] = {}
         self._session_restarts: set[tuple[str, str]] = set()
@@ -1290,17 +1292,44 @@ class RunController:
         diagnosis = self._liveness_diagnosis(run_id, run)
         if diagnosis["jobs"] or diagnosis["sandbox_exec_count"]:
             return None
-        if any(r["status"] == "running" for r in diagnosis["reviews"]):
-            return None  # worker has its own bounded model-turn timeout
         marks = ",".join("?" for _ in _LIVENESS_PROGRESS)
         progress = db.query_one(
-            f"SELECT occurred_at FROM events WHERE run_id=? AND (type IN ({marks})"
+            f"SELECT seq,occurred_at FROM events WHERE run_id=? AND (type IN ({marks})"
             " OR (type='prime.execution.progress'"
             " AND COALESCE(json_extract(payload,'$.detail'),'') NOT LIKE '%bohr job list%'"
             " AND (json_extract(payload,'$.item_id') IS NOT NULL"
             " OR COALESCE(json_extract(payload,'$.detail'),'') LIKE '工具完成%')))"
             " ORDER BY seq DESC LIMIT 1", (run_id, *_LIVENESS_PROGRESS))
         progress_at = _parse_ts(progress["occurred_at"]) if progress else None
+        latest_wait = db.query_one(
+            "SELECT seq,occurred_at,payload FROM events WHERE run_id=?"
+            " AND type='brain.wait' ORDER BY seq DESC LIMIT 1", (run_id,))
+        if latest_wait and (not progress or latest_wait["seq"] > progress["seq"]):
+            wait_at = _parse_ts(latest_wait["occurred_at"])
+            duration = json.loads(latest_wait["payload"]).get("duration_seconds", stall_seconds)
+            if wait_at is not None and now < wait_at + min(duration, defaults["max_brain_wait_seconds"]):
+                return None
+        if self._executor_busy.get(run_id) and diagnosis["trial_status"] == "active":
+            native = db.query_one(
+                "SELECT occurred_at FROM events WHERE run_id=? AND type IN ("
+                "'prime.task_accepted','prime.task_resumed','guidance.sent','model.retry_started',"
+                "'prime.native_activity','prime.usage.updated','prime.execution.progress')"
+                " ORDER BY seq DESC LIMIT 1", (run_id,))
+            native_at = _parse_ts(native["occurred_at"]) if native else None
+            turn_anchor = max(x for x in (native_at, self._native_arrival_at.get(run_id),
+                _parse_ts(run["started_at"]) or _parse_ts(run["created_at"])) if x is not None)
+            if turn_anchor is not None and now - turn_anchor < stall_seconds:
+                return None  # native activity is liveness, not scientific progress
+            q = self._signals.get(run_id)
+            if q is not None:
+                self._session_restarts.add((run_id, "executor"))
+                db.append_event(run_id, "controller", "executor.native_silence",
+                                {"idle_seconds": int(now - turn_anchor) if turn_anchor else None,
+                                 "trial_id": run["current_trial_id"]})
+                q.put_nowait({"type": "executor_stale", "last_native_at": turn_anchor})
+                return "executor_restart_queued"
+        if any(r["status"] == "running" for r in diagnosis["reviews"]):
+            return None  # worker has its own bounded model-turn timeout
         start_at = _parse_ts(run["started_at"]) or _parse_ts(run["created_at"])
         baseline = max(x for x in (progress_at, start_at) if x is not None)
         stall = db.query_one(
@@ -1471,6 +1500,8 @@ class RunController:
                 try:
                     runtime = self._prime_instances[run_id]
                     async for ev in runtime.events(sid):
+                        if ev.get("type") not in ("trial.stalled", "execution.heartbeat"):
+                            self._native_arrival_at[run_id] = time.time()
                         await q.put({"type": "prime_event", "event": ev})
                         if ev.get("type") == "session.ended":
                             break
@@ -1587,7 +1618,8 @@ class RunController:
             for mapping in (self._signals,self._tasks,self._prime_sessions,self._prime_instances,
                             self._brain_sessions,self._brain_instances,self._start_pump,self._review_wake,self._review_tasks,
                             self._executor_busy,self._prime_prompts,
-                            self._prime_guidance_ids,self._pumps):
+                            self._prime_guidance_ids,self._pumps,
+                            self._native_arrival_at,self._last_native_marker_at):
                 mapping.pop(run_id,None)
 
     def _recover_review_requests(self, run_id: str) -> None:
@@ -1629,7 +1661,15 @@ class RunController:
             trial_id = run["current_trial_id"]
             etype = ev.get("type", "prime.event")
             if (etype in ("reasoning", "token", "thinking")
+                    or etype == "native.activity"
                     or (etype == "execution.progress" and str(ev.get("detail", "")).lstrip().startswith(("思考:", "思考：")))):
+                if self._executor_busy.get(run_id):
+                    seen_at = time.time()
+                    self._native_arrival_at[run_id] = seen_at
+                    if seen_at - self._last_native_marker_at.get(run_id, 0) >= 10:
+                        db.append_event(run_id, "prime", "prime.native_activity",
+                                        {"kind": etype}, trial_id=trial_id)
+                        self._last_native_marker_at[run_id] = seen_at
                 return
             if etype == "trial.stalled" and (
                 run["phase"] != "running" or not self._has_active_trial(run)
@@ -1692,6 +1732,11 @@ class RunController:
                                 {"trial_id": trial_id})
                 self._enqueue_lifecycle(run_id, trigger="trial_done")
             elif etype == "trial.stalled":
+                if self._executor_busy.get(run_id):
+                    # The native stream watchdog fires before the configurable
+                    # liveness window. Keep the turn active; check_liveness owns
+                    # the bounded session restart when silence really expires.
+                    return
                 # A9：无事件只代表需要活性核对，不判失败、不 abort、不换会话；
                 # Trial 标记 stalled 保留现场，由大脑生命周期审阅裁决
                 self._executor_busy[run_id] = False
@@ -1768,6 +1813,29 @@ class RunController:
                     self._enqueue_lifecycle(run_id, trigger=latest["trigger"])
         elif stype in ("pause", "terminate"):
             pass  # 状态转换已在 control()/主循环处理
+        elif stype == "executor_stale":
+            try:
+                run = self._require_run(run_id)
+                if run["phase"] != "running" or not self._executor_busy.get(run_id):
+                    return
+                native = db.query_one(
+                    "SELECT occurred_at FROM events WHERE run_id=? AND type IN ("
+                    "'prime.task_accepted','prime.task_resumed','guidance.sent','model.retry_started',"
+                    "'prime.native_activity','prime.usage.updated','prime.execution.progress')"
+                    " ORDER BY seq DESC LIMIT 1", (run_id,))
+                native_at = max(x for x in (
+                    _parse_ts(native["occurred_at"]) if native else None,
+                    self._native_arrival_at.get(run_id),
+                    _parse_ts(run["started_at"]) or _parse_ts(run["created_at"]))
+                    if x is not None)
+                if native_at > signal.get("last_native_at", 0):
+                    return  # a native event arrived after the watchdog queued
+                if await self._restart_prime_session(run_id):
+                    self._enqueue_lifecycle(run_id, trigger="executor_restarted")
+                else:
+                    self._pause_needs_attention(run_id, "执行器原生会话长时间无事件且重启失败；请检查连接")
+            finally:
+                self._session_restarts.discard((run_id, "executor"))
         elif stype == "prime_error":
             info = model_limits.classify(signal.get("message"))
             if info:
@@ -1815,6 +1883,8 @@ class RunController:
         self._prime_instances[run_id] = runtime
         self._prime_sessions[run_id] = new_session
         self._executor_busy[run_id] = False
+        self._native_arrival_at.pop(run_id, None)
+        self._last_native_marker_at.pop(run_id, None)
         db.append_event(run_id, "controller", "executor.session_restarted", {})
         starter = self._start_pump.get(run_id)
         if starter:
@@ -3148,8 +3218,16 @@ class RunController:
                 if not self._executor_busy.get(run_id):
                     await self._deliver_queued_guidance(run_id)
             elif op == "wait":
+                requested = action.get("duration_seconds")
+                wait_limit = defaults["max_brain_wait_seconds"]
+                if requested is not None and requested > wait_limit:
+                    db.append_event(run_id, "brain", "brain.action_rejected",
+                                    {"op": "wait", "reason":
+                                     f"请求等待 {requested} 秒超过设置上限 {wait_limit} 秒"})
+                    continue
                 db.append_event(run_id, "brain", "brain.wait",
-                                {"reason": action["reason"]})
+                                {"reason": action["reason"],
+                                 "duration_seconds": requested or defaults["stall_seconds"]})
             elif op == "pause":
                 db.execute("UPDATE runs SET phase='pausing' WHERE id=?", (run_id,))
                 db.append_event(run_id, "controller", "run.pausing",

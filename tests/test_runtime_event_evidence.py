@@ -41,16 +41,17 @@ async def test_idle_stall_is_discarded_without_events_or_brain_reviews(trial_sta
     assert controller._executor_busy[run_id] == busy
 
 
-async def test_busy_active_trial_stall_still_requests_lifecycle_review():
+async def test_busy_active_trial_stream_watchdog_waits_for_configured_liveness_window():
     controller, run_id = running_run(trial_status="active", busy=True)
     await controller._handle_signal(
         {"type": "prime_event", "event": {"type": "trial.stalled", "detail": "240 seconds"}},
         run_id, asyncio.Queue())
-    assert db.query_one("SELECT status FROM trials WHERE id='trial-runtime'")["status"] == "stalled"
+    assert db.query_one("SELECT status FROM trials WHERE id='trial-runtime'")["status"] == "active"
     events = db.events_after(run_id, 0)
-    assert any(event["type"] == "trial.stalled" and event["trial_id"] == "trial-runtime" for event in events)
+    assert any(event["type"] == "prime.trial.stalled" and event["trial_id"] == "trial-runtime" for event in events)
     reviews = db.query("SELECT * FROM review_requests WHERE run_id=? AND source='lifecycle'", (run_id,))
-    assert len(reviews) == 1 and reviews[0]["trigger"] == "trial_stalled"
+    assert reviews == []
+    assert controller._executor_busy[run_id]
 
 
 async def test_executor_public_fields_and_raw_usage_survive_without_secrets():
@@ -70,7 +71,7 @@ async def test_executor_public_fields_and_raw_usage_survive_without_secrets():
     for event in events:
         await controller._handle_signal({"type": "prime_event", "event": event}, run_id, asyncio.Queue())
     recorded = [event for event in db.events_after(run_id, 0) if event["source"] == "prime"]
-    assert len(recorded) == 3
+    assert len(recorded) >= 4
     progress = recorded[0]["payload"]
     assert progress["status"] == "failed" and progress["exit_code"] == 9
     assert progress["item_id"] == "tool-1"
@@ -79,6 +80,7 @@ async def test_executor_public_fields_and_raw_usage_survive_without_secrets():
     assert recorded[1]["payload"]["usage"]["total"] == {"inputTokens": 123, "outputTokens": 17}
     assert recorded[1]["payload"]["usage"]["cost"] is None
     assert recorded[2]["payload"]["usage"] is None
+    assert all(event["payload"].keys() == {"kind"} for event in recorded[3:])
     serialized = json.dumps(recorded)
     for forbidden in ("saved-private-key", "unknown-private-key", "other-private-key", "private reasoning", "private thoughts"):
         assert forbidden not in serialized
