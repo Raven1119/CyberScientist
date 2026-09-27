@@ -1,0 +1,89 @@
+"""Audit historical display-score formulas without inventing missing science scores."""
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+from collections import Counter, defaultdict
+from pathlib import Path
+from typing import Any
+
+from cyberscientist import config
+
+
+def formula_a(harbor: float, trace: float) -> float:
+    return harbor * max(0.0, min((trace - 30.0) / 40.0, 1.0))
+
+
+def formula_b(harbor: float, trace: float) -> float:
+    return harbor * max(0.0, min(trace / 100.0, 1.0))
+
+
+def classify_formula(row: dict[str, Any], *, tolerance: float = 0.001) -> dict[str, Any]:
+    harbor, trace, display = (row.get(key) for key in
+                              ("harbor_score", "trace_score", "display_score"))
+    if any(value is None for value in (harbor, trace, display)):
+        return {"class": "missing", "error_a": None, "error_b": None}
+    error_a = abs(float(display) - formula_a(float(harbor), float(trace)))
+    error_b = abs(float(display) - formula_b(float(harbor), float(trace)))
+    a, b = error_a <= tolerance, error_b <= tolerance
+    return {"class": ("both" if a and b else "formula_a" if a else
+                      "formula_b" if b else "neither"),
+            "error_a": error_a, "error_b": error_b}
+
+
+def analyze(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    live = [row for row in rows if row.get("scoring_mode") == "live_task_grader"]
+    counts: Counter[str] = Counter()
+    by_challenge: dict[str, dict[str, Any]] = defaultdict(
+        lambda: {"sample_count": 0, "complete_score_count": 0,
+                 "science_artifact_count": 0, "formula_classes": Counter()})
+    anomalies = []
+    for row in live:
+        result = classify_formula(row)
+        kind = result["class"]
+        counts[kind] += 1
+        item = by_challenge[row["challenge_id"]]
+        item["sample_count"] += 1
+        item["complete_score_count"] += kind != "missing"
+        item["science_artifact_count"] += bool(row.get("science_files"))
+        item["formula_classes"][kind] += 1
+        if kind in {"formula_b", "neither"}:
+            anomalies.append({"attempt_id": row["attempt_id"],
+                              "challenge_id": row["challenge_id"],
+                              "class": kind,
+                              "error_a": result["error_a"],
+                              "error_b": result["error_b"],
+                              "override_in_effect": row.get("override_in_effect"),
+                              "score_is_final": row.get("score_is_final")})
+    return {"live_count": len(live), "formula_classes": dict(counts),
+            "by_challenge": {cid: {**value, "formula_classes": dict(value["formula_classes"])}
+                             for cid, value in sorted(by_challenge.items())},
+            "anomalies": anomalies}
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--root", type=Path, required=True)
+    args = parser.parse_args()
+    root = args.root.resolve()
+    ignored_parent = (config.WORKSPACE_ROOT / ".package-checks").resolve()
+    if root.parent != ignored_parent or not root.name.startswith("scorer-re-"):
+        raise ValueError("input must be a .package-checks/scorer-re-* directory")
+    data = (root / "dataset.jsonl").read_bytes()
+    summary = json.loads((root / "dataset_summary.json").read_text())
+    if hashlib.sha256(data).hexdigest() != summary["dataset_sha256"]:
+        raise ValueError("dataset hash mismatch; rebuild from raw receipts")
+    rows = [json.loads(line) for line in data.splitlines()]
+    result = analyze(rows)
+    (root / "score_analysis.json").write_text(json.dumps(result, ensure_ascii=False, indent=2))
+    print(json.dumps({"live_count": result["live_count"],
+                      "formula_classes": result["formula_classes"],
+                      "challenge_count": len(result["by_challenge"]),
+                      "live_with_science_artifacts": sum(
+                          item["science_artifact_count"] for item in result["by_challenge"].values())},
+                     sort_keys=True))
+
+
+if __name__ == "__main__":
+    main()
