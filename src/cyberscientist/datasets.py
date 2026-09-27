@@ -18,6 +18,16 @@ from .bohr_proxy import redact
 MAX_BYTES = 1024 ** 3
 
 
+def task_requires_data(content: str | None, resources: list[Any]) -> bool:
+    """A registered public resource is optional when the official task says it has no input."""
+    public_resource = any(isinstance(item, dict) and item.get("role") == "task-public-data"
+                          for item in resources)
+    if not public_resource:
+        return False
+    normalized = " ".join((content or "").split())
+    return "Nothing is provided as input: the problem statement above is the whole input." not in normalized
+
+
 class DataError(Exception):
     def __init__(self, code: str, message: str):
         super().__init__(message)
@@ -194,20 +204,19 @@ def input_refs(source: Path) -> list[str]:
 
 
 def evidence_class(conn: Any, run_id: str, trial_id: str | None) -> str:
-    run = conn.execute("SELECT c.resources_json FROM runs r JOIN challenges c"
+    run = conn.execute("SELECT c.content,c.resources_json FROM runs r JOIN challenges c"
                        " ON c.id=r.challenge_id WHERE r.id=?", (run_id,)).fetchone()
     try:
         resources = json.loads(run["resources_json"] or "[]") if run else []
     except ValueError:
         resources = []
-    required = any(isinstance(item, dict) and item.get("role") == "task-public-data"
-                   for item in resources)
-    if not required:
-        return "not_applicable"
+    required = task_requires_data(run["content"] if run else None, resources)
     rows = conn.execute("SELECT data_refs_json FROM compute_jobs WHERE run_id=?"
                         + (" AND trial_id=?" if trial_id else ""),
                         (run_id, trial_id) if trial_id else (run_id,)).fetchall()
-    return "official_data" if any(json.loads(row["data_refs_json"] or "[]") for row in rows) else "proxy"
+    if any(json.loads(row["data_refs_json"] or "[]") for row in rows):
+        return "official_data"
+    return "proxy" if required else "not_applicable"
 
 
 def materialize(challenge_id: str, key: str, operation_id: str,

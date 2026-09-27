@@ -412,6 +412,7 @@ CREATE INDEX IF NOT EXISTS idx_score_calibration_local ON score_calibration(loca
 
 # submissions 表 v2 新增列（对既有库做幂等 ALTER）
 SUBMISSION_V2_COLUMNS = {
+    "replay_of": "TEXT",
     "variant_of": "TEXT",
     "narrative_sha256": "TEXT",
     "science_artifact_hashes_json": "TEXT",

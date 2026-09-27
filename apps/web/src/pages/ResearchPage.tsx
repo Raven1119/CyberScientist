@@ -1927,6 +1927,7 @@ function SubmissionsPanel({
                 {s.score_anomaly && ` · 评分异常：${s.score_anomaly}`}
                 {s.scorecard_consistent === 0 && ' · 分项不一致'}
                 {s.scorecard_consistent === 1 && ' · 分项一致'}
+                {s.replay_of && ` · 原包重复提交，来源 ${s.replay_of}`}
               </div>
               {s.error && <p className="form-error">{s.error}</p>}
               {s.prediction_md && <p className="small-text">提交预测：{s.prediction_md}</p>}

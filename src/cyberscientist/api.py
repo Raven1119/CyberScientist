@@ -1176,6 +1176,13 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
             allow_proxy_evidence=body.get('allow_proxy_evidence', False),
             allow_indeterminate_admission=body.get('allow_indeterminate_admission', False))
 
+    @app.post("/api/v1/submissions/{submission_id}/exact-replay")
+    async def submit_exact_replay(submission_id: str, request: Request) -> dict[str, Any]:
+        body = await request.json()
+        return await asyncio.to_thread(mailboxes.submit_exact_replay,
+                                       submission_id, body.get('operation_id', ''),
+                                       body.get('prediction_md', ''))
+
     @app.post("/api/v1/runs/{run_id}/submissions/preflight")
     async def preflight_submission(run_id: str, request: Request) -> dict[str, Any]:
         body = await request.json()

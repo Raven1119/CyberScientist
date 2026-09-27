@@ -75,6 +75,24 @@ def test_register_account_bad_response():
         p.register_account()
 
 
+def test_http_rejection_keeps_redacted_reason_without_assuming_no_side_effect(monkeypatch):
+    body = json.dumps({"error": "round closed", "token": "asp_hidden",
+                       "message": "request asp_account rejected"}).encode()
+    def reject(*_args, **_kwargs):
+        raise urllib.error.HTTPError("https://play.bohrium.com/api/challenges/c/attempts",
+                                     400, "Bad Request", {}, io.BytesIO(body))
+    monkeypatch.setattr(urllib.request, "urlopen", reject)
+    p = BohriumPlaygroundPlatform("https://play.bohrium.com/api", operator_token="asp_operator")
+    with pytest.raises(PlatformError) as error:
+        p._http("POST", "/challenges/c/attempts", token="asp_account",
+                form=({"status": "draft"}, []))
+    assert "HTTP 400" in str(error.value)
+    assert "round closed" in str(error.value)
+    assert "asp_" not in str(error.value)
+    assert "token" not in str(error.value)
+    assert error.value.no_side_effect is False
+
+
 def test_submit_requires_secret_and_challenge(tmp_path):
     pkg = tmp_path / "result_package.json"
     pkg.write_text("{}", encoding="utf-8")

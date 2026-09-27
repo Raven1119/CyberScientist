@@ -15,7 +15,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from . import arm_admission, config, db, experience_context, package_seal, trace_narrative, trace_selection
+from . import arm_admission, config, datasets, db, experience_context, package_seal, trace_narrative, trace_selection
 from .mailbox_platform import (MailboxPlatform, PlatformError, final_score,
                                get_platform, public_feedback)
 
@@ -432,14 +432,13 @@ def _protocol_snapshot() -> dict[str, Any] | None:
 
 
 def _data_inputs(run_id: str, trial_id: str | None) -> dict[str, Any]:
-    run = db.query_one("SELECT c.resources_json FROM runs r JOIN challenges c"
+    run = db.query_one("SELECT c.content,c.resources_json FROM runs r JOIN challenges c"
                        " ON c.id=r.challenge_id WHERE r.id=?", (run_id,))
     try:
         resources = json.loads(run["resources_json"] or "[]") if run else []
     except ValueError:
         resources = []
-    requires_data = any(isinstance(r, dict) and r.get("role") == "task-public-data"
-                        for r in resources)
+    requires_data = datasets.task_requires_data(run["content"] if run else None, resources)
     rows = db.query("SELECT data_refs_json FROM compute_jobs WHERE run_id=?"
                     + (" AND trial_id=?" if trial_id else ""),
                     (run_id, trial_id) if trial_id else (run_id,))
@@ -835,6 +834,71 @@ def submit_trace_variant(source_submission_id: str, operation_id: str,
         'variant_of': source_submission_id, 'science_artifact_match': True,
         'science_artifact_hashes': expected}, trial_id=trial_id)
     return result
+
+
+def submit_exact_replay(source_submission_id: str, operation_id: str,
+                        prediction_md: str) -> dict[str, Any]:
+    """Submit the frozen baseline bytes again to measure scorer noise."""
+    source = db.query_one('SELECT * FROM submissions WHERE id=?', (source_submission_id,))
+    if (not source or source['is_harvest'] or source['variant_of']
+            or source['score_confidence'] != 'confirmed' or source['score_status'] != 'scored'):
+        raise MailboxError('INVALID_STATE', '重复提交来源必须是已确认评分的普通实验基线')
+    if not operation_id or not isinstance(prediction_md, str) or not prediction_md.strip() \
+            or len(prediction_md) > 4000:
+        raise MailboxError('INVALID_MESSAGE', '重复提交需要 operation_id 和非空有界预测')
+    from .observation import strip_secrets
+    prediction = strip_secrets(prediction_md)
+    if not prediction.strip():
+        raise MailboxError('INVALID_MESSAGE', '预测不能只包含密钥')
+    run_id, trial_id = source['run_id'], source['trial_id']
+    if not trial_id:
+        raise MailboxError('INVALID_STATE', '重复提交来源缺少 Trial')
+    frozen_path = (config.WORKSPACE_DIR / source['package_path']).resolve()
+    if config.WORKSPACE_DIR.resolve() not in frozen_path.parents or not frozen_path.is_file():
+        raise MailboxError('INVALID_PACKAGE', '来源冻结包不存在或路径越界')
+    frozen = frozen_path.read_bytes()
+    digest = hashlib.sha256(frozen).hexdigest()
+    if digest != source['package_sha256']:
+        raise MailboxError('INVALID_PACKAGE', '来源冻结包哈希不匹配')
+    platform = _platform()
+    challenge_id = _run_challenge_id(run_id)
+    fingerprint = _request_hash({'replay_of':source_submission_id,'run_id':run_id,
+                                 'package_sha256':digest,'prediction_md':prediction,
+                                 'platform':platform.name,'challenge':challenge_id})
+    with db.transaction() as conn:
+        dup = _duplicate(conn, operation_id, fingerprint)
+        if dup:
+            return dup
+        _check_budget(conn, run_id)
+        challenge_key = _challenge_key(conn, run_id)
+        limit = config.load_settings()['mailbox']['submission_limit']
+        accounts = conn.execute("SELECT * FROM mailboxes WHERE role='experiment' AND status='active'"
+                                " AND platform=? AND is_demo=? ORDER BY created_at,id",
+                                (platform.name,int(platform.is_demo))).fetchall()
+        available = [(mb, _used_for(conn, mb['id'], challenge_key)) for mb in accounts]
+        available = [(mb, used) for mb, used in available if used < limit]
+        mb = sorted(available, key=lambda item: (item[1] == 0, -item[1],
+                                                 item[0]['created_at'], item[0]['id']))[0][0] if available else None
+        if not mb:
+            raise MailboxError('NO_MAILBOX', '本题实验邮箱额度已用尽或无可用邮箱')
+        sid = _rid('sub')
+        path = _freeze(sid, frozen_path, frozen)
+        science_hashes = _science_artifact_hashes(frozen)
+        conn.execute('INSERT INTO submissions(id,run_id,trial_id,mailbox_id,package_path,'
+                     'package_sha256,status,operation_id,created_at,request_hash,stage,'
+                     'source_package_sha256,admission_json,prediction_md,source_submission_id,'
+                     'replay_of,science_artifact_hashes_json,science_artifact_match)'
+                     " VALUES(?,?,?,?,?,?,'unknown',?,?,?,'reserved',?,?,?,?,?,?,1)",
+                     (sid,run_id,trial_id,mb['id'],path,digest,operation_id,db.utcnow(),
+                      fingerprint,digest,source['admission_json'],prediction,
+                      source_submission_id,source_submission_id,
+                      json.dumps(science_hashes,sort_keys=True)))
+        from . import local_scoring
+        local_scoring.bind_submission_tx(conn, sid, frozen)
+        db.append_event_tx(conn,run_id,'controller','submission.replay_created',
+                           {'submission_id':sid,'replay_of':source_submission_id,
+                            'package_sha256':digest,'exact_bytes':True},trial_id=trial_id)
+    return _perform_submission(sid,platform,challenge_id)
 
 
 def poll_scores(run_id: str | None = None,

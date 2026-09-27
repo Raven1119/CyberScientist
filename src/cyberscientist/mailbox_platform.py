@@ -172,9 +172,17 @@ class BohriumPlaygroundPlatform:
             with urllib.request.urlopen(req, timeout=self.timeout) as resp:
                 raw = resp.read().decode("utf-8", "replace")
         except urllib.error.HTTPError as exc:
-            detail = exc.read().decode("utf-8", "replace")[:300]
+            raw_detail = exc.read(65536).decode("utf-8", "replace")
+            try:
+                parsed_detail = json.loads(raw_detail)
+            except json.JSONDecodeError:
+                parsed_detail = raw_detail
+            safe_detail = public_feedback(parsed_detail, token, self.operator_token)
+            detail = (json.dumps(safe_detail, ensure_ascii=False)
+                      if isinstance(safe_detail, (dict, list)) else str(safe_detail))[:300]
             raise PlatformError(
                 f"平台接口 {method} {path} 返回 HTTP {exc.code}"
+                + (f"：{detail}" if detail else "")
             ) from exc
         except urllib.error.URLError as exc:
             raise PlatformError(

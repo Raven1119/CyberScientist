@@ -273,6 +273,27 @@ def test_missing_protocol_is_indeterminate_and_proxy_blocks_without_reservation(
         allow_proxy_evidence=True)['error_code'] == 'TRACE_ADMISSION_INDETERMINATE'
 
 
+def test_explicit_no_input_task_does_not_require_registered_public_resource():
+    resources = [{'dataset_id': 'public-id', 'version_id': '1', 'role': 'task-public-data'}]
+    _, rid = _run(resources=resources)
+    db.execute("UPDATE challenges SET content=? WHERE id='ev_ch'",
+               ('Nothing is provided as input: the problem statement\nabove is the whole input.',))
+    trial = 'no_input_trial'
+    base = config.WORKSPACE_DIR / 'runs' / rid / 'trials' / trial
+    base.mkdir(parents=True)
+    (base / 'result_package.zip').write_bytes(_bundle([
+        {'step_type': 'tool_call', 'title': 'Real fixture call', 'tool_call_id': 'x'},
+        {'step_type': 'tool_result', 'title': 'Real fixture result', 'tool_call_id': 'x'}]))
+    db.execute("INSERT INTO trials(id,run_id,goal,success_check,created_at)"
+               " VALUES(?,?,?,?,?)", (trial, rid, 'g', 's', db.utcnow()))
+    with db.transaction() as conn:
+        assert datasets.evidence_class(conn, rid, trial) == 'not_applicable'
+    preflight = mailboxes.preflight_submission(rid, trial, None)
+    assert preflight['data_inputs']['evidence_class'] == 'not_applicable'
+    assert preflight['error_code'] is None
+    assert preflight['allow_proxy_evidence'] is False
+
+
 def test_blocked_trace_never_reserves_submission():
     _, rid = _run()
     trial = 'blocked-trial'
