@@ -44,3 +44,9 @@ V1–V8 一次只变一个因素；无法保持其他因素相同时不把分差
 H7 的真实 scorecard 返回 `executability=0.0`、`output_coverage=0.0`、`packaging=0.67`、`result_fidelity=1.0`、`trace_quality=1.0`；评分接口没有独立 `harbor_score` 或 `trace_score`。不能把 `trace_quality` 直接当作任务卡所设想的 0–100 轨迹分，也不能倒推出科学分 × 轨迹因子。预登记的两因子分析须先核实当前 abc 评分契约是否提供可辨识的分项。当前也无法计算重复噪声、因素效应、阈值准确率或 W5 退出容差。原 H3 的 HTTP 400 具体原因与私有草稿状态仍 unknown；未执行 W4 变体，也没有用公开他人的提交替代受控实验。
 
 2026-09-27 10:15 UTC 的只读复核已解决上述契约疑问：主选 abc 与指定备选 MCM 的轮次均于 2026-08-29 12:30 UTC 结束；当前两题详情都声明 `arm_v1_1_generic` 且没有题目专属 grader。两题公开晚交样本均只有通用五项 scorecard。当前 `/api/protocol` 把 `trace_quality` 的提取后分档明确写为 0/0.5/1；这不是历史公开 Attempt 中 1.125–98.75 的 `trace_score`。脱敏字段摘要及哈希保存在本机 `.package-checks/cs-up-03-score-contract-20260927T101535Z/`。此时新建备选 Run 仍不能生成任务卡要逆向的旧双分项；不会把通用 ARM 分数当作同一随机变量拟合。预登记 W4/W5 的样本数、噪声、阈值准确率和留出误差继续标为 unknown，退出标准未达到。
+
+## 题面科学评分器的真实验收
+
+2026-09-27 的独立 Run `run_ed3e28c12a` 复用 H1 已取回并核验的纪录三元组科学产物，在当前 Trial 重新封存，产品预检通过；题目声明镜像中的 CPU 沙箱运行项目版 `abc-rubric-1` 评分器并写入 `local_scores.id=ls_cc04d41aabb1`。记录的封存 SHA-256 为 `a9def16e7de7f3a6cdab088a775dad7eacedeeea78b295b7e5ac0a3bf75f2703`，评分器哈希版本为 `83c33775ee2e8b33c8241e117492e6aa03d31e583268986e22fae25523f3a071`；结果 `radical=15042`、`q≈1.6299116841`、题面科学分 **20**，置信度 medium。沙箱删除经只读对账确认为回收。此 Run 没有 Job、数据下载或 Attempt；回执与包仅在忽略的 Trial 目录。
+
+这个结果验证了项目本地科学评分器对一条已知有效样本的执行链路，不是对平台当前展示分的校准。H7 的 41.43 属晚交通用 ARM 评分、使用不同的最终封存包，而且没有 `harbor_score`/`trace_score`；因此 `score_calibration` 仍没有可用的双分项配对。轨迹模型保持低置信度占位，W4 的因子效果、≥70/≥80 判定、留出误差和 W5 退出标准均无法计算。

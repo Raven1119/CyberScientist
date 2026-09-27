@@ -116,6 +116,43 @@ def test_local_billing_confirmation_rejection_does_not_reserve_minutes(run,monke
     assert row['status']=='failed' and row['deleted_at'] is not None
 
 
+def test_invalid_cpu_is_rejected_before_remote_create(run):
+    _,rid,_,calls,_=run
+    with pytest.raises(compute.ComputeError, match='2c4g'):
+        sandboxes.create(rid,'bad-cpu',{'timeout':120,'cpu':'2'})
+    assert calls==[]
+    assert db.query_one('SELECT 1 FROM compute_sandboxes WHERE operation_id=?',
+                        ('bad-cpu',)) is None
+
+
+def test_rejected_create_request_id_miss_releases_reservation(run,monkeypatch):
+    _,rid,_,calls,_=run
+    def native(args,**kwargs):
+        calls.append(args)
+        if args[:2]==['sandbox','create']:
+            error={'code':'INVALID_ARGUMENTS','http':400,'retryable':False,
+                   'message':'--cpu must be one of 2c4g'}
+        else:
+            error={'code':'RESOURCE_NOT_FOUND','http':404,'retryable':False,
+                   'message':'Wenyon request not found'}
+        return {'ok':False,'exit_code':1,'stdout':json.dumps({'ok':False,'error':error}),
+                'stderr':''}
+    monkeypatch.setattr(compute,'_native',native)
+    # Simulate an older gateway that conservatively saved the 400 as unknown.
+    now=db.utcnow()
+    db.execute('INSERT INTO compute_sandboxes(operation_id,run_id,trial_id,request_json,status,'
+               'created_at,expires_at,receipt_json,updated_at) VALUES(?,?,?,?,?,?,?,?,?)',
+               ('old-bad-cpu',rid,'trial_sandbox',json.dumps({'timeout':120,'cpu':'2'}),
+                'unknown',now,now,json.dumps(native(['sandbox','create']) ),now))
+    result=sandboxes.reconcile_create(rid,'old-bad-cpu')
+    assert result['status']=='failed' and result['sandbox_id'] is None
+    row=db.query_one('SELECT status,created_at,deleted_at FROM compute_sandboxes'
+                     ' WHERE operation_id=?',('old-bad-cpu',))
+    assert row['status']=='failed' and row['deleted_at']==row['created_at']
+    assert sum(args[:2]==['sandbox','describe'] for args in calls)==1
+    assert sum(args[:2]==['sandbox','create'] for args in calls)==1
+
+
 def test_startup_reclaims_known_terminal_run_and_reports_unowned(run):
     _,rid,_,calls,remote=run
     sid=sandboxes.create(rid,'orphan',{'timeout':120})['sandbox_id']
@@ -186,6 +223,23 @@ def test_remote_command_failure_is_not_hidden_by_cli_exit_zero(run,monkeypatch):
     assert result['status']=='failed' and result['exit_code']==7
     event=db.query_one("SELECT payload FROM events WHERE run_id=? AND type='sandbox.exec_completed'",(rid,))
     assert json.loads(event['payload'])['exit_code']==7
+
+
+def test_delete_waits_for_inflight_scoring_exec(run,monkeypatch):
+    _,rid,_,calls,_=run
+    sid=sandboxes.create(rid,'score-box',{'timeout':120})['sandbox_id']
+    original=compute._native
+    def during_exec(args,**kwargs):
+        if args[:2]==['sandbox','exec']:
+            with pytest.raises(compute.ComputeError, match='仍有执行'):
+                sandboxes.delete(rid,sid)
+            assert db.query_one('SELECT status FROM compute_sandboxes WHERE sandbox_id=?',
+                                (sid,))['status']=='active'
+        return original(args,**kwargs)
+    monkeypatch.setattr(compute,'_native',during_exec)
+    assert sandboxes.execute(rid,sid,'true',20,'score-exec')['status']=='completed'
+    assert sum(args[:2]==['sandbox','delete'] for args in calls)==0
+    assert sandboxes.delete(rid,sid)['status']=='deleted'
 
 
 def test_sandbox_skills_are_default_for_executor_only(run):

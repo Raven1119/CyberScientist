@@ -11,7 +11,11 @@ from typing import Any, Awaitable, Callable, Mapping
 from .jsonrpc_stdio import JsonRpcStdio
 
 CLIENT_INFO = {"name": "cyberscientist", "version": "0.1.0"}
-COLLAB_TOOLS = ("research_checkpoint", "ack_guidance", "research_job")
+COLLAB_TOOLS = (
+    "research_checkpoint", "ack_guidance", "research_job",
+    "research_sandbox", "research_package_check",
+    "research_trace_narrative_check", "research_local_score", "research_data",
+)
 BRAIN_TOOLS = ("research_trace", "platform_scores")
 
 

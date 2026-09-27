@@ -6,7 +6,7 @@ import os
 import pytest
 
 from cyberscientist.brains.codex import CodexBrain
-from cyberscientist.codex_protocol import process_environment, thread_params, verify_thread_config
+from cyberscientist.codex_protocol import COLLAB_TOOLS, process_environment, thread_params, verify_thread_config
 from cyberscientist.prime.codex_exec import CodexExecutor, _Session
 
 
@@ -118,12 +118,25 @@ def test_mcp_capability_only_in_environment():
     assert cfg['memories.use_memories'] is False
     assert cfg['memories.generate_memories'] is False
     bridge = cfg['mcp_servers']['cyberscientist']
-    assert bridge['enabled_tools'] == ['research_checkpoint', 'ack_guidance', 'research_job']
+    assert bridge['enabled_tools'] == list(COLLAB_TOOLS)
     assert bridge['tools'] == {name: {'approval_mode': 'approve'}
-                               for name in ('research_checkpoint', 'ack_guidance', 'research_job')}
+                               for name in COLLAB_TOOLS}
+    assert {'research_sandbox', 'research_package_check', 'research_local_score'} <= set(
+        bridge['enabled_tools'])
     assert 'default_tools_approval_mode' not in bridge
     assert process_environment(spec)['CS_TOOL_TOKEN'] == 'test-secret'
     assert 'CS_TOOL_TOKEN' not in spec['env']
+
+
+def test_codex_executor_allowlist_matches_bridge_tools(monkeypatch):
+    from cyberscientist import mcp_bridge
+    monkeypatch.setenv('CS_TOOL_ROLE', 'executor')
+    listed = mcp_bridge._handle({'jsonrpc': '2.0', 'id': 1, 'method': 'tools/list'})
+    available = {tool['name'] for tool in listed['result']['tools']}
+    assert set(COLLAB_TOOLS) == available
+    monkeypatch.setenv('CS_TOOL_ROLE', 'brain')
+    brain = mcp_bridge._handle({'jsonrpc': '2.0', 'id': 2, 'method': 'tools/list'})
+    assert 'research_sandbox' not in {tool['name'] for tool in brain['result']['tools']}
 
 
 def test_other_mcp_server_does_not_inherit_bridge_approval():

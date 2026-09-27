@@ -142,7 +142,8 @@ _SCORES_TOOL = {
                     "properties": {}, "required": []}}
 
 
-def _post(path: str, payload: dict) -> dict:
+def _post(path: str, payload: dict, *, timeout: int = 10,
+          retry_transient: bool = True) -> dict:
     url = os.environ.get("CS_API_URL", "http://127.0.0.1:8765") + path
     token = os.environ.get("CS_TOOL_TOKEN", "")
     # 执行器报告可能含孤代理字符（读取二进制日志带进的 \udcXX）：
@@ -150,21 +151,23 @@ def _post(path: str, payload: dict) -> dict:
     body = json.dumps(payload, ensure_ascii=False).encode(
         "utf-8", errors="replace")
     last_err: Exception | None = None
-    # 瞬时挂起自愈：短超时 + 一次重试，整体 <25s 低于常见 MCP 客户端超时
-    for attempt in (1, 2):
+    # Mutating/long-running calls must not be repeated after a client timeout:
+    # the first request may still be executing in the backend.
+    attempts = 2 if retry_transient else 1
+    for attempt in range(attempts):
         req = urllib.request.Request(
             url, data=body,
             headers={"Content-Type": "application/json",
                      "Authorization": f"Bearer {token}"}, method="POST")
         try:
-            with urllib.request.urlopen(req, timeout=10) as resp:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
                 return json.loads(resp.read().decode("utf-8"))
         except urllib.error.HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")[:500]
             return {"error": f"HTTP {exc.code}: {detail}"}  # 协议错误不重试
         except OSError as exc:
             last_err = exc
-            if attempt == 1:
+            if attempt + 1 < attempts:
                 time.sleep(1)
     return {"error": f"后端不可达: {last_err}"}
 
@@ -205,13 +208,15 @@ def _handle(msg: dict) -> dict | None:
             else:
                 out = _post("/api/v1/tools/job", args)
         elif name == "research_sandbox":
-            out = _post("/api/v1/tools/sandbox", args)
+            out = _post("/api/v1/tools/sandbox", args, timeout=180,
+                        retry_transient=False)
         elif name == "research_package_check":
             out = _post("/api/v1/tools/package_check", args)
         elif name == "research_trace_narrative_check":
             out = _post("/api/v1/tools/trace_narrative_check", args)
         elif name == "research_local_score":
-            out = _post("/api/v1/tools/local_score", args)
+            out = _post("/api/v1/tools/local_score", args, timeout=180,
+                        retry_transient=False)
         elif name == "research_data":
             out = _post("/api/v1/tools/data", args)
         elif name == "ack_guidance":

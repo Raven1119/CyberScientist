@@ -126,6 +126,8 @@ def create(run_id: str, operation_id: str, request: dict) -> dict:
         if name in request and (not isinstance(request[name], str) or not request[name].strip()
                                 or request[name].startswith('-')):
             raise compute.ComputeError('INVALID_COMMAND', f'{name} 参数无效')
+    if request.get('cpu') and not re.fullmatch(r'[1-9][0-9]*c[1-9][0-9]*g', request['cpu']):
+        raise compute.ComputeError('INVALID_COMMAND', 'cpu 规格须形如 2c4g')
     gpu = request.get('gpu', False)
     if gpu is not False and gpu is not True and gpu not in ('4090', '5090', 'l20'):
         raise compute.ComputeError('INVALID_COMMAND', 'GPU 参数无效')
@@ -179,10 +181,13 @@ def create(run_id: str, operation_id: str, request: dict) -> dict:
     sid = _sandbox_id(_body(receipt)) if receipt.get('ok') else None
     error = (_body(receipt) or {}).get('error') if isinstance(_body(receipt),dict) else None
     confirmed_not_started = isinstance(error,dict) and error.get('code') == 'CONFIRMATION_REQUIRED'
-    status = 'active' if sid else ('failed' if receipt.get('not_started') or confirmed_not_started else 'unknown')
+    rejected_arguments = (isinstance(error,dict) and error.get('code') == 'INVALID_ARGUMENTS'
+                          and error.get('http') == 400 and error.get('retryable') is False)
+    status = ('active' if sid else 'failed' if (receipt.get('not_started')
+              or confirmed_not_started or rejected_arguments) else 'unknown')
     with db.transaction() as conn:
         conn.execute('UPDATE compute_sandboxes SET sandbox_id=?,status=?,deleted_at=?,receipt_json=?,updated_at=?'
-                     ' WHERE operation_id=?', (sid,status,now if confirmed_not_started else None,
+                     ' WHERE operation_id=?', (sid,status,now if status == 'failed' else None,
                                                 _json(_receipt(receipt)),db.utcnow(),operation_id))
         db.append_event_tx(conn,run_id,'controller',f'sandbox.{status}',
                            {'operation_id':operation_id,'sandbox_id':sid,
@@ -203,6 +208,10 @@ def reconcile_create(run_id: str, operation_id: str) -> dict:
     receipt = compute._native(['sandbox','describe','--create-request-id',operation_id,
                                '--no-interactive','-o','json'])
     sid = _sandbox_id(_body(receipt)) if receipt.get('ok') else None
+    original = _body(json.loads(row['receipt_json'])) if row['receipt_json'] else None
+    original_error = original.get('error') if isinstance(original,dict) else None
+    fresh = _body(receipt)
+    fresh_error = fresh.get('error') if isinstance(fresh,dict) else None
     if sid:
         db.execute('UPDATE compute_sandboxes SET sandbox_id=?,status=?,receipt_json=?,updated_at=?'
                    ' WHERE operation_id=?',(sid,'active',_json(_receipt(receipt)),db.utcnow(),operation_id))
@@ -211,6 +220,19 @@ def reconcile_create(run_id: str, operation_id: str) -> dict:
         if compute._run(run_id)['phase'] in TERMINAL_RUN:
             return {'operation_id':operation_id,'status':delete(run_id,sid)['status'],
                     'sandbox_id':sid,'receipt':_receipt(receipt)}
+    elif (isinstance(original_error,dict) and original_error.get('code') == 'INVALID_ARGUMENTS'
+          and original_error.get('http') == 400
+          and isinstance(fresh_error,dict) and fresh_error.get('code') == 'RESOURCE_NOT_FOUND'
+          and fresh_error.get('http') == 404):
+        # A rejected create plus an authoritative request-ID miss proves that
+        # this reservation never represented a remote sandbox.
+        db.execute("UPDATE compute_sandboxes SET status='failed',deleted_at=created_at,updated_at=?"
+                   " WHERE operation_id=?", (db.utcnow(),operation_id))
+        db.append_event(run_id,'controller','sandbox.failed',
+                        {'operation_id':operation_id,'sandbox_id':None,
+                         'reason':'invalid_arguments_request_not_found'},trial_id=row['trial_id'])
+        return {'operation_id':operation_id,'status':'failed','sandbox_id':None,
+                'receipt':_receipt(receipt)}
     elif row['status'] == 'creating':
         db.execute("UPDATE compute_sandboxes SET status='unknown',receipt_json=?,updated_at=?"
                    ' WHERE operation_id=?',(_json(_receipt(receipt)),db.utcnow(),operation_id))
@@ -229,6 +251,10 @@ def execute(run_id: str, sandbox_id: str, command: str, timeout: int,
     if not re.fullmatch(r'[A-Za-z0-9_-]{1,100}',op):
         raise compute.ComputeError('INVALID_OPERATION','执行操作 ID 无效')
     with db.transaction() as conn:
+        current = conn.execute('SELECT status FROM compute_sandboxes WHERE run_id=? AND sandbox_id=?',
+                               (run_id,sandbox_id)).fetchone()
+        if not current or current['status'] != 'active':
+            raise compute.ComputeError('SANDBOX_NOT_ACTIVE','沙箱已不在 active 状态')
         previous = conn.execute('SELECT * FROM compute_sandbox_operations WHERE operation_id=?',(op,)).fetchone()
         if previous:
             raise compute.ComputeError('OPERATION_CONFLICT','执行操作 ID 已使用；不自动重复执行')
@@ -301,6 +327,10 @@ def transfer(run_id: str, action: str, sandbox_id: str, remote_path: str,
                      'sha256':hashlib.sha256(content.encode()).hexdigest()}]
                    if content is not None else [])
     with db.transaction() as conn:
+        current = conn.execute('SELECT status FROM compute_sandboxes WHERE run_id=? AND sandbox_id=?',
+                               (run_id,sandbox_id)).fetchone()
+        if not current or current['status'] != 'active':
+            raise compute.ComputeError('SANDBOX_NOT_ACTIVE','沙箱已不在 active 状态')
         if conn.execute('SELECT 1 FROM compute_sandbox_operations WHERE operation_id=?',(op,)).fetchone():
             raise compute.ComputeError('OPERATION_CONFLICT','文件操作 ID 已使用；不自动重复传输')
         conn.execute('INSERT INTO compute_sandbox_operations(operation_id,run_id,sandbox_id,action,status,started_at)'
@@ -330,8 +360,17 @@ def delete(run_id: str, sandbox_id: str) -> dict:
                 'notice':'删除结果未确认；先对账，不重发删除'}
     if row['status'] not in LIVE:
         raise compute.ComputeError('SANDBOX_NOT_ACTIVE','沙箱不是可删除状态')
-    db.execute("UPDATE compute_sandboxes SET status='deleting',updated_at=? WHERE operation_id=?",
-               (db.utcnow(),row['operation_id']))
+    with db.transaction() as conn:
+        current = conn.execute('SELECT status FROM compute_sandboxes WHERE operation_id=?',
+                               (row['operation_id'],)).fetchone()
+        if not current or current['status'] != 'active':
+            return {'sandbox_id':sandbox_id,'status':'unknown','deduplicated':True}
+        if conn.execute("SELECT 1 FROM compute_sandbox_operations WHERE run_id=?"
+                        " AND sandbox_id=? AND status='running' LIMIT 1",
+                        (run_id,sandbox_id)).fetchone():
+            raise compute.ComputeError('SANDBOX_BUSY','沙箱仍有执行或传输操作；完成后再删除')
+        conn.execute("UPDATE compute_sandboxes SET status='deleting',updated_at=?"
+                     " WHERE operation_id=?", (db.utcnow(),row['operation_id']))
     receipt = compute._native(['sandbox','delete',sandbox_id,'--force','--no-interactive','-o','json'])
     if not receipt.get('ok'):
         db.execute("UPDATE compute_sandboxes SET status='unknown',receipt_json=?,updated_at=? WHERE operation_id=?",

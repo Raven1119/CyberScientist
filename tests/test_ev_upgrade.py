@@ -761,6 +761,40 @@ async def test_v2_finish_requires_objective_assessment(monkeypatch):
     assert snap['phase'] == 'finished' and snap['objective_status'] == 'partial'
 
 
+async def test_v2_finish_resolves_run_event_and_checkpoint_refs(monkeypatch):
+    controller,rid=_run()
+    monkeypatch.setattr(controller,'_defer_finish_for_curation',lambda *a:False)
+    db.append_event(rid,'controller','sandbox.deleted',{'sandbox_id':'fixture-box'})
+    seq=db.query_one('SELECT MAX(seq) AS n FROM events WHERE run_id=?',(rid,))['n']
+    db.execute('INSERT INTO checkpoints(id,run_id,report,evidence_refs,created_at)'
+               ' VALUES(?,?,?,?,?)',('cp_finish',rid,'fixture','[]',db.utcnow()))
+    refs=[f'event:{rid}:{seq}','checkpoint:cp_finish']
+    decision={'schema_version':2,'decision_id':'finish-with-refs','run_id':rid,
+              'observed_state_version':0,'summary':'finished','evidence_refs':refs,
+              'experience_proposals':[],
+              'actions':[{'op':'finish','reason':'evidence confirmed',
+                          'objective_assessment':{'status':'achieved',
+                                                   'evidence_refs':refs,'remaining_md':''}}]}
+    await controller._apply_decision(rid,decision,{},None,None)
+    snap=controller.run_snapshot(rid)
+    assert snap['phase']=='finished' and snap['objective_status']=='achieved'
+
+
+async def test_v2_finish_rejects_other_run_evidence(monkeypatch):
+    controller,rid=_run()
+    db.append_event(rid,'controller','sandbox.deleted',{'sandbox_id':'fixture-box'})
+    seq=db.query_one('SELECT MAX(seq) AS n FROM events WHERE run_id=?',(rid,))['n']
+    decision={'schema_version':2,'decision_id':'foreign-ref','run_id':rid,
+              'observed_state_version':0,'summary':'finished','evidence_refs':[],
+              'experience_proposals':[],
+              'actions':[{'op':'finish','reason':'not valid',
+                          'objective_assessment':{'status':'achieved',
+                              'evidence_refs':[f'event:other_run:{seq}'],
+                              'remaining_md':''}}]}
+    await controller._apply_decision(rid,decision,{},None,None)
+    assert controller.run_snapshot(rid)['phase']=='running'
+
+
 async def test_review_metrics_and_read_only_csv(monkeypatch, tmp_path):
     controller, rid = _run()
     review_id = 'rev_ev'

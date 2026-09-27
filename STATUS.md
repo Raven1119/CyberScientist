@@ -2,6 +2,9 @@
 
 ## 已实现
 
+- CS-UP-03 abc 科学评分器：项目内 `challenges/local_a619cdef/scorer/` 按题面验算三元组、素因子、radical 与分档；超出确定性素性或数值精度范围时返回未验证错误，不伪造 0 分。项目源码优先于历史工作区评分器，生成的 `__pycache__`/字节码不参与文件哈希或版本。Codex 执行器白名单现包含产品已实现的沙箱、包预检、本地评分、叙述预检和数据工具；这些入口仍受后端 Run 能力令牌与授权门禁约束。
+- CS-UP-03 沙箱评分链路修复：`cpu` 规格在创建前校验为 `2c4g` 形态；明确的 HTTP 400 `INVALID_ARGUMENTS` 记为失败，历史此类 unknown 只有在原 request ID 查询为 404 时才释放预留。MCP 桥对可能持续执行的沙箱/评分调用延长等待且不自动重放；网关在沙箱执行或文件传输未完成时拒绝删除，并在执行/传输登记时重新核对 active 状态。
+- CS-UP-03 生命周期证据修复：v2 `finish(achieved)` 现在解析产品自身使用的 `event:run_id:seq` 与 `checkpoint:id` 引用，核对其确属当前 Run；保留既有裸 event ID 和 `run_id#seq`。跨 Run 引用仍拒绝。
 - CS-UP-03 W3 创建表单兼容：行内轨迹的带时区长时间戳按同一时间点投影为 UTC `Z` 记法，超过平台 300 字符的 `title` 截短至 300 字符并把全文保存在 `body`；ARM 封存包不改。只有创建接口 HTTP 400 的脱敏回执明确包含 `nothing was stored` 时，才认定未产生远端 Attempt；既有同类 `unknown/create_sent` 记录可经受控、单次对账转为 `failed` 并释放预留，其他未知记录保留。
 - CS-UP-03 W4 准备：已预登记轨迹评分器的单因素对照、噪声优先、三条留出提交和停止规则。轨迹变体可选择 `projection_only=true`，从已确认来源的真实事件重新投影；普通叙述变体与投影专用变体均固定来源封存轨迹的事件引用截止序号，避免后续事件混入对照。科学产物逐文件哈希校验、提交预算与邮箱门禁不变。尚未执行 W4 的真实对照或拟合。
 - CS-UP-03 W3：新增已确认普通实验基线的原样重交入口，冻结包逐字节复用、记录 `replay_of`，沿用 Run 提交预算、邮箱额度、幂等与校准绑定；前端标出重交来源。明确声明无输入的 abc 题面不再因平台额外登记的公开资源被误判为代理证据；其他需数据题仍保留原门禁。平台适配器后续 HTTP 拒绝会保存截断、脱敏的响应原因，仍不自行判定无副作用；创建 Attempt 的行内轨迹现从 ARM `step_type` 映射到平台文档的 `type`，完整封存轨迹不变。
@@ -31,6 +34,9 @@
 
 ## 已实际验证
 
+- CS-UP-03 真实本地评分验收：`run_ed3e28c12a` 以 Codex `gpt-6-sol/xhigh` 大脑及执行器、0 Job/0 Attempt/0 数据下载授权，在当前 Trial `trial_a68a42964f` 通过产品预检和 `research_sandbox` 创建 1 个 `2c4g` CPU 沙箱，在声明镜像中经 `research_local_score` 得到 `local_scores.id=ls_cc04d41aabb1`、科学分 20、`radical=15042`、评分器版本 `83c33775ee2e8b33c8241e117492e6aa03d31e583268986e22fae25523f3a071`；封存包 SHA-256 `a9def16e7de7f3a6cdab088a775dad7eacedeeea78b295b7e5ac0a3bf75f2703`。沙箱先收到删除请求，后经只读列表确认为 `deleted`，账本时间 11:22:32–11:24:27 UTC；实际计费金额未知。Run 最终 `finished/achieved`，系统原生 curation 审阅为 `done`，题内经验 `exp_6bdc973e0c` 已更新并经产品 API 修正标题。脱敏回执与包仅在忽略的 Trial 目录。
+- CS-UP-03 验收回归：`.venv/bin/pytest -q` 为 485 passed、1 skipped；`npm --prefix apps/web test -- --run` 为 18 passed，`npm --prefix apps/web run build`、`.venv/bin/python -m compileall -q src tests challenges/local_a619cdef/scorer` 与 `git diff --check` 通过。沙箱失败/恢复、Codex 工具白名单和结束证据格式的定向测试均通过；前端未改动。
+- CS-UP-03 失败路径：`run_06316b6fa6` 的 `cpu=2` 被平台 `INVALID_ARGUMENTS` 拒绝，原 request ID 只读查询为 `RESOURCE_NOT_FOUND` 后账本改为 failed，未创建远端实例；`run_c118eaee44` 的旧 Trial 路径在本地 `INVALID_PATH` 被拒，远端创建数为 0；`run_312f38ada6` 暴露 Codex 工具白名单缺口及 MCP 10 秒重放/评分执行与删除竞态，曾真实创建 1 个沙箱，评分失败、无 `local_scores`，实例最终 `deleted`。这些失败未产生 Job 或 Attempt。最终成功 Run 的完整链路见上条。
 - CS-UP-03 当前评分契约只读复核（2026-09-27 10:15 UTC）：对主选 abc、备选 MCM 各调用一次题目详情及公开尝试首页，并读取一次 `/api/protocol`，只保存无作者信息的字段摘要到本机忽略目录 `.package-checks/cs-up-03-score-contract-20260927T101535Z/contract-summary.json`（3874 字节，SHA-256 `0ae71dadb4c9bda97b7b732187e29652f43afd99ce8451537df716ea59f5feb4`）。两题轮次均于 2026-08-29 12:30 UTC 结束，当前策略同为 `arm_v1_1_generic`、无题目专属 grader；公开晚交样本的 scorecard 字段只有通用五项，无独立 harbor/trace 分项。当前协议说明 `trace_quality` 在轨迹提取后按步骤数取 0/0.5/1，不等于旧 0–100 轨迹分。未创建新 Run、Job、沙箱、数据下载或 Attempt。
 - CS-UP-03 经验：大脑在 `run_b1ba85d4fb` 结束前按原生生命周期更新题内经验 `exp_a8640e677f`；结束后经原生 `POST /api/v1/runs/{id}/curation` 的请求 `curation_5dac77f2f9` 作一次整理，状态 `done`、1 条题内修订已应用。分数二次观察确认后再次原生整理 `curation_0ce224953c`，状态 `done`、同一经验修订 1 次，最新文本仍标 `hypothesis`，引用本 Run 的检查点和事件，并把 41.43 写为本地 `confirmed`。经验明确区分外部适配器修复、执行器动作、历史 provisional 与当前 confirmed、原 H3 unknown，不把经验采用归因为得分提升。没有提议或自动批准全局经验；原始回执和实验包没有写入经验文本。
 - CS-UP-03 W3 H5–H7：同一 Run `run_b1ba85d4fb`、同一科学来源包 `9c0ade1ec556b90890dc6e69b1996f1ada20a860e6b67fa83f665c006b16d5ba`。H5 创建 HTTP 400 指出轨迹 `timestamp` 超过 30 字符且 `nothing was stored`；备份本机 SQLite 至忽略目录 `.package-checks/cs-up-03-h5-reconcile-20260927T093742Z/before.db` 后，仅将 `sub_b8c82e4cc9` 对账为 `failed` 并释放预留。H6 创建 HTTP 400 指出第 3 步 `title` 超过 300 字符且 `nothing was stored`，新分类器自动将 `sub_1064e20791` 记为 `failed` 并释放预留。H7 新意图 `sub_2d30d5b21d` 经平台创建 Attempt `46889`、bundle 回执 `ready`、submit 成功；平台首次返回 `scoreIsFinal=true`、41.43，本地先记 provisional，10 分钟后同值第二次只读观察将其确认为 `confirmed`。三个 Trial 的脱敏审计与原始产物只在忽略的 `workspace/`；没有新增 Bohrium Job、沙箱、数据下载或收割。原 `sub_5f0ec08d05` 仍为 `unknown/create_sent`、无远端 ID、预留未释放。H7 后全套 `.venv/bin/pytest -q` 为 477 passed、1 skipped；前端 18 passed、构建通过，`compileall` 与 `git diff --check` 通过。
@@ -80,9 +86,9 @@
 
 ## 尚未验证
 
-- CS-UP-03 H7：Attempt `46889` 的展示分 41.43 已按两次同值观察确认为 `confirmed`；但平台没有返回独立 harbor/trace 分项。本地科学评分器沙箱尚未运行，`local_scores` 和 `score_calibration` 均无本 Run 记录；同包重复噪声、W4 对照和 W5 留出验证均未得到。
+- CS-UP-03 H7：Attempt `46889` 的展示分 41.43 已按两次同值观察确认为 `confirmed`；但平台没有返回独立 harbor/trace 分项。H7 原 Run 没有本地评分记录；后续独立验收 Run 已在真实沙箱记录题面科学分 20，但没有与 H7 相同的最终封存 SHA，也没有可比的双分项平台回执，因此不能把 20 和 41.43 当作一对校准样本。同包重复噪声、W4 对照和 W5 留出验证仍未得到。
 - CS-UP-03 H4 原请求：真实 wire 字节、HTTP 400 正文和服务端 request ID 均未留存；离线重建只能证明字段契约不符，不能证明原 400 的唯一根因。后续 H7 已被平台接收并评分，但不能据此判定原 H3 的远端副作用；W3 的两条 confirmed 基线、W4 对照和 W5 留出验证仍未完成。
-- CS-UP-03 的科学评分器尚未在真实 Bohrium 沙箱运行；轨迹预测器只有占位值与低置信度。W3 已发生真实 Run、Job 和一次未确认的实验提交请求，但没有 `confirmed` 基线及原包重交；新行内轨迹映射尚未经真实平台验证。W4 的受控轨迹对照、W5 的留出验证与校准均未执行，不能声称达到第三阶段退出标准。
+- CS-UP-03 的 abc 题面科学评分器已在真实 Bohrium 沙箱运行并记录 20 分；这只验证题面分档，不验证当前平台 `arm_v1_1_generic` 的展示分公式。轨迹预测器仍只有占位值与低置信度。H7 有一条 confirmed 展示分，但没有旧双分项基线或原包重交；W4 受控对照、W5 留出验证与校准均未执行，不能声称达到第三阶段退出标准。
 - CS-UP-03 W1 的叙述变体尚未在真实平台提交与评分；包内科学产物哈希一致不等于平台科学分必然一致。本包没有模型调用、科研 Run、Job 创建或 Attempt 提交。
 - CS-UP-02 W1 的多个真实 Run 并行及真实所选模型的原生会话检查尚未验证；W2 的真实 Codex/Kimi/Prime 错误文案、限流重试效果和长时看门狗仍未在真实 Run 验证。W3 的真实 `job submit` 仍未验证。W4 沙箱在真实科研中的用途与平台实际计费单位/金额未验证；W5 的真实环境事实自动采集尚未通过新的外部回执验收。W6 的真实预测与评分因果效果尚未验证；W7 的当前平台真实分页与长期缓存行为尚未实测。本包没有新模型调用、科研 Run、Job 创建或 Attempt 提交。
 - CS-UP-01 的新封存包尚未经真实平台准入验证；真实评分器的复评时间线也未经真实环境验证。本卡未进行真实 Run、模型调用、Job、沙箱、Attempt 或平台账号访问。

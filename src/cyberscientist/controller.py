@@ -52,6 +52,28 @@ _RESEARCH_JOB_STATES = frozenset(("Failed", "Stopped", "Finished"))
 _RESEARCH_TRIAL_EVENTS = frozenset((
     "trial.stalled", "trial.done", "trial.reported_complete"))
 
+
+def _objective_evidence_exists(run_id: str, ref: object) -> bool:
+    """Resolve the event/checkpoint references emitted by this Run's own tools."""
+    if not isinstance(ref, str) or not ref:
+        return False
+    event = re.fullmatch(r'event:([^:]+):([0-9]+)', ref)
+    if event:
+        return event.group(1) == run_id and bool(db.query_one(
+            'SELECT 1 FROM events WHERE run_id=? AND seq=?',
+            (run_id, int(event.group(2)))))
+    checkpoint = re.fullmatch(r'checkpoint:([A-Za-z0-9_-]+)', ref)
+    if checkpoint:
+        return bool(db.query_one('SELECT 1 FROM checkpoints WHERE run_id=? AND id=?',
+                                 (run_id, checkpoint.group(1))))
+    numbered = re.fullmatch(r'([^#]+)#([0-9]+)', ref)
+    if numbered:
+        return numbered.group(1) == run_id and bool(db.query_one(
+            'SELECT 1 FROM events WHERE run_id=? AND seq=?',
+            (run_id, int(numbered.group(2)))))
+    return bool(db.query_one('SELECT 1 FROM events WHERE run_id=? AND event_id=?',
+                             (run_id, ref)))
+
 # Only evidence of work counts as progress. Polls, heartbeat, usage, repeat
 # job-list output, review bookkeeping, and stall notices never move the clock.
 _LIVENESS_PROGRESS = (
@@ -3245,9 +3267,8 @@ class RunController:
                         continue
                     if assessment.get("status") == "achieved":
                         refs = assessment.get("evidence_refs") or []
-                        valid = bool(refs) and all(db.query_one(
-                            "SELECT 1 FROM events WHERE run_id=? AND (event_id=? OR CAST(seq AS TEXT)=?)",
-                            (run_id, ref, str(ref).split("#")[-1])) for ref in refs)
+                        valid = bool(refs) and all(
+                            _objective_evidence_exists(run_id, ref) for ref in refs)
                         if not valid:
                             db.append_event(run_id, "brain", "brain.action_rejected",
                                             {"op": op, "reason": "achieved 缺少可解析的真实证据引用"})

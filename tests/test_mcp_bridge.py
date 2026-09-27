@@ -5,6 +5,8 @@ import json
 import subprocess
 import sys
 
+from cyberscientist import mcp_bridge
+
 
 def test_bridge_survives_non_object_json_lines():
     proc = subprocess.Popen(
@@ -39,3 +41,16 @@ def test_bridge_survives_non_object_json_lines():
     finally:
         proc.kill()
         proc.wait()
+
+
+def test_sandbox_and_scoring_calls_wait_without_replay(monkeypatch):
+    calls=[]
+    def unreachable(request, timeout):
+        calls.append(timeout)
+        raise OSError('timed out')
+    monkeypatch.setattr(mcp_bridge.urllib.request, 'urlopen', unreachable)
+    for name in ('research_sandbox', 'research_local_score'):
+        result=mcp_bridge._handle({'jsonrpc':'2.0','id':1,'method':'tools/call',
+                                   'params':{'name':name,'arguments':{'action':'list'}}})
+        assert result['result']['isError'] is True
+    assert calls == [180,180]
