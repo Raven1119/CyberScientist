@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import sqlite3
 import subprocess
 import sys
 import zipfile
@@ -170,6 +171,12 @@ def test_fake_sandbox_scorer_records_and_calibrates(monkeypatch):
     assert paired['display_delta'] == 2
     assert paired['science_delta'] == 1
     assert paired['trace_delta'] == -5
+    assert paired['source'] == 'realtime'
+    with db.transaction() as conn:
+        local_scoring.calibrate_tx(conn, submission['id'], source='historical')
+        local_scoring.calibrate_tx(conn, submission['id'], source='historical')
+    assert db.query_one('SELECT source FROM score_calibration WHERE submission_id=?',
+                        (submission['id'],))['source'] == 'historical'
     db.execute("UPDATE submissions SET score_confidence='provisional' WHERE id=?", (submission['id'],))
     with db.transaction() as conn:
         local_scoring.calibrate_tx(conn, submission['id'])
@@ -182,6 +189,18 @@ def test_fake_sandbox_scorer_records_and_calibrates(monkeypatch):
         prediction_md=f'local_score:{row["id"]} 科学产物变化，应重新评分')
     assert not db.query_one('SELECT 1 FROM local_scores WHERE package_sha256=?',
                             (changed['package_sha256'],))
+
+
+def test_calibration_source_migration_is_additive_and_idempotent():
+    conn = sqlite3.connect(':memory:')
+    conn.row_factory = sqlite3.Row
+    conn.execute('CREATE TABLE score_calibration(submission_id TEXT PRIMARY KEY)')
+    conn.execute("INSERT INTO score_calibration(submission_id) VALUES('old')")
+    db._ensure_columns(conn, 'score_calibration', db.SCORE_CALIBRATION_V2_COLUMNS)
+    db._ensure_columns(conn, 'score_calibration', db.SCORE_CALIBRATION_V2_COLUMNS)
+    assert conn.execute("SELECT source FROM score_calibration WHERE submission_id='old'").fetchone()[0] == 'realtime'
+    assert [row['name'] for row in conn.execute('PRAGMA table_info(score_calibration)')].count('source') == 1
+    conn.close()
 
 
 def test_scorer_requires_matching_image_before_remote_operation(monkeypatch):

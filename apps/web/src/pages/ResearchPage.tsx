@@ -1789,7 +1789,8 @@ function SubmissionsPanel({
     scorer: { scorer_version: string; version: string; image: string } | null
     calibrations: { submission_id: string; predicted_display_score: number | null;
       platform_display_score: number | null; display_delta: number | null;
-      science_delta: number | null; trace_delta: number | null; valid: number }[]
+      science_delta: number | null; trace_delta: number | null; valid: number;
+      source: 'realtime' | 'historical' }[]
   } | null>(null)
   const [busy, setBusy] = useState(false)
   const [packagePath, setPackagePath] = useState('')
@@ -1933,7 +1934,7 @@ function SubmissionsPanel({
               {s.prediction_md && <p className="small-text">提交预测：{s.prediction_md}</p>}
               {localScoring?.calibrations.filter((item) => item.submission_id === s.id).map((item) => (
                 <p className="small-text" key={item.submission_id}>
-                  本地预测 {item.predicted_display_score ?? '未知'} / 平台 {item.platform_display_score ?? '未知'}
+                  {item.source === 'historical' ? '历史校准' : '实时校准'}：本地预测 {item.predicted_display_score ?? '未知'} / 平台 {item.platform_display_score ?? '未知'}
                   {' · '}展示分偏差 {item.display_delta ?? '未知'}
                   {' · '}科学分偏差 {item.science_delta ?? '未知'}
                   {' · '}轨迹分偏差 {item.trace_delta ?? '未知'}

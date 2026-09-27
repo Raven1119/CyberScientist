@@ -314,7 +314,9 @@ def bind_submission_tx(conn, submission_id: str, sealed: bytes) -> str | None:
     return score_id
 
 
-def calibrate_tx(conn, submission_id: str) -> None:
+def calibrate_tx(conn, submission_id: str, *, source: str = 'realtime') -> None:
+    if source not in ('realtime', 'historical'):
+        raise ValueError('unknown calibration source')
     submission = conn.execute('SELECT s.*,r.challenge_id FROM submissions s JOIN runs r'
                               ' ON r.id=s.run_id WHERE s.id=?', (submission_id,)).fetchone()
     if not submission:
@@ -345,12 +347,13 @@ def calibrate_tx(conn, submission_id: str) -> None:
     actual = submission['score']
     harbor = submission['harbor_score']
     actual_trace = submission['trace_score']
-    conn.execute('INSERT INTO score_calibration(submission_id,local_score_id,package_sha256,'
+    conn.execute('INSERT INTO score_calibration(submission_id,local_score_id,source,package_sha256,'
                  'predicted_display_score,platform_display_score,display_delta,'
                  'predicted_science_score,platform_science_score,science_delta,'
                  'predicted_trace_score,platform_trace_score,trace_delta,valid,confirmed_at)'
-                 ' VALUES(?,?,?,?,?,?,?,?,?,?,?,?,1,?)'
+                 ' VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,1,?)'
                  ' ON CONFLICT(submission_id) DO UPDATE SET local_score_id=excluded.local_score_id,'
+                 'source=excluded.source,'
                  'package_sha256=excluded.package_sha256,predicted_display_score=excluded.predicted_display_score,'
                  'platform_display_score=excluded.platform_display_score,display_delta=excluded.display_delta,'
                  'predicted_science_score=excluded.predicted_science_score,'
@@ -358,7 +361,7 @@ def calibrate_tx(conn, submission_id: str) -> None:
                  'predicted_trace_score=excluded.predicted_trace_score,'
                  'platform_trace_score=excluded.platform_trace_score,trace_delta=excluded.trace_delta,'
                  'valid=1,confirmed_at=excluded.confirmed_at',
-                 (submission_id,local['id'],submission['package_sha256'],predicted,actual,
+                 (submission_id,local['id'],source,submission['package_sha256'],predicted,actual,
                   predicted-actual if predicted is not None and actual is not None else None,
                   local['science_score'],harbor,
                   local['science_score']-harbor if harbor is not None else None,

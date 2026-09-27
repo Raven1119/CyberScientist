@@ -394,6 +394,7 @@ CREATE INDEX IF NOT EXISTS idx_local_scores_challenge ON local_scores(challenge_
 CREATE TABLE IF NOT EXISTS score_calibration (
     submission_id TEXT PRIMARY KEY REFERENCES submissions(id),
     local_score_id TEXT NOT NULL REFERENCES local_scores(id),
+    source TEXT NOT NULL DEFAULT 'realtime' CHECK(source IN ('realtime','historical')),
     package_sha256 TEXT NOT NULL,
     predicted_display_score REAL,
     platform_display_score REAL,
@@ -409,6 +410,10 @@ CREATE TABLE IF NOT EXISTS score_calibration (
 );
 CREATE INDEX IF NOT EXISTS idx_score_calibration_local ON score_calibration(local_score_id);
 """
+
+SCORE_CALIBRATION_V2_COLUMNS = {
+    "source": "TEXT NOT NULL DEFAULT 'realtime' CHECK(source IN ('realtime','historical'))",
+}
 
 # submissions 表 v2 新增列（对既有库做幂等 ALTER）
 SUBMISSION_V2_COLUMNS = {
@@ -514,6 +519,7 @@ def init_db() -> None:
         _ensure_columns(conn, "runs", RUN_V2_COLUMNS)
         _ensure_columns(conn, "submissions", SUBMISSION_V2_COLUMNS)
         _ensure_columns(conn, "local_scores", LOCAL_SCORE_V2_COLUMNS)
+        _ensure_columns(conn, "score_calibration", SCORE_CALIBRATION_V2_COLUMNS)
         _ensure_columns(conn, "guidance", GUIDANCE_PREDICTION_COLUMNS)
         _ensure_columns(conn, "authorizations", AUTHORIZATION_V2_COLUMNS)
         _ensure_columns(conn, "challenges", CHALLENGE_V2_COLUMNS)
