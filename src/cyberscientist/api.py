@@ -878,8 +878,13 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
                           f"event: {ev['type']}\n" \
                           f"data: {json.dumps(ev, ensure_ascii=False)}\n\n"
                 if not events:
+                    run = db.query_one("SELECT phase FROM runs WHERE id=?", (run_id,))
+                    if not run or run['phase'] in ('finished', 'failed', 'cancelled'):
+                        return  # All pages drained; completed Run history is finite.
                     yield ": heartbeat\n\n"
-                await asyncio.sleep(1.0)
+                    await asyncio.sleep(1.0)
+                else:
+                    await asyncio.sleep(0)  # Drain large histories without a second per page.
 
         return StreamingResponse(stream(), media_type="text/event-stream",
                                  headers={"Cache-Control": "no-cache",

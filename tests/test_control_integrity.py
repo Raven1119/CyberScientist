@@ -10,6 +10,25 @@ from cyberscientist.prime import ActionReceipt
 from test_collaboration import _seed_challenge, _rig, _start, _wait, _guidance
 
 
+async def test_user_guidance_receipt_is_correlated_to_its_review_request():
+    _seed_challenge()
+    c = RunController()
+    rid = c.create_run('COLLAB_CH')['id']
+    db.execute("UPDATE runs SET phase='running' WHERE id=?", (rid,))
+    c._signals[rid] = asyncio.Queue()
+    await c.control(rid, 'steer', 'Check the input', 'ui-steer-one')
+    signal = await c._signals[rid].get()
+    assert signal.get('operation_id') == 'ui-steer-one'
+    # Actual queue consumer; no brain or executor calls are needed here.
+    await c._handle_signal(signal, rid, c._signals[rid])
+    receipt = [e for e in db.events_after(rid, 0) if e['type'] == 'user.steer.review_queued']
+    assert len(receipt) == 1
+    assert receipt[0]['payload']['operation_id'] == 'ui-steer-one'
+    request = db.query_one('SELECT * FROM review_requests WHERE id=?', (receipt[0]['payload']['review_id'],))
+    assert request['run_id'] == rid and request['trigger'] == 'user_steer'
+    assert json.loads(request['frame_json'])['user_guidance'] == 'Check the input'
+
+
 def checkpoint(key="cp", review="blocking"):
     return {"schema_version": 1, "message_type": "checkpoint", "checkpoint_key": key, "stage": "progress",
             "review": review, "report_md": "checkpoint evidence", "evidence_refs": []}

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { api, ApiError } from '../api'
 import { useApp } from '../app-context'
 import { Badge, Modal } from '../components'
@@ -44,12 +44,18 @@ function scoreText(s: Submission): string {
 }
 
 export default function MailboxPage() {
-  const { toast, demoMode } = useApp()
+  const { toast, demoMode, currentChallengeId } = useApp()
   const [mailboxes, setMailboxes] = useState<MailboxList | null>(null)
   const [usage, setUsage] = useState<MailboxUsage[]>([])
   const [submissions, setSubmissions] = useState<Submission[]>([])
   const [candidates, setCandidates] = useState<Submission[]>([])
   const [currentRun, setCurrentRun] = useState<RunSummary | null>(null)
+  const [runs, setRuns] = useState<RunSummary[]>([])
+  const [runChoice, setRunChoice] = useState('')
+  const loadedRunId = useRef<string | null>(null)
+  const refreshRequest = useRef(0)
+  const [contextLoading, setContextLoading] = useState(true)
+  const [contextError, setContextError] = useState('')
   const [currentTrialId, setCurrentTrialId] = useState<string | null>(null)
   const [predictionRequired, setPredictionRequired] = useState(false)
   const [prediction, setPrediction] = useState('')
@@ -75,35 +81,53 @@ export default function MailboxPage() {
   }, [])
 
   const refresh = useCallback(async () => {
+    const request = ++refreshRequest.current
+    setContextLoading(true)
+    setContextError('')
     try {
       const mb = await api.get<MailboxList>('/api/v1/mailboxes')
       setMailboxes(mb)
       const quota = await api.get<{ items: MailboxUsage[] }>('/api/v1/mailboxes/usage')
       setUsage(quota.items)
-      const runs = await api.get<{ items: RunSummary[] }>('/api/v1/runs')
-      const run = runs.items[0] ?? null
-      setCurrentRun(run)
+      const available = await api.get<{ items: RunSummary[] }>('/api/v1/runs')
+      const selectedId = runChoice || loadedRunId.current
+      const run = selectedId ? available.items.find(r => r.id === selectedId) ?? null
+        : currentChallengeId ? available.items.find(r => r.challenge_id === currentChallengeId) ?? null
+        : available.items[0] ?? null
       if (run) {
         const detail = await api.get<RunDetail>(
           `/api/v1/runs/${run.id}`)
-        setCurrentTrialId(detail.current_trial_id)
-        setPredictionRequired(detail.config_snapshot?.submission_prediction_version === 1)
         const subs = await api.get<{ items: Submission[] }>(
           `/api/v1/runs/${run.id}/submissions`)
-        setSubmissions(subs.items)
         const cand = await api.get<{ items: Submission[] }>(
           `/api/v1/harvest/candidates?challenge_id=${encodeURIComponent(run.challenge_id)}`)
+        if (request !== refreshRequest.current) return
+        setCurrentTrialId(detail.current_trial_id)
+        setPredictionRequired(detail.config_snapshot?.submission_prediction_version === 1)
+        setSubmissions(subs.items)
         setCandidates(cand.items)
       } else {
+        if (request !== refreshRequest.current) return
         setCurrentTrialId(null)
         setPredictionRequired(false)
         setSubmissions([])
         setCandidates([])
       }
+      setRuns(available.items)
+      setCurrentRun(run)
+      loadedRunId.current = run?.id ?? null
     } catch (err) {
-      toast('加载邮箱数据失败：' + (err instanceof Error ? err.message : String(err)))
+      if (request !== refreshRequest.current) return
+      setCurrentRun(null)
+      setCandidates([])
+      setSubmissions([])
+      const message = '加载邮箱数据失败：' + (err instanceof Error ? err.message : String(err))
+      setContextError(message)
+      toast(message)
+    } finally {
+      if (request === refreshRequest.current) setContextLoading(false)
     }
-  }, [toast])
+  }, [toast, currentChallengeId, runChoice])
 
   useEffect(() => {
     void refresh()
@@ -203,7 +227,7 @@ export default function MailboxPage() {
   }
 
   const harvestSubmit = async () => {
-    if (!confirming) return
+    if (!confirming || contextLoading || busy) return
     setBusy(true)
     try {
       await api.post('/api/v1/harvest/submit', {
@@ -228,7 +252,7 @@ export default function MailboxPage() {
   }
 
   const submitExperiment = async () => {
-    if (!currentRun) return
+    if (!currentRun || contextLoading || busy) return
     if (predictionRequired && !prediction.trim()) {
       toast('请先写下本次改动及预计哪个得分分量如何变化。')
       return
@@ -447,7 +471,7 @@ export default function MailboxPage() {
                 </ul>
                 <div className="actions" style={{ marginTop: 10 }}>
                   <button type="button" className="btn primary"
-                    disabled={busy || !harvest || !selected}
+                    disabled={busy || contextLoading || !harvest || !selected}
                     title={harvest ? '' : '先配置收割邮箱'}
                     onClick={() => { setAckWarnings(false); setConfirming(selected) }}>
                     收割选中候选
@@ -474,6 +498,22 @@ export default function MailboxPage() {
             {demoMode && <Badge tone="demo">演示模式</Badge>}
           </div>
           <div className="card-body">
+            <div className="field">
+              <label htmlFor="submission-run">提交所属 Run</label>
+              <select id="submission-run" value={runChoice || currentRun?.id || ''} disabled={busy}
+                onChange={(event) => {
+                  setContextLoading(true)
+                  setRunChoice(event.target.value)
+                  setPkgPath(''); setPrediction(''); setAllowProxyEvidence(false); setAllowIndeterminateAdmission(false)
+                  setSelectedCandidateId(null); setConfirming(null); setAckWarnings(false)
+                }}>
+                <option value="" disabled>选择 Run</option>
+                {runs.map(run => <option key={run.id} value={run.id}>{run.challenge_id} · {run.id} · {run.phase}</option>)}
+              </select>
+              <p className="small-text">切换 Run 会清除包路径、预测和额外提交许可。</p>
+            </div>
+            {contextLoading && <p role="status">正在核对所选 Run 的提交数据…</p>}
+            {contextError && <p role="alert">{contextError}</p>}
             {currentRun && (
               <div className="field" style={{ marginBottom: 10 }}>
                 <label htmlFor="pkg-path">提交现成包（实验邮箱，消耗提交授权）</label>
@@ -487,7 +527,7 @@ export default function MailboxPage() {
                     onChange={(e) => setPkgPath(e.target.value)}
                   />
                   <button type="button" className="btn primary"
-                    disabled={busy}
+                    disabled={busy || contextLoading}
                     onClick={() => void submitExperiment()}>
                     提交
                   </button>
@@ -578,7 +618,7 @@ export default function MailboxPage() {
             </>}
             <div className="actions" style={{ marginTop: 12 }}>
               <button type="button" className="btn primary"
-                disabled={busy || Boolean(confirming.warnings?.length && !ackWarnings)}
+                disabled={busy || contextLoading || Boolean(confirming.warnings?.length && !ackWarnings)}
                 onClick={() => void harvestSubmit()}>
                 确认提交
               </button>

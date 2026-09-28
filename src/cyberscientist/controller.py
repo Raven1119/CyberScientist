@@ -700,9 +700,9 @@ class RunController:
                     "SELECT status FROM operations WHERE operation_id=?", (operation_id,))
                 return {"status": existing["status"], "deduplicated": True}
             db.append_event(run_id, "user", "user.steer.queued",
-                            {"text": _redact(text), "status": "queued"})
+                            {"text": _redact(text), "status": "queued", "operation_id": operation_id})
             db.bump_state_version(run_id)
-            await q.put({"type": "steer", "text": text})
+            await q.put({"type": "steer", "text": text, "operation_id": operation_id})
             return {"status": "queued",
                     "detail": "指导已排队；以审阅与投递事件确认生效"}
         if action == "pause":
@@ -1790,7 +1790,7 @@ class RunController:
         elif stype == "steer":
             # 用户指导 → 生命周期审阅（同一个大脑排队入口）
             self._enqueue_lifecycle(run_id, trigger="user_steer",
-                                    user_guidance=signal.get("text"))
+                                    user_guidance=signal.get("text"), operation_id=signal.get("operation_id"))
         elif stype == "resume":
             # 恢复：重新挂接执行器。若仍有活跃 Trial 且执行器空闲，
             # 重新下发任务让其继续（远程 Job 的实际状态核对属阶段 2）。
@@ -2025,7 +2025,8 @@ class RunController:
 
     # ---------- 审阅调度（单飞 worker）----------
     def _enqueue_lifecycle(self, run_id: str, trigger: str,
-                           user_guidance: str | None = None) -> str:
+                           user_guidance: str | None = None,
+                           operation_id: str | None = None) -> str:
         with db.transaction() as conn:
             rid = collab._enqueue_request_tx(
                 conn, run_id, source="lifecycle", blocking=False,
@@ -2035,6 +2036,9 @@ class RunController:
                     "UPDATE review_requests SET frame_json=? WHERE id=?",
                     (json.dumps({"user_guidance": _redact(user_guidance)},
                                 ensure_ascii=False), rid))
+            if operation_id:
+                db.append_event_tx(conn, run_id, "controller", "user.steer.review_queued",
+                                   {"operation_id": operation_id, "review_id": rid})
         self._wake(run_id)
         return rid
 

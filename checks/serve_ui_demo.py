@@ -61,7 +61,8 @@ def main() -> None:
         response.headers["X-CyberScientist-UI-Demo"] = "isolated-native-demo"
         return response
 
-    uvicorn.run(app, host="127.0.0.1", port=args.port, log_level="warning")
+    uvicorn.run(app, host="127.0.0.1", port=args.port, log_level="warning",
+                timeout_graceful_shutdown=5)
 
 
 if __name__ == "__main__":

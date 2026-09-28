@@ -1,14 +1,66 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import MailboxPage from './MailboxPage'
 
-const { get, post, toast } = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn(), toast: vi.fn() }))
+const { get, post, toast, context } = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn(), toast: vi.fn(),
+  context: { currentChallengeId: null as string | null } }))
 vi.mock('../api', () => ({ api: { get, post, delete: vi.fn() }, ApiError: class extends Error {} }))
-vi.mock('../app-context', () => ({ useApp: () => ({ toast, demoMode: false }) }))
+vi.mock('../app-context', () => ({ useApp: () => ({ toast, demoMode: false, ...context }) }))
 afterEach(() => { cleanup(); vi.resetAllMocks() })
 beforeEach(() => {
+  context.currentChallengeId = null
   HTMLDialogElement.prototype.showModal = function () { this.setAttribute('open', '') }
   HTMLDialogElement.prototype.close = function () { this.removeAttribute('open') }
+})
+
+it('uses the research page selected challenge rather than silently submitting the newest other Run', async () => {
+  mockData()
+  context.currentChallengeId = 'challenge-b'
+  const original = get.getMockImplementation()!
+  get.mockImplementation((path: string) => {
+    if (path === '/api/v1/runs') return Promise.resolve({ items: [
+      { id: 'run-a', challenge_id: 'challenge-a', phase: 'finished' },
+      { id: 'run-b', challenge_id: 'challenge-b', phase: 'finished' },
+    ] })
+    if (path === '/api/v1/runs/run-b') return Promise.resolve({ current_trial_id: 'trial-b', config_snapshot: {} })
+    return original(path)
+  })
+  render(<MailboxPage />)
+  await screen.findByRole('button', { name: /^提交$/ })
+  fireEvent.click(screen.getByRole('button', { name: /^提交$/ }))
+  await waitFor(() => expect(post).toHaveBeenCalledWith('/api/v1/runs/run-b/submissions',
+    expect.objectContaining({ trial_id: 'trial-b' })))
+  expect(post).not.toHaveBeenCalledWith('/api/v1/runs/run-a/submissions', expect.anything())
+})
+
+it('clears per-Run submission permissions and ignores a delayed response for an old selection', async () => {
+  mockData()
+  let resolveB!: (value: unknown) => void
+  const slowB = new Promise(r => { resolveB = r })
+  const original = get.getMockImplementation()!
+  get.mockImplementation((path: string) => {
+    if (path === '/api/v1/runs') return Promise.resolve({ items: [
+      { id: 'run-a', challenge_id: 'challenge-a', phase: 'finished' },
+      { id: 'run-b', challenge_id: 'challenge-b', phase: 'finished' },
+    ] })
+    if (path === '/api/v1/runs/run-b') return slowB
+    return original(path)
+  })
+  render(<MailboxPage />)
+  await screen.findByRole('button', { name: /^提交$/ })
+  fireEvent.change(screen.getByLabelText(/提交现成包/), { target: { value: 'old-package.zip' } })
+  fireEvent.click(screen.getByLabelText(/明确允许代理证据提交/))
+  fireEvent.change(screen.getByLabelText('提交所属 Run'), { target: { value: 'run-b' } })
+  await waitFor(() => expect(get).toHaveBeenCalledWith('/api/v1/runs/run-b'))
+  expect((screen.getByLabelText(/提交现成包/) as HTMLInputElement).value).toBe('')
+  expect((screen.getByLabelText(/明确允许代理证据提交/) as HTMLInputElement).checked).toBe(false)
+  expect(screen.getByRole('button', { name: /^提交$/ }).matches(':disabled')).toBe(true)
+  fireEvent.change(screen.getByLabelText('提交所属 Run'), { target: { value: 'run-a' } })
+  await waitFor(() => expect(screen.getByRole('button', { name: /^提交$/ }).matches(':disabled')).toBe(false))
+  await act(async () => resolveB({ current_trial_id: 'trial-b', config_snapshot: {} }))
+  fireEvent.click(screen.getByRole('button', { name: /^提交$/ }))
+  await waitFor(() => expect(post).toHaveBeenCalledWith('/api/v1/runs/run-a/submissions',
+    expect.objectContaining({ trial_id: 'trial-a', allow_proxy_evidence: false })))
 })
 
 const candidate = (id: string, score: number, warnings: string[]) => ({

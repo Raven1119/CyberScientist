@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import signal
 import socket
+import sqlite3
 import subprocess
 import sys
 import time
@@ -16,8 +17,9 @@ from cyberscientist import config, db
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="Linux SIGTERM lifecycle")
-def test_cli_sigterm_exits_with_sse_client_still_connected(tmp_path):
-    # A terminal fixture Run is sufficient: its event stream remains open.
+@pytest.mark.parametrize('entrypoint', ['cli', 'ui_demo'])
+def test_cli_sigterm_exits_with_sse_client_still_connected(tmp_path, entrypoint):
+    # A paused fixture keeps its stream open for a later explicit resume.
     db.execute(
         "INSERT INTO challenges(id, origin, title, content, content_hash, imported_at, is_demo)"
         " VALUES('shutdown-fixture', 'demo://local', 'fixture', '', 'hash', ?, 1)",
@@ -25,7 +27,7 @@ def test_cli_sigterm_exits_with_sse_client_still_connected(tmp_path):
     )
     db.execute(
         "INSERT INTO runs(id, challenge_id, mode, phase, config_snapshot, created_at)"
-        " VALUES('shutdown-run', 'shutdown-fixture', 'demo', 'finished', '{}', ?)",
+        " VALUES('shutdown-run', 'shutdown-fixture', 'demo', 'paused', '{}', ?)",
         (db.utcnow(),),
     )
     paths = {name: str(getattr(config, name)) for name in (
@@ -61,8 +63,18 @@ main()
         "PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": str(tmp_path),
         "LANG": "C.UTF-8", "PYTHONPATH": str(Path(config.__file__).resolve().parents[1]),
     }
+    command = [sys.executable, "-c", child, json.dumps(paths), str(port)]
+    if entrypoint == 'ui_demo':
+        root = tmp_path / 'ui-demo'
+        data = root / '.cyberscientist'
+        data.mkdir(parents=True)
+        (root / 'UI_DEMO_WORKSPACE.json').write_text('{}')
+        with sqlite3.connect(data / 'demo.db') as target:
+            db.get_db().backup(target)
+        helper = Path(__file__).resolve().parents[1] / 'checks' / 'serve_ui_demo.py'
+        command = [sys.executable, str(helper), '--port', str(port), '--data-root', str(root)]
     process = subprocess.Popen(
-        [sys.executable, "-c", child, json.dumps(paths), str(port)], env=env,
+        command, env=env,
         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
     )
     sse = None
@@ -88,7 +100,14 @@ main()
         response = sse.getresponse()
         assert response.status == 200
         assert response.getheader("Content-Type").startswith("text/event-stream")
-        assert response.readline() == b": heartbeat\n"
+        # Startup reconciliation may append a recovering event before the first heartbeat.
+        for _ in range(100):
+            line = response.readline()
+            assert line, 'nonterminal SSE closed unexpectedly'
+            if line == b': heartbeat\n':
+                break
+        else:
+            pytest.fail('nonterminal SSE did not reach a heartbeat')
 
         started = time.monotonic()
         process.send_signal(signal.SIGTERM)

@@ -56,11 +56,14 @@ const SOURCE_AVATAR: Record<string, string> = {
 }
 
 export default function ResearchPage() {
-  const { toast, setCurrentChallengeId, demoMode, setPage } = useApp()
+  const { toast, currentChallengeId, setCurrentChallengeId, demoMode, setPage } = useApp()
 
   const [challenges, setChallenges] = useState<ChallengeSummary[]>([])
-  const [challengeId, setChallengeId] = useState<string | null>(null)
-  const [challenge, setChallenge] = useState<ChallengeDetail | null>(null)
+  const [challengeId, setChallengeId] = useState<string | null>(currentChallengeId)
+  const [challengeSnapshot, setChallenge] = useState<ChallengeDetail | null>(null)
+  const challenge = challengeSnapshot?.id === challengeId ? challengeSnapshot : null
+  const selectedChallengeId = useRef(challengeId)
+  selectedChallengeId.current = challengeId
   const [runs, setRuns] = useState<RunSummary[]>([])
   const [overview, setOverview] = useState<RunOverview[]>([])
   const [preferredRunId, setPreferredRunId] = useState<string | null>(null)
@@ -74,11 +77,10 @@ export default function ResearchPage() {
   const [terminateOpen, setTerminateOpen] = useState(false)
   const [budgetOpen, setBudgetOpen] = useState(false)
   const [busy, setBusy] = useState(false)
-  const [steerText, setSteerText] = useState('')
+  const [steerDrafts, setSteerDrafts] = useState<Record<string, string>>({})
   const [steerState, setSteerState] = useState<{
     opId: string
-    sentAt: number
-    state: 'queued' | 'consumed'
+    state: 'queued' | 'review_queued'
   } | null>(null)
   const [supervisionSnapshot, setSupervisionSnapshot] = useState<{ runId: string; data: SupervisionStatus } | null>(null)
   const [subRefresh, setSubRefresh] = useState(0)
@@ -126,6 +128,7 @@ export default function ResearchPage() {
   }, [challenges, challengeId])
 
   useEffect(() => {
+    let cancelled = false
     setCurrentChallengeId(challengeId)
     if (!challengeId) {
       setChallenge(null)
@@ -133,8 +136,9 @@ export default function ResearchPage() {
     }
     api
       .get<ChallengeDetail>(`/api/v1/challenges/${challengeId}`)
-      .then(setChallenge)
-      .catch(() => setChallenge(null))
+      .then((value) => { if (!cancelled) setChallenge(value) })
+      .catch(() => { if (!cancelled) setChallenge(null) })
+    return () => { cancelled = true }
   }, [challengeId, setCurrentChallengeId])
 
   const currentRun: RunSummary | null = useMemo(() => {
@@ -150,11 +154,18 @@ export default function ResearchPage() {
   // A delayed response from a previous selection must never animate this Run.
   const selectedRunId = useRef<string | null>(null)
   selectedRunId.current = currentRun?.id ?? null
+  const steerText = currentRun ? steerDrafts[currentRun.id] ?? '' : ''
+  function setSteerText(text: string) {
+    if (currentRun) setSteerDrafts((drafts) => ({ ...drafts, [currentRun.id]: text }))
+  }
   const supervision = supervisionSnapshot?.runId === currentRun?.id ? supervisionSnapshot?.data ?? null : null
 
   const active = currentRun ? ACTIVE_PHASES.includes(currentRun.phase) : false
 
-  const [runDetail, setRunDetail] = useState<RunDetail | null>(null)
+  const [runSnapshot, setRunDetail] = useState<RunDetail | null>(null)
+  const runDetail = runSnapshot?.id === currentRun?.id ? runSnapshot : null
+  const detailRequest = useRef(0)
+  const checkpointRequest = useRef(0)
   const lifecycleV2 = (runDetail?.config_snapshot as { lifecycle_version?: number } | undefined)?.lifecycle_version === 2
 
   const phase = runDetail?.phase ?? currentRun?.phase ?? null
@@ -166,15 +177,17 @@ export default function ResearchPage() {
   useEffect(() => {
     setRunDetail(null)
     setEvents([])
+    setCheckpoints([])
     setSteerState(null)
     setSupervisionSnapshot(null)
   }, [currentRun?.id])
 
   const refreshRunDetail = useCallback(async () => {
     if (!currentRun) return
+    const request = ++detailRequest.current
     try {
       const detail = await api.get<RunDetail>(`/api/v1/runs/${currentRun.id}`)
-      setRunDetail(detail)
+      if (request === detailRequest.current && selectedRunId.current === currentRun.id) setRunDetail(detail)
     } catch {
       // 轮询失败不打扰用户；事件流断线提示会覆盖连接问题
     }
@@ -192,13 +205,16 @@ export default function ResearchPage() {
 
   const refreshCheckpoints = useCallback(async () => {
     if (!currentRun) return
+    const request = ++checkpointRequest.current
     try {
       const data = await api.get<{ items?: Checkpoint[] } | Checkpoint[]>(
         `/api/v1/runs/${currentRun.id}/checkpoints`,
       )
-      setCheckpoints(Array.isArray(data) ? data : (data.items ?? []))
+      if (request === checkpointRequest.current && selectedRunId.current === currentRun.id) {
+        setCheckpoints(Array.isArray(data) ? data : (data.items ?? []))
+      }
     } catch {
-      setCheckpoints([])
+      if (request === checkpointRequest.current && selectedRunId.current === currentRun.id) setCheckpoints([])
     }
   }, [currentRun])
 
@@ -224,7 +240,7 @@ export default function ResearchPage() {
     if (tab === 'checkpoints') void refreshCheckpoints()
   }, [tab, refreshCheckpoints])
 
-  const steerStateRef = useRef<{ opId: string; sentAt: number; state: 'queued' | 'consumed' } | null>(null)
+  const steerStateRef = useRef<typeof steerState>(null)
   useEffect(() => {
     steerStateRef.current = steerState
   }, [steerState])
@@ -234,17 +250,8 @@ export default function ResearchPage() {
       setEvents((list) => [...list, event])
       const pendingSteer = steerStateRef.current
       if (pendingSteer && pendingSteer.state === 'queued') {
-        // 后端不把前端的 operation_id 带回事件（guidance.sent 里是执行器回执 id），
-        // 改为时间序匹配：只认发送之后到达的消费信号，避免历史回放误判
-        const at = Date.parse(event.occurred_at)
-        const afterSend = Number.isNaN(at) || at >= pendingSteer.sentAt - 1000
-        const consumed =
-          event.type === 'prime.steer.consumed' ||
-          event.type === 'guidance.sent' ||
-          event.type === 'guidance.acknowledged' ||
-          (event.type === 'guidance.queued' && event.payload?.kind === 'steer')
-        if (consumed && afterSend) {
-          setSteerState({ ...pendingSteer, state: 'consumed' })
+        if (event.type === 'user.steer.review_queued' && event.payload.operation_id === pendingSteer.opId) {
+          setSteerState({ ...pendingSteer, state: 'review_queued' })
         }
       }
       if (event.type.startsWith('run.')) {
@@ -308,8 +315,11 @@ export default function ResearchPage() {
     const text = steerText.trim()
     if (!text || !currentRun) return
     const opId = crypto.randomUUID()
-    const sentAt = Date.now()
     setBusy(true)
+    // Subscribe to a correlated receipt before POST; SSE can arrive first.
+    const pending = { opId, state: 'queued' as const }
+    steerStateRef.current = pending
+    setSteerState(pending)
     try {
       await api.post(`/api/v1/runs/${currentRun.id}/control`, {
         action: 'steer',
@@ -317,9 +327,9 @@ export default function ResearchPage() {
         operation_id: opId,
       })
       setSteerText('')
-      setSteerState({ opId, sentAt, state: 'queued' })
       toast('指导已排队。')
     } catch (err) {
+      if (selectedRunId.current === currentRun.id) { steerStateRef.current = null; setSteerState(null) }
       toast('发送指导失败：' + (err instanceof Error ? err.message : String(err)))
     } finally {
       setBusy(false)
@@ -530,7 +540,7 @@ export default function ResearchPage() {
                 <p className="small-text" role="status">
                   {steerState.state === 'queued'
                     ? '已排队，等待大脑审阅后投递。'
-                    : '指导已被 Run 消费（转为正式指导或已投递执行器）。'}
+                    : '已进入大脑审阅队列；尚未确认执行器接收。'}
                 </p>
               )}
               {terminal && (
@@ -665,6 +675,7 @@ export default function ResearchPage() {
               {tab === 'checkpoints' && (
                 <div>
                   <CheckpointForm
+                    key={currentRun?.id ?? 'none'}
                     runId={currentRun?.id ?? null}
                     trials={runDetail?.trials ?? []}
                     onCreated={() => void refreshCheckpoints()}
@@ -687,6 +698,7 @@ export default function ResearchPage() {
 
               {tab === 'submission' && challengeId && (
                 <SubmissionsPanel
+                  key={`${challengeId}:${currentRun?.id}:${runDetail?.current_trial_id}`}
                   challengeId={challengeId}
                   runId={currentRun?.id ?? null}
                   trialId={runDetail?.current_trial_id ?? null}
@@ -694,7 +706,7 @@ export default function ResearchPage() {
                 />
               )}
               {tab === 'data' && challengeId && (
-                <DataPanel challengeId={challengeId} runId={currentRun?.id ?? null} />
+                <DataPanel key={`${challengeId}:${currentRun?.id}`} challengeId={challengeId} runId={currentRun?.id ?? null} />
               )}
             </div>
           </article>
@@ -810,18 +822,24 @@ export default function ResearchPage() {
         }}
       />
 
-      <ChallengeModelDialog open={editModelsOpen} challenge={challenge}
+      <ChallengeModelDialog key={`models:${challengeId}`} open={editModelsOpen} challenge={challenge}
         onClose={() => setEditModelsOpen(false)}
-        onSaved={(updated) => { setChallenge(updated); setEditModelsOpen(false) }} />
+        onSaved={(updated) => {
+          if (selectedChallengeId.current === updated.id) { setChallenge(updated); setEditModelsOpen(false) }
+        }} />
 
       <StartDialog
+        key={`start:${challengeId}`}
         open={startOpen}
         onClose={() => setStartOpen(false)}
         challengeId={challengeId}
         challengeTitle={challenge?.title ?? ''}
         activePhase={active ? phase : null}
+        existingRunId={currentRun?.phase === 'created' ? currentRun.id : null}
         demoMode={demoMode}
+        onCreated={() => void refreshRuns()}
         onStarted={() => {
+          if (selectedChallengeId.current !== challengeId) return
           setStartOpen(false)
           void refreshRuns()
           if (currentRun) void refreshRunDetail()
@@ -1499,7 +1517,9 @@ function StartDialog({
   challengeId,
   challengeTitle,
   activePhase,
+  existingRunId,
   demoMode,
+  onCreated,
   onStarted,
   onResume,
 }: {
@@ -1508,7 +1528,9 @@ function StartDialog({
   challengeId: string | null
   challengeTitle: string
   activePhase: string | null
+  existingRunId: string | null
   demoMode: boolean
+  onCreated: () => void
   onStarted: () => void
   onResume: () => void
 }) {
@@ -1526,9 +1548,16 @@ function StartDialog({
   const [objective, setObjective] = useState('')
   const [allowDataDownload, setAllowDataDownload] = useState(false)
   const [busy, setBusy] = useState(false)
+  const pendingRun = useRef<string | null>(null)
+  const [creationUncertain, setCreationUncertain] = useState(false)
+  const [error, setError] = useState('')
+  const [defaultsLoading, setDefaultsLoading] = useState(false)
 
   useEffect(() => {
+    let cancelled = false
     if (open) {
+      setDefaultsLoading(true)
+      setMaxModelTurns(0); setMaxRunMinutes(30); setMaxSubmissions(0); setMaxJobs(0)
       setAllowModelCalls(false)
       setShadowEnabled(false)
       setNote('')
@@ -1542,24 +1571,45 @@ function StartDialog({
           '/api/v1/settings',
         )
         .then((s) => {
+          if (cancelled) return
           setMaxModelTurns(s.run_defaults.max_model_turns)
           setMaxRunMinutes(s.run_defaults.max_run_minutes)
           setMaxSubmissions(s.run_defaults.max_submissions)
           setMaxJobs(s.run_defaults.max_jobs)
         })
-        .catch(() => undefined)
+        .catch(() => { if (!cancelled) setError('未能加载默认预算，请核对并手动填写本轮授权。') })
+        .finally(() => { if (!cancelled) setDefaultsLoading(false) })
     }
+    return () => { cancelled = true }
   }, [open])
 
   async function start() {
-    if (!challengeId) return
+    if (!challengeId || busy || defaultsLoading || creationUncertain) return
     setBusy(true)
+    setError('')
+    let stage = 'prepare'
     try {
-      const run = await api.post<{ id: string }>('/api/v1/runs', {
-        challenge_id: challengeId,
-        shadow_enabled: shadowEnabled,
-      })
-      await api.post(`/api/v1/runs/${run.id}/authorize`, {
+      let runId = pendingRun.current ?? existingRunId
+      if (runId) {
+        const status = await api.get<{ phase: string }>(`/api/v1/runs/${runId}`)
+        if (status.phase === 'running') {
+          pendingRun.current = null
+          toast('Run 已在运行，已重新读取状态。')
+          onStarted()
+          return
+        }
+        if (status.phase !== 'created') throw new Error(`Run ${runId} 当前为 ${status.phase}，请在研究页处理已有 Run。`)
+      } else {
+        stage = 'create'
+        const run = await api.post<{ id: string }>('/api/v1/runs', {
+          challenge_id: challengeId, shadow_enabled: shadowEnabled,
+        })
+        runId = run.id
+        pendingRun.current = run.id
+        onCreated()
+      }
+      stage = 'authorize'
+      await api.post(`/api/v1/runs/${runId}/authorize`, {
         scope: demoMode ? 'demo' : 'model_roundtrip',
         allow_model_calls: allowModelCalls,
         max_model_turns: maxModelTurns,
@@ -1574,11 +1624,17 @@ function StartDialog({
         objective: objective.trim() || note.trim() || undefined,
         allow_data_download: allowDataDownload,
       })
-      await api.post(`/api/v1/runs/${run.id}/start`)
+      stage = 'start'
+      await api.post(`/api/v1/runs/${runId}/start`)
+      pendingRun.current = null
       toast('研究已开始。')
       onStarted()
     } catch (err) {
-      toast('开始研究失败：' + (err instanceof Error ? err.message : String(err)))
+      if (stage === 'create' && (!(err instanceof ApiError) || err.status >= 500)) setCreationUncertain(true)
+      const message = '开始研究失败：' + (err instanceof Error ? err.message : String(err))
+      setError(message)
+      toast(message)
+      onCreated()
     } finally {
       setBusy(false)
     }
@@ -1602,7 +1658,7 @@ function StartDialog({
     )
   }
 
-  if (activePhase) {
+  if (activePhase && activePhase !== 'created') {
     return (
       <Modal open={open} onClose={onClose} title="研究进行中">
         <p>当前题目已有进行中的 Run（{PHASE_LABELS[activePhase as keyof typeof PHASE_LABELS] ?? activePhase}）。</p>
@@ -1619,6 +1675,11 @@ function StartDialog({
     <Modal open={open} onClose={onClose} title="开始研究 · 预检与授权">
       <p className="sub">题目：{challengeTitle || '—'}</p>
       <p>开始研究前，请确认本轮授权范围。授权只对本 Run 生效。</p>
+      {(pendingRun.current || existingRunId) && <p className="inline-note">继续配置已有 Run：{pendingRun.current ?? existingRunId}，不会重复创建。</p>}
+      {error && <p role="alert" className="form-error">{error}</p>}
+      {creationUncertain && <p role="alert">创建结果未知，已停止重试创建。请关闭此窗口并刷新研究页，核对已有 Run。</p>}
+      {defaultsLoading && <LoadingState>正在加载默认预算…</LoadingState>}
+      <fieldset className="settings-fields" disabled={busy || defaultsLoading}>
       <div className="field checkbox">
         <input
           id="auth-model-calls"
@@ -1709,10 +1770,11 @@ function StartDialog({
         <button type="button" className="btn" onClick={onClose}>
           取消
         </button>
-        <button type="button" className="btn primary" disabled={busy} onClick={() => void start()}>
-          {busy ? '启动中…' : '确认并开始'}
+        <button type="button" className="btn primary" disabled={busy || creationUncertain} onClick={() => void start()}>
+          {busy ? '启动中…' : (pendingRun.current || existingRunId) ? '授权并启动现有 Run' : '确认并开始'}
         </button>
       </div>
+      </fieldset>
     </Modal>
   )
 }

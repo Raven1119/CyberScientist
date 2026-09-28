@@ -76,6 +76,7 @@ const EVENT_LABELS: Record<string, string> = {
   'trial.reported_complete': 'Trial 报告完成',
   'trial.skills_enabled': 'Trial 已挂载技能',
   'user.steer.queued': '指导已排队',
+  'user.steer.review_queued': '用户指导已进入审阅队列',
   'guidance.queued': '指导已排队',
   'guidance.sent': '指导已投递执行器',
   'guidance.send_deferred': '指导投递暂缓',

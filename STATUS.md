@@ -2,6 +2,8 @@
 
 ## 已实现
 
+- 第二轮故障检查：按严重程度修复提交页默认选错题目的 Run、研究页旧请求覆盖新选择、启动失败重试重复创建 Run、迟到默认预算覆盖授权输入，以及指导回执误报、跨页面丢失选题、终态 SSE 不关闭。提交页增加明确 Run 选择，切换清除旧包路径和额外许可；指导按 operation_id 确认进入审阅队列；Demo 服务退出有界。详见 `docs/DECISIONS.md` 的「第二轮界面与运行生命周期故障修复」。
+
 - 修复 skills 勾选后点击“保存设置”未落盘，以及单独保存技能造成整页设置版本过期的问题：三个保存入口共用一份设置草稿和一次带版本检查的写入。保存期间禁用编辑；冲突保留草稿并提供明确的放弃重载入口；设置和技能目录加载失败可重试。技能目录遇到单个非 UTF-8 文件不再整页失败，生效说明区分新建 Run 的常驻技能、本题后续 Trial 绑定和独立大脑。
 
 - Linux 日常入口 `./start.sh`：加入项目 Linux CLI 和用户本地 CLI 路径，先重新构建前端，再执行原生后端 `cyberscientist start`。后端同端口提供前端与 API；浏览器等待健康接口就绪后再打开，WSL 无 Linux 图形浏览器时尝试 Windows 默认浏览器。沿用现有连接模式和授权设置。
@@ -52,6 +54,9 @@
 - CS-SB-01 稀疏输入与唤醒修复：可选短研究摘要独立存储；新 Run 普通检查点不唤醒 shadow，Job/Trial 研究级重复状态按 ID 去重。详见 `docs/SPARSE_BRAIN_INPUT_WAKE_FIX_2026-09-24.md`。
 
 ## 已实际验证
+
+- 第二轮回归：`.venv/bin/pytest -q` → 568 passed、2 skipped（沙箱禁止回环监听）；这两项 `.venv/bin/pytest -q tests/test_cli_shutdown.py` 在允许本机监听的环境中另行通过（2 passed），覆盖正式 CLI 和隔离 Demo 服务在 SSE 客户端仍连接时退出。`PATH="$HOME/.local/bin:$PATH" npm --prefix apps/web test -- --run` → 38 passed；前端 TypeScript/Vite 构建、`.venv/bin/python -m compileall -q src tests checks/serve_ui_demo.py` 与 `git diff --check` 通过。
+- WebBridge 验收第二轮修复：较早题目 B 被选中时，提交页使用 B 的 Run；手动切换清除包路径和额外许可，返回研究页保留 B。对已有 created Demo Run 从页面授权启动，两个合成 Run 总数保持 2，目标 Run 到 finished。SSE 返回完整 32 条事件（与 SQLite 一致）后 EOF，页面显示“事件流已归档”；隔离账本 compute_jobs、submissions、compute_sandboxes 均为 0。原始断言、失败回归及 Demo 数据保留于 `.package-checks/bug-audit-20260928-round2/`，不提交。
 
 - 本次 skills 修复：`PATH="$HOME/.local/bin:$PATH" npm --prefix apps/web test -- --run` → 25 passed（含新增 7 个保存/加载回归）；`npm --prefix apps/web run build` 成功。`.venv/bin/pytest -q` → 563 passed、1 skipped（沙箱禁止回环监听）；随后获准本机监听执行 `.venv/bin/pytest -q tests/test_cli_shutdown.py` → 1 passed。`.venv/bin/python -m compileall -q src tests` 与 `git diff --check` 通过。
 - WebBridge 在隔离 Demo 工作区真实复现修复前“勾选→保存设置提示成功→后端列表仍空”，修复后主保存、卡片保存、连续保存、整页刷新回读均通过；同时保留其他设置修改。前端导入 Demo 题目、绑定另一技能、以模型/Job/提交/沙箱/下载均未授权的设置启动原生 Demo；Run 正常结束，`trial.skills_enabled` 包含常驻与本题技能，独立大脑记录 `skills_injected=false`，compute_jobs 为 0。原始界面/请求断言及 Demo 数据保留于忽略目录 `.package-checks/ui-bug-audit-20260928/`。
@@ -144,6 +149,8 @@
 
 ## 尚未验证
 
+- 第二轮修复只验证本地应用、隔离 Demo 及受控异步/失败回归；未发起真实模型、科学 Run、Bohrium Job、沙箱或 Attempt。真实平台中断的长时间行为未新增验收。上一轮后台标签页偶发停滞的唯一原因仍未判定，不能由本轮 SSE 修复倒推出其原因。
+
 - 本次 skills 修复未启动真实科研或真实模型，也未验证新的远程 Job/Attempt。WebBridge 曾出现一次设置加载停滞及命令超时；后端只读设置请求约 7 ms 返回 200，刷新并开启网络诊断后未再复现，根因未判定，不能作为已修复的产品缺陷。
 
 - 本轮实际浏览器窗口自动打开未做 GUI 验收；在 WSL 中已实现 Linux opener 失败时的 Windows 浏览器回退，窗口可见性待用户桌面环境验证。无新的模型、Job 或 Attempt 验收。
@@ -177,6 +184,8 @@
 - CS-SB-01 当轮未重跑 CLI 关闭测试，也未验证未经包装的完整 pytest；该轮未修改 UI，故未重跑前端测试与构建。本轮 CS-EV-01 的前端测试与构建结果见上方。
 
 ## 阻塞项
+
+- 第二轮应用修复无新增阻塞；既有科研/评分契约阻塞保留如下。
 
 - 仅凭已读公开资料，USCT/FWI/XAS/Pancreas 的隐藏评测输入，以及 CNVkit/TBMA/Deep BSDE/堆积等题未完整披露的计分细节，阻止宣称完整官方科学分复刻；不妨碍实现已公开的独立科学检查。该项是评分可识别性限制，不是当前运行故障。
 
