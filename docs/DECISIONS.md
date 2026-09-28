@@ -338,3 +338,9 @@
 - W1（2026-09-27）：项目数据库只有 1 个实验邮箱、没有收割邮箱；该邮箱原有密钥通过 `/auth/me` 核验。操作者现有凭据的只读 `GET /agent/register` 确认另外 3 个任务指定代理均为其已确认关联账号，但项目密钥库与允许搜索的本机历史审计目录未找到这 3 个代理各自的完整 token。因此按任务卡收窄为只采集它们的公开评分和元数据，内容标为 unavailable；不借操作者身份推断可以读取代理私有内容，也不重新生成 token。
 - 作者过滤的 `GET /attempts?author=...&limit=1000` 分别返回 3、15、20、37 条且逐条 `authorId` 匹配，但响应没有 `total` 或页码；不能宣称全历史绝对完整。对已发现的 10 道题另用官方 `/challenges/{id}/attempts?page=...&limit=100` 走完分页（每题公开 `total`），逐条精确作者 ID 交叉核对，0 请求错误、0 已知题目内计数差异。此法不能发现作者过滤列表完全遗漏的另一道题，数据集保留此覆盖限制。
 - 官方文档确认本人 bundle 的 `GET /attempts/{id}/bundle`、轨迹的 `GET /attempts/{id}/trace` 以及自动导出 `GET /attempts/{id}/export-arm`。有直接凭据的 3 条 Attempt 均成功取回 bundle；三个历史账号的 72 条列表记录均标记无 bundle、原始消息或脚本。各抽取一条的公开轨迹 GET 返回空列表，bundle/export GET 返回 403；用已确认的操作者凭据重试一条仍为 403。不能把自动导出的 starter manifest 冒充原始科学文件，也不猜测 raw-message 路径。原始回执、身份、包及逐文件 SHA-256 仅在忽略目录 `.package-checks/scorer-re-20260927T132218Z/`；平台资源没有创建或修改。
+
+## 2026-09-28：CS-UP-03R 公开评分源码与证据转换逆向
+
+- 从已安装官方 CLI 的包元数据找到作者公开仓库，固定 `trace-score-cli@81c434907e7b0a2feccc79236f6601f7abbc1d84`。源码引擎为 v6，63 份历史回执为 v8；因此只把公开 reducer、上限、解析和摘要行为标为已验证，不把它接入生产作为已验证的 v8 预测器。完整发现见 `docs/TRACE_SCORER_SOURCE_REVERSE_ENGINEERING_2026-09-28.md`。
+- 对本人三份按接收回执 SHA-256 配对的 FigQA 原生轨迹，只执行离线格式转换和检查。当前 Playground CLI `0.1.33` 中顶层 error 会先匹配 OpenCode，令 Codex E008 的 43 事件只剩 1 条 error；最小合成对照也复现。E010 的转换文件在公开 scorer 上触发 N09 / cap 49，E011 无负项。未取得服务端当时最终归一化文件，不把本次复现冒充历史 worker 的完整重放。
+- 增加固定源码哈希的离线审计工具，使用原函数和合成裁判数值检验行为；禁用本进程网络、不调用真实评分模型。公共克隆和含原始证据的结果留 `.package-checks/`。本轮不改用户全局 CLI、不创建平台资源、不把未经验证的提示词技巧或评分预测写进生产。

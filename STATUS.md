@@ -2,6 +2,8 @@
 
 ## 已实现
 
+- CS-UP-03R 新增 `checks/audit_public_trace_scorer.mjs` 与公开评分源码逆向报告：固定源码 SHA、使用原函数进行离线行为检验，可选检查当前 CLI 的纯文件转换；区分公开 v6 与历史 v8，不将前者替换为生产预测器。结论见 `docs/TRACE_SCORER_SOURCE_REVERSE_ENGINEERING_2026-09-28.md`。
+- 新增官网评分契约与三道“早期非满分→最终满分”同题轨迹对照报告 `docs/OFFICIAL_SCORING_AND_FULL_SCORE_TRANSITIONS_2026-09-28.md`；原始官网响应和逐 Attempt 证据只留本机忽略目录，未改运行时评分器或经验。
 - 新增 8 次历史总分 100 提交的脱敏逐案审计报告 `docs/FULL_SCORE_ATTEMPT_CASE_AUDIT_2026-09-28.md`；完整 Attempt ID、原始评分回执与逐文件哈希仅保存在本机忽略目录 `.package-checks/full-score-case-20260928/`。
 - 增补 AgentMaster 历史评分诊断审计器 `checks/audit_agentmaster_grader_diagnostics.py`：只读核对未遮蔽的本地评分回执、提交命令、封存输出和原始轨迹路径，逐 Attempt 证据留在本机忽略目录；脱敏结论并入 `docs/HISTORICAL_SCORER_PATTERN_AUDIT_2026-09-28.md`。
 - 历史评分规律审计：新增只读脚本 `checks/analyze_agentmaster_trace_scores.py` 和 `checks/audit_agentmaster_science_outputs.py`，在本机忽略目录中保存哈希核对后的结构特征、按题留出结果及科学输出清单；脱敏结论见 `docs/HISTORICAL_SCORER_PATTERN_AUDIT_2026-09-28.md`。未修改产品预测器、评分器或经验。
@@ -43,6 +45,9 @@
 
 ## 已实际验证
 
+- 本轮取得公开 `trace-score-cli@81c434907e7b0a2feccc79236f6601f7abbc1d84`（v6），18 项离线断言通过，核实 0.55/0.25/0.20 合成、上限、70 分界、抽样和解析；未调用评分模型。三份本人 FigQA 轨迹先按接收回执 SHA 配对，再作 6 次 native/转换文件检查：当前固定 CLI 将 E008 的 43 事件丢成 1 条 error，最小合成对照同样复现；E010 的转换文件触发公开 N09/cap 49，E011 检查表无负项。公开 npm 元数据 GET 返回 404，未取得 v8 包。
+- 本轮 `.venv/bin/pytest -q`：518 passed、1 skipped（沙箱禁用回环监听）；`npm --prefix apps/web test -- --run`：18 passed；`npm --prefix apps/web run build` 通过；`.venv/bin/python -m compileall -q src checks`、`node --check checks/audit_public_trace_scorer.mjs`、`git diff --check` 通过。Node 为 Linux 22.17.0，当前 shell 通过 `.local/bin` 使用；没有修改全局配置。
+- 2026-09-28 官网契约审计阶段：无凭据只读 GET `/api/docs`、`/api/docs/getting-started`、`/api/docs/arm-bundles`、`/api/docs/reading-a-trace`、`/api/protocol` 和 Lean 题详情均返回 HTTP 200；协议 21194 字节、SHA-256 `7042a86210915ad516521b052be3c62278c28696716909ca43cb08ea375c8cf4`。只读复核 AgentMaster 封存的 Lean、FigQA-0177、FigQA-0178 早期与最终提交，核对科学分、轨迹分、判定、答案/证明及输出目录；未创建 Run、模型调用、Job 或 Attempt。该阶段仅修改文档，`git diff --check` 通过，当时未运行代码测试；后续源码审计阶段的全套验证见上一条。
 - 本轮对 8 次历史满分提交核对平台接收包哈希、题目标识、命令轨迹与平台原生轨迹哈希，8/8 一致；7 次有封存输出、1 次仅能读取原输出目录。无凭据官方只读 `GET /api/attempts/{id}/score` 返回 6 次 HTTP 200 且 `score=100`/`scoreIsFinal=true`，两道 FigQA 返回 HTTP 404；另一个非满分对照返回 HTTP 200、`score=0`。本轮未调用模型或创建 Job/Attempt，逐案结论见 `docs/FULL_SCORE_ATTEMPT_CASE_AUDIT_2026-09-28.md`。
 - 本轮离线复核 63 份历史双分项回执及 AgentMaster 封存输出：剔除错包后，FigQA-0177 的 10 份 B 答案科学分均为 100、1 份 C 答案为 0；separable-covariance 的 5 份结构有效答案均给出 `1/35`，科学分仍有 62/70/78 三档。三组跨题同 SHA-256 原生轨迹的分数各不相同，且每组较晚的 Attempt 都有 `N01` 诊断。只做历史文件读取，未调用模型、平台、Job 或 Attempt；推断边界见 `docs/HISTORICAL_SCORER_PATTERN_AUDIT_2026-09-28.md`。
 - 本轮用 `python` 对 AgentMaster 148 份已有 `submission/stdout.log` 做只读包哈希与题目标识交叉核对：145 份生成/接收哈希及目标一致，3 份同时发生哈希与清单题目错配；三条可读科学分均为 0。两份错配的接收哈希逐字节等于另一道题同期 Attempt 的生成哈希。完整依据及限制见 `docs/HISTORICAL_SCORER_PATTERN_AUDIT_2026-09-28.md`；本轮未访问平台或创建 Run/Job/Attempt。
@@ -113,6 +118,8 @@
 
 ## 尚未验证
 
+- 公开 scorer 是 `evidence-checklist-v6-contextual-signals`，历史 63 回执是 `v8-process-evidence-sufficiency`；尚缺 v8 完整源码、双裁判原始数值和服务端最终输入。E008 的转换缺陷已在固定本机 CLI 复现且与旧诊断吻合，但历史服务端唯一根因与修复后的真实评分效果未验证。新增工具是源码审计，不是已验证的 ≥70/≥80 内容预测器。
+- 历史赛季外部/专属评分 worker 与当前题目详情的 `arm_v1_1_generic` 元数据何时切换、旧轨迹的最终归一化行、每项科学验算和同包重评分噪声仍未知。当前官网通用 ARM `executability` 的结构分不能证明 Dockerfile 真正构建或代码实际运行；不能用它预测旧轮次的 `trace_score`。
 - 两道 FigQA 历史满分提交当前无凭据查分 404 的原因未判定；其历史分数仍由本地真实回执支持。Paired-block Lean 某条早期本地 0 分与较晚平台最终 100 分的差异原因不可见。历史满分题的隐藏科学逐项验算、平台最终归一化评分轨迹以及独立同包重评分噪声均未取得；CNVkit harvest 满分提交没有独立封存输出，本轮只核对当前原路径。
 - 63 份未遮蔽回执可确认历史展示分合成系数和若干诊断代码，但不能复刻从输入轨迹到 `trace_score/trace_decision` 的完整引擎，也不能确认当前平台仍沿用 `trace-score-cli/0.3.0-beta.1`。其中 6 份命令路径当前不能证明输入字节，但已由回执哈希在其他封存副本中找到相同内容；评分器内部投影仍不可见。`harvest/` 回执没有可核对的封存输出快照。FigQA 同本地答案不同科学分的异常已发现接收包错配，具体零分机制缺逐项科学验算仍未知；共享可变包路径是否由并发竞态导致也未证实。
 - AgentMaster 上传输入由官方 CLI 如何归一化、平台最终对哪几行打分，当前不可从旧 Attempt 的 API 轨迹或 bundle 复核。58 条最终分已做探索性的整题留出结构特征检查，但特征是看过样本后选择，不能当作独立前瞻验证；连续轨迹分预测误差和同轨迹重复噪声仍未知。另 4 条旧分项没有在 AgentMaster 本地提交记录中找到精确配对。
@@ -137,7 +144,7 @@
 
 ## 阻塞项
 
-- CS-UP-03R 评分器剩余阻塞：AgentMaster 两组已找回 71 条旧分项提交和 63 份未遮蔽历史诊断，134 条均有回执原生轨迹哈希相同的本地字节；旧组 58 条有最终双分项。历史展示分合成系数已可核对；但平台归一化后的最终评分轨迹、完整轨迹打分公式及逐项科学验算不可读，同包评分噪声未知；探索性的整题留出未支持简单结构预测器，不能发布已验证的从内容预测 ≥70/≥80 或逐题科学分的模型。另 4 条旧分项当前没有 AgentMaster 本地精确配对。
+- CS-UP-03R 评分器剩余阻塞：AgentMaster 两组已找回 71 条旧分项提交和 63 份未遮蔽历史诊断，134 条均有回执原生轨迹哈希相同的本地字节；旧组 58 条有最终双分项。历史展示分合成系数已可核对，公开 v6 轨迹评分源码及确定性合成已验证；但历史 v8 完整实现、平台最终归一化轨迹、双裁判原始数值和逐项科学验算仍缺失，同包评分噪声未知，不能发布已验证的从内容预测 ≥70/≥80 或逐题科学分的模型。另 4 条旧分项当前没有 AgentMaster 本地精确配对。
 - CS-UP-03 W3–W5 的目标评分契约当前不可重现实测：主选与指定备选题均已过轮次，晚交回执采用通用 ARM 评分；当前协议无法给出任务卡要求的独立 `harbor_score` / `trace_score` 及其 ≥70/≥80 轨迹阈值。公开历史双分项和本轮通用分不可混合作受控拟合；任务卡要求的同包双基线、W4 对照和 W5 留出标准尚未达到。继续在备选 MCM 付费计算或提交不能解决该契约缺口，需有能产生目标分项的当前平台轮次/契约，或明确变更研究目标。
 - CS-UP-03 当前 Run 授权最多 2 次实验提交，原未知创建与 H7 已提交各占 1 次；在原创建的远端副作用无法权威确认前，不能释放其预留。即使 H7 得分确认，本 Run 的同包原样重交仍受授权上限阻止；后续须在产品授权边界内另行安排，不能直接改账本或重复未知意图。
 - CS-UP-03 H3 原 `sub_5f0ec08d05` 仍是 `unknown/create_sent`，无 Attempt ID、无 confirmed 分且预留未释放。带失败邮箱凭据的 `GET /attempts?author=<own-id>` 与匿名结果一致，均未包含私有 draft；公开列表不能充当权威对账。需平台按原账号、题目和创建时间确认是否产生私有 draft，才可对原意图释放预留或重试。H5/H6 的明确无存储回执仅适用于各自请求；H7 成功也不能为 H3 对账。额外 CPU Job 对此无诊断价值。
