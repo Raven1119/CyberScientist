@@ -2,6 +2,7 @@
 
 ## 已实现
 
+- 新增 8 次历史总分 100 提交的脱敏逐案审计报告 `docs/FULL_SCORE_ATTEMPT_CASE_AUDIT_2026-09-28.md`；完整 Attempt ID、原始评分回执与逐文件哈希仅保存在本机忽略目录 `.package-checks/full-score-case-20260928/`。
 - 增补 AgentMaster 历史评分诊断审计器 `checks/audit_agentmaster_grader_diagnostics.py`：只读核对未遮蔽的本地评分回执、提交命令、封存输出和原始轨迹路径，逐 Attempt 证据留在本机忽略目录；脱敏结论并入 `docs/HISTORICAL_SCORER_PATTERN_AUDIT_2026-09-28.md`。
 - 历史评分规律审计：新增只读脚本 `checks/analyze_agentmaster_trace_scores.py` 和 `checks/audit_agentmaster_science_outputs.py`，在本机忽略目录中保存哈希核对后的结构特征、按题留出结果及科学输出清单；脱敏结论见 `docs/HISTORICAL_SCORER_PATTERN_AUDIT_2026-09-28.md`。未修改产品预测器、评分器或经验。
 - CS-UP-03R AgentMaster 本地补证：新增 `checks/match_agentmaster_traces.py`，按精确 Attempt ID、提交状态、题目参数和 `--trace` 路径配对历史评分表与 AgentMaster 封存迭代；分别记录原始事件、CLI 上传副本和本地投影轨迹的哈希及结构计数。逐 Attempt 对照仅写入本机忽略目录，脱敏汇总见 `docs/AGENTMASTER_TRACE_SCORE_PAIRS_2026-09-28.md`。
@@ -42,6 +43,7 @@
 
 ## 已实际验证
 
+- 本轮对 8 次历史满分提交核对平台接收包哈希、题目标识、命令轨迹与平台原生轨迹哈希，8/8 一致；7 次有封存输出、1 次仅能读取原输出目录。无凭据官方只读 `GET /api/attempts/{id}/score` 返回 6 次 HTTP 200 且 `score=100`/`scoreIsFinal=true`，两道 FigQA 返回 HTTP 404；另一个非满分对照返回 HTTP 200、`score=0`。本轮未调用模型或创建 Job/Attempt，逐案结论见 `docs/FULL_SCORE_ATTEMPT_CASE_AUDIT_2026-09-28.md`。
 - 本轮离线复核 63 份历史双分项回执及 AgentMaster 封存输出：剔除错包后，FigQA-0177 的 10 份 B 答案科学分均为 100、1 份 C 答案为 0；separable-covariance 的 5 份结构有效答案均给出 `1/35`，科学分仍有 62/70/78 三档。三组跨题同 SHA-256 原生轨迹的分数各不相同，且每组较晚的 Attempt 都有 `N01` 诊断。只做历史文件读取，未调用模型、平台、Job 或 Attempt；推断边界见 `docs/HISTORICAL_SCORER_PATTERN_AUDIT_2026-09-28.md`。
 - 本轮用 `python` 对 AgentMaster 148 份已有 `submission/stdout.log` 做只读包哈希与题目标识交叉核对：145 份生成/接收哈希及目标一致，3 份同时发生哈希与清单题目错配；三条可读科学分均为 0。两份错配的接收哈希逐字节等于另一道题同期 Attempt 的生成哈希。完整依据及限制见 `docs/HISTORICAL_SCORER_PATTERN_AUDIT_2026-09-28.md`；本轮未访问平台或创建 Run/Job/Attempt。
 - 本机另有与先前 71 条不重叠的 63 份已评分 AgentMaster 回执，直接含 `trace_decision`、`trace_factor`、原因代码和引擎版本；其中 1 份在单独 `harvest/` 目录。旧组 71/71 上传副本与回执原生轨迹哈希一致；新组 57 份命令所指文件直接匹配，3 份从同迭代副本、3 份从其他迭代副本按哈希找回，故两组共 134 份原生轨迹字节可核对，文件来源差异单列。回执哈希确认 3 组跨题复用，和 3 条 `N01` 诊断相符。新组 62 份 `--outputs` 与封存快照逐文件一致，`harvest/` 那份无输出快照；63/63 的历史因子为 `accept→1`、`review→trace_score/100`、`block→0`，展示分乘法最大误差约 `1×10⁻⁷`。封存组 48 个同题输出树组中 1 组同字节答案出现 0 与 100 两种科学分，原因未知。本次 `.venv/bin/python -m pytest -q` 为 `518 passed, 1 skipped`，前端 `18 passed` 且构建通过，定向 fake 测试为 `6 passed`，所改 Python 文件 `compileall` 与 `git diff --check` 通过。
@@ -111,6 +113,7 @@
 
 ## 尚未验证
 
+- 两道 FigQA 历史满分提交当前无凭据查分 404 的原因未判定；其历史分数仍由本地真实回执支持。Paired-block Lean 某条早期本地 0 分与较晚平台最终 100 分的差异原因不可见。历史满分题的隐藏科学逐项验算、平台最终归一化评分轨迹以及独立同包重评分噪声均未取得；CNVkit harvest 满分提交没有独立封存输出，本轮只核对当前原路径。
 - 63 份未遮蔽回执可确认历史展示分合成系数和若干诊断代码，但不能复刻从输入轨迹到 `trace_score/trace_decision` 的完整引擎，也不能确认当前平台仍沿用 `trace-score-cli/0.3.0-beta.1`。其中 6 份命令路径当前不能证明输入字节，但已由回执哈希在其他封存副本中找到相同内容；评分器内部投影仍不可见。`harvest/` 回执没有可核对的封存输出快照。FigQA 同本地答案不同科学分的异常已发现接收包错配，具体零分机制缺逐项科学验算仍未知；共享可变包路径是否由并发竞态导致也未证实。
 - AgentMaster 上传输入由官方 CLI 如何归一化、平台最终对哪几行打分，当前不可从旧 Attempt 的 API 轨迹或 bundle 复核。58 条最终分已做探索性的整题留出结构特征检查，但特征是看过样本后选择，不能当作独立前瞻验证；连续轨迹分预测误差和同轨迹重复噪声仍未知。另 4 条旧分项没有在 AgentMaster 本地提交记录中找到精确配对。
 - CS-UP-03R 全账号轨迹扩查：9 条列表有轨迹却读到空数组的记录是否能由代理本人 token 或平台后台归档恢复，未知；当前项目凭据库没有这些代理的直接 token。`GET /attempts` 不提供 total，不能确认私有草稿完整性。API 轨迹与包内选中轨迹的差异已确认，但平台对每条旧提交实际采用哪个输入评分、以及重复包的评分噪声，仍无可配对最终回执。75 条旧轨迹分缺内容，≥70/≥80 预测误差不可计算。
