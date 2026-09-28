@@ -30,7 +30,7 @@ def _parse_skill_md(path: Path) -> dict[str, str]:
     """解析 SKILL.md frontmatter；缺 frontmatter/字段时回退默认值。"""
     try:
         content = path.read_text(encoding="utf-8")
-    except OSError:
+    except (OSError, UnicodeError):
         return {}
     m = _FRONTMATTER_RE.match(content)
     if not m:

@@ -1,0 +1,124 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import SettingsPage from './SettingsPage'
+
+const { get, put, listSkills, putAlwaysOnSkills, toast } = vi.hoisted(() => ({
+  get: vi.fn(), put: vi.fn(), listSkills: vi.fn(), putAlwaysOnSkills: vi.fn(), toast: vi.fn(),
+}))
+vi.mock('../api', () => ({ api: { get, put }, listSkills, putAlwaysOnSkills }))
+vi.mock('../app-context', () => ({ useApp: () => ({ toast }) }))
+
+const defaults = {
+  revision: 0,
+  app: { mode: 'demo' },
+  brain: { runtime: 'codex', executable: '', model_id: 'brain', reasoning_effort: 'high' },
+  executor: { runtime: 'codex', executable: '', model_id: 'executor', reasoning_effort: 'high' },
+  prime: { executable: '', llm_profile_id: '' }, llm_profiles: [],
+  playground: { base_url: '', token_secret_ref: '' },
+  bohrium: { executable: '', project_id: '', access_key_secret_ref: '', wenyon_executable: '', wenyon_home: '' },
+  run_defaults: { max_active_runs: 3, stall_seconds: 300, max_brain_wait_seconds: 3600,
+    brain_review_timeout_seconds: 900, rate_limit_max_seconds: 3600 },
+  shadow: { max_reviews: 8, min_interval_seconds: 60 }, mailbox: { platform: 'demo' },
+  skills: { always_on: [] as string[] },
+}
+let stored = structuredClone(defaults)
+beforeEach(() => {
+  stored = structuredClone(defaults)
+  get.mockImplementation(async () => structuredClone(stored))
+  listSkills.mockImplementation(async () => ({
+    skills: [{ id: 'bohrium-job', name: 'Bohrium Job', description: 'Jobs', source: '/skills' }],
+    always_on: [...stored.skills.always_on], bound: [],
+  }))
+  put.mockImplementation(async (_url, body) => {
+    if (body.base_revision !== stored.revision) throw new Error('REVISION_CONFLICT')
+    stored = { ...structuredClone(body.settings), revision: stored.revision + 1 }
+    return structuredClone(stored)
+  })
+  // Model the old independent writer so the regression reaches both save paths.
+  putAlwaysOnSkills.mockImplementation(async (ids: string[]) => {
+    stored.skills.always_on = [...ids]
+    stored.revision += 1
+    return { always_on: ids, revision: stored.revision }
+  })
+})
+afterEach(() => { cleanup(); vi.resetAllMocks() })
+
+describe('settings and skills persist together', () => {
+  it.each([0, 1])('saves checked skills through page save button %i and survives remount', async (index) => {
+    const user = userEvent.setup()
+    const view = render(<SettingsPage />)
+    await user.click(await screen.findByRole('checkbox', { name: /常驻/ }))
+    await user.click(screen.getAllByRole('button', { name: '保存设置' })[index])
+    await waitFor(() => expect(stored.skills.always_on).toEqual(['bohrium-job']))
+    view.unmount()
+    render(<SettingsPage />)
+    expect((await screen.findByRole('checkbox', { name: /常驻/ }) as HTMLInputElement).checked).toBe(true)
+  })
+
+  it('saves from the skills card then saves other settings without stale revisions or lost drafts', async () => {
+    const user = userEvent.setup()
+    render(<SettingsPage />)
+    await user.click(await screen.findByRole('checkbox', { name: /常驻/ }))
+    const limit = screen.getByLabelText('同时活跃的 Run 上限')
+    await user.clear(limit)
+    await user.type(limit, '5')
+    await user.click(screen.getByRole('button', { name: /保存常驻技能|保存设置与技能/ }))
+    await waitFor(() => expect(stored.skills.always_on).toEqual(['bohrium-job']))
+    expect((limit as HTMLInputElement).value).toBe('5')
+    await user.click(screen.getAllByRole('button', { name: '保存设置' })[0])
+    await waitFor(() => expect(stored.run_defaults.max_active_runs).toBe(5))
+    expect(stored.skills.always_on).toEqual(['bohrium-job'])
+    expect(toast.mock.calls.flat().join(' ')).not.toContain('失败')
+  })
+
+  it('prevents edits and duplicate saves while the settings write is pending', async () => {
+    let resolve!: (value: unknown) => void
+    put.mockImplementationOnce(() => new Promise(r => { resolve = r }))
+    const user = userEvent.setup()
+    render(<SettingsPage />)
+    const checkbox = await screen.findByRole('checkbox', { name: /常驻/ })
+    await user.click(checkbox)
+    await user.click(screen.getAllByRole('button', { name: '保存设置' })[0])
+    expect(checkbox.matches(':disabled')).toBe(true)
+    expect(screen.getByLabelText('同时活跃的 Run 上限').matches(':disabled')).toBe(true)
+    await act(async () => { resolve({ ...structuredClone(stored), revision: 1, skills: { always_on: ['bohrium-job'] } }) })
+    await waitFor(() => expect(checkbox.matches(':disabled')).toBe(false))
+  })
+
+  it('keeps the draft after a save conflict and allows an explicit reload', async () => {
+    const user = userEvent.setup()
+    render(<SettingsPage />)
+    const checkbox = await screen.findByRole('checkbox', { name: /常驻/ })
+    await user.click(checkbox)
+    stored.revision += 1 // Another tab saved first.
+    await user.click(screen.getAllByRole('button', { name: '保存设置' })[0])
+    expect((checkbox as HTMLInputElement).checked).toBe(true)
+    expect(await screen.findByRole('alert')).toHaveProperty('textContent', expect.stringContaining('REVISION_CONFLICT'))
+    expect(stored.skills.always_on).toEqual([])
+    await user.click(screen.getByRole('button', { name: '放弃本页修改并重新加载' }))
+    await waitFor(() => expect((checkbox as HTMLInputElement).checked).toBe(false))
+  })
+
+  it('recovers a failed catalog load without discarding other setting edits', async () => {
+    listSkills.mockRejectedValueOnce(new Error('catalog unavailable'))
+    const user = userEvent.setup()
+    render(<SettingsPage />)
+    expect(await screen.findByRole('alert')).toHaveProperty('textContent', expect.stringContaining('catalog unavailable'))
+    const limit = screen.getByLabelText('同时活跃的 Run 上限')
+    await user.clear(limit)
+    await user.type(limit, '4')
+    await user.click(screen.getByRole('button', { name: '重试加载技能' }))
+    await screen.findByRole('checkbox', { name: /常驻/ })
+    expect((limit as HTMLInputElement).value).toBe('4')
+  })
+
+  it('offers a retry instead of an endless spinner when loading settings fails', async () => {
+    get.mockRejectedValueOnce(new Error('backend unavailable'))
+    const user = userEvent.setup()
+    render(<SettingsPage />)
+    expect(await screen.findByRole('alert')).toHaveProperty('textContent', expect.stringContaining('backend unavailable'))
+    await user.click(screen.getByRole('button', { name: '重新加载设置' }))
+    await screen.findByRole('heading', { name: '技能管理' })
+  })
+})

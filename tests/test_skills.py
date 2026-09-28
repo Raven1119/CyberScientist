@@ -58,6 +58,16 @@ def test_scan_catalog_multiline_description_collapsed(tmp_path):
     assert catalog["description"] == "第一行 第二行"
 
 
+def test_catalog_survives_a_non_utf8_skill_file(tmp_path):
+    root = tmp_path / 'skills'
+    _make_skill(root, 'good', '---\nname: Good skill\n---\n')
+    broken = _make_skill(root, 'bad-encoding', '')
+    (broken / 'SKILL.md').write_bytes(b'\xff\xfeinvalid UTF-8')
+    catalog = skills.scan_catalog([root])
+    assert catalog_by_id(catalog, 'good')['name'] == 'Good skill'
+    assert catalog_by_id(catalog, 'bad-encoding')['name'] == 'bad-encoding'
+
+
 def test_challenge_skill_bind_unbind_list():
     conn = db.get_db()
     with db.transaction() as tx:

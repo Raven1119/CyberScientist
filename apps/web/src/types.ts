@@ -78,6 +78,7 @@ export interface Settings {
     max_challenge_entries: number
     max_injected_characters: number
   }
+  skills: { always_on: string[] }
   _status?: SettingsStatus
 }
 

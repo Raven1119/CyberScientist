@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { api, listSkills, putAlwaysOnSkills } from '../api'
+import { api, listSkills } from '../api'
 import { useApp } from '../app-context'
 import { Badge, LoadingState } from '../components'
 import { formatTime } from '../labels'
@@ -73,32 +73,42 @@ export default function SettingsPage() {
     bohrium: false,
   })
   const [saving, setSaving] = useState(false)
+  const [loadError, setLoadError] = useState('')
+  const [saveError, setSaveError] = useState('')
 
   const reload = useCallback(async () => {
-    const fresh = await api.get<Settings>('/api/v1/settings')
-    setSettings(fresh)
-    setBaseRevision(fresh.revision)
+    setLoadError('')
+    try {
+      const fresh = await api.get<Settings>('/api/v1/settings')
+      setSettings(fresh)
+      setBaseRevision(fresh.revision)
+      setSaveError('')
+    } catch (err) {
+      setLoadError('加载设置失败：' + (err instanceof Error ? err.message : String(err)))
+    }
   }, [])
 
   useEffect(() => {
-    reload().catch((err) => {
-      if (err instanceof Error) toast('加载设置失败：' + err.message)
-    })
-  }, [reload, toast])
+    void reload()
+  }, [reload])
 
   const update = useCallback((fn: (s: Settings) => Settings) => {
     setSettings((prev) => (prev ? fn(structuredClone(prev)) : prev))
   }, [])
 
   async function saveSettings() {
-    if (!settings) return
+    if (!settings || saving) return
     setSaving(true)
+    setSaveError('')
     try {
-      await api.put('/api/v1/settings', { settings, base_revision: baseRevision })
+      const saved = await api.put<Settings>('/api/v1/settings', { settings, base_revision: baseRevision })
+      setSettings({ ...saved, _status: settings._status })
+      setBaseRevision(saved.revision)
       toast('设置已保存。')
-      await reload()
     } catch (err) {
-      toast('保存设置失败：' + (err instanceof Error ? err.message : String(err)))
+      const message = '保存设置失败：' + (err instanceof Error ? err.message : String(err))
+      setSaveError(message)
+      toast(message)
     } finally {
       setSaving(false)
     }
@@ -161,8 +171,13 @@ export default function SettingsPage() {
     return (
       <section aria-label="连接与设置">
         <div className="empty">
-          <LoadingState>正在加载设置…</LoadingState>
-          <p>如果长时间没有响应，请确认后端已启动。</p>
+          {loadError ? <>
+            <p className="form-error" role="alert">{loadError}</p>
+            <button className="btn" onClick={() => void reload()}>重新加载设置</button>
+          </> : <>
+            <LoadingState>正在加载设置…</LoadingState>
+            <p>如果长时间没有响应，请确认后端已启动。</p>
+          </>}
         </div>
       </section>
     )
@@ -183,7 +198,13 @@ export default function SettingsPage() {
         </button>
       </div>
 
-      <div className="settings-stack">
+      {(saveError || loadError) && <div className="card card-body">
+        <p className="form-error" role="alert">{saveError || loadError}。本页修改已保留。</p>
+        <button className="btn" disabled={saving} onClick={() => void reload()}>
+          放弃本页修改并重新加载
+        </button>
+      </div>}
+      <fieldset className="settings-stack settings-fields" disabled={saving}>
         <article className="card">
           <div className="card-head"><h2>并行运行</h2></div>
           <div className="card-body">
@@ -709,60 +730,49 @@ export default function SettingsPage() {
           </div>
         </article>
 
-        <SkillsCard />
+        <SkillsCard
+          selected={settings.skills?.always_on ?? []}
+          onChange={(always_on) => update((s) => ({ ...s, skills: { ...s.skills, always_on } }))}
+          onSave={() => void saveSettings()}
+          saving={saving}
+        />
 
         <div className="save-bar">
           <button type="button" className="btn primary" disabled={saving} onClick={() => void saveSettings()}>
             {saving ? '保存中…' : '保存设置'}
           </button>
         </div>
-      </div>
+      </fieldset>
     </section>
   )
 }
 
-function SkillsCard() {
-  const { toast } = useApp()
+function SkillsCard({ selected, onChange, onSave, saving }: {
+  selected: string[]
+  onChange: (ids: string[]) => void
+  onSave: () => void
+  saving: boolean
+}) {
   const [skills, setSkills] = useState<SkillInfo[] | null>(null)
-  const [checked, setChecked] = useState<Set<string>>(new Set())
-  const [dirty, setDirty] = useState(false)
-  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
   const [query, setQuery] = useState('')
 
   const reload = useCallback(async () => {
-    const data = await listSkills()
-    setSkills(data.skills)
-    setChecked(new Set(data.always_on))
-    setDirty(false)
+    setError('')
+    try {
+      const data = await listSkills()
+      setSkills(data.skills)
+    } catch (err) {
+      setError('加载技能目录失败：' + (err instanceof Error ? err.message : String(err)))
+    }
   }, [])
 
   useEffect(() => {
-    reload().catch((err) => {
-      toast('加载技能目录失败：' + (err instanceof Error ? err.message : String(err)))
-    })
-  }, [reload, toast])
+    void reload()
+  }, [reload])
 
   function toggle(id: string) {
-    setChecked((prev) => {
-      const next = new Set(prev)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
-      return next
-    })
-    setDirty(true)
-  }
-
-  async function save() {
-    setSaving(true)
-    try {
-      await putAlwaysOnSkills([...checked])
-      toast('常驻技能已保存。')
-      await reload()
-    } catch (err) {
-      toast('保存常驻技能失败：' + (err instanceof Error ? err.message : String(err)))
-    } finally {
-      setSaving(false)
-    }
+    onChange(selected.includes(id) ? selected.filter((sid) => sid !== id) : [...selected, id])
   }
 
   const q = query.trim().toLowerCase()
@@ -792,17 +802,18 @@ function SkillsCard() {
           <button
             type="button"
             className="btn small"
-            disabled={!dirty || saving}
-            onClick={() => void save()}
+            disabled={saving}
+            onClick={onSave}
           >
-            {saving ? '保存中…' : '保存常驻技能'}
+            {saving ? '保存中…' : '保存设置与技能'}
           </button>
         </div>
       </div>
       <div className="card-body">
         <p className="sub">
-          常驻技能对所有 Trial 生效；随题目启用的技能在研究工作台按题绑定。
-          启用后，大脑和执行器会收到技能说明与 SKILL.md 路径，并在使用前阅读。
+          勾选后点击任一保存按钮，将与本页其他设置一起保存。
+          常驻技能对新建 Run 生效，已有 Run 保留创建时的常驻技能；本题绑定在研究工作台设置，对后续 Trial 生效。
+          执行器会收到适用技能的说明与 SKILL.md 路径；独立研究大脑不自动注入这些技能。
         </p>
         {skills !== null && skills.length > 0 && (
           <div className="field" style={{ marginBottom: 10 }}>
@@ -816,11 +827,16 @@ function SkillsCard() {
             />
           </div>
         )}
-        {skills === null ? (
+        {error ? (
+          <div>
+            <p className="form-error" role="alert">{error}</p>
+            <button className="btn" onClick={() => void reload()}>重试加载技能</button>
+          </div>
+        ) : skills === null ? (
           <LoadingState>正在加载技能目录…</LoadingState>
         ) : skills.length === 0 ? (
           <p className="small-text">
-            未在 ~/.kimi-code/skills、~/.agents/skills、~/.codex/skills 发现技能（含 SKILL.md 的子目录）。
+            未在项目 skills/、~/.kimi-code/skills、~/.agents/skills、~/.codex/skills 发现技能（含 SKILL.md 的子目录）。
           </p>
         ) : filtered && filtered.length === 0 ? (
           <p className="small-text">没有匹配「{query}」的技能。</p>
@@ -837,7 +853,8 @@ function SkillsCard() {
                   <input
                     id={`skill-always-${s.id}`}
                     type="checkbox"
-                    checked={checked.has(s.id)}
+                    checked={selected.includes(s.id)}
+                    aria-label={`${s.name} 常驻`}
                     onChange={() => toggle(s.id)}
                   />
                   <label htmlFor={`skill-always-${s.id}`}>常驻</label>

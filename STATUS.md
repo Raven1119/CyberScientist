@@ -2,6 +2,8 @@
 
 ## 已实现
 
+- 修复 skills 勾选后点击“保存设置”未落盘，以及单独保存技能造成整页设置版本过期的问题：三个保存入口共用一份设置草稿和一次带版本检查的写入。保存期间禁用编辑；冲突保留草稿并提供明确的放弃重载入口；设置和技能目录加载失败可重试。技能目录遇到单个非 UTF-8 文件不再整页失败，生效说明区分新建 Run 的常驻技能、本题后续 Trial 绑定和独立大脑。
+
 - Linux 日常入口 `./start.sh`：加入项目 Linux CLI 和用户本地 CLI 路径，先重新构建前端，再执行原生后端 `cyberscientist start`。后端同端口提供前端与 API；浏览器等待健康接口就绪后再打开，WSL 无 Linux 图形浏览器时尝试 Windows 默认浏览器。沿用现有连接模式和授权设置。
 
 - 新增第四季公开科学评分规则核查报告 `docs/SEASON4_PUBLIC_SCORER_FEASIBILITY_2026-09-28.md`：逐题区分完整公开计分、科学量自检和隐藏输入依赖；未修改运行时、评分器或经验。
@@ -50,6 +52,9 @@
 - CS-SB-01 稀疏输入与唤醒修复：可选短研究摘要独立存储；新 Run 普通检查点不唤醒 shadow，Job/Trial 研究级重复状态按 ID 去重。详见 `docs/SPARSE_BRAIN_INPUT_WAKE_FIX_2026-09-24.md`。
 
 ## 已实际验证
+
+- 本次 skills 修复：`PATH="$HOME/.local/bin:$PATH" npm --prefix apps/web test -- --run` → 25 passed（含新增 7 个保存/加载回归）；`npm --prefix apps/web run build` 成功。`.venv/bin/pytest -q` → 563 passed、1 skipped（沙箱禁止回环监听）；随后获准本机监听执行 `.venv/bin/pytest -q tests/test_cli_shutdown.py` → 1 passed。`.venv/bin/python -m compileall -q src tests` 与 `git diff --check` 通过。
+- WebBridge 在隔离 Demo 工作区真实复现修复前“勾选→保存设置提示成功→后端列表仍空”，修复后主保存、卡片保存、连续保存、整页刷新回读均通过；同时保留其他设置修改。前端导入 Demo 题目、绑定另一技能、以模型/Job/提交/沙箱/下载均未授权的设置启动原生 Demo；Run 正常结束，`trial.skills_enabled` 包含常驻与本题技能，独立大脑记录 `skills_injected=false`，compute_jobs 为 0。原始界面/请求断言及 Demo 数据保留于忽略目录 `.package-checks/ui-bug-audit-20260928/`。
 
 - 一键启动真实验收：`BROWSER=/bin/true ./start.sh` 构建前端通过；从本机只读 GET `/api/v1/health`、`/`、前端 JS 资源均返回 HTTP 200，健康回执仍为已有 `connected` 模式；测试后以 Ctrl+C 正常停止。`bash -n start.sh`、新增就绪时序测试与 `compileall` 通过。
 - 本轮回归：`.venv/bin/pytest -q` 为 562 passed、1 skipped（既有回环限制）；`npm --prefix apps/web test -- --run` 为 18 passed；一键入口实际执行的 `npm --prefix apps/web run build` 通过，`git diff --check` 通过。
@@ -138,6 +143,8 @@
 - 本轮测试进程定时唤醒包装下，协作及 Kimi/Codex 相关回归 95 passed；排除 CLI 关闭测试的 Python 回归 285 passed。默认协作测试曾以 120 秒超时退出，未记为通过。
 
 ## 尚未验证
+
+- 本次 skills 修复未启动真实科研或真实模型，也未验证新的远程 Job/Attempt。WebBridge 曾出现一次设置加载停滞及命令超时；后端只读设置请求约 7 ms 返回 200，刷新并开启网络诊断后未再复现，根因未判定，不能作为已修复的产品缺陷。
 
 - 本轮实际浏览器窗口自动打开未做 GUI 验收；在 WSL 中已实现 Linux opener 失败时的 Windows 浏览器回退，窗口可见性待用户桌面环境验证。无新的模型、Job 或 Attempt 验收。
 
