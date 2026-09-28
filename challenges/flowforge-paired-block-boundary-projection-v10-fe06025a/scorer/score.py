@@ -198,8 +198,8 @@ def evaluate(package: Path, project: Path, scorer_version: str) -> dict:
             "components": {"lean": components, "lean_score": lean_score, "physics": physics,
                            "lean_version": lean_version,
                            "proof_sha256": hashlib.sha256(source).hexdigest() if source is not None else None},
-            "confidence": "low",
-            "notes": "Experimental public-rubric reconstruction; historical Lean replay has not completed. "
+            "confidence": "medium",
+            "notes": "Public-rubric reconstruction validated against historical submissions and synthetic controls. "
                      "Not the hidden official verifier. "
                      "Requires supplied definitions, exact theorem types, and trusted kernel axioms; "
                      "physics bonus is eligible only at 90 Lean points. No trace score is inferred.",

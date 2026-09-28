@@ -3,11 +3,14 @@
 Reconstructs the deterministic scientific rubric in the [public challenge](https://play.bohrium.com/#challenge/flowforge-paired-block-boundary-projection-v10-fe06025a).
 This is not the platform's hidden verifier and does not predict trace scores.
 
-**Validation status, 2026-09-28:** application/unit tests pass, but actual
-historical Lean scoring did not complete. Environment preparation encountered
-network failures; the sandbox expired before candidate evaluation. No numeric
-historical agreement is claimed. The scorer reports low confidence. The
-completed real replay in this work is FigQA-0177; see the dated result report.
+**Validation status, 2026-09-28:** real Bohrium evaluation matched **4/4**
+historical scientific scores (two 0s, two 100s), with MAE/max error **0**.
+All **8** synthetic negative controls also matched the public rubric's expected
+scores; these controls have no platform receipts. The fifth historical input,
+which imports all Mathlib, remains unverified after cache and transfer failures.
+The scorer reports medium confidence. See the
+[real replay and limits](../../docs/PAIRED_BLOCK_SCORER_REPLAY_2026-09-28.md).
+Earlier environment failures remain in the audit history.
 
 ## Rule and prerequisites
 
@@ -47,6 +50,10 @@ task requires fresh bounded sandbox authorization.
    Bohrium sandbox. Public dependency files may be downloaded on the host and
    transferred if the sandbox's external network is unreliable. Do not compile
    or run scientific evaluation on the host.
+   `checks/run_paired_block_remote.py` automates pinned archive verification,
+   environment preparation and replay inside the sandbox, with stage logs and a
+   deadline. Prepare its local `manifest.json` with dependency hashes and the
+   frozen scorer version. Retrieve evidence before deleting the sandbox.
 3. Transfer scorer source, science ZIPs and replay driver. Run in the sandbox:
 
    ```sh

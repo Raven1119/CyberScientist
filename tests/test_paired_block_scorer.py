@@ -196,3 +196,60 @@ def test_corpus_requires_received_bundle_binding(tmp_path, monkeypatch, tamper):
         assert set(labels[0]) == {"sample", "expected_science_score", "replay_zip_sha256"}
         with zipfile.ZipFile(tmp_path / "result/cases/E001.zip") as archive:
             assert archive.namelist() == ["outputs/Problem.lean"]
+
+
+@pytest.mark.parametrize("first_exit", [0, 2])
+def test_replay_subset_and_infrastructure_stop_preserve_unattempted(tmp_path, monkeypatch, first_exit):
+    monkeypatch.syspath_prepend(str(ROOT / "checks"))
+    import replay_paired_block
+    cases = tmp_path / "cases"
+    cases.mkdir()
+    labels = []
+    for name in ("E000", "E002", "E009"):
+        raw = b"synthetic; scoring subprocess is mocked"
+        (cases / (name + ".zip")).write_bytes(raw)
+        labels.append({"sample": name, "replay_zip_sha256": hashlib.sha256(raw).hexdigest(),
+                       "expected_science_score": 0})
+    (tmp_path / "labels.json").write_text(json.dumps(labels))
+    (tmp_path / "fake.py").write_text("# synthetic scorer")
+    monkeypatch.setattr(replay_paired_block.sys, "argv", ["replay", "--scorer", str(tmp_path / "fake.py"), "--inputs", str(cases),
+        "--labels", str(tmp_path / "labels.json"), "--project", str(tmp_path), "--output", str(tmp_path / "result"),
+        "--version", "synthetic", "--samples", "E002", "E009", "--skip-mutations"])
+    called = []
+    def fake_run(argv, **kwargs):
+        called.append(Path(argv[-1]).stem)
+        return subprocess.CompletedProcess(argv, first_exit, '{"score":0}', "synthetic")
+    monkeypatch.setattr(replay_paired_block.subprocess, "run", fake_run)
+    replay_paired_block.main()
+    summary = json.loads((tmp_path / "result/summary.json").read_text())
+    if first_exit:
+        assert called == ["E002"]
+        assert summary["historical_final"]["numeric"] == 0
+        assert summary["historical_final"]["mae"] is None
+        assert summary["unattempted_history"] == ["E000", "E009"]
+    else:
+        assert called == ["E002", "E009"]
+        assert summary["historical_final"]["numeric"] == 2
+        assert summary["unattempted_history"] == ["E000"]
+
+
+@pytest.mark.parametrize("escape", [False, True])
+def test_remote_preparation_rejects_untrusted_files_before_execution(tmp_path, monkeypatch, escape):
+    monkeypatch.syspath_prepend(str(ROOT / "checks"))
+    import run_paired_block_remote
+    staged = tmp_path / "staged"
+    staged.mkdir()
+    artifact = tmp_path / "outside.bin" if escape else staged / "archive.bin"
+    artifact.write_bytes(b"synthetic dependency")
+    name = "../outside.bin" if escape else "archive.bin"
+    digest = hashlib.sha256(artifact.read_bytes()).hexdigest() if escape else "wrong-hash"
+    (staged / "manifest.json").write_text(json.dumps({"sha256": {name: digest}}))
+    monkeypatch.setattr(run_paired_block_remote.sys, "argv", ["prepare", "--staged", str(staged),
+        "--output", str(tmp_path / "evidence"), "--only-broad"])
+    monkeypatch.setattr(run_paired_block_remote.subprocess, "run", lambda *a, **k: pytest.fail("must not execute dependencies"))
+    with pytest.raises(SystemExit) as raised:
+        run_paired_block_remote.main()
+    assert raised.value.code == 2
+    status = json.loads((tmp_path / "evidence/status.json").read_text())
+    assert status["status"] == "incomplete" and status["steps"] == []
+    assert ("escapes" if escape else "hash mismatch") in status["reason"]

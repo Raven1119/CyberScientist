@@ -58,11 +58,19 @@ def main() -> None:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--version", required=True)
     parser.add_argument("--good-sample", default="E009")
+    parser.add_argument("--samples", nargs="+", help="Explicit subset; omitted records remain unattempted")
+    parser.add_argument("--skip-mutations", action="store_true")
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=False)
     history = json.loads(args.labels.read_text())
+    available = {row["sample"] for row in history}
+    if args.samples and not set(args.samples) <= available:
+        raise ValueError("requested historical sample is absent")
+    unattempted = [row["sample"] for row in history if args.samples and row["sample"] not in args.samples]
     rows = []
     for label in history:
+        if label["sample"] in unattempted:
+            continue
         if not re.fullmatch(r"E\d+", label["sample"]):
             raise ValueError("invalid sample alias")
         package = args.inputs / (label["sample"] + ".zip")
@@ -70,7 +78,8 @@ def main() -> None:
             raise ValueError("replay ZIP differs from audited manifest")
         rows.append({"sample": label["sample"], "package": str(package),
                      "expected_science_score": label["expected_science_score"], "kind": "historical_final"})
-    rows += mutations(args.inputs / (args.good_sample + ".zip"), args.project / "Problem.lean", args.output / "mutations")
+    if not args.skip_mutations:
+        rows += mutations(args.inputs / (args.good_sample + ".zip"), args.project / "Problem.lean", args.output / "mutations")
     env = dict(os.environ, CS_LEAN_PROJECT=str(args.project), CS_SCORER_VERSION=args.version)
     results = []
     for row in rows:
@@ -107,6 +116,8 @@ def main() -> None:
                          "mae": sum(errors) / len(errors) if errors else None,
                          "max_absolute_error": max(errors) if errors else None}
     summary["scorer_version"] = args.version
+    summary["unattempted_history"] = unattempted + [row["sample"] for row in rows[len(results):] if row["kind"] == "historical_final"]
+    summary["unattempted_mutations"] = [row["sample"] for row in rows[len(results):] if row["kind"] == "synthetic_not_platform_scored"]
     summary["scorer_file_sha256"] = hashlib.sha256(args.scorer.read_bytes()).hexdigest()
     summary["validation"] = "Fixed public rule; no label fitting. Known-label retrospective replay, not blinded evaluation."
     (args.output / "summary.json").write_text(json.dumps(summary, indent=2))
