@@ -2,8 +2,11 @@
 from __future__ import annotations
 
 import argparse
+import json
 import subprocess
 import sys
+import time
+import urllib.request
 from pathlib import Path
 
 WEB_DIR = Path(__file__).resolve().parents[2] / "apps" / "web"
@@ -28,6 +31,48 @@ def _ensure_frontend_build() -> Path | None:
               flush=True)
         return None
     return dist
+
+
+def _open_browser_when_ready(url: str) -> None:
+    """Open the local UI only after the backend has finished startup."""
+    for _ in range(60):
+        try:
+            with urllib.request.urlopen(f"{url}/api/v1/health", timeout=0.5) as response:
+                if response.status == 200 and json.load(response).get("ok") is True:
+                    break
+        except (OSError, ValueError):
+            pass
+        time.sleep(0.5)
+    else:
+        print(f"服务尚未就绪；就绪后请打开 {url}", flush=True)
+        return
+
+    import webbrowser
+    try:
+        if webbrowser.open(url):
+            return
+    except Exception:
+        pass
+    # WSL may have no Linux desktop opener. This opens the Windows browser;
+    # the backend, brain, and executor remain Linux processes.
+    try:
+        is_wsl = "microsoft" in Path("/proc/sys/kernel/osrelease").read_text().lower()
+    except OSError:
+        is_wsl = False
+    if is_wsl:
+        from shutil import which
+        cmd = which("cmd.exe")
+        if cmd is None and Path("/mnt/c/Windows/System32/cmd.exe").exists():
+            cmd = "/mnt/c/Windows/System32/cmd.exe"
+        if cmd:
+            try:
+                subprocess.run([cmd, "/C", "start", "", url],
+                               stdout=subprocess.DEVNULL,
+                               stderr=subprocess.DEVNULL, timeout=5, check=True)
+                return
+            except (OSError, subprocess.SubprocessError):
+                pass
+    print(f"浏览器未自动打开，请访问 {url}", flush=True)
 
 
 def main() -> None:
@@ -79,8 +124,8 @@ def main() -> None:
                   "（vite dev 代理 /api 到本端口）。", flush=True)
         if args.command == "start":
             import threading
-            import webbrowser
-            threading.Timer(1.2, lambda: webbrowser.open(url)).start()
+            threading.Thread(target=_open_browser_when_ready, args=(url,),
+                             daemon=True).start()
         uvicorn.run(app, host="127.0.0.1", port=settings["app"]["port"],
                     log_level="warning", timeout_graceful_shutdown=5)
     else:  # pragma: no cover

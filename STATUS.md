@@ -2,6 +2,8 @@
 
 ## 已实现
 
+- Linux 日常入口 `./start.sh`：加入项目 Linux CLI 和用户本地 CLI 路径，先重新构建前端，再执行原生后端 `cyberscientist start`。后端同端口提供前端与 API；浏览器等待健康接口就绪后再打开，WSL 无 Linux 图形浏览器时尝试 Windows 默认浏览器。沿用现有连接模式和授权设置。
+
 - 新增第四季公开科学评分规则核查报告 `docs/SEASON4_PUBLIC_SCORER_FEASIBILITY_2026-09-28.md`：逐题区分完整公开计分、科学量自检和隐藏输入依赖；未修改运行时、评分器或经验。
 
 - CS-UP-03R 本地评分器切片：新增 FigQA-0177 的规范答案科学评分器、独立历史回放脚本和隔离的无模型分析上下文；兼容现有评分器 JSON 契约。Paired-block Lean 后续已完成 4 份历史证明和 8 种反例的真实验算，增加按依赖准备环境、分批回放及未尝试样本记录。详见 `docs/LOCAL_SCORER_REPLAY_2026-09-28.md` 与 `docs/PAIRED_BLOCK_SCORER_REPLAY_2026-09-28.md`。
@@ -48,6 +50,9 @@
 - CS-SB-01 稀疏输入与唤醒修复：可选短研究摘要独立存储；新 Run 普通检查点不唤醒 shadow，Job/Trial 研究级重复状态按 ID 去重。详见 `docs/SPARSE_BRAIN_INPUT_WAKE_FIX_2026-09-24.md`。
 
 ## 已实际验证
+
+- 一键启动真实验收：`BROWSER=/bin/true ./start.sh` 构建前端通过；从本机只读 GET `/api/v1/health`、`/`、前端 JS 资源均返回 HTTP 200，健康回执仍为已有 `connected` 模式；测试后以 Ctrl+C 正常停止。`bash -n start.sh`、新增就绪时序测试与 `compileall` 通过。
+- 本轮回归：`.venv/bin/pytest -q` 为 562 passed、1 skipped（既有回环限制）；`npm --prefix apps/web test -- --run` 为 18 passed；一键入口实际执行的 `npm --prefix apps/web run build` 通过，`git diff --check` 通过。
 
 - 第四季公开资料核查：匿名 GET 官方赛季/轮次和 16 道不同题目正文均成功；赛季清单为 60 道、6 轮各 10 道。原始响应及 SHA-256 留 `.package-checks/s4-scorer-public-review/`；本轮仅文档和文件核对，无认证下载、模型、科学计算、Job、沙箱或 Attempt。
 - 本轮文档验证：本机 Python 标准库核对赛季 ID、轮次计数、16 题报告覆盖及来源 SHA-256 通过；确认当前评分元数据为 15 条通用 ARM、1 条 LLM（DPA4C）。`git diff --check` 通过；没有应用代码改动，未重跑 pytest、前端测试或构建。
@@ -133,6 +138,8 @@
 - 本轮测试进程定时唤醒包装下，协作及 Kimi/Codex 相关回归 95 passed；排除 CLI 关闭测试的 Python 回归 285 passed。默认协作测试曾以 120 秒超时退出，未记为通过。
 
 ## 尚未验证
+
+- 本轮实际浏览器窗口自动打开未做 GUI 验收；在 WSL 中已实现 Linux opener 失败时的 Windows 浏览器回退，窗口可见性待用户桌面环境验证。无新的模型、Job 或 Attempt 验收。
 
 - 第四季新增候选只完成规范可复刻性判断：Matchgate 实例/schema、DPA4C 的公开检查与计时源码本轮未取回执行，未验证新的官方分数一致性；Paired-block 的既有回放证据仍以原报告为准。
 

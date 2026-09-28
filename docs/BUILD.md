@@ -2,6 +2,8 @@
 
 ## Linux 开发环境
 
+日常启动只需在仓库根目录执行 `./start.sh`。入口每次构建前端，然后由后端在同一 `127.0.0.1` 端口提供界面和 API；浏览器在健康检查通过后打开。在 WSL2 没有 Linux 浏览器时会尝试打开 Windows 默认浏览器，代理和后端仍在 Linux 运行。命令行参数原样传给 `cyberscientist start`，例如 `./start.sh --port 8766`；不传 `--mode` 时沿用现有设置。首次安装仍按下文 `uv sync --locked` 和 `npm ci` 完成。
+
 开发环境约定见根目录 `AGENTS.md`。当前工作区位于 WSL2 的 `/home/wmywb/CyberScientist`；依赖在 Linux 内按锁文件安装，已有 Windows 虚拟环境或 `node_modules` 不可直接复用。
 
 后端从 Linux shell 启动，大脑和执行器使用该 Linux 环境中的原生 CLI 与登录态。前端「连接与设置」中的两处可执行文件路径填写 Linux 路径，或留空使用后端 PATH。历史 Windows 探针只作为协议参考，不能视为 Linux 联调通过。

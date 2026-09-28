@@ -70,13 +70,17 @@ Run 结束后的环境隔离、状态持久化和关闭流程已做本地核验�
 
 ## 快速开始
 
+Linux / WSL2 已完成首次依赖安装后，在仓库根目录运行 **`./start.sh`**。它会重新构建前端，启动同端口的 Linux 后端，并在服务就绪后打开浏览器；已有连接模式与端口设置会保留。需要改用其他端口可运行 `./start.sh --port 8766`，该设置会保存。关闭启动终端或按 Ctrl+C 停止本地服务。首次安装依赖见 [Linux 开发环境](docs/BUILD.md#linux-开发环境)。
+
 ```bash
 git clone <your-repo> && cd CyberScientist
-uv sync                                  # Python 3.11+ 后端依赖
-uv run cyberscientist serve --port 8765  # 启动（控制台输出配对码）
+export PATH="$HOME/.local/bin:$PATH"      # 当前 Linux shell 使用本机工具
+uv sync --locked                        # 首次安装项目 Python 依赖
+npm --prefix apps/web ci                 # 首次安装 Linux 前端依赖
+./start.sh                               # 以后只需这一条启动命令
 ```
 
-浏览器打开 **http://127.0.0.1:8765/** → 输入配对码 → 导入演示题目 → 开始研究。
+浏览器会打开 **http://127.0.0.1:8765/**；如未自动打开，手动访问该地址。之后可在研究工作台选择题目并开始研究。
 
 前端开发模式：`cd apps/web && npm install && npm run dev`（代理 `/api` 到 8765）。
 
