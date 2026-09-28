@@ -2,6 +2,8 @@
 
 ## 已实现
 
+- CS-UP-03R 本地评分器切片：新增 FigQA-0177 的规范答案科学评分器、独立历史回放脚本和隔离的无模型分析上下文；兼容现有评分器 JSON 契约。另保留低置信度 Paired-block Lean 实验评分器，其真实证明复验未完成。详见 `docs/LOCAL_SCORER_REPLAY_2026-09-28.md`。
+
 - CS-UP-03R 新增 `checks/audit_public_trace_scorer.mjs` 与公开评分源码逆向报告：固定源码 SHA、使用原函数进行离线行为检验，可选检查当前 CLI 的纯文件转换；区分公开 v6 与历史 v8，不将前者替换为生产预测器。结论见 `docs/TRACE_SCORER_SOURCE_REVERSE_ENGINEERING_2026-09-28.md`。
 - 新增官网评分契约与三道“早期非满分→最终满分”同题轨迹对照报告 `docs/OFFICIAL_SCORING_AND_FULL_SCORE_TRANSITIONS_2026-09-28.md`；原始官网响应和逐 Attempt 证据只留本机忽略目录，未改运行时评分器或经验。
 - 新增 8 次历史总分 100 提交的脱敏逐案审计报告 `docs/FULL_SCORE_ATTEMPT_CASE_AUDIT_2026-09-28.md`；完整 Attempt ID、原始评分回执与逐文件哈希仅保存在本机忽略目录 `.package-checks/full-score-case-20260928/`。
@@ -44,6 +46,10 @@
 - CS-SB-01 稀疏输入与唤醒修复：可选短研究摘要独立存储；新 Run 普通检查点不唤醒 shadow，Job/Trial 研究级重复状态按 ID 去重。详见 `docs/SPARSE_BRAIN_INPUT_WAKE_FIX_2026-09-24.md`。
 
 ## 已实际验证
+
+- FigQA-0177：通过原生 Bohrium 沙箱网关实际回放 11 份已核对包绑定的历史答案，11/11 与平台科学分一致，MAE=0、最大绝对误差=0；另 1 份生成/接收包不一致记录排除。网关执行退出 0，评分结果已取回；后续只读列表已无该沙箱且 describe 返回 404，原生删除对账完成，两个分析上下文的沙箱账本均为 deleted、Run 均为 finished。完整回执与科学文件留 `.package-checks/figqa-replay-20260928/`。
+- 本地评分器本轮执行 `.venv/bin/pytest -q`：`557 passed, 1 skipped`（现有回环限制跳过）；最终限定复查两组新测试：39 passed；`npm --prefix apps/web test -- --run`：18 passed；`npm --prefix apps/web run build`、所改文件 `compileall` 和 `git diff --check` 通过。Node 使用已安装 Linux Node 22，仅修改当次进程 PATH。
+- Lean 准备真实验证到固定版本 `Lean 4.32.2`、锁定源码传输、缓存程序编译与约 43% 缓存下载观察；没有完成候选证明评分。原沙箱到期后已确认 404 且列表无该资源。首次分析占用时长的保守上界 127.551 分钟，随后 FigQA 上下文限 15 分钟，合计仍在用户原 180 分钟授权内；并发始终为 1，无模型、Job、Attempt。
 
 - 本轮取得公开 `trace-score-cli@81c434907e7b0a2feccc79236f6601f7abbc1d84`（v6），18 项离线断言通过，核实 0.55/0.25/0.20 合成、上限、70 分界、抽样和解析；未调用评分模型。三份本人 FigQA 轨迹先按接收回执 SHA 配对，再作 6 次 native/转换文件检查：当前固定 CLI 将 E008 的 43 事件丢成 1 条 error，最小合成对照同样复现；E010 的转换文件触发公开 N09/cap 49，E011 检查表无负项。公开 npm 元数据 GET 返回 404，未取得 v8 包。
 - 本轮 `.venv/bin/pytest -q`：518 passed、1 skipped（沙箱禁用回环监听）；`npm --prefix apps/web test -- --run`：18 passed；`npm --prefix apps/web run build` 通过；`.venv/bin/python -m compileall -q src checks`、`node --check checks/audit_public_trace_scorer.mjs`、`git diff --check` 通过。Node 为 Linux 22.17.0，当前 shell 通过 `.local/bin` 使用；没有修改全局配置。
@@ -118,6 +124,8 @@
 
 ## 尚未验证
 
+- FigQA 仅验证规范答案及两种实际答案内容，不声称完整复刻隐藏解析器、ARM 可执行性/封包准入或轨迹评分。Paired-block Lean 的真实历史分数一致率、部分得分和 8 种科学反例均尚未验证；应用单元测试不替代这些验证。
+
 - 公开 scorer 是 `evidence-checklist-v6-contextual-signals`，历史 63 回执是 `v8-process-evidence-sufficiency`；尚缺 v8 完整源码、双裁判原始数值和服务端最终输入。E008 的转换缺陷已在固定本机 CLI 复现且与旧诊断吻合，但历史服务端唯一根因与修复后的真实评分效果未验证。新增工具是源码审计，不是已验证的 ≥70/≥80 内容预测器。
 - 历史赛季外部/专属评分 worker 与当前题目详情的 `arm_v1_1_generic` 元数据何时切换、旧轨迹的最终归一化行、每项科学验算和同包重评分噪声仍未知。当前官网通用 ARM `executability` 的结构分不能证明 Dockerfile 真正构建或代码实际运行；不能用它预测旧轮次的 `trace_score`。
 - 两道 FigQA 历史满分提交当前无凭据查分 404 的原因未判定；其历史分数仍由本地真实回执支持。Paired-block Lean 某条早期本地 0 分与较晚平台最终 100 分的差异原因不可见。历史满分题的隐藏科学逐项验算、平台最终归一化评分轨迹以及独立同包重评分噪声均未取得；CNVkit harvest 满分提交没有独立封存输出，本轮只核对当前原路径。
@@ -144,7 +152,9 @@
 
 ## 阻塞项
 
-- CS-UP-03R 评分器剩余阻塞：AgentMaster 两组已找回 71 条旧分项提交和 63 份未遮蔽历史诊断，134 条均有回执原生轨迹哈希相同的本地字节；旧组 58 条有最终双分项。历史展示分合成系数已可核对，公开 v6 轨迹评分源码及确定性合成已验证；但历史 v8 完整实现、平台最终归一化轨迹、双裁判原始数值和逐项科学验算仍缺失，同包评分噪声未知，不能发布已验证的从内容预测 ≥70/≥80 或逐题科学分的模型。另 4 条旧分项当前没有 AgentMaster 本地精确配对。
+- Paired-block Lean 完整科学回放本轮未完成：GitHub/沙箱传输故障导致准备缓慢，随后监督衔接延误、沙箱到期，未取得准备终态与候选评分。已有本地输入和诊断回执保留；恢复须在授权内先完成可复用环境准备及自动回放/取回/清理。FigQA 的规范接口复验已完成，此项不阻塞其使用。
+
+- CS-UP-03R 评分器剩余阻塞：AgentMaster 两组已找回 71 条旧分项提交和 63 份未遮蔽历史诊断，134 条均有回执原生轨迹哈希相同的本地字节；旧组 58 条有最终双分项。历史展示分合成系数已可核对，公开 v6 轨迹评分源码及确定性合成已验证；但历史 v8 完整实现、平台最终归一化轨迹、双裁判原始数值和其他题目的逐项科学验算仍缺失，同包评分噪声未知，不能发布已验证的从内容预测 ≥70/≥80 的模型；科学评分本轮仅验证 FigQA-0177 的规范答案接口。另 4 条旧分项当前没有 AgentMaster 本地精确配对。
 - CS-UP-03 W3–W5 的目标评分契约当前不可重现实测：主选与指定备选题均已过轮次，晚交回执采用通用 ARM 评分；当前协议无法给出任务卡要求的独立 `harbor_score` / `trace_score` 及其 ≥70/≥80 轨迹阈值。公开历史双分项和本轮通用分不可混合作受控拟合；任务卡要求的同包双基线、W4 对照和 W5 留出标准尚未达到。继续在备选 MCM 付费计算或提交不能解决该契约缺口，需有能产生目标分项的当前平台轮次/契约，或明确变更研究目标。
 - CS-UP-03 当前 Run 授权最多 2 次实验提交，原未知创建与 H7 已提交各占 1 次；在原创建的远端副作用无法权威确认前，不能释放其预留。即使 H7 得分确认，本 Run 的同包原样重交仍受授权上限阻止；后续须在产品授权边界内另行安排，不能直接改账本或重复未知意图。
 - CS-UP-03 H3 原 `sub_5f0ec08d05` 仍是 `unknown/create_sent`，无 Attempt ID、无 confirmed 分且预留未释放。带失败邮箱凭据的 `GET /attempts?author=<own-id>` 与匿名结果一致，均未包含私有 draft；公开列表不能充当权威对账。需平台按原账号、题目和创建时间确认是否产生私有 draft，才可对原意图释放预留或重试。H5/H6 的明确无存储回执仅适用于各自请求；H7 成功也不能为 H3 对账。额外 CPU Job 对此无诊断价值。
