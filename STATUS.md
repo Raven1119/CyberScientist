@@ -2,6 +2,8 @@
 
 ## 已实现
 
+- 新增第四季公开科学评分规则核查报告 `docs/SEASON4_PUBLIC_SCORER_FEASIBILITY_2026-09-28.md`：逐题区分完整公开计分、科学量自检和隐藏输入依赖；未修改运行时、评分器或经验。
+
 - CS-UP-03R 本地评分器切片：新增 FigQA-0177 的规范答案科学评分器、独立历史回放脚本和隔离的无模型分析上下文；兼容现有评分器 JSON 契约。Paired-block Lean 后续已完成 4 份历史证明和 8 种反例的真实验算，增加按依赖准备环境、分批回放及未尝试样本记录。详见 `docs/LOCAL_SCORER_REPLAY_2026-09-28.md` 与 `docs/PAIRED_BLOCK_SCORER_REPLAY_2026-09-28.md`。
 
 - CS-UP-03R 新增 `checks/audit_public_trace_scorer.mjs` 与公开评分源码逆向报告：固定源码 SHA、使用原函数进行离线行为检验，可选检查当前 CLI 的纯文件转换；区分公开 v6 与历史 v8，不将前者替换为生产预测器。结论见 `docs/TRACE_SCORER_SOURCE_REVERSE_ENGINEERING_2026-09-28.md`。
@@ -46,6 +48,9 @@
 - CS-SB-01 稀疏输入与唤醒修复：可选短研究摘要独立存储；新 Run 普通检查点不唤醒 shadow，Job/Trial 研究级重复状态按 ID 去重。详见 `docs/SPARSE_BRAIN_INPUT_WAKE_FIX_2026-09-24.md`。
 
 ## 已实际验证
+
+- 第四季公开资料核查：匿名 GET 官方赛季/轮次和 16 道不同题目正文均成功；赛季清单为 60 道、6 轮各 10 道。原始响应及 SHA-256 留 `.package-checks/s4-scorer-public-review/`；本轮仅文档和文件核对，无认证下载、模型、科学计算、Job、沙箱或 Attempt。
+- 本轮文档验证：本机 Python 标准库核对赛季 ID、轮次计数、16 题报告覆盖及来源 SHA-256 通过；确认当前评分元数据为 15 条通用 ARM、1 条 LLM（DPA4C）。`git diff --check` 通过；没有应用代码改动，未重跑 pytest、前端测试或构建。
 
 - Lean 复验后最终回归：`.venv/bin/pytest -q` 为 561 passed、1 skipped（现有回环限制）；`npm --prefix apps/web test -- --run` 为 18 passed；`npm --prefix apps/web run build`、所改文件 `compileall` 和 `git diff --check` 通过。
 
@@ -129,6 +134,8 @@
 
 ## 尚未验证
 
+- 第四季新增候选只完成规范可复刻性判断：Matchgate 实例/schema、DPA4C 的公开检查与计时源码本轮未取回执行，未验证新的官方分数一致性；Paired-block 的既有回放证据仍以原报告为准。
+
 - FigQA 仅验证规范答案及两种实际答案内容，不声称完整复刻隐藏解析器、ARM 可执行性/封包准入或轨迹评分。Paired-block Lean 已验证 4 份历史提交与 8 种本地反例；E000 仍未完成真实回放，中间分数的官方反例回执、隐藏资源限制及所有异常输入的等价性尚未验证。
 
 - 公开 scorer 是 `evidence-checklist-v6-contextual-signals`，历史 63 回执是 `v8-process-evidence-sufficiency`；尚缺 v8 完整源码、双裁判原始数值和服务端最终输入。E008 的转换缺陷已在固定本机 CLI 复现且与旧诊断吻合，但历史服务端唯一根因与修复后的真实评分效果未验证。新增工具是源码审计，不是已验证的 ≥70/≥80 内容预测器。
@@ -156,6 +163,8 @@
 - CS-SB-01 当轮未重跑 CLI 关闭测试，也未验证未经包装的完整 pytest；该轮未修改 UI，故未重跑前端测试与构建。本轮 CS-EV-01 的前端测试与构建结果见上方。
 
 ## 阻塞项
+
+- 仅凭已读公开资料，USCT/FWI/XAS/Pancreas 的隐藏评测输入，以及 CNVkit/TBMA/Deep BSDE/堆积等题未完整披露的计分细节，阻止宣称完整官方科学分复刻；不妨碍实现已公开的独立科学检查。该项是评分可识别性限制，不是当前运行故障。
 
 - Paired-block Lean 剩余 E000 回放未完成：全量 Mathlib 的 5 个缓存文件部分下载后停滞，600 秒期限到达；这 5 个文件经本机匿名 GET 补齐后，最后补验又在依赖包上传阶段失败，未进入证明验算。既有 4 份历史回放与 8 种反例不受影响；原始失败回执保留，两个新增沙箱均已回收。网络唯一根因未定位，未将环境故障写成科学 0 分。
 
