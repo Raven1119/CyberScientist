@@ -15,7 +15,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
-from . import collab, config, db, datasets, experiences, mailboxes, skills, compute, observation, sandboxes, local_scoring
+from . import collab, config, db, datasets, experiences, mailboxes, skills, compute, observation, sandboxes, local_scoring, trace_diagnostics
 from .brains.codex import CodexBrain
 from .brains.demo import DemoBrain
 from .brains.kimi import KimiBrain
@@ -1029,6 +1029,7 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
             identity["run_id"], body.get("trial_id"), body.get("package_path"))
         result.pop("sealed_bytes", None)
         result.pop("projected_steps", None)
+        result["trace_diagnostics"] = trace_diagnostics.executor_view(result["trace_diagnostics"])
         return result
 
     @app.post("/api/v1/tools/trace_narrative_check")

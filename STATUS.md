@@ -1,6 +1,9 @@
-# 当前状态（2026-09-28）
+# 当前状态（2026-09-30）
 
 ## 已实现
+
+- CS-UP-04：W1 为 63 份历史原生轨迹生成固定 CLI、单条件补丁 CLI 和原生直读三种转换与哈希；W2 用公开 v6 原函数对照本机 63 份 v8 可见回执及 71 份旧组上限，逐代码保留不可观察与两种未列出解释。W3 在封存和平台选行后加入离线确定性诊断，只有 N06/N08/N09/N11/N14 的条件达标项形成真实补救建议；失败返回 unavailable，不改变既有准入。前端展示全量详情，提交事件与同 Trial 审阅帧只传达达标摘要；skill 加入对应证据补救动作。公开 MIT 源码与许可证按固定哈希 vendor；Playground CLI 只复制临时补丁，不改全局安装。见 `docs/TRACE_CONVERSION_VARIANTS_CS-UP-04.md`、`docs/TRACE_CHECKLIST_V6_V8_AGREEMENT.md` 和 `docs/DECISIONS.md` 的 CS-UP-04 节。
+- 本轮相邻缺陷按严重程度修复：高，项目旧 H7 轨迹 43 组配对工具事件被 v6 误读成 0 调用/43 结果，投影补真实适配器来源字段，旧包只在临时诊断输入中补标签，解析配对数不符则 unavailable；高，执行器包预检工具原可收到只应进入前端详情的低一致性代码，现输出限定为达标建议及可归因上限；中，包路径变更时前端旧预检哈希与结果未清除，现清除并拒收迟到响应；中，审阅帧可能混入无充分历史一致性代码的上限或其他 Trial 的诊断，现按达标归因和 Trial 过滤。
 
 - 第二轮故障检查：按严重程度修复提交页默认选错题目的 Run、研究页旧请求覆盖新选择、启动失败重试重复创建 Run、迟到默认预算覆盖授权输入，以及指导回执误报、跨页面丢失选题、终态 SSE 不关闭。提交页增加明确 Run 选择，切换清除旧包路径和额外许可；指导按 operation_id 确认进入审阅队列；Demo 服务退出有界。详见 `docs/DECISIONS.md` 的「第二轮界面与运行生命周期故障修复」。
 
@@ -54,6 +57,9 @@
 - CS-SB-01 稀疏输入与唤醒修复：可选短研究摘要独立存储；新 Run 普通检查点不唤醒 shadow，Job/Trial 研究级重复状态按 ID 去重。详见 `docs/SPARSE_BRAIN_INPUT_WAKE_FIX_2026-09-24.md`。
 
 ## 已实际验证
+
+- CS-UP-04：固定源码 SHA-256 `afafd718c1eca6c25fa81231905988b436ff03684581d0410f8cc549599dfa46`、CLI 原文件 SHA-256 `d231fefe0f11a481866aeae399906fc587e75d95c0cf08ff405b3f6f7ee48b03`、补丁副本 SHA-256 `52b85b55e038e383d0350b153b648c45269e5ff9a98edb5b5454d181f7d5c065` 均核对。63/63 三种转换成功；E008 原转换仅 1 条 error、修复转换保留 27 事件与 10 组配对。公开 v6 对可见 v8 代码的闭世界不一致为原 CLI 3/818、修复 CLI 10/819；主集和 71 份旧组未见 v6 上限被实际轨迹分超过，此项不证明 v8 与 v6 上限相同。E008 原转换触发 N04/cap20，修复版无 N04；E010 触发 N09，E011 不触发 N09。只读 H7 abc 已封存包 111 行、43 组工具配对，经临时适配器标签的本地诊断仍识别 43 组；原包未修改。
+- CS-UP-04 回归：`.venv/bin/pytest -q` 为 576 passed、2 skipped（既有回环监听限制）；定向提交/封存回归 130 passed；`PATH="$HOME/.local/bin:$PATH" npm --prefix apps/web test -- --run` 为 39 passed；前端 TypeScript/Vite 构建、`.venv/bin/python -m compileall -q src checks tests`、`node --check` 和 `git diff --check` 通过。转换与对照的原始资料仅留本机忽略目录。本轮没有模型调用、新科研 Run、Job、沙箱、Attempt 或平台账号操作。
 
 - 第二轮回归：`.venv/bin/pytest -q` → 568 passed、2 skipped（沙箱禁止回环监听）；这两项 `.venv/bin/pytest -q tests/test_cli_shutdown.py` 在允许本机监听的环境中另行通过（2 passed），覆盖正式 CLI 和隔离 Demo 服务在 SSE 客户端仍连接时退出。`PATH="$HOME/.local/bin:$PATH" npm --prefix apps/web test -- --run` → 38 passed；前端 TypeScript/Vite 构建、`.venv/bin/python -m compileall -q src tests checks/serve_ui_demo.py` 与 `git diff --check` 通过。
 - WebBridge 验收第二轮修复：较早题目 B 被选中时，提交页使用 B 的 Run；手动切换清除包路径和额外许可，返回研究页保留 B。对已有 created Demo Run 从页面授权启动，两个合成 Run 总数保持 2，目标 Run 到 finished。SSE 返回完整 32 条事件（与 SQLite 一致）后 EOF，页面显示“事件流已归档”；隔离账本 compute_jobs、submissions、compute_sandboxes 均为 0。原始断言、失败回归及 Demo 数据保留于 `.package-checks/bug-audit-20260928-round2/`，不提交。
@@ -149,6 +155,8 @@
 
 ## 尚未验证
 
+- CS-UP-04 没有取得完整 v8 评分器、服务端最终归一化轨迹或模型裁判值；条件分级与本地上限不能当作新题目的官方得分保证。只有现有 Linux CLI 0.1.33 与 Node 22 的本机离线诊断已测；其他安装环境的打包轮子、CLI 版本和真实平台新包尚未验证。诊断缺少固定依赖或匹配哈希时返回 unavailable。
+
 - 第二轮修复只验证本地应用、隔离 Demo 及受控异步/失败回归；未发起真实模型、科学 Run、Bohrium Job、沙箱或 Attempt。真实平台中断的长时间行为未新增验收。上一轮后台标签页偶发停滞的唯一原因仍未判定，不能由本轮 SSE 修复倒推出其原因。
 
 - 本次 skills 修复未启动真实科研或真实模型，也未验证新的远程 Job/Attempt。WebBridge 曾出现一次设置加载停滞及命令超时；后端只读设置请求约 7 ms 返回 200，刷新并开启网络诊断后未再复现，根因未判定，不能作为已修复的产品缺陷。
@@ -184,6 +192,8 @@
 - CS-SB-01 当轮未重跑 CLI 关闭测试，也未验证未经包装的完整 pytest；该轮未修改 UI，故未重跑前端测试与构建。本轮 CS-EV-01 的前端测试与构建结果见上方。
 
 ## 阻塞项
+
+- CS-UP-04 本地离线诊断与提交准入无新增阻塞；完整 v8 判定可识别性仍受上节缺失的私有评分与归一化输入限制，不影响 advisory-only 运行。
 
 - 第二轮应用修复无新增阻塞；既有科研/评分契约阻塞保留如下。
 

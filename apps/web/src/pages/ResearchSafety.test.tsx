@@ -50,6 +50,45 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.resetAllMocks(); vi.unstubAllGlobals(); stream.clear() })
 
 describe('research selection and lifecycle safety', () => {
+  it('does not show a stale package preflight after the package path changes', async () => {
+    const old = deferred<unknown>()
+    get.mockImplementation(async (path: string) => path === '/api/v1/challenges/A/submissions'
+      ? { items: [] } : path === '/api/v1/challenges/A/local-scores'
+        ? { scorer: null, calibrations: [] } : data(path))
+    post.mockImplementation((path: string) => path.endsWith('/submissions/preflight')
+      ? old.promise : Promise.resolve({}))
+    const user = userEvent.setup()
+    render(<ResearchPage />)
+    await screen.findByText('A intention')
+    await user.click(screen.getByRole('tab', { name: '提交与评分' }))
+    const input = await screen.findByLabelText(/工作区相对包路径/) as HTMLInputElement
+    await user.type(input, 'first.zip')
+    await user.click(screen.getByRole('button', { name: '检查封存包' }))
+    await user.clear(input)
+    await user.type(input, 'second.zip')
+    await act(async () => { old.resolve({
+      sealed_package_sha256: 'old-package', error_code: null,
+      admission: { verdict: 'admitted', signals: {} },
+      trace_diagnostics: { status: 'ready', checklist_cap: 49, advisories: [], details: [] },
+    }) })
+    expect(screen.queryByText(/old-package/)).toBeNull()
+    expect(input.value).toBe('second.zip')
+    post.mockImplementation((path: string) => path.endsWith('/submissions/preflight')
+      ? Promise.resolve({ sealed_package_sha256: 'new-package', error_code: null,
+        admission: { verdict: 'admitted', signals: {} },
+        trace_diagnostics: { status: 'ready', checklist_cap: 49,
+          advisories: [{ code: 'N09_NO_EXECUTION_EVIDENCE', grade: 'reliable',
+            reason: '缺真实执行', action: '执行真实计算', implied_cap: 49 }],
+          details: [{ code: 'N04_TRACE_SCHEMA_INVALID', grade: 'unavailable',
+            reason: '结构异常', implied_cap: 20 }] },
+      }) : Promise.resolve({}))
+    await user.click(screen.getByRole('button', { name: '检查封存包' }))
+    await screen.findByText(/new-package/)
+    expect(screen.getByText(/N09_NO_EXECUTION_EVIDENCE/).textContent).toContain('执行真实计算')
+    await user.click(screen.getByText(/查看全部触发项/))
+    expect(screen.getByText(/N04_TRACE_SCHEMA_INVALID/).textContent).toContain('未知')
+  })
+
   it('keeps the selected challenge when returning from another page', async () => {
     context.currentChallengeId = 'B'
     render(<ResearchPage />)

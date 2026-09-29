@@ -16,7 +16,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from . import arm_admission, config, datasets, db, experience_context, package_seal, trace_narrative, trace_selection
+from . import arm_admission, config, datasets, db, experience_context, package_seal, trace_diagnostics, trace_narrative, trace_selection
 from .mailbox_platform import (MailboxPlatform, PlatformError, final_score,
                                explicit_create_rejection, get_platform, public_feedback)
 
@@ -540,10 +540,20 @@ def preflight_submission(run_id: str, trial_id: str | None,
             code = exc.code
         except (KeyError, ValueError, zipfile.BadZipFile):
             code = "INVALID_PACKAGE"
+    diagnostic = trace_diagnostics.unavailable("non_ARM_bundle")
+    if is_bundle:
+        try:
+            challenge = db.query_one("SELECT c.content FROM challenges c JOIN runs r"
+                                     " ON r.challenge_id=c.id WHERE r.id=?", (run_id,))
+            diagnostic = trace_diagnostics.diagnose_sealed_package(
+                sealed, challenge["content"] if challenge else "")
+        except Exception as exc:
+            diagnostic = trace_diagnostics.unavailable(type(exc).__name__)
     return {"source_package_sha256": source_hash,
             "sealed_package_sha256": hashlib.sha256(sealed).hexdigest(),
             "sealed_bytes": sealed, "admission": report, "projected_steps": steps,
-            "data_inputs": data, "allow_proxy_evidence": allow_proxy_evidence,
+            "data_inputs": data, "trace_diagnostics": diagnostic,
+            "allow_proxy_evidence": allow_proxy_evidence,
             "allow_indeterminate_admission": allow_indeterminate_admission,
             "error_code": code}
 
@@ -760,6 +770,10 @@ def submit_experiment(run_id: str, trial_id: str | None,
         db.append_event_tx(conn,run_id,"controller","submission.created",
                            {"submission_id":sid,"package_sha256":digest,
                             "source_package_sha256":source_digest,
+                            "trace_diagnostics": {
+                                "status": check["trace_diagnostics"]["status"],
+                                "checklist_cap": check["trace_diagnostics"].get("advisory_cap"),
+                                "advisories": check["trace_diagnostics"].get("advisories", [])[:8]},
                             "allow_proxy_evidence":allow_proxy_evidence,
                             "allow_indeterminate_admission":allow_indeterminate_admission},trial_id=trial_id)
     return _perform_submission(sid,platform,challenge_id)

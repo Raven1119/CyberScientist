@@ -271,8 +271,23 @@ def build_frame(run_id: str, *, mode: str, frame_id: str,
     truncated |= clip
 
     known_scores = {}
-    for value in score_deltas(events_through(run_id,1,through_seq)):
+    durable_events = events_through(run_id, 1, through_seq)
+    for value in score_deltas(durable_events):
         known_scores[value["submission_id"]] = value
+    submission_summary = None
+    for event in reversed(durable_events):
+        if (event["type"] == "submission.created" and
+                event.get("trial_id") == (trial["id"] if trial else None) and
+                "trace_diagnostics" in event["payload"]):
+            diagnostic = event["payload"]["trace_diagnostics"]
+            submission_summary = {
+                "submission_id": event["payload"].get("submission_id"),
+                "package_sha256": event["payload"].get("package_sha256"),
+                "trace_diagnostics": {"status": diagnostic.get("status", "unavailable"),
+                    "checklist_cap": diagnostic.get("checklist_cap"),
+                    "advisories": diagnostic.get("advisories", [])[:8]},
+            }
+            break
     defaults = run_defaults or {}
     auth = db.query_one("SELECT * FROM authorizations WHERE id=?",
                         (run["authorization_id"],)) \
@@ -318,6 +333,7 @@ def build_frame(run_id: str, *, mode: str, frame_id: str,
         "activity_counts": activity,
         "metrics": score_deltas(events),
         "known_scores":list(known_scores.values()),
+        "submission_summary": submission_summary,
         "submission_prediction_version":json.loads(run['config_snapshot']).get('submission_prediction_version'),
         "prediction_outcomes":submission_predictions.outcomes(run_id,through_seq=through_seq),
         "experience_context_id": context["id"],

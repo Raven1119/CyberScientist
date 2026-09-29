@@ -47,10 +47,13 @@ def project(run_id: str, trial_id: str | None, through_seq: int,
             if status in ("started", "running", "in_progress", "inprogress", "in-progress") and item not in calls:
                 calls.add(item)
                 steps.append(base | {"step_type": "tool_call", "tool_call_id": item,
-                                     "title": _safe(payload.get("detail"))})
+                                     "tool_name": "cyberscientist_prime_event",
+                                     "title": _safe(payload.get("detail")),
+                                     "body": _safe(payload.get("detail"))})
             elif status in ("completed", "failed") and item not in results:
                 results.add(item)
                 steps.append(base | {"step_type": "tool_result", "tool_call_id": item,
+                                     "tool_name": "cyberscientist_prime_event",
                                      "title": _safe(payload.get("detail")),
                                      "tool_output": _safe(payload.get("output")),
                                      "exit_code": payload.get("exit_code")
@@ -64,11 +67,14 @@ def project(run_id: str, trial_id: str | None, through_seq: int,
                                (run_id, op))
             spec = json.loads(job["spec_json"]) if job else {}
             steps.append(base | {"step_type": "tool_call", "tool_call_id": "job:" + op,
-                                 "title": "Bohrium Job accepted", "code": _safe(spec.get("command"))})
+                                 "tool_name": "bohrium_job", "title": "Bohrium Job accepted",
+                                 "code": _safe(spec.get("command")),
+                                 "body": _safe(spec.get("command"))})
         elif kind == "job.observed" and payload.get("status") in ("Finished", "Failed", "Stopped"):
             op = str(payload.get("operation_id") or "")
             retrieval = retrieval_by_op.get(op, "not_attempted")
             steps.append(base | {"step_type": "tool_result", "tool_call_id": "job:" + op,
+                                 "tool_name": "bohrium_job",
                                  "title": "Bohrium Job terminal state",
                                  "tool_output": _safe(f"Job {payload.get('platform_job_id')} status {payload.get('status')}; Finished does not prove scientific success; 结果取回：{retrieval}")})
         elif kind in ("job.not_started", "job.unknown"):
@@ -77,10 +83,13 @@ def project(run_id: str, trial_id: str | None, through_seq: int,
         elif kind == 'sandbox.exec_started' and payload.get('operation_id'):
             op = str(payload['operation_id'])
             steps.append(base | {'step_type':'tool_call','tool_call_id':'sandbox:'+op,
-                                 'title':'Bohrium sandbox exec','code':_safe(payload.get('command'))})
+                                 'tool_name':'bohrium_sandbox',
+                                 'title':'Bohrium sandbox exec','code':_safe(payload.get('command')),
+                                 'body':_safe(payload.get('command'))})
         elif kind == 'sandbox.exec_completed' and payload.get('operation_id'):
             op = str(payload['operation_id'])
             steps.append(base | {'step_type':'tool_result','tool_call_id':'sandbox:'+op,
+                                 'tool_name':'bohrium_sandbox',
                                  'title':'Bohrium sandbox exec result',
                                  'tool_output':_safe(payload.get('output')),
                                  'exit_code':payload.get('exit_code')

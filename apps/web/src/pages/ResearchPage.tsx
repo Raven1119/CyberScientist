@@ -1856,10 +1856,18 @@ function SubmissionsPanel({
   } | null>(null)
   const [busy, setBusy] = useState(false)
   const [packagePath, setPackagePath] = useState('')
+  const preflightRequest = useRef(0)
   const [preflight, setPreflight] = useState<{
     sealed_package_sha256: string
     error_code: string | null
     admission: { verdict: string; signals: Record<string, { ok: boolean | null; detail: string }> }
+    trace_diagnostics: {
+      status: 'ready' | 'unavailable'
+      reason?: string
+      checklist_cap: number | null
+      advisories: { code: string; grade: string; reason: string; action: string; implied_cap: number | null }[]
+      details: { code: string; grade: string; reason: string; implied_cap: number | null }[]
+    }
   } | null>(null)
 
   const load = useCallback(async () => {
@@ -1914,14 +1922,18 @@ function SubmissionsPanel({
 
   async function checkPackage() {
     if (!runId) return
+    const requestId = ++preflightRequest.current
+    setPreflight(null)
     setBusy(true)
     try {
       const result = await api.post<typeof preflight>(`/api/v1/runs/${runId}/submissions/preflight`, {
         trial_id: trialId, package_path: packagePath.trim() || undefined,
       })
-      setPreflight(result)
+      if (requestId === preflightRequest.current) setPreflight(result)
     } catch (err) {
-      toast('提交预检失败：' + (err instanceof Error ? err.message : String(err)))
+      if (requestId === preflightRequest.current) {
+        toast('提交预检失败：' + (err instanceof Error ? err.message : String(err)))
+      }
     } finally { setBusy(false) }
   }
 
@@ -1937,12 +1949,36 @@ function SubmissionsPanel({
       {runId && <div className="callout" style={{ marginBottom: 12 }}>
         <strong>提交包只读预检</strong>
         <div className="field"><label htmlFor="preflight-package-path">工作区相对包路径（留空用当前 Trial 的 result_package.zip）</label>
-          <input id="preflight-package-path" value={packagePath} onChange={(e) => setPackagePath(e.target.value)} /></div>
+          <input id="preflight-package-path" value={packagePath} onChange={(e) => {
+            preflightRequest.current += 1
+            setPreflight(null)
+            setPackagePath(e.target.value)
+          }} /></div>
         <button type="button" className="btn" disabled={busy} onClick={() => void checkPackage()}>检查封存包</button>
         {preflight && <div role="status">
           <p>准入：{preflight.admission.verdict} · 门禁：{preflight.error_code || '通过'} · 封存 SHA-256：{preflight.sealed_package_sha256}</p>
           <ul>{Object.entries(preflight.admission.signals).map(([name, signal]) =>
             <li key={name}>{name}：{signal.ok === null ? '未知' : signal.ok ? '通过' : '未满足'} · {signal.detail}</li>)}</ul>
+          <p>轨迹确定性诊断：{preflight.trace_diagnostics.status === 'ready'
+            ? `可用 · 公开 v6 检查表提示上限 ${preflight.trace_diagnostics.checklist_cap ?? '未知'}（不是官方评分）`
+            : `不可用（${preflight.trace_diagnostics.reason || '未知原因'}）；不影响提交准入`}</p>
+          {preflight.trace_diagnostics.status === 'ready' && <p className="small-text">
+            分级只对历史 v8 回执中可见的代码成立；诊断不证明当前平台会采用同一上限。
+          </p>}
+          {preflight.trace_diagnostics.advisories.length > 0 && <ul>
+            {preflight.trace_diagnostics.advisories.map((item) => <li key={item.code}>
+              {item.code} · {item.grade === 'reliable' ? '条件可靠' : '条件提示性'}：{item.reason}
+              {item.implied_cap !== null && ` · 该项上限 ${item.implied_cap}`} {item.action}
+            </li>)}
+          </ul>}
+          {preflight.trace_diagnostics.status === 'ready' && <details>
+            <summary>查看全部触发项（含历史一致性不足的检查项）</summary>
+            <p className="small-text">分级仅按 63 份历史回执中可见代码计算；平台可能未显示所有触发项。</p>
+            <ul>{preflight.trace_diagnostics.details.map((item) => <li key={item.code}>
+              {item.code} · {item.grade === 'unavailable' ? '未知' : item.grade === 'reliable' ? '条件可靠' : '条件提示性'}：{item.reason}
+              {item.implied_cap !== null && ` · 该项上限 ${item.implied_cap}`}
+            </li>)}</ul>
+          </details>}
         </div>}
       </div>}
       <div className="actions" style={{ marginBottom: 10 }}>
