@@ -1,0 +1,6 @@
+{
+  "entrypoint": "score.py",
+  "image": "registry.dp.tech/dptech/ubuntu:20.04-py3.10",
+  "version": "matchgate-public-endpoints-1",
+  "contract_version": 1
+}

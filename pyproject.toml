@@ -19,6 +19,7 @@ cyberscientist = "cyberscientist.cli:main"
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
+    "numpy==2.2.6",
 ]
 
 [build-system]

@@ -1,0 +1,125 @@
+{
+  "schema_version": "cyberscientist-eval-catalog/v1",
+  "challenges": [
+    {
+      "challenge_id": "local_a619cdef",
+      "platform_challenge_id": "paper2arm-abc-conjecture-record-b335c57d",
+      "title": "ABC record certificate",
+      "tier": "fast",
+      "included": true,
+      "science_scorer": {
+        "status": "spec_validated",
+        "directory": "challenges/local_a619cdef/scorer",
+        "evidence_refs": ["docs/DECISIONS.md", "docs/SEASON4_PUBLIC_SCORER_FEASIBILITY_2026-09-28.md"],
+        "limitations": "One real local rubric score of 20, but the late platform ARM display score uses another contract; huge primes and threshold edges are not calibrated."
+      },
+      "evaluation_difficulty": {"cpu_cores": 1, "estimated_minutes": 0.2,
+        "basis": "Small exact integer certificate; estimate is for local scorer only, not research."},
+      "expected_run_cost": {"wall_minutes_range": [15, 60], "job_limit": 2,
+        "sandbox_minutes_limit": 60, "model_tokens": null, "bohrium_amount": null,
+        "basis": "Planning range and explicit fast-Run ceilings; token and currency estimates are unknown."},
+      "public_score_distribution": {"status": "leaderboard_snapshot",
+        "source": "2026-09-22 anonymous public leaderboard snapshot in .package-checks/season4-selection/leaderboards/paper2arm-abc-conjecture-record-b335c57d.json",
+        "sample_count": 45, "min": 0, "median": 20, "max": 20, "full_score_count": 0,
+        "notes": "Best visible score per leaderboard entry, not every Attempt; historical snapshot may differ from later scoring."},
+      "historical_best": {"display_score": 41.43, "source": "confirmed local submissions ledger for local_a619cdef",
+        "notes": "Later generic ARM display score; not a validation label for the ABC scientific scorer."},
+      "selection_reason": "Low-cost certificate task with unsaturated visible scores; preserves a known platform-contract mismatch as an explicit evaluation limit."
+    },
+    {
+      "challenge_id": "lab-bench-figqa-figqa-0177-b4156bee",
+      "platform_challenge_id": "lab-bench-figqa-figqa-0177-b4156bee",
+      "title": "FigQA-0177",
+      "tier": "fast",
+      "included": true,
+      "science_scorer": {
+        "status": "receipt_validated",
+        "directory": "challenges/lab-bench-figqa-figqa-0177-b4156bee/scorer",
+        "evidence_refs": ["docs/LOCAL_SCORER_REPLAY_2026-09-28.md"],
+        "limitations": "11/11 historical canonical answer bundles agree, but only two distinct answer bytes were observed; malformed parser behavior is unknown."
+      },
+      "evaluation_difficulty": {"cpu_cores": 1, "estimated_minutes": 0.1,
+        "basis": "Canonical answer-file comparison; scientific grader itself is near-instant."},
+      "expected_run_cost": {"wall_minutes_range": [5, 60], "job_limit": 2,
+        "sandbox_minutes_limit": 60, "model_tokens": null, "bohrium_amount": null,
+        "basis": "Planning range and explicit fast-Run ceilings; token and currency estimates are unknown."},
+      "public_score_distribution": {"status": "unavailable", "source": "anonymous GET /api/challenges/lab-bench-figqa-figqa-0177-b4156bee/attempts (2026-09-30)",
+        "sample_count": null, "min": null, "median": null, "max": null, "full_score_count": null,
+        "notes": "Public endpoint returned HTTP 404; historical owned samples are not a public distribution."},
+      "historical_best": {"display_score": 100, "source": "docs/LOCAL_SCORER_REPLAY_2026-09-28.md F011", "notes": "Historical owned Attempt."},
+      "selection_reason": "Very cheap, receipt-validated scientific score; repeated runs measure runtime and trace variation despite binary science outcome."
+    },
+    {
+      "challenge_id": "lab-bench-figqa-figqa-0178-23afc746",
+      "platform_challenge_id": "lab-bench-figqa-figqa-0178-23afc746",
+      "title": "FigQA-0178",
+      "tier": "fast",
+      "included": true,
+      "science_scorer": {
+        "status": "receipt_validated",
+        "directory": "challenges/lab-bench-figqa-figqa-0178-23afc746/scorer",
+        "evidence_refs": ["docs/EVAL_CATALOG_2026-09-30.md", "docs/OFFICIAL_SCORING_AND_FULL_SCORE_TRANSITIONS_2026-09-28.md"],
+        "limitations": "Four owned historical canonical F bundles have science 100, but no wrong-answer receipt or malformed-input parser calibration."
+      },
+      "evaluation_difficulty": {"cpu_cores": 1, "estimated_minutes": 0.1,
+        "basis": "Canonical answer-file comparison; scientific grader itself is near-instant."},
+      "expected_run_cost": {"wall_minutes_range": [5, 60], "job_limit": 2,
+        "sandbox_minutes_limit": 60, "model_tokens": null, "bohrium_amount": null,
+        "basis": "Planning range and explicit fast-Run ceilings; token and currency estimates are unknown."},
+      "public_score_distribution": {"status": "unavailable", "source": "anonymous GET /api/challenges/lab-bench-figqa-figqa-0178-23afc746/attempts (2026-09-30)",
+        "sample_count": null, "min": null, "median": null, "max": null, "full_score_count": null,
+        "notes": "Public endpoint returned HTTP 404; historical owned samples are not a public distribution."},
+      "historical_best": {"display_score": 100, "source": "docs/OFFICIAL_SCORING_AND_FULL_SCORE_TRANSITIONS_2026-09-28.md E003", "notes": "Historical owned Attempt."},
+      "selection_reason": "Second low-cost FigQA instance with independently fixed public answer and four matching owned receipts; tests transfer beyond one question."
+    },
+    {
+      "challenge_id": "flowforge-paired-block-boundary-projection-v10-fe06025a",
+      "platform_challenge_id": "flowforge-paired-block-boundary-projection-v10-fe06025a",
+      "title": "Paired-block Lean",
+      "tier": "hard",
+      "included": true,
+      "science_scorer": {
+        "status": "receipt_validated",
+        "directory": "challenges/flowforge-paired-block-boundary-projection-v10-fe06025a/scorer",
+        "evidence_refs": ["docs/PAIRED_BLOCK_SCORER_REPLAY_2026-09-28.md"],
+        "limitations": "Four of five historical proofs replayed; E000 remains unreplayed. Intermediate rubric scores have synthetic controls but no platform receipts."
+      },
+      "evaluation_difficulty": {"cpu_cores": 4, "estimated_minutes": 10,
+        "basis": "Prior Bohrium replay driver took about 280 seconds after fixed Lean/Mathlib preparation; 10 minutes includes setup uncertainty."},
+      "expected_run_cost": {"wall_minutes_range": [60, 180], "job_limit": 5,
+        "sandbox_minutes_limit": 180, "model_tokens": null, "bohrium_amount": null,
+        "basis": "Planning range and explicit hard-Run ceilings; token and currency estimates are unknown."},
+      "public_score_distribution": {"status": "leaderboard_snapshot",
+        "source": "2026-09-22 anonymous public leaderboard snapshot in .package-checks/season4-selection/leaderboards/flowforge-paired-block-boundary-projection-v10-fe06025a.json",
+        "sample_count": 39, "min": 0, "median": 100, "max": 100, "full_score_count": 21,
+        "notes": "Best visible score per leaderboard entry; saturated at the top, so useful mainly for hard workflow variance."},
+      "historical_best": {"display_score": 100, "source": "docs/PAIRED_BLOCK_SCORER_REPLAY_2026-09-28.md E009/E013", "notes": "Science 100; historical display-100 transition recorded in docs/OFFICIAL_SCORING_AND_FULL_SCORE_TRANSITIONS_2026-09-28.md."},
+      "selection_reason": "User-selected long-form proof task; exercises dependency setup, actual compilation, and sustained evidence, despite saturated public scores."
+    },
+    {
+      "challenge_id": "flowforge-matchgate-swap-inverse-synthesis-v2-4019e745",
+      "platform_challenge_id": "flowforge-matchgate-swap-inverse-synthesis-v2-4019e745",
+      "title": "Matchgate/SWAP inverse synthesis",
+      "tier": "hard",
+      "included": true,
+      "science_scorer": {
+        "status": "spec_validated",
+        "directory": "challenges/flowforge-matchgate-swap-inverse-synthesis-v2-4019e745/scorer",
+        "evidence_refs": ["docs/EVAL_CATALOG_2026-09-30.md", "docs/SEASON4_PUBLIC_SCORER_FEASIBILITY_2026-09-28.md"],
+        "limitations": "Public resource and synthetic positive, negative, and 0.80/0.99 controls validated; no historical platform receipt calibration or full-size scorer timing yet."
+      },
+      "evaluation_difficulty": {"cpu_cores": 16, "estimated_minutes": null,
+        "basis": "Q4 has 2,704,156 fixed-particle amplitudes; full-size scorer timing is unmeasured. CPU requirement is a planning ceiling, not an observed need."},
+      "expected_run_cost": {"wall_minutes_range": [60, 180], "job_limit": 5,
+        "sandbox_minutes_limit": 180, "model_tokens": null, "bohrium_amount": null,
+        "basis": "Planning range and explicit hard-Run ceilings; token and currency estimates are unknown."},
+      "public_score_distribution": {"status": "leaderboard_snapshot",
+        "source": "2026-09-22 anonymous public leaderboard snapshot in .package-checks/season4-selection/leaderboards/flowforge-matchgate-swap-inverse-synthesis-v2-4019e745.json",
+        "sample_count": 40, "min": 0, "median": 67.3, "max": 100, "full_score_count": 6,
+        "notes": "Best visible score per leaderboard entry, not every Attempt; lower saturation than Lean."},
+      "historical_best": {"display_score": null, "source": "No matching owned scored receipt found in the reviewed local ledger",
+        "notes": "Unknown, not zero."},
+      "selection_reason": "Public deterministic 25x4 fidelity formula and lower leaderboard saturation; hardest scorer and research workload, so only in the hard tier."
+    }
+  ]
+}
