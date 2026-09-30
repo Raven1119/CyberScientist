@@ -411,6 +411,36 @@ CREATE TABLE IF NOT EXISTS score_calibration (
 CREATE INDEX IF NOT EXISTS idx_score_calibration_local ON score_calibration(local_score_id);
 """
 
+SCHEMA_EVALUATIONS = """
+CREATE TABLE IF NOT EXISTS eval_runs (
+    id TEXT PRIMARY KEY,
+    suite TEXT NOT NULL,
+    repeats INTEGER NOT NULL,
+    label TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'pending',
+    config_json TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    ended_at TEXT
+);
+CREATE TABLE IF NOT EXISTS eval_results (
+    id TEXT PRIMARY KEY,
+    eval_id TEXT NOT NULL REFERENCES eval_runs(id),
+    challenge_id TEXT NOT NULL,
+    repeat_index INTEGER NOT NULL,
+    run_id TEXT UNIQUE REFERENCES runs(id),
+    status TEXT NOT NULL DEFAULT 'pending',
+    result_json TEXT,
+    error TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(eval_id, challenge_id, repeat_index)
+);
+CREATE INDEX IF NOT EXISTS idx_eval_results_eval ON eval_results(eval_id, status);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_eval_running_label ON eval_runs(suite, label)
+    WHERE status='running';
+"""
+
 SCORE_CALIBRATION_V2_COLUMNS = {
     "source": "TEXT NOT NULL DEFAULT 'realtime' CHECK(source IN ('realtime','historical'))",
 }
@@ -515,6 +545,7 @@ def init_db() -> None:
         conn.executescript(SCHEMA_V2_TABLES)
         conn.executescript(SCHEMA_RELIABILITY)
         conn.executescript(SCHEMA_LOCAL_SCORING)
+        conn.executescript(SCHEMA_EVALUATIONS)
         _ensure_columns(conn, "checkpoints", CHECKPOINT_V2_COLUMNS)
         _ensure_columns(conn, "runs", RUN_V2_COLUMNS)
         _ensure_columns(conn, "submissions", SUBMISSION_V2_COLUMNS)
@@ -688,6 +719,15 @@ def record_operation(operation_id: str, run_id: str, kind: str, status: str,
 
 def row_to_dict(row: sqlite3.Row | None) -> dict[str, Any] | None:
     return dict(row) if row else None
+
+
+def eval_mode(run_id: str) -> dict[str, Any] | None:
+    """Return the immutable evaluation marker used by external-effect guards."""
+    row = query_one("SELECT config_snapshot FROM runs WHERE id=?", (run_id,))
+    if not row:
+        return None
+    marker = json.loads(row["config_snapshot"]).get("eval_mode")
+    return marker if isinstance(marker, dict) and marker.get("enabled") is True else None
 
 
 def list_challenge_skills(conn: sqlite3.Connection,

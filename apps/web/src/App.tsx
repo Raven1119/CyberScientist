@@ -5,19 +5,22 @@ import ResearchPage from './pages/ResearchPage'
 import ExperiencePage from './pages/ExperiencePage'
 import MailboxPage from './pages/MailboxPage'
 import SettingsPage from './pages/SettingsPage'
+import EvaluationPage from './pages/EvaluationPage'
 import { PresentationProvider, usePresentation } from './design/presentation'
 import { TargetCursor } from './design/TargetCursor'
 import { enter } from './design/motion'
 
 const NAV_ITEMS: { page: Page; num: string; label: string }[] = [
   { page: 'research', num: '01', label: '研究工作台' },
-  { page: 'experience', num: '02', label: '经验库' },
-  { page: 'mailbox', num: '03', label: '邮箱与提交' },
-  { page: 'settings', num: '04', label: '连接与设置' },
+  { page: 'evaluation', num: '02', label: '评测' },
+  { page: 'experience', num: '03', label: '经验库' },
+  { page: 'mailbox', num: '04', label: '邮箱与提交' },
+  { page: 'settings', num: '05', label: '连接与设置' },
 ]
 
 const CRUMBS: Record<Page, string> = {
   research: '研究工作台',
+  evaluation: '评测',
   experience: '经验库',
   mailbox: '邮箱与提交',
   settings: '连接与设置',
@@ -106,6 +109,7 @@ function Shell() {
         <div className="content" id="workspace" tabIndex={-1}>
           <div ref={view} className="page-view">
           {page === 'research' && <ResearchPage />}
+          {page === 'evaluation' && <EvaluationPage />}
           {page === 'experience' && <ExperiencePage />}
           {page === 'mailbox' && <MailboxPage />}
           {page === 'settings' && <SettingsPage />}

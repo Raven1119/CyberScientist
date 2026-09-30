@@ -267,8 +267,17 @@ class RunController:
         snapshot = json.loads(run["config_snapshot"])
         settings = snapshot["settings"]
         settings["app"]["mode"] = run["mode"]
-        settings["run_defaults"] = config.load_settings()["run_defaults"]
+        if not db.eval_mode(run_id):
+            settings["run_defaults"] = config.load_settings()["run_defaults"]
         return settings
+
+    @staticmethod
+    def _enabled_skills(run_id: str, settings: dict[str, Any],
+                        challenge_id: str, role: str) -> list[dict[str, Any]]:
+        marker = db.eval_mode(run_id)
+        if marker:
+            return marker.get('skills', {}).get(role, [])
+        return skills_mod.effective_for(db.get_db(), settings, challenge_id, role=role)
 
     @staticmethod
     def _sparse_brain(run: Any) -> bool:
@@ -279,7 +288,7 @@ class RunController:
         """New Runs get a brain-only read capability; old Runs keep their snapshot."""
         run = self._require_run(run_id)
         if not self._sparse_brain(run):
-            enabled = skills_mod.effective_for(db.get_db(), settings, run["challenge_id"])
+            enabled = self._enabled_skills(run_id, settings, run["challenge_id"], 'brain')
             return {"working_directory": str(brain_dir),
                     "instructions": skills_mod.prompt_segment(enabled)}
         import sys as _sys
@@ -457,7 +466,8 @@ class RunController:
                                   "请结束现有 Run 或提高设置中的 max_active_runs")
 
     def create_run(self, challenge_id: str, mode: str | None = None,
-                   shadow_enabled: bool | None = None) -> dict[str, Any]:
+                   shadow_enabled: bool | None = None,
+                   eval_mode: dict[str, Any] | None = None) -> dict[str, Any]:
         settings = config.load_settings()
         mode = mode if mode is not None else settings["app"]["mode"]
         if mode not in ("demo", "connected"):
@@ -467,7 +477,9 @@ class RunController:
         if not challenge:
             raise ControllerError("NOT_FOUND", f"题目不存在: {challenge_id}")
         try:
-            selected = challenge_models.from_challenge(challenge, settings)
+            selected = (challenge_models.from_challenge(challenge, settings) if eval_mode is None
+                        else {role: challenge_models.choose(role, eval_mode['models'][role], settings)
+                              for role in ('brain', 'executor')})
         except (ValueError, TypeError, KeyError) as exc:
             raise ControllerError("INVALID_ARGUMENT", f"题目模型配置无效：{exc}") from exc
         for role, choice in selected.items():
@@ -485,6 +497,10 @@ class RunController:
                     "challenge_id": challenge_id, "mode": mode,
                     "compute_policy_version": 1, "sparse_brain_version": 1,
                     "lifecycle_version": 2, "submission_prediction_version": 1}
+        if eval_mode is not None:
+            if mode != "connected" or eval_mode.get("enabled") is not True:
+                raise ControllerError("INVALID_ARGUMENT", "评测标记只适用于真实 connected Run")
+            snapshot["eval_mode"] = json.loads(json.dumps(eval_mode))
         with config.mutation_lock, db.transaction() as conn:
             self._check_active_capacity(conn, config.load_settings())
             conn.execute(
@@ -492,6 +508,13 @@ class RunController:
                 " config_snapshot, created_at) VALUES(?,?,?,?,0,NULL,?,?)",
                 (run_id, challenge_id, mode, "created", json.dumps(snapshot, ensure_ascii=False),
                  db.utcnow()))
+            if eval_mode is not None and eval_mode.get('result_id'):
+                linked = conn.execute(
+                    "UPDATE eval_results SET run_id=?,status='created',updated_at=?"
+                    " WHERE id=? AND run_id IS NULL",
+                    (run_id, db.utcnow(), eval_mode['result_id']))
+                if linked.rowcount != 1:
+                    raise ControllerError('CONFLICT', '评测结果已绑定 Run')
         return self.run_snapshot(run_id)
 
     @staticmethod
@@ -1510,8 +1533,8 @@ class RunController:
                                 {"trace": "optional", "skills_injected": False})
             else:
                 db.append_event(run_id, "controller", "brain.skills_enabled", {
-                    "skills": [s["id"] for s in skills_mod.effective_for(
-                        db.get_db(), settings, run["challenge_id"])],
+                    "skills": [s["id"] for s in self._enabled_skills(
+                        run_id, settings, run["challenge_id"], 'brain')],
                 })
             self._brain_sessions[run_id] = b_session
             self._brain_instances[run_id] = brain
@@ -1672,7 +1695,7 @@ class RunController:
     def _handle_signal_guarded_pause(self, run_id: str) -> bool:
         """暂停/正在暂停期间：只记账，不驱动 Trial 完成与大脑判断。"""
         phase = self._require_run(run_id)["phase"]
-        return phase in ("pausing", "paused")
+        return phase in ("pausing", "paused", "eval_scoring")
 
     async def _handle_signal(self, signal: dict[str, Any], run_id: str,
                              q: asyncio.Queue, **ctx: Any) -> None:
@@ -2916,7 +2939,7 @@ class RunController:
             "challenge_id": run["challenge_id"],
             "user_guidance": user_guidance,
             "enabled_skills": (None if sparse else skills_mod.prompt_segment(
-                skills_mod.effective_for(db.get_db(), settings, run["challenge_id"]))),
+                self._enabled_skills(run_id, settings, run["challenge_id"], 'brain'))),
             "new_events_since_last_review": [
                 {"seq": e["seq"], "source": e["source"], "type": e["type"],
                  **({} if sparse else observation.event_excerpt(e))}
@@ -2992,6 +3015,9 @@ class RunController:
         return row["s"]
 
     def _memory_manifest(self, run: Any, settings: dict[str, Any]) -> list[dict[str, Any]]:
+        marker = db.eval_mode(run["id"])
+        if marker:
+            return marker.get("experience_manifests", {}).get("brain", [])
         return experience_context.select(run["challenge_id"],role='brain')
 
     @staticmethod
@@ -3096,14 +3122,19 @@ class RunController:
                        stalled_trial_id=stalled_tid,
                        reported_trial_id=reported_tid)
 
-        try:
-            with db.transaction() as conn:
-                experience_context.adopt_tx(conn,run_id,current_tid,dec.get("experience_uses",[]),
-                                           "brain",f"decision:{dec['decision_id']}")
-                submission_predictions.record_verdicts_tx(
-                    conn,run_id,dec.get('prediction_verdicts',[]),f"decision:{dec['decision_id']}")
-        except ValueError as exc:
-            db.append_event(run_id,"controller","experience.adoption_rejected",{"reason":str(exc)})
+        if db.eval_mode(run_id):
+            if dec.get("experience_uses"):
+                db.append_event(run_id, "controller", "evaluation.experience_write_rejected",
+                                {"operation": "adopt", "count": len(dec["experience_uses"])})
+        else:
+            try:
+                with db.transaction() as conn:
+                    experience_context.adopt_tx(conn,run_id,current_tid,dec.get("experience_uses",[]),
+                                               "brain",f"decision:{dec['decision_id']}")
+                    submission_predictions.record_verdicts_tx(
+                        conn,run_id,dec.get('prediction_verdicts',[]),f"decision:{dec['decision_id']}")
+            except ValueError as exc:
+                db.append_event(run_id,"controller","experience.adoption_rejected",{"reason":str(exc)})
 
         for proposal in dec.get("experience_proposals", [])[:3]:
             self._apply_experience_proposal(run_id, dec["decision_id"], proposal)
@@ -3174,8 +3205,8 @@ class RunController:
                                         "goal": action["goal"]},
                                        trial_id=trial_id)
                 self._snapshot_memory(run_id, trial_id, settings)
-                enabled_skills = skills_mod.effective_for(
-                    db.get_db(), settings, run["challenge_id"], role='executor')
+                enabled_skills = self._enabled_skills(
+                    run_id, settings, run["challenge_id"], 'executor')
                 task_text = (f"目标：{action['goal']}\n"
                              f"成功判据：{action['success_check']}\n"
                              f"Run ID：{run_id}；Trial ID：{trial_id}。\n"
@@ -3287,6 +3318,14 @@ class RunController:
                                     {"notice": "先进行本题经验整理审阅，"
                                                "随后自动收尾"})
                     continue
+                if db.eval_mode(run_id):
+                    with db.transaction() as conn:
+                        conn.execute("UPDATE runs SET phase='eval_scoring',gate='open',end_reason=? WHERE id=?",
+                                     (action['reason'], run_id))
+                        db.append_event_tx(conn, run_id, 'controller',
+                                           'evaluation.scoring_started',
+                                           {'reason': action['reason']})
+                    continue
                 self._finalize_run(run_id, action["reason"])
             elif op == "promote_experience":
                 self._promote(run_id, action)
@@ -3315,6 +3354,10 @@ class RunController:
         带 target_id = 更新已有条目：追加新修订（冲突即更新，不拒绝）；
         更新全局 active 条目时内容落修订但状态回 candidate，待用户复核。
         """
+        if run_id and db.eval_mode(run_id):
+            db.append_event(run_id, "controller", "evaluation.experience_write_rejected",
+                            {"operation": "proposal", "decision_id": decision_id})
+            return None
         target_id = proposal.get("target_id")
         prior: dict[str, Any] | None = None
         try:
@@ -3397,6 +3440,10 @@ class RunController:
                                 {"reason": str(exc)[:200]})
 
     def _promote(self, run_id: str, action: dict[str, Any]) -> None:
+        if db.eval_mode(run_id):
+            db.append_event(run_id, "controller", "evaluation.experience_write_rejected",
+                            {"operation": "promote", "experience_id": action.get("experience_id")})
+            return
         try:
             exp = experiences.get_experience(action["experience_id"])
             scope = exp["frontmatter"]["scope"]
@@ -3450,6 +3497,10 @@ class RunController:
     def _defer_finish_for_curation(self, run_id: str, reason: str) -> bool:
         """Run 终态前先整理本题经验：需要且能整理则排 curation 审阅并推迟
         finish（返回 True）；审阅完结后由 _finish_request 钩子收尾。"""
+        if db.eval_mode(run_id):
+            db.append_event(run_id, "controller", "evaluation.curation_skipped",
+                            {"reason": "评测 Run 禁止经验整理"})
+            return False
         done = db.query_one(
             "SELECT id FROM review_requests WHERE run_id=?"
             " AND trigger='curation' AND status IN ('done','error','obsolete')",
@@ -3478,7 +3529,9 @@ class RunController:
         """效果回联原料：Run 起止时各记一份 active 经验版本清单。"""
         run = self._require_run(run_id)
         settings = config.load_settings()
-        manifest = experience_context.select(run["challenge_id"])
+        marker = db.eval_mode(run_id)
+        manifest = (marker.get("experience_manifests", {}).get("both", []) if marker else
+                    experience_context.select(run["challenge_id"]))
         try:
             snap = json.loads(run["experience_snapshot"]) \
                 if run["experience_snapshot"] else {}
@@ -3708,6 +3761,10 @@ class RunController:
     async def curate_run_experience(self, run_id: str, operation_id: str) -> dict:
         from .curation import run_evidence
         run = self._require_run(run_id)
+        if db.eval_mode(run_id):
+            db.append_event(run_id, "controller", "evaluation.experience_write_rejected",
+                            {"operation": "curation", "operation_id": operation_id})
+            raise ControllerError("INVALID_ACTION", "评测 Run 不允许经验整理")
         if run['phase'] not in ('paused', 'recovering', 'finished', 'failed', 'cancelled'):
             raise ControllerError('INVALID_STATE', '请先暂停研究，再整理本轮经验')
         if not operation_id or len(operation_id) > 128:

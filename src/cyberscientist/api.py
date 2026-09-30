@@ -15,7 +15,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
-from . import collab, config, db, datasets, experiences, mailboxes, skills, compute, observation, sandboxes, local_scoring, trace_diagnostics
+from . import collab, config, db, datasets, experiences, mailboxes, skills, compute, observation, sandboxes, local_scoring, trace_diagnostics, evaluations
 from .brains.codex import CodexBrain
 from .brains.demo import DemoBrain
 from .brains.kimi import KimiBrain
@@ -124,6 +124,12 @@ class RunCreate(BaseModel):
     challenge_id: str
     mode: str | None = None
     shadow_enabled: bool | None = None
+
+
+class EvaluationCreate(BaseModel):
+    suite: str
+    repeats: int = 2
+    label: str = ''
 
 
 class ReviewRequestCreate(BaseModel):
@@ -294,15 +300,30 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
                 except asyncio.TimeoutError:
                     pass
 
+        async def _evaluation_loop() -> None:
+            import logging
+            logger = logging.getLogger('cyberscientist.api')
+            while not stop.is_set():
+                try:
+                    await evaluations.advance(controller)
+                except Exception:
+                    logger.exception('Evaluation scheduling pass failed')
+                try:
+                    await asyncio.wait_for(stop.wait(), 10)
+                except asyncio.TimeoutError:
+                    pass
+
         task = asyncio.create_task(_poll_loop())
         watch_task = asyncio.create_task(_watch_loop())
+        evaluation_task = asyncio.create_task(_evaluation_loop())
         try:
             yield
         finally:
             stop.set()
             task.cancel()
             watch_task.cancel()
-            await asyncio.gather(task, watch_task, return_exceptions=True)
+            evaluation_task.cancel()
+            await asyncio.gather(task, watch_task, evaluation_task, return_exceptions=True)
 
     app = FastAPI(title="CyberScientist", docs_url=None, openapi_url=None,
                   lifespan=lifespan)
@@ -809,6 +830,33 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
         return {"challenge_id": cid, "bound": bound}
 
     # ---------------- Run ----------------
+
+    @app.post('/api/v1/evals')
+    async def create_evaluation(body: EvaluationCreate) -> dict[str, Any]:
+        try:
+            return await asyncio.to_thread(evaluations.create_evaluation,
+                                           body.suite, body.repeats, body.label)
+        except evaluations.EvaluationError as exc:
+            raise HTTPException(422, detail={'code': 'INVALID_EVALUATION',
+                                             'message': str(exc)}) from exc
+
+    @app.get('/api/v1/evals')
+    async def list_evaluations() -> dict[str, Any]:
+        return {'items': evaluations.list_evaluations()}
+
+    @app.get('/api/v1/evals/{eval_id}')
+    async def get_evaluation(eval_id: str) -> dict[str, Any]:
+        try:
+            return evaluations.get_evaluation(eval_id)
+        except evaluations.EvaluationError as exc:
+            raise HTTPException(404, detail={'code': 'NOT_FOUND', 'message': str(exc)}) from exc
+
+    @app.get('/api/v1/evals/{eval_id}/report')
+    async def get_evaluation_report(eval_id: str) -> dict[str, Any]:
+        try:
+            return evaluations.report(eval_id)
+        except evaluations.EvaluationError as exc:
+            raise HTTPException(404, detail={'code': 'NOT_FOUND', 'message': str(exc)}) from exc
 
 
     @app.post("/api/v1/runs")

@@ -54,7 +54,10 @@ def freeze(run_id: str, trial_id: str | None, boundary: str, items=None,
     if row:
         return json.loads(row['content_json'])
     run = db.query_one('SELECT challenge_id,intention FROM runs WHERE id=?', (run_id,))
-    items = select(run['challenge_id'],goal=run['intention'] or '',role=role) if items is None else items
+    if items is None:
+        marker = db.eval_mode(run_id)
+        items = (marker.get('experience_manifests', {}).get(role, []) if marker else
+                 select(run['challenge_id'],goal=run['intention'] or '',role=role))
     with db.transaction() as conn:
         return freeze_tx(conn, run_id, trial_id, boundary, items)
 
@@ -81,6 +84,11 @@ def for_trial(run_id, trial_id):
 
 
 def adopt_tx(conn, run_id, trial_id, declarations, source, declaration_id):
+    if db.eval_mode(run_id):
+        if declarations:
+            db.append_event_tx(conn, run_id, 'controller', 'evaluation.experience_write_rejected',
+                               {'operation': 'adopt', 'count': len(declarations)}, trial_id=trial_id)
+        return
     for declaration in declarations:
         row = conn.execute('SELECT * FROM experience_contexts WHERE id=? AND run_id=?',
                             (declaration['context_id'],run_id)).fetchone()

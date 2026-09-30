@@ -194,7 +194,10 @@ def _science_package(sealed: bytes) -> bytes:
 
 
 def evaluate(run_id: str, trial_id: str, sandbox_id: str,
-             operation_id: str, package_path: str | None = None) -> dict[str, Any]:
+             operation_id: str, package_path: str | None = None,
+             *, preflight: dict[str, Any] | None = None,
+             public_resource_zip: Path | None = None,
+             score_timeout: int = 120) -> dict[str, Any]:
     if not isinstance(operation_id, str) or not _OPERATION.fullmatch(operation_id):
         raise LocalScoreError('INVALID_OPERATION', '需要有界的稳定评分 operation_id')
     existing = db.query_one('SELECT * FROM local_scores WHERE sandbox_operation_id=?', (operation_id,))
@@ -203,7 +206,7 @@ def evaluate(run_id: str, trial_id: str, sandbox_id: str,
             raise LocalScoreError('OPERATION_CONFLICT', '评分 operation_id 已绑定其他 Run/Trial')
         return dict(existing) | {'deduplicated': True}
     run = db.query_one('SELECT challenge_id,current_trial_id,phase,gate FROM runs WHERE id=?', (run_id,))
-    if not run or run['current_trial_id'] != trial_id or run['phase'] != 'running' or run['gate'] != 'open':
+    if not run or run['current_trial_id'] != trial_id or run['phase'] not in ('running', 'eval_scoring') or run['gate'] != 'open':
         raise LocalScoreError('RUN_NOT_RUNNING', '本地评分需要当前运行中的 Trial')
     manifest = scorer_manifest(run['challenge_id'])
     sandbox = db.query_one('SELECT * FROM compute_sandboxes WHERE run_id=? AND sandbox_id=?',
@@ -211,7 +214,10 @@ def evaluate(run_id: str, trial_id: str, sandbox_id: str,
     if (not sandbox or sandbox['trial_id'] != trial_id or sandbox['status'] != 'active'
             or json.loads(sandbox['request_json']).get('image') != manifest['image']):
         raise LocalScoreError('SCORER_IMAGE_MISMATCH', '需要当前 Trial 在评分器声明镜像中的活跃沙箱')
-    check = mailboxes.preflight_submission(run_id, trial_id, package_path)
+    if preflight is not None and not db.eval_mode(run_id):
+        raise LocalScoreError('INVALID_ARGUMENT', '冻结预检仅供评测 Run 使用')
+    check = preflight if preflight is not None else mailboxes.preflight_submission(
+        run_id, trial_id, package_path)
     if check['error_code']:
         raise LocalScoreError(check['error_code'], '封存包未通过本地准入')
     sealed = check['sealed_bytes']
@@ -244,10 +250,36 @@ def evaluate(run_id: str, trial_id: str, sandbox_id: str,
         result = action()
         if result['status'] != 'completed':
             raise LocalScoreError('SCORE_EXECUTION_UNKNOWN', f'沙箱 {name} 阶段未确认完成')
+    resource_env = ''
+    if public_resource_zip is not None:
+        if not db.eval_mode(run_id):
+            raise LocalScoreError('INVALID_ARGUMENT', '公开评测数据只供评测 Run 使用')
+        staged_resource = stage / 'public_resource.zip'
+        resource = public_resource_zip.read_bytes()
+        if staged_resource.exists() and staged_resource.read_bytes() != resource:
+            raise LocalScoreError('OPERATION_CONFLICT', '公开资源与已冻结版本不一致')
+        if not staged_resource.exists():
+            staged_resource.write_bytes(resource)
+        transferred = sandboxes.transfer(run_id, 'write', sandbox_id,
+            remote + '/public_resource.zip', local_path=str(staged_resource),
+            operation_id=operation_id + '-resource')
+        if transferred['status'] != 'completed':
+            raise LocalScoreError('SCORE_EXECUTION_UNKNOWN', '公开资源传输未确认完成')
+        unpacked = sandboxes.execute(run_id, sandbox_id,
+            'cd ' + shlex.quote(remote) + ' && python3 -m zipfile -e public_resource.zip public',
+            120, operation_id + '-unpack')
+        if unpacked['status'] != 'completed':
+            raise LocalScoreError('SCORE_EXECUTION_UNKNOWN', '公开资源解压未确认完成')
+        resource_env = 'CS_MATCHGATE_INSTANCE_DIR=' + shlex.quote(remote + '/public/resources/instances') + ' '
+    dependency_command = ''
+    if public_resource_zip is not None and 'requirements.txt' in manifest['files']:
+        dependency_command = (' && python3 -m pip install --disable-pip-version-check'
+                              ' --no-input --no-cache-dir -r scorer/requirements.txt')
     command = ('cd ' + shlex.quote(remote) + ' && python3 -m zipfile -e scorer.zip scorer'
-               + ' && CS_SCORER_VERSION=' + shlex.quote(manifest['scorer_version'])
+               + dependency_command
+               + ' && ' + resource_env + 'CS_SCORER_VERSION=' + shlex.quote(manifest['scorer_version'])
                + ' python3 ' + shlex.quote('scorer/' + manifest['entrypoint']) + ' package.zip')
-    result = sandboxes.execute(run_id, sandbox_id, command, 120, operation_id + '-run')
+    result = sandboxes.execute(run_id, sandbox_id, command, score_timeout, operation_id + '-run')
     if result['status'] != 'completed':
         raise LocalScoreError('SCORE_EXECUTION_UNKNOWN', '沙箱评分执行未确认成功')
     science = _score_output(result, manifest['scorer_version'])

@@ -1,4 +1,4 @@
-"""CLI：uv run cyberscientist start|serve [--port N] [--mode demo|connected]"""
+"""CLI：start/serve and persistent local-only evaluation suites."""
 from __future__ import annotations
 
 import argparse
@@ -6,6 +6,7 @@ import json
 import subprocess
 import sys
 import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -86,8 +87,65 @@ def main() -> None:
     serve.add_argument("--mode", choices=["demo", "connected"], default=None)
     serve.add_argument("--brain-executable", default=None,
                        help="大脑 CLI 可执行文件路径（默认自动探测）")
+    evaluation = sub.add_parser('eval', help='运行或生成本地评测报告')
+    evaluation_sub = evaluation.add_subparsers(dest='eval_command', required=True)
+    eval_run = evaluation_sub.add_parser('run', help='启动一层评测')
+    eval_run.add_argument('--suite', choices=('fast', 'hard'), required=True)
+    eval_run.add_argument('--repeats', type=int, default=2)
+    eval_run.add_argument('--label', default='')
+    eval_report = evaluation_sub.add_parser('report', help='重建 Markdown 和 JSON 报告')
+    eval_report.add_argument('eval_id')
     args = parser.parse_args()
 
+    if args.command == 'eval':
+        if args.eval_command == 'report':
+            from . import db, evaluations
+            db.init_db()
+            try:
+                markdown, structured = evaluations.write_report(args.eval_id)
+            except evaluations.EvaluationError as exc:
+                parser.error(str(exc))
+            print(json.dumps({'markdown': str(markdown), 'json': str(structured)},
+                             ensure_ascii=False))
+            return
+        from . import config
+        settings = config.load_settings()
+        port = settings['app']['port']
+        root = f'http://127.0.0.1:{port}'
+        health = root + '/api/v1/health'
+        try:
+            urllib.request.urlopen(health, timeout=2).close()
+        except OSError:
+            # A detached backend keeps the evaluation progressing after the
+            # initiating shell closes. Its log remains local and ignored.
+            log_dir = config.WORKSPACE_ROOT / '.package-checks' / 'eval-server'
+            log_dir.mkdir(parents=True, exist_ok=True)
+            log_file = log_dir / (time.strftime('%Y%m%dT%H%M%SZ', time.gmtime()) + '.log')
+            with log_file.open('ab') as output:
+                subprocess.Popen([sys.executable, '-m', 'cyberscientist.cli', 'serve',
+                                  '--port', str(port)], cwd=config.WORKSPACE_ROOT,
+                                 stdout=output, stderr=subprocess.STDOUT,
+                                 start_new_session=True)
+            for _ in range(60):
+                try:
+                    urllib.request.urlopen(health, timeout=1).close()
+                    break
+                except OSError:
+                    time.sleep(.5)
+            else:
+                parser.error(f'后端未就绪；检查 {log_file}')
+        request = urllib.request.Request(root + '/api/v1/evals',
+            data=json.dumps({'suite': args.suite, 'repeats': args.repeats,
+                             'label': args.label}).encode(),
+            headers={'Content-Type': 'application/json'}, method='POST')
+        try:
+            with urllib.request.urlopen(request, timeout=180) as response:
+                created = json.load(response)
+        except urllib.error.HTTPError as exc:
+            parser.error(f'评测创建失败 HTTP {exc.code}: {exc.read(1000).decode(errors="replace")}')
+        print(json.dumps({'eval_id': created['id'], 'status': created['status'],
+                          'url': root + '/api/v1/evals/' + created['id']}, ensure_ascii=False))
+        return
     if args.command in ("start", "serve"):
         from . import config
         config.acquire_workspace_lock()

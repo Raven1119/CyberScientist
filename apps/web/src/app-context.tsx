@@ -3,7 +3,7 @@ import type { ReactNode } from 'react'
 import { api } from './api'
 import type { HealthInfo } from './types'
 
-export type Page = 'research' | 'experience' | 'mailbox' | 'settings'
+export type Page = 'research' | 'evaluation' | 'experience' | 'mailbox' | 'settings'
 
 interface AppState {
   page: Page

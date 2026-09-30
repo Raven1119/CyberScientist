@@ -142,7 +142,8 @@ def create(run_id: str, operation_id: str, request: dict) -> dict:
             return {'operation_id': operation_id, 'sandbox_id': prior['sandbox_id'],
                     'status': prior['status'], 'deduplicated': True}
         run = conn.execute('SELECT * FROM runs WHERE id=?', (run_id,)).fetchone()
-        if not run or run['mode'] != 'connected' or run['phase'] != 'running' or run['gate'] != 'open' or not run['current_trial_id']:
+        eval_scoring = (run and run['phase'] == 'eval_scoring' and db.eval_mode(run_id))
+        if not run or run['mode'] != 'connected' or (run['phase'] != 'running' and not eval_scoring) or run['gate'] != 'open' or not run['current_trial_id']:
             raise compute.ComputeError('RUN_NOT_RUNNING', 'Run 未运行或研究门禁关闭，不能创建沙箱')
         auth = conn.execute('SELECT * FROM authorizations WHERE id=?', (run['authorization_id'],)).fetchone()
         if not auth or auth['max_sandboxes'] <= 0 or auth['max_sandbox_minutes'] <= 0:

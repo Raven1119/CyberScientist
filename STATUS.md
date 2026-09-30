@@ -1,6 +1,8 @@
-# 当前状态（2026-09-30）
+# 当前状态（2026-10-01）
 
 ## 已实现
+
+- CS-UP-05 W0–W2：设计约束已同步；目录收录 abc、FigQA-0177/0178、Paired-block Lean、Matchgate/SWAP，新增两道科学评分器。评测可用 `cyberscientist eval run --suite fast|hard --repeats 2` 启动，SQLite 持久队列按现有 Run 容量创建 connected Run，冻结经验、模型、监督和 skills 快照；评测 Run 禁止平台提交与经验写入，结束前封存、本地科学评分和公开 v6 轨迹诊断。`eval report <eval_id>` 重建 Markdown/JSON；前端评测页显示进度、分数区间与状态。原始评测包和回执仍留本机忽略目录。
 
 - CS-UP-04：W1 为 63 份历史原生轨迹生成固定 CLI、单条件补丁 CLI 和原生直读三种转换与哈希；W2 用公开 v6 原函数对照本机 63 份 v8 可见回执及 71 份旧组上限，逐代码保留不可观察与两种未列出解释。W3 在封存和平台选行后加入离线确定性诊断，只有 N06/N08/N09/N11/N14 的条件达标项形成真实补救建议；失败返回 unavailable，不改变既有准入。前端展示全量详情，提交事件与同 Trial 审阅帧只传达达标摘要；skill 加入对应证据补救动作。公开 MIT 源码与许可证按固定哈希 vendor；Playground CLI 只复制临时补丁，不改全局安装。见 `docs/TRACE_CONVERSION_VARIANTS_CS-UP-04.md`、`docs/TRACE_CHECKLIST_V6_V8_AGREEMENT.md` 和 `docs/DECISIONS.md` 的 CS-UP-04 节。
 - 本轮相邻缺陷按严重程度修复：高，项目旧 H7 轨迹 43 组配对工具事件被 v6 误读成 0 调用/43 结果，投影补真实适配器来源字段，旧包只在临时诊断输入中补标签，解析配对数不符则 unavailable；高，执行器包预检工具原可收到只应进入前端详情的低一致性代码，现输出限定为达标建议及可归因上限；中，包路径变更时前端旧预检哈希与结果未清除，现清除并拒收迟到响应；中，审阅帧可能混入无充分历史一致性代码的上限或其他 Trial 的诊断，现按达标归因和 Trial 过滤。
@@ -57,6 +59,8 @@
 - CS-SB-01 稀疏输入与唤醒修复：可选短研究摘要独立存储；新 Run 普通检查点不唤醒 shadow，Job/Trial 研究级重复状态按 ID 去重。详见 `docs/SPARSE_BRAIN_INPUT_WAKE_FIX_2026-09-24.md`。
 
 ## 已实际验证
+
+- CS-UP-05 W2：迁移前 SQLite 已备份到本机忽略目录 `.package-checks/cs-up-05/pre-eval-migration.sqlite`（22,241,280 B），原库连续两次 `db.init_db()` 后 `eval_runs`、`eval_results` 均存在且初始 0 行。fake 两题×两次验收覆盖容量、重启续跑、去重、报告与零提交/零经验修订；评测提交和经验写入拒绝会记事件。`.venv/bin/pytest -q`：622 passed、2 skipped；`PATH=/home/wmywb/.local/bin:$PATH npm --prefix apps/web test -- --run`：40 passed；同一 PATH 下 `npm --prefix apps/web run build`、`.venv/bin/python -m compileall -q src tests`、`git diff --check` 通过。W2 未启动真实模型、Job、沙箱或 Attempt。
 
 - CS-UP-04：固定源码 SHA-256 `afafd718c1eca6c25fa81231905988b436ff03684581d0410f8cc549599dfa46`、CLI 原文件 SHA-256 `d231fefe0f11a481866aeae399906fc587e75d95c0cf08ff405b3f6f7ee48b03`、补丁副本 SHA-256 `52b85b55e038e383d0350b153b648c45269e5ff9a98edb5b5454d181f7d5c065` 均核对。63/63 三种转换成功；E008 原转换仅 1 条 error、修复转换保留 27 事件与 10 组配对。公开 v6 对可见 v8 代码的闭世界不一致为原 CLI 3/818、修复 CLI 10/819；主集和 71 份旧组未见 v6 上限被实际轨迹分超过，此项不证明 v8 与 v6 上限相同。E008 原转换触发 N04/cap20，修复版无 N04；E010 触发 N09，E011 不触发 N09。只读 H7 abc 已封存包 111 行、43 组工具配对，经临时适配器标签的本地诊断仍识别 43 组；原包未修改。
 - CS-UP-04 回归：`.venv/bin/pytest -q` 为 576 passed、2 skipped（既有回环监听限制）；定向提交/封存回归 130 passed；`PATH="$HOME/.local/bin:$PATH" npm --prefix apps/web test -- --run` 为 39 passed；前端 TypeScript/Vite 构建、`.venv/bin/python -m compileall -q src checks tests`、`node --check` 和 `git diff --check` 通过。转换与对照的原始资料仅留本机忽略目录。本轮没有模型调用、新科研 Run、Job、沙箱、Attempt 或平台账号操作。
@@ -155,6 +159,8 @@
 
 ## 尚未验证
 
+- CS-UP-05 W2 的真实模型、Bohrium 沙箱/Job、Matchgate 全规模计时和 Lean 项目准备尚未验收；这些属于 W3 基线任务。公开 v6 轨迹检查表仅对历史 v8 可见代码作条件比较，不能给出官方展示分保证。Bohrium 金额无可靠接口时记录 unknown。
+
 - CS-UP-04 没有取得完整 v8 评分器、服务端最终归一化轨迹或模型裁判值；条件分级与本地上限不能当作新题目的官方得分保证。只有现有 Linux CLI 0.1.33 与 Node 22 的本机离线诊断已测；其他安装环境的打包轮子、CLI 版本和真实平台新包尚未验证。诊断缺少固定依赖或匹配哈希时返回 unavailable。
 
 - 第二轮修复只验证本地应用、隔离 Demo 及受控异步/失败回归；未发起真实模型、科学 Run、Bohrium Job、沙箱或 Attempt。真实平台中断的长时间行为未新增验收。上一轮后台标签页偶发停滞的唯一原因仍未判定，不能由本轮 SSE 修复倒推出其原因。
@@ -192,6 +198,8 @@
 - CS-SB-01 当轮未重跑 CLI 关闭测试，也未验证未经包装的完整 pytest；该轮未修改 UI，故未重跑前端测试与构建。本轮 CS-EV-01 的前端测试与构建结果见上方。
 
 ## 阻塞项
+
+- CS-UP-05 W2 代码与 fake 流程无已知阻塞；W3 真实评分是否能取得各题科学分，须由授权内的真实 Run 核实。未取得结果时保持 unknown，不补造分数。
 
 - CS-UP-04 本地离线诊断与提交准入无新增阻塞；完整 v8 判定可识别性仍受上节缺失的私有评分与归一化输入限制，不影响 advisory-only 运行。
 

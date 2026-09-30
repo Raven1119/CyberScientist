@@ -117,6 +117,11 @@ h3 { font-weight: 500; }
 .empty strong { display: block; font-weight: 500; color: var(--ink); margin-bottom: 8px; }
 .empty p { margin: 0; }
 .page-head + .empty { margin-bottom: 28px; padding: 32px; border-top: 2px solid var(--ink); }
+.evaluation-page .actions { margin: 18px 0; }
+.evaluation-page select { margin: 12px; max-width: 100%; }
+.evaluation-table-wrap { overflow-x: auto; margin: 18px 0; border: 1px solid var(--line); }
+.evaluation-table-wrap table { border-collapse: collapse; min-width: 980px; width: 100%; font-size: 12px; }
+.evaluation-table-wrap th, .evaluation-table-wrap td { padding: 10px; border-bottom: 1px solid var(--line); text-align: left; }
 .loading-state { display: flex; align-items: center; gap: 10px; padding: 16px 0; color: var(--muted); font-size: 13px; }
 .loading-mark { font-family: var(--ril-font-mono); border: 1px solid var(--line); padding: 0 7px; letter-spacing: 2px; }
 .divider { border-top: 1px solid var(--line); margin: 24px 0; }

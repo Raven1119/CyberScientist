@@ -36,6 +36,14 @@ def _platform() -> MailboxPlatform:
     return get_platform(config.load_settings()["mailbox"]["platform"])
 
 
+def _reject_eval_submission(run_id: str, operation: str) -> None:
+    """The zero-submission evaluation boundary is independent of authorization."""
+    if db.eval_mode(run_id):
+        db.append_event(run_id, 'controller', 'evaluation.submission_rejected',
+                        {'operation': operation})
+        raise MailboxError('EVAL_SUBMISSION_FORBIDDEN', '评测 Run 禁止平台提交')
+
+
 def _store_secret(secret_id: str, value: str) -> str:
     config.update_secret(secret_id, value)
     return f"local:{secret_id}"
@@ -685,6 +693,7 @@ def submit_experiment(run_id: str, trial_id: str | None,
                       allow_indeterminate_admission: bool = False,
                       prediction_md: str | None = None, *,
                       variant_context: dict[str, Any] | None = None) -> dict[str, Any]:
+    _reject_eval_submission(run_id, 'experiment')
     if not operation_id:
         raise MailboxError("INVALID_MESSAGE", "缺少 operation_id（幂等键）")
     if prediction_md is not None and (not isinstance(prediction_md,str) or
@@ -793,6 +802,7 @@ def submit_trace_variant(source_submission_id: str, operation_id: str,
     if not source or source['is_harvest'] or source['score_confidence'] != 'confirmed':
         raise MailboxError('INVALID_STATE', '轨迹变体来源必须是已确认评分的实验提交')
     run_id, trial_id = source['run_id'], source['trial_id']
+    _reject_eval_submission(run_id, 'trace_variant')
     if not trial_id or not operation_id:
         raise MailboxError('INVALID_MESSAGE', '轨迹变体需要来源 Trial 与 operation_id')
     if projection_only:
@@ -911,6 +921,7 @@ def submit_exact_replay(source_submission_id: str, operation_id: str,
     if not prediction.strip():
         raise MailboxError('INVALID_MESSAGE', '预测不能只包含密钥')
     run_id, trial_id = source['run_id'], source['trial_id']
+    _reject_eval_submission(run_id, 'exact_replay')
     if not trial_id:
         raise MailboxError('INVALID_STATE', '重复提交来源缺少 Trial')
     frozen_path = (config.WORKSPACE_DIR / source['package_path']).resolve()
@@ -1266,6 +1277,7 @@ def harvest_submit(submission_id: str, operation_id: str,
         " WHERE s.id=?", (submission_id,))
     if not src:
         raise MailboxError("NOT_FOUND", f"来源提交不存在: {submission_id}")
+    _reject_eval_submission(src['run_id'], 'harvest')
     if src["mailbox_role"] != "experiment" or src["is_harvest"]:
         raise MailboxError("INVALID_STATE", "收割来源必须是实验邮箱的提交")
     if src["status"] != "submitted" or src["score_status"] != "scored":
