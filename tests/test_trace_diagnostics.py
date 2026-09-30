@@ -12,6 +12,21 @@ from cyberscientist import config, db, mailboxes, observation, trace_diagnostics
 from test_trace_narrative import _fixture
 
 
+@pytest.fixture
+def pinned_diagnostic_tools():
+    """Historical integration cases require the exact installed offline tools."""
+    for name in ("node", "playground"):
+        try:
+            binary = trace_diagnostics._binary(name)
+        except RuntimeError as exc:
+            pytest.skip(str(exc))
+        if name == "playground":
+            if trace_diagnostics._sha(binary.read_bytes()) != trace_diagnostics.CLI_SHA:
+                pytest.skip("installed Playground CLI does not match pinned SHA")
+            if not binary.with_name("task-authoring.js").is_file():
+                pytest.skip("pinned Playground CLI companion is not installed")
+
+
 def _zip(rows: list[dict]) -> bytes:
     stream = io.BytesIO()
     with zipfile.ZipFile(stream, "w") as archive:
@@ -38,7 +53,7 @@ def test_advice_only_requests_real_work():
     assert all(item["code"] != "N04_TRACE_SCHEMA_INVALID" for item in narrowed["advisories"])
 
 
-def test_legacy_projected_pairs_survive_conversion_and_public_parser():
+def test_legacy_projected_pairs_survive_conversion_and_public_parser(pinned_diagnostic_tools):
     rows = [
         {"step_type": "tool_call", "tool_call_id": "a", "cs_ref": "run#1",
          "title": "real command", "timestamp": "2026-09-30T00:00:00Z"},
@@ -55,7 +70,7 @@ def test_legacy_projected_pairs_survive_conversion_and_public_parser():
     assert result["adapter_labels_added"] == 2
 
 
-def test_diagnostic_failure_does_not_change_submission_gate(monkeypatch):
+def test_diagnostic_failure_does_not_change_submission_gate(monkeypatch, pinned_diagnostic_tools):
     run_id, trial_id, *_ = _fixture()
     monkeypatch.setattr(mailboxes.arm_admission, "check",
                         lambda *_: {"verdict": "admitted", "signals": {}})
@@ -103,7 +118,7 @@ def test_submission_review_frame_uses_durable_diagnostic_summary(monkeypatch):
     assert frame["submission_summary"]["submission_id"] == submission["id"]
 
 
-def test_historical_e008_e010_e011_only_when_local_evidence_available():
+def test_historical_e008_e010_e011_only_when_local_evidence_available(pinned_diagnostic_tools):
     path = Path(".package-checks/cs-up-04/conversions.jsonl")
     if not path.is_file():
         pytest.skip("private historical conversion evidence is not installed")
@@ -127,7 +142,7 @@ def test_historical_e008_e010_e011_only_when_local_evidence_available():
     assert "N09_NO_EXECUTION_EVIDENCE" not in codes(diagnostic("S33", "fix"))
 
 
-def test_h7_abc_sealed_trace_pairs_when_local_evidence_available():
+def test_h7_abc_sealed_trace_pairs_when_local_evidence_available(pinned_diagnostic_tools):
     path = Path("workspace/submissions/sub_2d30d5b21d/package.zip")
     if not path.is_file():
         pytest.skip("private H7 ARM bundle is not installed")
