@@ -70,3 +70,32 @@ def test_paired_block_runtime_stages_only_trusted_project(tmp_path, monkeypatch)
         assert set(archive.getnames()) == {'PairCore.lean', 'lake-manifest.json'}
     assert all('labels.json' not in command and 'answer.lean' not in command
                for command in commands)
+    assert any('lake --no-cache build' in command and 'GIT_ALLOW_PROTOCOL=file' in command
+               and 'MATHLIB_NO_CACHE_ON_UPDATE=1' in command for command in commands)
+
+
+@pytest.mark.parametrize('status', ['failed', 'unknown'])
+def test_prebuilt_project_build_failure_is_not_reported_ready(tmp_path, monkeypatch, status):
+    from cyberscientist import config, runtime_environments
+    monkeypatch.setattr(config, 'WORKSPACE_ROOT', tmp_path)
+    source = tmp_path / 'public-project'
+    source.mkdir()
+    raw = b'public synthetic module'
+    (source/'Core.lean').write_bytes(raw)
+    monkeypatch.setattr(runtime_environments, 'resolve', lambda _: {
+        'image': 'registry.example/prebuilt:fixed', 'identity': {},
+        'descriptor_path': '/opt/environment.json', 'mathlib_root': '/opt/mathlib',
+        'lean_bin': '/opt/lean/bin'})
+    monkeypatch.setattr(db, 'query_one', lambda *args: {
+        'request_json': '{"image":"registry.example/prebuilt:fixed"}'})
+    calls = []
+    def execute(*args):
+        calls.append(args[2])
+        return {'status': status if 'lake --no-cache build' in args[2] else 'completed'}
+    monkeypatch.setattr(lean_runtime.sandboxes, 'execute', execute)
+    monkeypatch.setattr(lean_runtime.sandboxes, 'transfer', lambda *args, **kwargs: {'status':'completed'})
+    with pytest.raises(lean_runtime.LeanRuntimeUnavailable, match='project-build'):
+        lean_runtime.prepare('run-synthetic','sandbox-synthetic',tmp_path/'stage','op-synthetic',
+            project={'path':'public-project','files':{'Core.lean':hashlib.sha256(raw).hexdigest()}},
+            environment_id='synthetic')
+    assert any('lake --no-cache build' in command for command in calls)

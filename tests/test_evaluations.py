@@ -151,7 +151,7 @@ def test_report_refreshes_sandbox_minutes_after_cleanup(monkeypatch, tmp_path):
     started = datetime.now(timezone.utc) - timedelta(minutes=3)
     db.execute('INSERT INTO compute_sandboxes(operation_id,run_id,trial_id,sandbox_id,'
                'request_json,status,created_at,expires_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)',
-               ('eval-cost-check', rid, trial_id, 'sb-cost', '{}', 'deleting',
+               ('eval-cost-check', rid, trial_id, 'sb-cost', '{"cpu":"4c8g"}', 'deleting',
                 started.isoformat(), (started + timedelta(minutes=10)).isoformat(), db.utcnow()))
     before = evaluations.report(created['id'])['evaluation']['results'][0]['result']
     assert before['sandbox_minutes_status'] == 'lower_bound_pending_cleanup'
@@ -169,6 +169,38 @@ def test_report_refreshes_sandbox_minutes_after_cleanup(monkeypatch, tmp_path):
                 db.utcnow(), db.utcnow(), started.isoformat()))
     assert evaluations.report(created['id'])['evaluation']['results'][0]['result'][
         'sandbox_minutes'] == 3.5
+    from cyberscientist import sandbox_costs
+    sandbox_costs.record_prices(rid, {'ok': True, 'stdout': json.dumps({'ok': True,
+        'data': {'items': [{'class': 'cpu', 'cpu': '4', 'memory': '8Gi',
+                           'sku_id': 4690, 'sku_name': 'c4_m8_cpu', 'price': '0.80 RMB/h'}]}})})
+    markdown, structured = evaluations.write_report(created['id'])
+    assert 'sandbox_estimate=0.0467 CNY' in markdown.read_text()
+    assert 'not a bill' in markdown.read_text()
+    report = json.loads(structured.read_text())
+    assert report['evaluation']['results'][0]['result']['bohrium_cost_details'][
+        'sandbox_estimate']['amount'] == '0.0467'
+
+
+def test_evaluation_price_query_is_off_loop_and_local_finalization_is_offline(monkeypatch, tmp_path):
+    import threading
+    from cyberscientist import sandbox_costs
+    _catalog(monkeypatch, tmp_path)
+    monkeypatch.setattr(evaluations, '_score_run', _fake_score)
+    main_thread = threading.get_ident()
+    queried = []
+    def refresh(rid):
+        assert threading.get_ident() != main_thread
+        queried.append(rid)
+        return {'status': 'unknown'}
+    monkeypatch.setattr(sandbox_costs, 'refresh', refresh)
+    created = evaluations.create_evaluation('fast', 1, 'price-io')
+    controller = FakeController()
+    for _ in range(4):
+        asyncio.run(evaluations.advance(controller))
+    assert len(queried) == 2
+    row = evaluations.get_evaluation(created['id'])['results'][0]
+    monkeypatch.setattr(sandbox_costs, 'refresh', lambda *args: pytest.fail('local finalize is offline'))
+    evaluations._finish_result(row['id'], row['run_id'])
 
 
 def test_report_distinguishes_job_reservations_from_platform_jobs(monkeypatch, tmp_path):

@@ -19,7 +19,8 @@ describe('evaluation page', () => {
             wall_seconds: 42, job_count: 2, job_unknown_count: 1,
             sandbox_minutes: 3.5, sandbox_minutes_status: 'confirmed',
             bohrium_amount: 'unknown', final_status: 'finished',
-            bohrium_cost_details: { job_native_amount_total: '0.12', currency: null, total_amount: null } } },
+            bohrium_cost_details: { job_native_amount_total: '0.12', currency: null, total_amount: null,
+              sandbox_estimate: { amount: '0.0400', currency: 'CNY', status: 'estimated_partial', unpriced_count: 1 } } } },
       ] })
     post.mockResolvedValue({ id: 'eval_two', suite: 'hard', status: 'running', results: [] })
     render(<EvaluationPage />)
@@ -28,6 +29,7 @@ describe('evaluation page', () => {
     expect(screen.getByText('2 (+1 unknown)')).toBeTruthy()
     expect(screen.getByText('3.5')).toBeTruthy()
     expect(screen.getByText(/Job 原始金额 0.12（币种未确认，非总费用）/)).toBeTruthy()
+    expect(screen.getByText(/沙箱估算 0.0400 CNY（未定价 1 项，非账单）/)).toBeTruthy()
     expect(screen.getByText(/只做本地科学评分/)).toBeTruthy()
     await userEvent.setup().click(screen.getByRole('button', { name: '运行困难层' }))
     expect(post).toHaveBeenCalledWith('/api/v1/evals', { suite: 'hard', repeats: 2, label: '' })

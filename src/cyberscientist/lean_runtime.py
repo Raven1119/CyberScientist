@@ -98,11 +98,21 @@ def prepare(run_id: str, sandbox_id: str, stage: Path, operation_id: str,
              "for n in e['packages']}; roots['mathlib']=pathlib.Path(" + repr(environment['mathlib_root']) + "); "
              "assert all(e['packages'][x['name']]==x['rev'] for x in m['packages']); "
              "q=p/'.lake/packages'; q.mkdir(parents=True,exist_ok=True); "
+             "assert all(roots[x['name']].is_dir() for x in m['packages']); "
              "[(q/x['name']).symlink_to(roots[x['name']],target_is_directory=True) "
              "for x in m['packages'] if not (q/x['name']).exists()]")
     command = ('tar -xzf ' + shlex.quote(remote + '/project.tar.gz') + ' -C ' + shlex.quote(remote)
                + ' && python3 -c ' + shlex.quote(setup))
     _completed(sandboxes.execute(run_id, sandbox_id, command, 60,
                                 operation_id + '-project-link'), 'project-link')
+    build_env = ('PATH=' + shlex.quote(environment['lean_bin']) + ':$PATH '
+                 'GIT_ALLOW_PROTOCOL=file MATHLIB_NO_CACHE_ON_UPDATE=1 ')
+    # Build the trusted public project before any candidate is loaded. Lake's
+    # versioned --no-cache flag prevents automatic remote cache acquisition.
+    # Dependencies must already exist above; Git can only use local protocols.
+    command = ('cd ' + shlex.quote(remote) + ' && ' + build_env
+               + 'lake --no-cache build 1>&2')
+    _completed(sandboxes.execute(run_id, sandbox_id, command, 600,
+                                operation_id + '-project-build'), 'project-build')
     return ('PATH=' + shlex.quote(environment['lean_bin']) + ':$PATH '
             'CS_LEAN_PROJECT=' + shlex.quote(remote) + ' ')

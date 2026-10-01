@@ -265,6 +265,7 @@ def _limits(suite: str) -> dict[str, int]:
 
 async def advance(controller: Any) -> None:
     """One idempotent scheduling pass, called periodically by the backend."""
+    from . import sandbox_costs
     for evaluation in db.query("SELECT * FROM eval_runs WHERE status='running' ORDER BY created_at"):
         eid = evaluation['id']
         snapshot = json.loads(evaluation['config_json'])
@@ -326,10 +327,12 @@ async def advance(controller: Any) -> None:
                 db.execute("UPDATE eval_results SET status='scoring',updated_at=? WHERE id=?",
                            (db.utcnow(), result['id']))
                 score_status, score_reason = await asyncio.to_thread(_score_run, rid, result['id'])
+                await asyncio.to_thread(sandbox_costs.refresh, rid)
                 controller._finalize_run(rid, run['end_reason'] or 'evaluation completed')
                 _finish_result(result['id'], rid, scoring_status=score_status,
                                scoring_reason=score_reason)
             elif run['phase'] in TERMINAL:
+                await asyncio.to_thread(sandbox_costs.refresh, rid)
                 _finish_result(result['id'], rid)
             else:
                 db.execute('UPDATE eval_results SET status=?,updated_at=? WHERE id=?',
@@ -790,6 +793,8 @@ def write_report(eval_id: str) -> tuple[Path, Path]:
     lines.extend(['', '## Run details', ''])
     for row in data['evaluation']['results']:
         item = row['result'] or {}
+        cost = item.get('bohrium_cost_details') or {}
+        estimate = cost.get('sandbox_estimate') or {}
         reason = item.get('science_reason') or item.get('failure_reason')
         reason_text = observation.strip_secrets(str(reason)).replace('\n', ' ')[:180] if reason else 'none'
         lines.append(f"- {row['run_id'] or 'pending'}: source={shown(item.get('challenge_source'))}; "
@@ -797,7 +802,12 @@ def write_report(eval_id: str) -> tuple[Path, Path]:
                      f"qualified_codes={item.get('trace_qualified_codes') or []}; "
                      f"brain_tokens={shown(item.get('brain_tokens'))}; "
                      f"executor_tokens={shown(item.get('executor_tokens'))}; "
-                     f"sandbox_minutes_status={shown(item.get('sandbox_minutes_status'))}")
+                     f"sandbox_minutes_status={shown(item.get('sandbox_minutes_status'))}; "
+                     f"sandbox_estimate={shown(estimate.get('amount'))} "
+                     f"{shown(estimate.get('currency'))} "
+                     f"(current rates, not a bill, unpriced={shown(estimate.get('unpriced_count'))}); "
+                     f"job_native_amount={shown(cost.get('job_native_amount_total'))} "
+                     '(currency unknown, not total cost)')
     lines.extend(['', '## Per-challenge statistics', ''])
     for cid, stats in data['challenge_stats'].items():
         lines.append(f"- {cid}: observed_mean={shown(stats['science_mean'])}, "

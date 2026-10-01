@@ -2,6 +2,8 @@
 
 ## 已实现
 
+- CS-UP-06 W1 接续：固定公开项目在预置 Lean 环境中先离线构建，失败/unknown 不进入评分；模板沙箱实际规格独立留痕，回执逐字符串脱敏。接入沙箱自身公开报价与生命周期估算，前端、JSON/Markdown 评测报告均单独显示估算及未定价项，不混算币种未知的 Job cost。
+
 - CS-UP-06 W2 停跑记录：`docs/EVAL_V2_2026-10.md` 列出 0/10、逐题 v1 值/未运行 v2、模型清单门槛、资源额度及 F3/F4 验收缺项；没有把未执行记成评测通过。
 
 - CS-UP-06 W1：最终包分项最佳候选对账、明确确认事件、同科学输入/评分器评分复用、双路径契约、跨审阅授权事实、题面 objective、题目级评测模型冻结和 JSON 脱敏修复。每项均有回归测试；没有调整题目科研方法或停止策略。固定 Lean 配方/已验证环境注册表及 256 MiB Job 创建前提示已接入，但配方尚无可用镜像。只读 Job 分页保留局部成功、预约精确匹配和平台原始费用投影已接入，前端显示费用缺项。详情见 DECISIONS 的 CS-UP-06。
@@ -67,7 +69,9 @@
 
 ## 已实际验证
 
-- CS-UP-06 W1 最终检查：`.venv/bin/pytest -q` 664 passed、2 skipped（现有回环监听限制）；`npm --prefix apps/web test -- --run` 40 passed，`npm --prefix apps/web run build`、`.venv/bin/python -m compileall -q src tests`、`git diff --check` 通过。此前一轮 661 passed 后新增暂停竞态、诊断数值排除和冻结包防篡改测试，最终全套已重跑。新 fake 场景覆盖分项退步/确认、缓存无沙箱、输入变化失效、路径冲突、授权事实、目标、脱敏、分页部分失败、保留 unknown、预置环境不可用和大输入创建前提示。
+- CS-UP-06 W1 接续最终检查：`.venv/bin/pytest -q` 677 passed、2 skipped；`npm --prefix apps/web test -- --run` 40 passed，`npm --prefix apps/web run build`、compileall、diff --check 通过（Node/npm 使用用户已安装 Linux 路径）。两层 `eval report` 实际重生成，科学分不变；九个有沙箱的 v1 Run 按当前沙箱公开报价与账本生命周期估算合计0.4065 CNY，标注非账单、不与 Job 未知币种金额混加。只读原生 SKU 报价和模板硬件源哈希均保留本机，公开文档只有脱敏统计。
+
+- CS-UP-06 W1 首轮检查：`.venv/bin/pytest -q` 664 passed、2 skipped（现有回环监听限制）；`npm --prefix apps/web test -- --run` 40 passed，`npm --prefix apps/web run build`、`.venv/bin/python -m compileall -q src tests`、`git diff --check` 通过。此前一轮 661 passed 后新增暂停竞态、诊断数值排除和冻结包防篡改测试，最终全套已重跑。新 fake 场景覆盖分项退步/确认、缓存无沙箱、输入变化失效、路径冲突、授权事实、目标、脱敏、分页部分失败、保留 unknown、预置环境不可用和大输入创建前提示。
 
 - CS-UP-06 W1：本机 SQLite 一致备份后新增 science_input_sha256 列和 runtime_environments 表，两次 init_db 幂等；已从真实只读 Job 列表核对 v1 十个已知 Job 的 cost 字段。Lean #1588 和 Matchgate 第一轮 #1358 记录两个无 ID 预约仍 unknown，未重发。现有两个 eval report 命令已实际从数据库重建含费用缺项的本机报告；原科学分未改变。
 - CS-UP-06 W1 外部前置：镜像 Dockerfile 检查成功；整数 projectId 创建请求收到 code 148888/rpc error、没有镜像 ID。新主机私有列表 total=0；旧主机返回 401/code 2000。官方资源价格查询返回 HTTP 400/code 148888，没有取得单价。均只记录真实观察，不把 HTTP 成功当资源创建成功。
@@ -176,10 +180,10 @@
 
 ## 尚未验证
 
-- CS-UP-06 F3：新预置环境两次沙箱 + 两次 CPU Job 的无下载构建，以及已验证历史证明包重评分，均未执行。F4 仅有 Job cost 原始字段；币种、沙箱费率、unknown 预约费用和总账单/估算金额尚未确认。
+- CS-UP-06 F3：新预置环境两次沙箱 + 两次 CPU Job 的无下载构建，以及已验证历史证明包重评分，均未执行。F4 已取得当前沙箱公开费率和有来源估算，但历史单价、Job cost 币种、两个 unknown 预约费用与实际总账单尚未确认。
 - CS-UP-06 W2：10 个目标模型评测 Run 均未启动，不能判断修复后的科学能力、路径 unknown 是否消除或其他旧缺陷的真实运行复发率。
 
-- CS-UP-06 W1/W2 尚未实施或启动；W1 验证额度及 W2 两层预算均未使用。当前配置的原生 Codex 0.155.1 完整 `model/list(includeHidden=true, limit=100)` 返回 9 个模型，无 `gpt-6.1-sol`；零模型 turn，原始元数据留本机。继续 W1，在准确模型可用性未成立前不启动 W2，不替换其他模型。
+- CS-UP-06 W1 应用代码已实施、真实环境验收未完成；新 Job/科学沙箱/研究 Run 额度和 W2 两层预算未使用。当前配置的原生 Codex 0.155.1 完整 `model/list(includeHidden=true, limit=100)` 返回 9 个模型，无 `gpt-6.1-sol`；用户本地 PATH 候选是较旧的 0.148.0-alpha.15，不据此声称目标可用。零模型 turn，原始元数据留本机。准确模型可用性未成立前不启动 W2，不替换模型。
 
 - CS-UP-05 W2 的真实模型、Bohrium 沙箱/Job、Matchgate 全规模计时和 Lean 项目准备尚未验收；这些属于 W3 基线任务。公开 v6 轨迹检查表仅对历史 v8 可见代码作条件比较，不能给出官方展示分保证。Bohrium 金额无可靠接口时记录 unknown。
 
@@ -222,7 +226,7 @@
 ## 阻塞项
 
 - CS-UP-06 F3：唯一私有镜像请求无 ID 且返回 rpc error，创建结果 unknown，占用本卡唯一环境资源预约；未增加资源重试、数据集或开发节点。预置环境不可用于验收；当前镜像配方不能标为真实可用。
-- CS-UP-06 F4 完整费用：只读官方价格接口失败，没有可核实的沙箱单价/总账单，不编造估算。
+- CS-UP-06 F4 实际总账单仍 unknown；已有当前沙箱公开单价的明确标注估算，Job cost 币种及两个无 ID 预约无法判定，不把局部估算当完整金额。
 
 - CS-UP-06 W2：当前配置的 Codex 原生模型列表没有任务卡要求的 `gpt-6.1-sol`。按用户“模型不可用时完成 W0–W1、不跑 W2”的边界保留此项，不将 `gpt-6-sol` 或 Astra 作为替代。
 

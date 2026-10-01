@@ -150,6 +150,45 @@ def test_invalid_cpu_is_rejected_before_remote_create(run):
                         ('bad-cpu',)) is None
 
 
+def test_template_create_preserves_native_hardware_after_delete(run, monkeypatch):
+    _, rid, _, _, _ = run
+    original = compute._native
+    def native(args, **kwargs):
+        if args[:2] == ['sandbox', 'create']:
+            return {'ok': True, 'exit_code': 0, 'stdout': json.dumps({'ok': True,
+                'data': {'sandboxID': 'fixture--box-001', 'cpuCount': 2,
+                         'memoryMB': 4096, 'gpuCount': 0}})}
+        return original(args, **kwargs)
+    monkeypatch.setattr(compute, '_native', native)
+    sid = sandboxes.create(rid, 'observed-machine', {'timeout': 60, 'template': 'fixture'})['sandbox_id']
+    sandboxes.delete(rid, sid)
+    event = db.query_one("SELECT payload FROM events WHERE run_id=?"
+                         " AND type='sandbox.resources_observed'", (rid,))
+    assert event
+    payload = json.loads(event['payload'])
+    assert payload['resources'] == {'cpu': '2c4g', 'gpu_count': 0}
+    assert payload['operation_id'] == 'observed-machine'
+    assert payload['sandbox_id'] == sid
+
+
+@pytest.mark.parametrize('data', [
+    {'sandboxID': 'other-box', 'cpuCount': 2, 'memoryMB': 4096},
+    {'sandboxID': 'fixture--box-001', 'cpuCount': True, 'memoryMB': 4096},
+    {'sandboxID': 'fixture--box-001', 'cpuCount': 2, 'memoryMB': 4097},
+])
+def test_resource_facts_reject_unbound_or_unusable_native_hardware(data):
+    receipt = {'ok': True, 'stdout': json.dumps({'ok': True, 'data': data})}
+    assert sandboxes.observed_resources(receipt, 'fixture--box-001') == {}
+
+
+def test_sandbox_receipt_redacts_before_encoding_escaped_secret(monkeypatch):
+    secret = 'synthetic-key-with-"quotes"'
+    monkeypatch.setattr(config, 'load_secrets', lambda: {'synthetic': secret})
+    result = sandboxes._receipt({'ok': True, 'stdout': 'reply "value" ' + secret})
+    assert secret not in result['stdout']
+    assert 'reply "value"' in result['stdout']
+
+
 def test_rejected_create_request_id_miss_releases_reservation(run,monkeypatch):
     _,rid,_,calls,_=run
     def native(args,**kwargs):

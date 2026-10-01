@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from . import compute, config, db
-from .bohr_proxy import redact
+from .bohr_proxy import redact_value
 
 LIVE = ('creating', 'active', 'unknown', 'deleting')
 TERMINAL_RUN = ('finished', 'failed', 'cancelled')
@@ -26,7 +26,7 @@ def _json(value: Any) -> str:
 
 def _clean(value: Any) -> Any:
     secrets = list(config.load_secrets().values())
-    return json.loads(redact(_json(value), secrets))
+    return redact_value(value, secrets)
 
 
 def _receipt(value: dict) -> dict:
@@ -60,6 +60,28 @@ def _sandbox_id(value: Any) -> str | None:
             if isinstance(candidate, str) and re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]{2,199}', candidate):
                 return candidate
     return None
+
+
+def observed_resources(receipt: dict, sandbox_id: str) -> dict:
+    """Project native hardware only when bound to this sandbox's successful reply."""
+    body = _body(receipt)
+    if (not receipt.get('ok') or receipt.get('truncated')
+            or not isinstance(body, dict) or body.get('ok') is False
+            or _sandbox_id(body) != sandbox_id):
+        return {}
+    node = _data(body)
+    if isinstance(node, dict) and isinstance(node.get('sandbox'), dict):
+        node = node['sandbox']
+    cpu, memory = node.get('cpuCount'), node.get('memoryMB')
+    if (type(cpu) is not int or not 0 < cpu < 10000
+            or type(memory) is not int or not 0 < memory < 10240000
+            or memory % 1024):
+        return {}
+    result = {'cpu': f'{cpu}c{memory // 1024}g'}
+    gpu = node.get('gpuCount')
+    if type(gpu) is int and gpu >= 0:
+        result['gpu_count'] = gpu
+    return result
 
 
 def _local_dns_denied(value: dict) -> bool:
@@ -210,6 +232,11 @@ def create(run_id: str, operation_id: str, request: dict) -> dict:
         db.append_event_tx(conn,run_id,'controller',f'sandbox.{status}',
                            {'operation_id':operation_id,'sandbox_id':sid,
                             'exit_code':receipt.get('exit_code')},trial_id=run['current_trial_id'])
+        resources = observed_resources(receipt, sid) if sid else {}
+        if resources:
+            db.append_event_tx(conn, run_id, 'controller', 'sandbox.resources_observed',
+                {'operation_id': operation_id, 'sandbox_id': sid, 'resources': resources,
+                 'source': 'create_receipt'}, trial_id=run['current_trial_id'])
     if sid and compute._run(run_id)['phase'] in TERMINAL_RUN and not eval_retry:
         status = delete(run_id,sid)['status']
     return {'operation_id':operation_id,'sandbox_id':sid,'status':status,

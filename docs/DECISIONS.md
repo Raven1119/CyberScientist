@@ -29,6 +29,17 @@
 
 - W1 有界代码审查核对：不加入评测题方法/参数/答案；通用 scorer 输入/环境声明替代运行时题目 ID 分支；真实环境没有凭 fake 晋升；最终快照须与接受的评分记录绑定；评分期间暂停不得被 finish 覆盖；只读成本查询不覆盖原创建回执。最终完整 pytest 664 passed、2 skipped，前端 40 passed、构建/compileall/diff --check 通过。F3 实环境和 F4 完整金额仍未验收，代码通过不等于整个 W1 已满足。
 
+### W1 接续：固定项目构建与有来源的沙箱估算
+
+- 有界复查发现预置环境准备只连接依赖缓存，没有构建评分器声明的固定公开项目。现在先执行固定版本 Lake 的 `--no-cache build`，禁用 Mathlib 自动下载缓存的更新钩子，并限制 Git 为本地协议；构建日志进入 stderr。失败或 unknown 的构建回执阻止评分。fake 先复现遗漏及两种失败，再验证修复；没有增加证明内容、科学方法或题目路径规则。这仍是应用流程验证，未替代 F3 的真实环境验收。[固定版本 Lake 参数](https://github.com/leanprover/lean4/blob/v4.32.2/src/lake/Lake/CLI/Help.lean)和项目锁定 Mathlib 的 lakefile 用于核对参数。
+- F4 价格接口的初次 HTTP400 查询没有 SKU，不能泛化成“所有价格接口不可用”。只读资源列表后携带 Node SKU 查询实际返回 `price=0.8`，但 Node 单价不能视为沙箱单价，因此不混用。
+- 经现有后台 `_native` 执行一次只读 `sandbox machine list --output json`，获得沙箱自身的公开报价及单位：`c2_m4_cpu` 为 `0.16 RMB/h`、`c4_m8_cpu` 为 `0.80 RMB/h`。脱敏原始输出 SHA-256 为 `518bef14508b14b57ede737acc60ee3eaebb491ee0c03dec621c24032f446844`，完整回执仅在忽略目录。应用严格检查 CPU SKU、规格和币种/小时单位，逐 Run 留存报价事件；未知单位或冲突 SKU 不推定价格。
+- 模板创建时实际硬件只在原生创建回执中，删除回执会覆盖当前 receipt。网关现在单独保留绑定 operation_id/sandbox_id 的实际 CPU、内存及已观察 GPU 数量；费用投影优先使用该事实。历史 Lean 第二轮以本 Run #60 的成功原生创建回执核对实际 `2c4g`、GPU0，追加有事件引用和哈希的资源事实；没有改写原请求，也不猜模板配置。不同 sandbox ID、非整数规格和不完整规格有失败回归。
+- `eval report` 与前端分别呈现 Job 原始金额、沙箱估算和总额 unknown。沙箱估算采用**当前公开沙箱报价 × 控制器观察生命周期**，不是历史单价或实际账单；未定价项不计零，不与未知币种 Job cost 混加。九个有沙箱的 v1 Run 的估算合计 `0.4065 CNY`；没有沙箱的 Run 保留空估算。两个无平台 ID 的 Job、Job cost 币种及完整总账单继续 unknown。原科学分、封存包、经验和研究配置未改变。
+- 沙箱回执脱敏也统一为逐字符串处理后再编码，补测带引号的已知密钥不会因 JSON 转义而漏遮蔽。全部是通用数据/环境契约修复，不新增题目科学内容。W1 新增科学沙箱0分钟、Job0、真实Run0，唯一私有镜像请求仍 unknown，不重复创建。
+- 新价格读取只在正常评测调度的工作线程执行，超时/失败只留费用缺项；不阻塞后端事件循环。本地 `_finish_result`、`eval report` 与原回执恢复保持离线，回归检查线程边界及零额外调用。接续只读镜像列表在 15:05 UTC 返回 HTTP200/code0/total0、同名0，仍不足以否定创建；唯一资源预约继续 unknown。已取得的官方 OpenAPI 161 个路径中未发现只读 bill/expense/cost/consumption/balance 路径，这不是“平台没有任何内部账单”的证明。
+- 接续最终 `.venv/bin/pytest -q` 为677 passed、2 skipped；前端40 passed，TypeScript/Vite构建、compileall、diff --check通过。全套通过后新增线程/离线边界检查又重跑全套；没有凭旧测试数字认定新代码通过。14个本次待提交文件的已知密钥/1MiB大文件扫描均无命中，原有任务卡与经验不暂存。
+
 ### W2：准确模型缺失时遵守停跑边界
 
 当前配置的 Linux Codex 0.155.1 完整原生 model/list 有 9 个模型，无准确 `gpt-6.1-sol`；PATH 中也没有另一份 codex。未作模型 turn，不把 gpt-6-sol 当成目标模型。按本卡仅完成可推进的 W0/W1，W2 两个 eval run 命令不执行，不建假结果或填零分。停跑报告 `docs/EVAL_V2_2026-10.md` 已如实列明 0/10、模型门槛和 F3/F4 未完成验收；不声称“基础设施未知科学分已归零”，也不拆分修复/模型因果。

@@ -594,7 +594,9 @@ def costs(run_id: str) -> dict:
     billed = [row.get('receipt', {}).get('billing', {}) for row in rows]
     values = [item['native_amount'] for item in billed
               if item.get('native_amount') is not None]
-    return {'status': 'partial' if values else 'unknown',
+    from . import sandbox_costs
+    return {'sandbox_estimate': sandbox_costs.estimate(run_id),
+            'status': 'partial' if values else 'unknown',
             'job_native_amount_total': str(sum((Decimal(value) for value in values), Decimal(0)))
                                        if values else None,
             'currency': None, 'job_cost_count': len(values), 'job_count': len(rows),
