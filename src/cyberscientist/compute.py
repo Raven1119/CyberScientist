@@ -124,10 +124,10 @@ def _path(run, value: str) -> Path:
     return path
 
 
-def _native(args: list[str], *, timeout: int = 90) -> dict:
+def _native(args: list[str], *, timeout: int = 90, modern: bool = False) -> dict:
     settings = config.load_settings()['bohrium']
     key = config.resolve_secret(settings.get('access_key_secret_ref', ''))
-    wenyon = args[:1] in (['wenyon'], ['sandbox'])
+    wenyon = modern or args[:1] in (['wenyon'], ['sandbox'])
     executable = (settings.get('wenyon_executable') if wenyon else None) or settings['executable']
     env = {k: v for k, v in os.environ.items() if not k.startswith(('CS_', 'BOHR_', 'PLAYGROUND_'))
            and k not in ('ACCESS_KEY', 'OPENAPI_HOST', 'TIEFBLUE_HOST')}
@@ -153,9 +153,23 @@ def _native(args: list[str], *, timeout: int = 90) -> dict:
         success = result.returncode == 0 and not re.search(
             r'(?im)^\s*(error:|unknown (?:shorthand )?flag|panic:)|json: cannot unmarshal object into Go struct field RespErr\.error of type string',
             out + '\n' + err)
+        # The CLI can finish while its HTTP request has no known outcome.
+        # In particular its COMMAND_FAILED/http=400 envelope is also used for
+        # a data-plane deadline; that is not a confirmed remote rejection.
+        transport_unknown = False
+        if not success:
+            try:
+                body = json.loads(out)
+                error = body.get('error') if isinstance(body, dict) else None
+                message = error.get('message', '') if isinstance(error, dict) else ''
+                transport_unknown = isinstance(message, str) and bool(re.search(
+                    r'context deadline exceeded|Client\.Timeout exceeded|i/o timeout', message))
+            except ValueError:
+                pass
         return {'exit_code': result.returncode, 'ok': success,
                 'stdout': out[:2_000_000], 'stderr': err[-12000:],
-                'truncated': len(out) > 2_000_000}
+                'truncated': len(out) > 2_000_000,
+                **({'unknown': True} if transport_unknown else {})}
     except subprocess.TimeoutExpired:
         return {'exit_code': None, 'ok': False, 'unknown': True,
                 'stdout': '', 'stderr': 'Bohrium 请求超时；先对账，不重试变更请求'}

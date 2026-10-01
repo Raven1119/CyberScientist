@@ -289,6 +289,29 @@ async def advance(controller: Any) -> None:
                 db.execute('UPDATE eval_results SET run_id=?,status=\'created\',updated_at=? WHERE id=?',
                            (rid, db.utcnow(), result['id']))
             run = db.query_one('SELECT * FROM runs WHERE id=?', (rid,))
+            if run['phase'] not in TERMINAL and run['started_at'] and run['authorization_id']:
+                auth = db.query_one('SELECT max_run_minutes FROM authorizations WHERE id=?',
+                                    (run['authorization_id'],))
+                elapsed = (datetime.fromisoformat(db.utcnow()) -
+                           datetime.fromisoformat(run['started_at'])).total_seconds()
+                if auth and auth['max_run_minutes'] > 0 and elapsed >= auth['max_run_minutes'] * 60:
+                    # A paused infrastructure failure must not hold the queue
+                    # forever after its original grant ends. Stop native work;
+                    # preserve missing scores and do not rent a late scorer.
+                    prior = db.query_one("SELECT seq,payload FROM events WHERE run_id=?"
+                        " AND type IN ('brain.action_rejected','evaluation.local_score_unavailable')"
+                        " ORDER BY seq DESC LIMIT 1", (rid,))
+                    reason = '本 Run 原授权时长已耗尽；未扩大额度或追加评分'
+                    if not db.query_one("SELECT 1 FROM events WHERE run_id=?"
+                                        " AND type='evaluation.budget_exhausted'", (rid,)):
+                        db.append_event(rid, 'controller', 'evaluation.budget_exhausted',
+                            {'reason': reason, 'previous_phase': run['phase'],
+                             'prior_failure_event_seq': prior['seq'] if prior else None})
+                    await controller.control(rid, 'terminate', None, f'eval-expire-{rid}')
+                    await asyncio.to_thread(sandbox_costs.refresh, rid)
+                    _finish_result(result['id'], rid, scoring_status='budget_exhausted',
+                                   scoring_reason=reason)
+                    continue
             if run['phase'] == 'created':
                 limit = _limits(evaluation['suite'])
                 if not run['authorization_id']:
@@ -402,9 +425,10 @@ def score_preflight(run, preflight: dict[str, Any], score_op: str, sandbox_op: s
                           (run_id, trial_id, manifest['image']))
     sid = active['sandbox_id'] if active else None
     if sid is None:
+        lifetime = sandboxes.bounded_lifetime(run_id, runtime.get('sandbox_timeout', 600))
         created = sandboxes.create(run_id, sandbox_op,
             {'image': manifest['image'], 'cpu': '4c8g',
-             'timeout': runtime.get('sandbox_timeout', 600)})
+             'timeout': lifetime}, _session_id=run_id)
         sid = created.get('sandbox_id') if created.get('status') == 'active' else None
     if not sid:
         raise EvaluationError('评分沙箱未确认 active')

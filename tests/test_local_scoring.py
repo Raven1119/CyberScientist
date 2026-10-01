@@ -101,7 +101,8 @@ def test_trace_predictor_is_deterministic():
     assert first['features']['steps'] >= 1
 
 
-def test_fake_sandbox_scorer_records_and_calibrates(monkeypatch):
+@pytest.mark.parametrize('session_workspace', [False, True])
+def test_fake_sandbox_scorer_records_and_calibrates(monkeypatch, session_workspace):
     rid, tid, package, files, rows, *_ = _fixture()
     _scorer()
     db.execute("UPDATE runs SET phase='running',gate='open' WHERE id=?", (rid,))
@@ -110,7 +111,8 @@ def test_fake_sandbox_scorer_records_and_calibrates(monkeypatch):
     db.execute('INSERT INTO compute_sandboxes(operation_id,run_id,trial_id,sandbox_id,'
                'request_json,status,created_at,expires_at,updated_at)'
                ' VALUES(?,?,?,?,?,?,?,?,?)',
-               ('fake-create',rid,tid,sid,json.dumps({'image':'registry.example/challenge:v1'}),
+               ('fake-create',rid,tid,sid,json.dumps({'image':'registry.example/challenge:v1',
+                 **({'session_id': rid} if session_workspace else {})}),
                 'active',now,now,now))
     monkeypatch.setattr(mailboxes.arm_admission, 'check',
                         lambda *_: {'verdict': 'admitted', 'signals': {}})
@@ -136,6 +138,8 @@ def test_fake_sandbox_scorer_records_and_calibrates(monkeypatch):
     assert row['predicted_display_score'] == 20.0
     assert json.loads(row['scorer_file_hashes_json']) == local_scoring.scorer_manifest('MB_CH')['file_hashes']
     assert len(calls) == 4 and all(call[1].startswith('score-one-') for call in calls)
+    expected_root = '/bohr-workspace/' if session_workspace else '/tmp/'
+    assert all(call[2].startswith(expected_root) for call in calls if call[0] == 'transfer')
     assert local_scoring.evaluate(rid, tid, sid, 'score-one')['deduplicated'] is True
     db.append_event(rid, 'controller', 'checkpoint.created',
                     {'checkpoint_id': 'after-science'}, trial_id=tid)

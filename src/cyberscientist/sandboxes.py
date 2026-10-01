@@ -145,12 +145,44 @@ def list_run(run_id: str) -> dict:
             'cumulative_minutes': sum(item['alive_minutes'] for item in items)}
 
 
-def create(run_id: str, operation_id: str, request: dict) -> dict:
+def bounded_lifetime(run_id: str, requested: int) -> int:
+    """Fit a controller scorer to existing time grants, never extend a grant.
+
+    Creation checks the bounds again atomically. Unknown sandboxes continue to
+    reserve their full lifetime, as in ordinary sandbox admission.
+    """
+    run = compute._run(run_id)
+    auth = db.query_one('SELECT max_run_minutes,max_sandbox_minutes FROM authorizations WHERE id=?',
+                        (run['authorization_id'],))
+    if not auth or not run['started_at']:
+        raise compute.ComputeError('SANDBOX_BUDGET', '评分没有有效时长授权')
+    run_left = auth['max_run_minutes'] * 60 - (datetime.now(timezone.utc) -
+                datetime.fromisoformat(run['started_at'])).total_seconds()
+    reserved = sum((datetime.fromisoformat(row['expires_at']) -
+                    datetime.fromisoformat(row['created_at'])).total_seconds()
+                   if row['deleted_at'] is None else
+                   max(0, (datetime.fromisoformat(row['deleted_at']) -
+                           datetime.fromisoformat(row['created_at'])).total_seconds())
+                   for row in db.query('SELECT * FROM compute_sandboxes WHERE run_id=?', (run_id,)))
+    seconds = math.floor(min(requested, run_left - 5,
+                             auth['max_sandbox_minutes'] * 60 - reserved - 5))
+    if seconds < 1:
+        raise compute.ComputeError('SANDBOX_BUDGET', '评分沙箱时长额度已耗尽')
+    return seconds
+
+
+def create(run_id: str, operation_id: str, request: dict, *, _session_id: str | None = None) -> dict:
     """Reserve the entire requested lifetime before a single remote create."""
     if not isinstance(operation_id, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,100}', operation_id):
         raise compute.ComputeError('INVALID_OPERATION', '沙箱创建需要稳定的 operation_id')
     if not isinstance(request, dict) or not set(request) <= {'template', 'image', 'cpu', 'gpu', 'timeout'}:
         raise compute.ComputeError('INVALID_COMMAND', '沙箱创建含不支持的参数')
+    if _session_id is not None:
+        # Backend scoring sessions cannot refer to another Run's persistent
+        # workspace. This option is not exposed by the agent gateway.
+        if _session_id != run_id:
+            raise compute.ComputeError('INVALID_COMMAND', '评分工作区必须绑定本 Run')
+        request = request | {'session_id': _session_id}
     timeout = request.get('timeout')
     if type(timeout) is not int or timeout < 1:
         raise compute.ComputeError('INVALID_TIMEOUT', '沙箱必须显式设置正数 --timeout 秒数')
@@ -211,6 +243,7 @@ def create(run_id: str, operation_id: str, request: dict) -> dict:
         db.append_event_tx(conn,run_id,'controller','sandbox.creating',
                            {'operation_id':operation_id,'expires_at':expires},trial_id=run['current_trial_id'])
     argv = ['sandbox','create','--timeout',str(timeout),'--project-id',str(project_id)]
+    if _session_id is not None: argv += ['--session-id', _session_id]
     if request.get('template'): argv += ['-t',request['template']]
     if request.get('image'): argv += ['--image',request['image']]
     if request.get('cpu'): argv += ['--cpu',request['cpu']]
@@ -364,6 +397,13 @@ def transfer(run_id: str, action: str, sandbox_id: str, remote_path: str,
             if not path.exists() or path.is_symlink():
                 raise compute.ComputeError('INVALID_PATH','源文件不存在或是符号链接')
             argv += ['--source',str(path)]
+            session_id = json.loads(row['request_json']).get('session_id')
+            if (session_id == run_id and
+                    (remote_path == '/bohr-workspace' or remote_path.startswith('/bohr-workspace/'))):
+                # Native multipart transport for the Run-bound mount avoids
+                # the short filesystem HTTP deadline on large science ZIPs.
+                # No new dataset, user-storage mount or credential propagation.
+                argv += ['--ti', '--session-id', session_id]
         elif not isinstance(content,str) or len(content)>8192:
             raise compute.ComputeError('INVALID_COMMAND','内联内容不合法或过长')
         else: argv += ['--content',content]

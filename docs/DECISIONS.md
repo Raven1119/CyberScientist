@@ -74,6 +74,18 @@ v2首轮run_224c5edd1b的Job23455392在原生describe中明确为Failed/exitCode
 
 定向网关/对账49通过，全套pytest682通过/2跳过（回环限制）；前端40通过及build沿用本轮模型更新后的检查，前端源码未变。原始回执和部署记录只留本机，公开记录不含账号字段或科学候选。
 
+### W2发现并修复：完整包传输与授权到期队列
+
+run_224c5edd1b #617的完整科学ZIP为33,513,990字节，CLI写入返回COMMAND_FAILED/http400及context deadline exceeded；#618拒绝finish。执行器随后按原身份观察远端ZIP截断并保留回执，评分未启动；原沙箱已删除。#782大脑因此暂停，原队列没有对暂停Run执行授权到期收尾。首轮正式科学分保持unknown，不把Job内的代理评分结果写进正式local_scores。
+
+通用修复：原生CLI已结束但结构化错误中是HTTP deadline时保留unknown，不以HTTP400判断变更明确失败；不自动重发旧操作。后端创建的评分沙箱使用Run绑定的session，并通过bohr2.7.8原生/bohr-workspace对象存储通道传输原ZIP。普通沙箱与/tmp路径保留原行为；调用者不能选择别的Run会话，不继承认证、不挂个人盘、不新建数据集。评分存活时长只收缩到原Run与累计沙箱剩余额度，创建时仍原子复核，不延长授权。来源是当前CLI内置references/sandbox/files.md和真实失败回执，不写题目科学内容。
+
+评测原授权到期后通过既有terminate入口停本机原生会话并回收自有沙箱，记录evaluation.budget_exhausted及前一故障事件号；不租 late scorer，不以0填缺失，不改普通用户暂停语义。首轮#786已实际触发，ended_at为19:05 UTC，墙钟3794.221秒包含暂停与Run外部署延迟，不能声称恰好60分钟收尾；没有在原授权到期后为该Run新增模型turn/Job/沙箱。原第二轮run_a96d4666d4随后启动，原六项队列没有增加重复。第二次有界后端重载只部署应用修复，当前v2包含动态部署及首轮基础设施缺分，不能称为完整干净基线。
+
+fake覆盖原HTTP400/deadline、成功输出含deadline不误判、旧操作不重发、工作区Run归属、原生大文件通道、科学包字节不变、剩余授权收缩和unknown不释放、暂停Run到期不续租及原队列继续。最新完整pytest693 passed/2 skipped、compileall/diff通过，前端源码未改，沿用本轮40 passed/build。后续真实完整包传输尚未完成，不用fake宣布外部故障消失。
+
+额外只读核对F3/F4：配置项目在新平台精简项目列表可见，私有镜像type=1及带projectId查询均total0；这不能否定先前未知创建。新CLI image build的dry-run只显示POST /openapi/v4/sandbox_work/image/build，没有执行创建；与旧v2请求是不同入口，没有据此清空未知预约或再造镜像。F3仍未验收。billing ledger真实只读返回1条resource=consume记录，无资源ID；沙箱历史列表则精确对应13个自有评测沙箱，包括首轮cost0.08/paymentType0。当前CLI契约将paymentType0解释为CNY、1为光子；这些查询时金额可能延迟结算，既不是估算，也不是最终账单。完整回执只存本机；应用实际金额接入待完成，不能将通用consume记录或其他资源费用归到Run。
+
 
 | 决策 | 替换的设计 | 原因与影响 |
 |---|---|---|

@@ -1,6 +1,7 @@
 """Sandbox gateway invariants with a fake bohr CLI; no platform calls."""
 import asyncio
 import json
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -104,6 +105,71 @@ def test_uncertain_create_reconciles_without_second_create(run,monkeypatch):
     assert sandboxes.reconcile_create(rid,'uncertain')['status']=='active'
     assert sum(a[:2]==['sandbox','create'] for a in calls)==1
     assert '--create-request-id' in calls[-1]
+
+
+def test_scoring_workspace_is_bound_to_run_and_uses_native_large_file_transport(run):
+    _, rid, work, calls, _ = run
+    source = work / 'science.zip'
+    source.write_bytes(b'bounded fixture science bytes')
+    sid = sandboxes.create(rid, 'session-score', {'timeout': 600}, _session_id=rid)['sandbox_id']
+    assert calls[0][calls[0].index('--session-id') + 1] == rid
+    result = sandboxes.transfer(rid, 'write', sid, '/bohr-workspace/score/package.zip',
+                               local_path=str(source), operation_id='large-file-write')
+    assert result['status'] == 'completed'
+    assert '--ti' in calls[-1]
+    assert calls[-1][calls[-1].index('--session-id') + 1] == rid
+    assert result['files'][0]['sha256'] == compute._file_sha256(source)
+    sandboxes.transfer(rid, 'write', sid, '/tmp/package.zip', local_path=str(source),
+                       operation_id='local-file-write')
+    assert '--ti' not in calls[-1]
+    before = len(calls)
+    assert sandboxes.create(rid, 'session-score', {'timeout': 600}, _session_id=rid)['deduplicated']
+    assert len(calls) == before
+    with pytest.raises(compute.ComputeError, match='绑定本 Run'):
+        sandboxes.create(rid, 'foreign-session', {'timeout': 60}, _session_id='other-run')
+    with pytest.raises(compute.ComputeError, match='不支持'):
+        sandboxes.create(rid, 'agent-session', {'timeout': 60, 'session_id': rid})
+    assert len(calls) == before
+
+
+def test_legacy_sandbox_never_claims_persistent_workspace_or_retries_timeout(run, monkeypatch):
+    _, rid, work, calls, _ = run
+    source = work / 'science.zip'; source.write_bytes(b'original scene')
+    sid = sandboxes.create(rid, 'legacy-score', {'timeout': 600})['sandbox_id']
+    original = compute._native
+    def native(args, **kwargs):
+        if args[:3] == ['sandbox', 'files', 'write']:
+            calls.append(args)
+            return {'ok': False, 'exit_code': 1, 'unknown': True, 'stdout': json.dumps({
+                'ok': False, 'error': {'code': 'COMMAND_FAILED', 'http': 400,
+                'message': 'write request failed: context deadline exceeded'}})}
+        return original(args, **kwargs)
+    monkeypatch.setattr(compute, '_native', native)
+    result = sandboxes.transfer(rid, 'write', sid, '/bohr-workspace/package.zip',
+                               local_path=str(source), operation_id='write-timeout')
+    assert result['status'] == 'unknown'
+    assert '--ti' not in calls[-1]
+    before = len(calls)
+    with pytest.raises(compute.ComputeError, match='不自动重复传输'):
+        sandboxes.transfer(rid, 'write', sid, '/bohr-workspace/package.zip',
+                           local_path=str(source), operation_id='write-timeout')
+    assert len(calls) == before
+
+
+def test_controller_scoring_lifetime_fits_remaining_grant_without_releasing_unknown(run):
+    _, rid, _, calls, _ = run
+    db.execute('UPDATE runs SET started_at=? WHERE id=?',
+               ((datetime.now(timezone.utc) - timedelta(minutes=55)).isoformat(), rid))
+    seconds = sandboxes.bounded_lifetime(rid, 600)
+    assert 290 <= seconds <= 295
+    sandboxes.create(rid, 'short-scorer', {'timeout': seconds})
+    assert int(calls[-1][calls[-1].index('--timeout') + 1]) == seconds
+    db.execute("UPDATE compute_sandboxes SET status='unknown' WHERE run_id=?", (rid,))
+    db.execute('UPDATE authorizations SET max_sandbox_minutes=4 WHERE id='
+               '(SELECT authorization_id FROM runs WHERE id=?)', (rid,))
+    with pytest.raises(compute.ComputeError, match='耗尽'):
+        sandboxes.bounded_lifetime(rid, 600)
+    assert len(calls) == 1
 
 
 def test_local_billing_confirmation_rejection_does_not_reserve_minutes(run,monkeypatch):

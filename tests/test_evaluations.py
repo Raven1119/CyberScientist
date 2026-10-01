@@ -88,6 +88,55 @@ def _fake_score(run_id: str, result_id: str):
     return 'scored', None
 
 
+def test_paused_infrastructure_failure_expires_original_grant_and_releases_queue(monkeypatch, tmp_path):
+    _catalog(monkeypatch, tmp_path)
+    evaluation = evaluations.create_evaluation('fast', 2, 'bounded-fixture')
+    first = db.query_one('SELECT * FROM eval_results WHERE eval_id=? ORDER BY rowid', (evaluation['id'],))
+    controller = FakeController()
+    snapshot = json.loads(db.query_one('SELECT config_json FROM eval_runs WHERE id=?',
+                                     (evaluation['id'],))['config_json'])
+    marker = evaluations._marker(snapshot, snapshot['entries'][0], first['id'])
+    marker['eval_id'] = evaluation['id']
+    run = controller.create_run(first['challenge_id'], 'connected', False, eval_mode=marker)
+    rid = run['id']
+    controller.authorize(rid, 'connected', True, 0, 60, 0, '', max_jobs=2,
+                         max_sandboxes=2, max_sandbox_minutes=60)
+    db.execute("UPDATE runs SET phase='paused',started_at=? WHERE id=?",
+               ((datetime.now(timezone.utc) - timedelta(minutes=59)).isoformat(), rid))
+    db.execute("UPDATE eval_results SET run_id=?,status='paused' WHERE id=?", (rid, first['id']))
+    db.append_event(rid, 'brain', 'brain.action_rejected',
+                    {'op': 'finish', 'error_code': 'SCORE_EXECUTION_UNKNOWN'})
+    terminated = []
+    async def control(run_id, action, text, operation_id):
+        assert action == 'terminate'
+        terminated.append((run_id, operation_id))
+        db.execute("UPDATE runs SET phase='cancelled',ended_at=? WHERE id=?", (db.utcnow(), run_id))
+        return {'status': 'confirmed'}
+    monkeypatch.setattr(controller, 'control', control)
+    def score_other(run_id, result_id):
+        assert run_id != rid, 'no late scorer for the expired Run'
+        return _fake_score(run_id, result_id)
+    monkeypatch.setattr(evaluations, '_score_run', score_other)
+    # Before expiry a science/infrastructure pause is preserved.
+    asyncio.run(evaluations.advance(controller))
+    assert terminated == []
+    assert db.query_one('SELECT phase FROM runs WHERE id=?', (rid,))['phase'] == 'paused'
+    starts_before_expiry = len(controller.starts)
+    db.execute('UPDATE runs SET started_at=? WHERE id=?',
+               ((datetime.now(timezone.utc) - timedelta(minutes=61)).isoformat(), rid))
+    asyncio.run(evaluations.advance(controller))
+    assert terminated == [(rid, f'eval-expire-{rid}')]
+    row = db.query_one('SELECT status,result_json FROM eval_results WHERE id=?', (first['id'],))
+    result = json.loads(row['result_json'])
+    assert row['status'] == 'failed'
+    assert result['science_score'] is None and result['science_status'] == 'budget_exhausted'
+    assert result['job_count'] == 0 and result['sandbox_minutes'] == 0
+    assert db.query_one("SELECT 1 FROM events WHERE run_id=? AND type='evaluation.budget_exhausted'", (rid,))
+    assert len(controller.starts) > starts_before_expiry  # The expired Run releases capacity.
+    asyncio.run(evaluations.advance(controller))
+    assert len(terminated) == 1
+
+
 def test_two_by_two_evaluation_and_resume(monkeypatch, tmp_path):
     _catalog(monkeypatch, tmp_path)
     monkeypatch.setattr(evaluations, '_score_run', _fake_score)

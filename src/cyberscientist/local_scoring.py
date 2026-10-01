@@ -458,7 +458,9 @@ def evaluate(run_id: str, trial_id: str, sandbox_id: str,
         if not path.exists():
             with path.open('xb') as stream:
                 stream.write(raw)
-    remote = f'/tmp/cs-local-scorer-{operation_id}'
+    workspace = ('/bohr-workspace' if json.loads(sandbox['request_json']).get('session_id') == run_id
+                 else '/tmp')
+    remote = f'{workspace}/cs-local-scorer-{operation_id}'
     commands = [
         ('mkdir', lambda: sandboxes.execute(run_id, sandbox_id,
             'mkdir -p ' + shlex.quote(remote), 30, operation_id + '-mkdir')),

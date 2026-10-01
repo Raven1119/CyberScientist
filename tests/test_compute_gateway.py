@@ -186,6 +186,44 @@ def test_job_client_uses_legacy_api_host_without_changing_wenyon(monkeypatch):
                      (['wenyon', 'dataset', 'download', '--help'], 'https://open.bohrium.com')]
 
 
+def test_modern_readonly_client_override_does_not_switch_jobs(monkeypatch):
+    settings = config.load_settings()
+    settings['bohrium'].update(executable='/fixture/legacy', wenyon_executable='/fixture/modern')
+    config.save_settings(settings)
+    calls = []
+    def native(cmd, **kwargs):
+        calls.append((cmd[0], kwargs['env']['OPENAPI_HOST']))
+        return subprocess.CompletedProcess(cmd, 0, '{}', '')
+    monkeypatch.setattr(compute.subprocess, 'run', native)
+    compute._native(['billing', 'ledger'], modern=True)
+    compute._native(['job', 'list'])
+    assert calls == [('/fixture/modern', 'https://open.bohrium.com'),
+                     ('/fixture/legacy', 'https://openapi.dp.tech')]
+
+
+@pytest.mark.parametrize('message,unknown', [
+    ('write request failed: Post https://fixture/files: context deadline exceeded', True),
+    ('request canceled (Client.Timeout exceeded while awaiting headers)', True),
+    ('read tcp: i/o timeout', True),
+    ('invalid path: /tmp/context-deadline-note', False),
+])
+def test_native_http_deadline_is_unknown_not_remote_rejection(monkeypatch, message, unknown):
+    body = json.dumps({'ok': False, 'error': {'code': 'COMMAND_FAILED',
+                      'http': 400, 'message': message, 'retryable': False}})
+    monkeypatch.setattr(compute.subprocess, 'run', lambda *a, **k:
+                        subprocess.CompletedProcess(a, 1, body, ''))
+    result = compute._native(['sandbox', 'files', 'write', 'box', '/tmp/package.zip'])
+    assert result['ok'] is False
+    assert result.get('unknown', False) is unknown
+
+
+def test_successful_science_output_mentioning_deadline_stays_success(monkeypatch):
+    body = json.dumps({'ok': True, 'data': {'stdout': 'context deadline exceeded'}})
+    monkeypatch.setattr(compute.subprocess, 'run', lambda *a, **k:
+                        subprocess.CompletedProcess(a, 0, body, ''))
+    assert compute._native(['sandbox', 'exec', 'box', '--command', 'cat log'])['ok'] is True
+
+
 def test_client_scoped_hosts_and_legacy_flat_new_host_guard(monkeypatch):
     settings = config.load_settings()
     settings['bohrium']['host_overrides'] = {
