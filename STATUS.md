@@ -1,6 +1,9 @@
-# 当前状态（2026-10-01）
+# 当前状态（2026-10-02）
 
 ## 已实现
+
+- CS-UP-06 F4：按自有 sandbox ID/operation 精确匹配原生查询费用，CNY与光子分别汇总；缺项不填零，前端及eval report区分查询时金额、估算与最终总账单。源查询时间与落账时间分别记录，原始脱敏回执只留本机。评测创建前检查评分器声明的固定环境，不可用时保留该项基础设施失败并继续其他原计划项。
+- CS-UP-06运行中轨迹诊断修复：原20 MB产物证据上限导致合法39 MB声明产物报unavailable；通用有界上限改为128 MiB，完整字节/哈希保留，超限仍拒绝；评分器源码及科学结果不变。
 
 - CS-UP-06真实v2收尾修复：CLI HTTP deadline保留unknown；控制器评分沙箱按Run绑定原生工作区，科学包走CLI对象存储大文件通道，不分块上传工具链、不替换产物。评分沙箱存活时长受原Run及累计沙箱剩余额度约束。评测Run即使因故障暂停，原授权到期也收尾并保留缺分，不阻塞后续队列、不追加评分。
 
@@ -72,6 +75,11 @@
 - CS-SB-01 稀疏输入与唤醒修复：可选短研究摘要独立存储；新 Run 普通检查点不唤醒 shadow，Job/Trial 研究级重复状态按 ID 去重。详见 `docs/SPARSE_BRAIN_INPUT_WAKE_FIX_2026-09-24.md`。
 
 ## 已实际验证
+
+- CS-UP-06费用与轨迹诊断修复完整回归：`.venv/bin/pytest -q`为708 passed、2 skipped（既有回环监听限制）；`npm --prefix apps/web test -- --run`为40 passed，`npm --prefix apps/web run build`通过；compileall和git diff --check通过。所有新增缺陷均有fake回归，未增加W1真实快速题验证。
+
+- CS-UP-06快速层第二轮abc run_a96d4666d4已finished，正式科学分20；原生完整包上传/评分成功，两个CPU Job Finished/retrieved。原封存包仅离线重做轨迹诊断后公开v6检查表100、91对工具调用，展示区间[6,20]；这不是官方轨迹分。沙箱已清理。FigQA-0177第一轮run_cfb012c971已完成，原队列进入第二轮run_a9979ad18c，没有新增重复、Attempt或经验写入。
+- CS-UP-06费用真实只读来源：2026-10-01 19:06:41 UTC沙箱列表的自有资源投影，v1九个Run可见合计0.17 CNY，v2首轮0.08 CNY；只是查询时金额，缺项及最终结算仍未确认。原输出SHA-256为41912eafd920ae2c1cbdcefabf6c52dfaa7449f9163ee9dd2504f737c747492b；两层v1和当前v2已由eval report重生成。新版API真实返回首轮0.08 CNY及final_settlement_confirmed=false。
 
 - CS-UP-06接续：完整`.venv/bin/pytest -q`为693 passed、2 skipped（既有回环限制），传输/评分/授权到期的定向回归通过；compileall和git diff --check通过。前端源码未改，沿用本轮已执行的40 passed及build通过。
 - CS-UP-06快速层：首轮run_224c5edd1b因33,513,990字节完整科学包传输deadline而未取得正式科学分，失败证据保留；原授权到期后新增evaluation.budget_exhausted事件并关闭，未追加其时间或计算。原队列第二轮run_a96d4666d4于19:05 UTC启动，两角色冻结gpt-6.1-sol/xhigh；eval report已从数据库重建首轮缺分、token、2 Job及7.009沙箱分钟。没有额外验证Run。
@@ -196,10 +204,10 @@
 
 ## 尚未验证
 
-- CS-UP-06原生对象存储传输修复已通过fake测试并部署，但尚未从后续真实评分取得完整包成功回执；不能声称真实收尾故障已解决。首轮已因基础设施缺分，不重跑或补造20分。F4新增真实账单来源的应用接入和最终结算确认尚未完成。
+- CS-UP-06原生对象存储传输在第二轮已取得完整包上传和正式评分成功；首轮基础设施缺分仍保留，不重跑或补造20分。F4应用查询费用已接入，最终结算和总账单尚未确认。
 
 - CS-UP-06 F3：新预置环境两次沙箱 + 两次 CPU Job 的无下载构建，以及已验证历史证明包重评分，均未执行。F4 已取得当前沙箱公开费率和有来源估算，但历史单价、Job cost 币种、两个 unknown 预约费用与实际总账单尚未确认。
-- CS-UP-06 W2：快速层首轮run_224c5edd1b运行中，尚无最终科学成绩；其余快速层待调度，困难层尚未开始。最终能力、路径unknown和旧缺陷复发率待终态验证。
+- CS-UP-06 W2：快速层首轮run_224c5edd1b已cancelled/budget_exhausted且正式科学分unknown；第二轮abc20，FigQA-0177第一轮已完成、第二轮运行中，其余快速层待调度。困难层尚未启动。最终能力、路径unknown和旧缺陷复发率待终态验证。
 
 - CS-UP-06 W1通用修复已实施，Lean真实环境验收未完成；W1未新增研究Run、Job或科学沙箱，唯一私有镜像请求仍unknown。W2已开始原快速层，无预算扩大。
 

@@ -10,6 +10,7 @@ type Result = { id: string; challenge_id: string; repeat_index: number; run_id: 
     job_count?: number; job_unknown_count?: number; sandbox_minutes?: number;
     sandbox_minutes_status?: string; bohrium_amount: string; final_status: string;
     bohrium_cost_details?: { job_native_amount_total: string | null; currency: string | null;
+      sandbox_observed?: { amounts: Record<string, string>; unmatched_count: number };
       total_amount: string | null; sandbox_estimate?: { amount: string | null;
         currency: string | null; status: string; unpriced_count: number } } } }
 type Detail = { id: string; suite: string; status: string; results: Result[] }
@@ -82,6 +83,8 @@ export default function EvaluationPage() {
               <small> Job 原始金额 {item.result.bohrium_cost_details.job_native_amount_total}（币种未确认，非总费用）</small>}
             {item.result?.bohrium_cost_details?.sandbox_estimate?.amount != null &&
               <small> 沙箱估算 {item.result.bohrium_cost_details.sandbox_estimate.amount} {item.result.bohrium_cost_details.sandbox_estimate.currency}（未定价 {item.result.bohrium_cost_details.sandbox_estimate.unpriced_count} 项，非账单）</small>}
+            {Object.entries(item.result?.bohrium_cost_details?.sandbox_observed?.amounts || {}).map(([currency, amount]) =>
+              <small key={currency}> 沙箱查询费用 {amount} {currency}（未确认最终结算；缺 {item.result?.bohrium_cost_details?.sandbox_observed?.unmatched_count} 项）</small>)}
           </td>
           <td title={item.error || undefined}>{item.status}</td>
         </tr>)}</tbody></table></div>

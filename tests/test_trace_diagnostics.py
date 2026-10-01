@@ -70,6 +70,28 @@ def test_legacy_projected_pairs_survive_conversion_and_public_parser(pinned_diag
     assert result["adapter_labels_added"] == 2
 
 
+def test_large_declared_artifact_retains_bytes_in_offline_diagnostic(monkeypatch, tmp_path):
+    import hashlib
+    rows = [{"step_type": "decision", "body": "fixture"}]
+    artifact = b"\x00" * 21_000_000
+    seen = []
+    monkeypatch.setattr(trace_diagnostics, "_binary", lambda _: tmp_path / "node")
+    def run(command, env, **kwargs):
+        directory = Path(command[-2])
+        content = (directory / "result.bin").read_bytes()
+        seen.append((len(content), hashlib.sha256(content).hexdigest()))
+        Path(command[-1]).write_text(json.dumps({"paired_tool_calls": 0, "items": [],
+            "cap": 100, "trace_sha256": "fixture", "format": "fixture", "stats": {},
+            "score": 100, "decision": "fixture"}))
+    monkeypatch.setattr(trace_diagnostics, "_run", run)
+    assert trace_diagnostics._evaluate(rows, "", {"result.bin": artifact}, convert=False)["status"] == "ready"
+    assert seen == [(len(artifact), hashlib.sha256(artifact).hexdigest())]
+    monkeypatch.setattr(trace_diagnostics, "MAX_OUTPUT_EVIDENCE_BYTES", len(artifact) - 1)
+    with pytest.raises(RuntimeError, match="size limit"):
+        trace_diagnostics._evaluate(rows, "", {"result.bin": artifact}, convert=False)
+    assert len(seen) == 1  # Oversized evidence never reaches the diagnostic runner.
+
+
 def test_diagnostic_failure_does_not_change_submission_gate(monkeypatch, pinned_diagnostic_tools):
     run_id, trial_id, *_ = _fixture()
     monkeypatch.setattr(mailboxes.arm_admission, "check",

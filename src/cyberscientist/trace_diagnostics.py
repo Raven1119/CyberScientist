@@ -29,6 +29,9 @@ NEW = ("    if (opencodeEventLike(rows) && !(codexEventLike(rows) && "
        ".includes(stringValue(row.type) || \"\"))))\n"
        "        return convertOpenCodeEvents(rows, source);")
 VENDOR = Path(__file__).resolve().parent / "vendor" / "trace_score_cli_v6"
+# Scientific bundles can legitimately exceed the former 20 MB evidence cap.
+# Keep the diagnostic bounded while preserving complete artifact bytes/hashes.
+MAX_OUTPUT_EVIDENCE_BYTES = 128 * 1024 * 1024
 
 # Conditional on the codes exposed in 63 historical v8 receipts; unlisted
 # codes could have been suppressed by the platform. See the W2 report.
@@ -188,7 +191,7 @@ def _evaluate(rows: list[dict[str, Any]], task: str, outputs: dict[str, bytes],
         task_file.write_text(task)
         output_dir = root / "outputs"
         output_dir.mkdir()
-        if len(outputs) > 500 or sum(map(len, outputs.values())) > 20_000_000:
+        if len(outputs) > 500 or sum(map(len, outputs.values())) > MAX_OUTPUT_EVIDENCE_BYTES:
             raise RuntimeError("diagnostic output evidence size limit")
         for name, content in outputs.items():
             path = PurePosixPath(name)

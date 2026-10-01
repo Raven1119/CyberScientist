@@ -137,6 +137,29 @@ def test_paused_infrastructure_failure_expires_original_grant_and_releases_queue
     assert len(terminated) == 1
 
 
+def test_required_environment_missing_blocks_only_affected_entries_before_paid_run(monkeypatch, tmp_path):
+    from cyberscientist import runtime_environments
+    _catalog(monkeypatch, tmp_path)
+    evaluation = evaluations.create_evaluation('fast', 2, 'environment-fixture')
+    monkeypatch.setattr(local_scoring, 'scorer_manifest', lambda cid: {
+        'runtime': {'environment_id': 'fixture-public-toolchain'} if cid == 'eval_a' else {}})
+    def unavailable(environment_id):
+        assert environment_id == 'fixture-public-toolchain'
+        raise runtime_environments.EnvironmentUnavailable('固定公开环境未验证')
+    monkeypatch.setattr(runtime_environments, 'resolve', unavailable)
+    monkeypatch.setattr(evaluations, '_score_run', _fake_score)
+    controller = FakeController()
+    asyncio.run(evaluations.advance(controller))
+    blocked = db.query('SELECT run_id,status,error FROM eval_results WHERE eval_id=? AND challenge_id=?',
+                       (evaluation['id'], 'eval_a'))
+    assert len(blocked) == 2 and all(r['run_id'] is None and r['status'] == 'failed' for r in blocked)
+    assert all('EnvironmentUnavailable' in r['error'] for r in blocked)
+    assert not db.query("SELECT 1 FROM runs WHERE challenge_id='eval_a'")
+    assert controller.starts
+    assert all(db.query_one('SELECT challenge_id FROM runs WHERE id=?', (rid,))['challenge_id'] == 'eval_b'
+               for rid in controller.starts)
+
+
 def test_two_by_two_evaluation_and_resume(monkeypatch, tmp_path):
     _catalog(monkeypatch, tmp_path)
     monkeypatch.setattr(evaluations, '_score_run', _fake_score)

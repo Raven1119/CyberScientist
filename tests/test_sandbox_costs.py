@@ -72,3 +72,72 @@ def test_template_price_uses_observed_hardware_bound_to_owned_resource():
     assert sandbox_costs.estimate(rid)['amount'] == '0.4000'
     db.execute("UPDATE compute_sandboxes SET sandbox_id='different-box' WHERE run_id=?", (rid,))
     assert sandbox_costs.estimate(rid)['amount'] is None
+
+
+@pytest.mark.parametrize('payment,cost,photon,currency,expected', [
+    (0, 0.08, None, 'CNY', '0.08'),
+    (0, 0, None, 'CNY', '0'),
+    (1, 0.03, 1.25, 'photons', '1.25'),
+    (1, 0.03, None, 'photons', '0.03'),
+])
+def test_native_resource_costs_match_owned_id_and_keep_payment_units(payment, cost, photon, currency, expected, monkeypatch):
+    from cyberscientist import sandbox_costs
+    rid = _fixture()
+    item = {'sandbox_id': 'synthetic-box', 'paymentType': payment, 'cost': cost}
+    if photon is not None:
+        item['photonCost'] = photon
+    receipt = {'ok': True, 'stdout': json.dumps({'ok': True, 'data': {'items': [item,
+        {'sandbox_id': 'another-account-resource', 'cost': 999, 'owner': 'private account info'}]}})}
+    assert sandbox_costs.record_costs(rid, receipt)['matched_count'] == 1
+    monkeypatch.setattr(compute, '_native', lambda *a, **k: pytest.fail('offline reports'))
+    observed = compute.costs(rid)['sandbox_observed']
+    assert observed['amounts'] == {currency: expected}
+    assert observed['unmatched_count'] == 0
+    assert observed['final_settlement_confirmed'] is False
+    assert compute.costs(rid)['total_amount'] is None
+    payload = db.query_one("SELECT payload FROM events WHERE run_id=? AND type='sandbox.cost_observed'", (rid,))['payload']
+    assert 'private account info' not in payload and 'another-account-resource' not in payload
+    assert observed['source_receipt_sha256']
+
+
+@pytest.mark.parametrize('fields', [
+    {}, {'cost': None}, {'cost': True}, {'cost': -1}, {'cost': 'NaN'},
+    {'cost': 0.1, 'paymentType': True}, {'cost': 0.1, 'paymentType': 7},
+])
+def test_absent_or_unverified_native_cost_is_unknown_not_zero(fields):
+    from cyberscientist import sandbox_costs
+    rid = _fixture()
+    receipt = {'ok': True, 'stdout': json.dumps({'ok': True, 'data': {'items': [
+        {'sandbox_id': 'synthetic-box', **fields}]}})}
+    sandbox_costs.record_costs(rid, receipt)
+    observed = sandbox_costs.observed_costs(rid)
+    assert observed['status'] == 'unknown' and observed['amounts'] == {}
+    assert observed['unmatched_count'] == 1
+
+
+def test_billing_snapshot_conflicts_and_changed_identity_cannot_leak_into_totals():
+    from cyberscientist import sandbox_costs
+    rid = _fixture()
+    def receipt(values):
+        return {'ok': True, 'stdout': json.dumps({'ok': True, 'data': {'items': [
+            {'sandbox_id': 'synthetic-box', 'cost': value} for value in values]}})}
+    sandbox_costs.record_costs(rid, receipt([0.08, 0.09]))
+    assert sandbox_costs.observed_costs(rid)['amounts'] == {}
+    sandbox_costs.record_costs(rid, receipt([0.08]))
+    assert sandbox_costs.observed_costs(rid)['amounts'] == {'CNY': '0.08'}
+    assert sandbox_costs.record_costs(rid, {'ok': False})['status'] == 'unknown'
+    assert sandbox_costs.observed_costs(rid)['amounts'] == {'CNY': '0.08'}
+    db.execute("UPDATE compute_sandboxes SET sandbox_id='changed-resource' WHERE run_id=?", (rid,))
+    assert sandbox_costs.observed_costs(rid)['amounts'] == {}
+
+
+def test_delayed_billing_projection_retains_original_cli_time():
+    from cyberscientist import sandbox_costs
+    rid = _fixture()
+    receipt = {'ok': True, 'stdout': json.dumps({'ok': True,
+        'meta': {'timestamp': 1790856000}, 'data': {'items': [
+            {'sandbox_id': 'synthetic-box', 'cost': 0.08}]}})}
+    sandbox_costs.record_costs(rid, receipt)
+    observed = sandbox_costs.observed_costs(rid)
+    assert observed['observed_at'] == '2026-10-01T12:00:00+00:00'
+    assert observed['recorded_at'] != observed['observed_at']

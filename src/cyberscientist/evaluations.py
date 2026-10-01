@@ -276,6 +276,19 @@ async def advance(controller: Any) -> None:
             rid = result['run_id']
             if rid is None:
                 try:
+                    required = local_scoring.scorer_manifest(result['challenge_id']).get('runtime', {}).get('environment_id')
+                except local_scoring.LocalScoreError:
+                    required = None  # Preserve existing handling of legacy scorers.
+                if required:
+                    from . import runtime_environments
+                    try:
+                        runtime_environments.resolve(required)
+                    except runtime_environments.EnvironmentUnavailable as exc:
+                        # Declared immutable infrastructure must exist before
+                        # spending on an evaluation whose score requires it.
+                        _failure(result['id'], 'EnvironmentUnavailable: ' + str(exc))
+                        continue
+                try:
                     marker = _marker(snapshot, by_id[result['challenge_id']], result['id'])
                     marker['eval_id'] = eid
                     run = controller.create_run(result['challenge_id'], 'connected',
@@ -819,6 +832,7 @@ def write_report(eval_id: str) -> tuple[Path, Path]:
         item = row['result'] or {}
         cost = item.get('bohrium_cost_details') or {}
         estimate = cost.get('sandbox_estimate') or {}
+        observed = cost.get('sandbox_observed') or {}
         reason = item.get('science_reason') or item.get('failure_reason')
         reason_text = observation.strip_secrets(str(reason)).replace('\n', ' ')[:180] if reason else 'none'
         lines.append(f"- {row['run_id'] or 'pending'}: source={shown(item.get('challenge_source'))}; "
@@ -827,6 +841,8 @@ def write_report(eval_id: str) -> tuple[Path, Path]:
                      f"brain_tokens={shown(item.get('brain_tokens'))}; "
                      f"executor_tokens={shown(item.get('executor_tokens'))}; "
                      f"sandbox_minutes_status={shown(item.get('sandbox_minutes_status'))}; "
+                     f"sandbox_observed={shown(observed.get('amounts'))} "
+                     f"(query-time, final settlement unconfirmed, missing={shown(observed.get('unmatched_count'))}); "
                      f"sandbox_estimate={shown(estimate.get('amount'))} "
                      f"{shown(estimate.get('currency'))} "
                      f"(current rates, not a bill, unpriced={shown(estimate.get('unpriced_count'))}); "
