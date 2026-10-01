@@ -169,3 +169,6 @@ CyberScientist/
 - Brain `protocol=experience_curation` 输出 `{"schema_version":1,"message_type":"curation_result","summary":"...","experience_proposals":[]}`；提案形状沿用既有 experience_proposals。该协议不执行 Run actions。
 
 细节与证据边界见 `TBMA_UPGRADE_2026-09-23.md`。
+
+
+CS-UP-06 候选对账允许评分器额外声明 `comparison_contract`：`higher_is_better` 是 `/components/` 下的 JSON Pointer 列表（`*` 仅匹配一层字典键或数组位置），`verification` 引用该字段是单调计分输入的已审查证据。仅显式声明的输入参与比较，不猜计时、误差或其他诊断字段的方向；保留原始数值，不转换为正式分数。声明参与评分器哈希，并与科学输入哈希、原评分值和产物哈希在同一事务内写入 `local_score.registered`；之后修改声明不重新解释旧候选。完整包退步事实包含原字段路径、两侧值、候选哈希及可确认 token，大脑仍可明确确认，不自动替换产物。旧评分器没有该声明时沿用明确 score/points 比较；同包及同评分器哈希仍复用评分，不创建沙箱。

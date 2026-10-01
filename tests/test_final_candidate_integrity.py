@@ -149,6 +149,91 @@ def test_component_registry_distinguishes_scores_from_runtime_diagnostics():
                       '/components/bonus/points/first': 3, '/components/bonus/points/second': 0}
 
 
+def test_plateau_scores_reject_lost_declared_candidates_and_allow_confirmation(monkeypatch):
+    from cyberscientist import config
+    rid, tid, _, files, _ = _run_with_scorer()
+    path = config.WORKSPACE_DIR / 'challenges/MB_CH/scorer/scorer.json'
+    description = json.loads(path.read_text())
+    description['comparison_contract'] = {'higher_is_better': ['/components/*/quality'],
+        'verification': 'Synthetic monotone grading input; formal points have a plateau.'}
+    path.write_text(json.dumps(description))
+    manifest = local_scoring.scorer_manifest('MB_CH')
+    def candidate(operation, a, b):
+        sealed, _ = package_seal.seal(_zip(files | {'candidate.txt': operation.encode()}), rid, tid, 0)
+        return local_scoring._record_score('MB_CH', rid, tid, operation, sealed, manifest,
+            {'score': 0, 'components': {'Q1': {'score': 0, 'quality': a, 'runtime': 9},
+                                      'Q2': {'score': 0, 'quality': b, 'runtime': 3}},
+             'confidence': 'high', 'notes': 'synthetic plateau', 'scorer_version': manifest['scorer_version']})
+    first = candidate('better-q1', .8, 0)
+    second = candidate('better-q2', 0, .81)
+    final = candidate('placeholder', .0001, .00001)
+    # Later edits cannot reinterpret the registered identities/contract.
+    description.pop('comparison_contract'); path.write_text(json.dumps(description))
+    monkeypatch.setattr(local_scoring, 'score_candidate', lambda *a, **k: final)
+    controller = RunController()
+    action = {'op': 'finish', 'reason': 'synthetic plateau finish'}
+    asyncio.run(controller._apply_decision(rid, _decision([action], rid=rid), {}, None, None))
+    assert db.query_one('SELECT phase FROM runs WHERE id=?', (rid,))['phase'] == 'running'
+    facts = local_scoring.latest_final_check(rid)['final_package_check']
+    losses = {item['component']: item for item in facts['regressions']}
+    assert set(losses) == {'/components/Q1/quality', '/components/Q2/quality'}
+    assert losses['/components/Q1/quality']['best_score'] == .8
+    assert losses['/components/Q1/quality']['current_score'] == .0001
+    assert losses['/components/Q1/quality']['candidate_package_sha256'] == first['package_sha256']
+    assert losses['/components/Q2/quality']['candidate_package_sha256'] == second['package_sha256']
+    assert all(item['candidate_artifact_hashes'] for item in losses.values())
+    assert final['science_score'] == 0  # Comparison does not rewrite formal points.
+    action['finish_confirmation'] = {'token': facts['confirmation_token'], 'reason_md': 'retain synthetic result'}
+    asyncio.run(controller._apply_decision(rid, _decision([action], rid=rid), {}, None, None))
+    assert db.query_one('SELECT phase FROM runs WHERE id=?', (rid,))['phase'] == 'eval_scoring'
+    assert db.query_one("SELECT 1 FROM events WHERE run_id=? AND type='run.final_package_confirmed'", (rid,))
+
+
+@pytest.mark.parametrize('contract', [
+    {'higher_is_better': ['/score'], 'verification': 'fixture'},
+    {'higher_is_better': ['/components/a~2b'], 'verification': 'fixture'},
+    {'higher_is_better': ['/components/*/value'], 'verification': ''},
+    {'higher_is_better': ['/components/*/value'], 'verification': 'fixture', 'direction': 'guessed'},
+])
+def test_comparison_contract_rejects_unreviewable_fields(contract):
+    with pytest.raises(local_scoring.LocalScoreError, match='单调比较'):
+        local_scoring.validate_comparison(contract)
+
+
+def test_score_and_comparison_registration_are_atomic(monkeypatch):
+    rid, tid, _, files, manifest = _run_with_scorer()
+    def interrupted(*a, **k):
+        raise RuntimeError('registration interrupted')
+    monkeypatch.setattr(db, 'append_event_tx', interrupted)
+    with pytest.raises(RuntimeError, match='registration interrupted'):
+        _score(rid, tid, files, manifest, 'interrupted-score', 1, 2)
+    assert not db.query('SELECT 1 FROM local_scores WHERE run_id=?', (rid,))
+
+
+def test_cache_preserves_declared_comparison_without_creating_sandbox(monkeypatch):
+    from cyberscientist import config
+    rid, tid, _, _, _ = _run_with_scorer()
+    path = config.WORKSPACE_DIR / 'challenges/MB_CH/scorer/scorer.json'
+    description = json.loads(path.read_text())
+    description['comparison_contract'] = {'higher_is_better': ['/components/*/quality'],
+        'verification': 'Synthetic monotone input.'}
+    path.write_text(json.dumps(description)); manifest = local_scoring.scorer_manifest('MB_CH')
+    first = mailboxes.preflight_submission(rid, tid, None, allow_proxy_evidence=True)
+    source = local_scoring._record_score('MB_CH', rid, tid, 'declared-source', first['sealed_bytes'],
+        manifest, {'score': 0, 'components': {'part': {'score': 0, 'quality': .8}},
+                   'confidence': 'high', 'notes': 'synthetic', 'scorer_version': manifest['scorer_version']})
+    db.execute("UPDATE runs SET phase='eval_scoring' WHERE id=?", (rid,))
+    def forbidden(*a, **k):
+        pytest.fail('cached declared comparisons must not create or execute a sandbox')
+    monkeypatch.setattr(sandboxes, 'create', forbidden)
+    monkeypatch.setattr(local_scoring, 'evaluate', forbidden)
+    assert evaluations._score_run(rid, 'er_declared_cache') == ('scored', None)
+    derived = db.query_one('SELECT * FROM local_scores WHERE sandbox_operation_id=?',
+                           ('eval-score-er_declared_cache',))
+    assert derived['source_local_score_id'] == source['id']
+    assert local_scoring._registered_components(derived)['/components/part/quality'] == .8
+
+
 def test_mutated_final_snapshot_is_not_silently_accepted(monkeypatch):
     from cyberscientist import config
     rid, tid, _, files, manifest = _run_with_scorer()

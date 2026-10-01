@@ -75,6 +75,25 @@ def validate_runtime(value: Any) -> dict:
     return value
 
 
+def validate_comparison(value: Any) -> dict:
+    """Only the reviewed scorer may declare monotone grading inputs."""
+    if value is None:
+        return {}
+    if (not isinstance(value, dict) or set(value) != {'higher_is_better', 'verification'}
+            or not isinstance(value['higher_is_better'], list)
+            or not 1 <= len(value['higher_is_better']) <= 32
+            or any(not isinstance(path, str) or len(path) > 300
+                   or not path.startswith('/components/')
+                   or len(path.split('/')) > 12
+                   or not re.fullmatch(r'(?:/(?:[^/~]|~[01])+)+', path)
+                   for path in value['higher_is_better'])
+            or len(set(value['higher_is_better'])) != len(value['higher_is_better'])
+            or not isinstance(value['verification'], str) or not value['verification'].strip()
+            or len(value['verification']) > 1000):
+        raise LocalScoreError('INVALID_SCORER', '评分器单调比较指标声明无效')
+    return value
+
+
 def scorer_manifest(challenge_id: str) -> dict[str, Any]:
     if not db.query_one('SELECT 1 FROM challenges WHERE id=?', (challenge_id,)):
         raise LocalScoreError('NOT_FOUND', '题目不存在')
@@ -119,7 +138,7 @@ def scorer_manifest(challenge_id: str) -> dict[str, Any]:
         raise LocalScoreError('INVALID_SCORER', 'scorer.json 缺失或无法解析') from exc
     required = {'entrypoint', 'image', 'version', 'contract_version'}
     if (not isinstance(manifest, dict) or not required <= set(manifest)
-            or not set(manifest) <= required | {'input_contract', 'runtime'}):
+            or not set(manifest) <= required | {'input_contract', 'runtime', 'comparison_contract'}):
         raise LocalScoreError('INVALID_SCORER', 'scorer.json 字段必须为 entrypoint/image/version/contract_version')
     entry, image = manifest['entrypoint'], manifest['image']
     if (not isinstance(entry, str) or not _ENTRYPOINT.fullmatch(entry)
@@ -142,6 +161,7 @@ def scorer_manifest(challenge_id: str) -> dict[str, Any]:
                 or not isinstance(contract['verification'], str) or not contract['verification']):
             raise LocalScoreError('INVALID_SCORER', '评分器输入路径声明无效')
     runtime = validate_runtime(manifest.get('runtime', {}))
+    comparison = validate_comparison(manifest.get('comparison_contract'))
     hashes = {name: hashlib.sha256(raw).hexdigest() for name, raw in files.items()}
     if runtime.get('environment_id'):
         from . import runtime_environments
@@ -155,6 +175,7 @@ def scorer_manifest(challenge_id: str) -> dict[str, Any]:
     version = hashlib.sha256(_canonical(hashes).encode()).hexdigest()
     return {'entrypoint': entry, 'image': image, 'version': manifest['version'], 'contract_version': 1,
             'scorer_version': version, 'file_hashes': hashes, 'files': files, 'runtime': runtime,
+            **({'comparison_contract': comparison} if comparison else {}),
             **({'input_contract': contract} if contract is not None else {})}
 
 
@@ -258,11 +279,12 @@ def _science_package(sealed: bytes) -> bytes:
     return _archive(files)
 
 
-def component_scores(science: dict[str, Any]) -> dict[str, float]:
+def component_scores(science: dict[str, Any], comparison: dict | None = None) -> dict[str, float]:
     """Named higher-is-better score fields, excluding unrelated diagnostics.
 
     Nested objects use explicit score/points fields or *_score names.
-    Boolean checks, fidelities and timings are not scores.
+    Other numeric fields require an explicit monotone-input declaration;
+    their original values are preserved, never converted into formal points.
     """
     result = {'/score': float(science['score'])}
 
@@ -275,7 +297,33 @@ def component_scores(science: dict[str, Any]) -> dict[str, float]:
                 visit(item, path + '/' + part,
                       named or key in ('score', 'points') or key.endswith('_score'))
     visit(science.get('components', {}), '/components')
+    def selected(value, parts, path):
+        if not parts:
+            if type(value) in (int, float) and math.isfinite(value):
+                result[path] = float(value)
+            return
+        token = parts[0].replace('~1', '/').replace('~0', '~')
+        children = value.items() if isinstance(value, dict) else enumerate(value) if isinstance(value, list) else ()
+        for key, item in children:
+            if token == '*' or str(key) == token:
+                escaped = str(key).replace('~', '~0').replace('/', '~1')
+                selected(item, parts[1:], path + '/' + escaped)
+    for pointer in validate_comparison(comparison).get('higher_is_better', []):
+        selected(science, pointer.split('/')[1:], '')
     return result
+
+
+def _registered_components(row: dict) -> dict[str, float]:
+    # The registration freezes the reviewed contract beside the exact score
+    # identity, so a later scorer edit cannot reinterpret earlier candidates.
+    event = db.query_one("SELECT payload FROM events WHERE run_id=? AND type='local_score.registered'"
+                         " AND json_extract(payload,'$.local_score_id')=? ORDER BY seq DESC LIMIT 1",
+                         (row['run_id'], row['id']))
+    data = json.loads(event['payload']) if event else {}
+    bound = (data.get('scorer_version') == row['scorer_version']
+             and data.get('science_input_sha256') == row['science_input_sha256'])
+    return component_scores(json.loads(row['science_result_json']),
+                            data.get('comparison_contract') if bound else None)
 
 
 def reuse_score(run_id: str, trial_id: str, operation_id: str, sealed: bytes,
@@ -296,12 +344,12 @@ def reuse_score(run_id: str, trial_id: str, operation_id: str, sealed: bytes,
 
 def final_package_check(run_id: str, candidate: dict[str, Any]) -> dict[str, Any]:
     """Compare the full candidate against every registered per-component best."""
-    current = component_scores(json.loads(candidate['science_result_json']))
+    current = _registered_components(candidate)
     best = {}
     for row in db.query('SELECT * FROM local_scores WHERE run_id=? AND scorer_version=?'
                          ' AND science_score IS NOT NULL ORDER BY created_at,id',
                          (run_id, candidate['scorer_version'])):
-        for component, score in component_scores(json.loads(row['science_result_json'])).items():
+        for component, score in _registered_components(row).items():
             if component not in best or score > best[component]['best_score']:
                 best[component] = {'component': component, 'best_score': score,
                     'candidate_local_score_id': row['id'],
@@ -374,6 +422,8 @@ def _record_score(challenge_id: str, run_id: str, trial_id: str, operation_id: s
     predicted = science['score'] * max(0.0, min(1.0, (trace['trace_score'] - 30.0) / 40.0))
     package_sha = hashlib.sha256(sealed).hexdigest()
     score_id = 'ls_' + uuid.uuid4().hex[:12]
+    comparison = validate_comparison(manifest.get('comparison_contract')) or None
+    components = component_scores(science, comparison)
     with db.transaction() as conn:
         prior = conn.execute('SELECT * FROM local_scores WHERE sandbox_operation_id=?',
                              (operation_id,)).fetchone()
@@ -393,10 +443,11 @@ def _record_score(challenge_id: str, run_id: str, trial_id: str, operation_id: s
                       _canonical(trace),predicted,manifest['scorer_version'],
                       _canonical(manifest['file_hashes']),FEATURE_VERSION,MODEL_VERSION,operation_id,db.utcnow(),
                       science_input_sha,source_local_score_id))
-    db.append_event(run_id, 'controller', 'local_score.registered',
+        db.append_event_tx(conn, run_id, 'controller', 'local_score.registered',
                     {'local_score_id': score_id, 'scorer_version': manifest['scorer_version'],
                      'science_input_sha256': science_input_sha,
-                     'components': component_scores(science),
+                     'components': components,
+                     'comparison_contract': comparison,
                      'artifact_hashes': science_hashes,
                      'source_local_score_id': source_local_score_id}, trial_id=trial_id)
     return dict(db.query_one('SELECT * FROM local_scores WHERE id=?', (score_id,)))
