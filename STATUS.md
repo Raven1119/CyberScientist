@@ -82,6 +82,8 @@
 
 - CS-UP-06 F3只读目录复核：官方公共分类GET完整返回20类；Basic Image 21/21、Third-party software 42/42版本描述未标出Lean/Mathlib，Tools for Agents只检查首100/88,011条，同样未发现版本证据。未穷尽代理工具目录，不能断言平台没有合适环境；未知私有创建预约不变，无新建资源或额外验证Run。
 
+- CS-UP-06 F3上游容器复核：固定Mathlib revision的blueprint配方明确未预装Mathlib；官方Docker CI只构建lean/gitpod/gitpod-blueprint，不能由包名证明固定缓存就绪。Kimina公共标签GET连接超时，无响应、未重试；仍未判定其可用标签。没有拉取镜像、执行配方或使用科学算力。
+
 - CS-UP-06 F1同分退步补修：定向49 passed，全量`.venv/bin/pytest -q`为715 passed、2 skipped（既有回环限制）；compileall及diff --check通过。前端未改，沿用本轮40 passed/build。fake验证正式分数不变、两项指标退步拒绝/明确确认、契约冻结、事件与评分原子回滚及缓存不创建沙箱。
 
 - CS-UP-06费用与轨迹诊断修复完整回归：`.venv/bin/pytest -q`为708 passed、2 skipped（既有回环监听限制）；`npm --prefix apps/web test -- --run`为40 passed，`npm --prefix apps/web run build`通过；compileall和git diff --check通过。所有新增缺陷均有fake回归，未增加W1真实快速题验证。
