@@ -42,6 +42,40 @@ def remote(rid, status='Running'):
     return receipt(json.dumps([{'id': 123, 'jobName': row['spec']['job_name'], 'status': status}]))
 
 
+def test_large_job_input_timeout_and_streamed_secret_boundary(run, monkeypatch):
+    assert compute._submit_timeout(256 * 1024**2) == 180
+    assert compute._submit_timeout(256 * 1024**2 + 1) == 1200
+    rid, source = run
+    settings = config.load_settings()
+    settings['bohrium']['access_key_secret_ref'] = 'local:fixture-key'
+    config.save_settings(settings)
+    secret = b'boundary-secret-for-test'
+    config.update_secret('fixture-key', secret.decode())
+    (source / 'payload.bin').write_bytes(b'x' * (1024 * 1024 - 5) + secret)
+    result = compute.submit(rid, 'stream-secret-boundary', spec(), str(source))
+    assert result['status'] == 'not_started'
+    assert secret.decode() not in json.dumps(result)
+
+
+def test_submit_exception_and_terminal_pending_reservation_remain_unknown(run, monkeypatch):
+    rid, source = run
+    def broken_native(*args, **kwargs):
+        raise RuntimeError('transient transport failure')
+    monkeypatch.setattr(compute, '_native', broken_native)
+    result = compute.submit(rid, 'unknown-transport', spec(), str(source))
+    assert result['status'] == 'unknown' and result['platform_job_id'] is None
+    db.execute("UPDATE compute_jobs SET status='submitting' WHERE operation_id=?",
+               ('unknown-transport',))
+    db.execute("UPDATE runs SET phase='finished',ended_at=? WHERE id=?", (db.utcnow(), rid))
+    assert compute.mark_terminal_pending_unknown(rid) == 1
+    assert compute.mark_terminal_pending_unknown(rid) == 0
+    job = compute.list_jobs(rid)['items'][0]
+    assert job['status'] == 'unknown'
+    events = db.query("SELECT payload FROM events WHERE run_id=? AND type='job.unknown'", (rid,))
+    assert len(events) == 2
+    assert '只读对账，不重发' in events[-1]['payload']
+
+
 @pytest.mark.parametrize('mode', ['cli_error', 'empty_output', 'file'])
 def test_download_records_real_files_or_failure(run, monkeypatch, mode):
     rid, source = run

@@ -1578,6 +1578,15 @@ class RunController:
             # 兜底放行，否则恢复后大脑所有 start_trial 都会被门禁拒绝
             self._release_orphaned_gate(run_id)
             self._enqueue_lifecycle(run_id, trigger=trigger)
+            # A recovered active Trial has already been authorized. The new
+            # native executor session is idle; reattach it even if the sparse
+            # brain elects to wait for remote reconciliation.
+            if trigger == "recovery":
+                recovered = self._require_run(run_id)
+                if (recovered["gate"] == "open" and recovered["current_trial_id"]
+                        and db.query_one("SELECT 1 FROM trials WHERE id=? AND status='active'",
+                                         (recovered["current_trial_id"],))):
+                    await q.put({"type": "resume"})
             while True:
                 run = self._require_run(run_id)
                 phase = run["phase"]
@@ -2942,11 +2951,14 @@ class RunController:
                 self._enabled_skills(run_id, settings, run["challenge_id"], 'brain'))),
             "new_events_since_last_review": [
                 {"seq": e["seq"], "source": e["source"], "type": e["type"],
-                 **({} if sparse else observation.event_excerpt(e))}
+                 **({} if sparse and e["type"] not in
+                    ("brain.action_rejected", "brain.decision_rejected")
+                    else observation.event_excerpt(e))}
                 for e in recent if not sparse or e["type"] in (
                     "checkpoint.created", "job.observed", "job.unknown",
                     "trial.stalled", "trial.done", "submission.scored",
-                    "submission.score_corrected")][-20:],
+                    "submission.score_corrected", "brain.action_rejected",
+                    "brain.decision_rejected")][-20:],
             "budget_remaining": {
                 "brain_reviews": defaults["max_brain_reviews"]
                 - run["brain_reviews_used"],
@@ -2955,6 +2967,10 @@ class RunController:
             "authorization": {
                 "note": auth["note"],
                 "max_jobs": auth["max_jobs"],
+                "max_sandboxes": auth["max_sandboxes"],
+                "max_sandbox_minutes": auth["max_sandbox_minutes"],
+                "allow_sandbox_gpu": bool(auth["allow_sandbox_gpu"]),
+                "allow_data_download": bool(auth["allow_data_download"]),
                 "max_submissions": auth["max_submissions"],
                 "max_run_minutes": auth["max_run_minutes"],
             } if auth else None,
@@ -2966,6 +2982,13 @@ class RunController:
             packet["run_objective"] = run["objective_md"]
             packet["current_trial_goal"] = trial["goal"] if trial else None
             packet["pending_intent"] = json.loads(run["pending_action_json"]) if run["pending_action_json"] else None
+        if db.eval_mode(run_id):
+            packet["evaluation_handoff"] = {
+                "platform_submission_allowed": False,
+                "experience_write_allowed": False,
+                "local_scoring_after_finish": True,
+                "agent_scoring_sandbox_required_for_finish": False,
+            }
         packet["data_status"] = datasets.status(run["challenge_id"])["items"]
         # 题目信息进帧：大脑开局必须亲自核实任务要素（数据/工具链/评分契约），
         # 不再只能依赖执行器转述（2026-09-19：大脑因帧内无题面，
@@ -3302,11 +3325,21 @@ class RunController:
                         continue
                     if assessment.get("status") == "achieved":
                         refs = assessment.get("evidence_refs") or []
-                        valid = bool(refs) and all(
-                            _objective_evidence_exists(run_id, ref) for ref in refs)
-                        if not valid:
+                        invalid = [ref for ref in refs
+                                   if not _objective_evidence_exists(run_id, ref)]
+                        if not refs or invalid:
                             db.append_event(run_id, "brain", "brain.action_rejected",
-                                            {"op": op, "reason": "achieved 缺少可解析的真实证据引用"})
+                                            {"op": op, "reason": "achieved 缺少可解析的真实证据引用",
+                                             "invalid_refs": [_redact(str(ref), 120)
+                                                              for ref in invalid[:8]]})
+                            prior_repairs = db.query_one(
+                                "SELECT COUNT(*) AS n FROM review_requests WHERE run_id=?"
+                                " AND trigger='finish_rejected'", (run_id,))["n"]
+                            if prior_repairs < 2:
+                                self._enqueue_lifecycle(run_id, trigger="finish_rejected")
+                            else:
+                                self._pause_needs_attention(
+                                    run_id, "目标完成动作连续缺少可解析证据引用；已尝试两次自动复审")
                             continue
                     db.execute("UPDATE runs SET objective_status=?,end_reason=? WHERE id=?",
                                (assessment["status"], action["reason"], run_id))

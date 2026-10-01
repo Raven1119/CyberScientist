@@ -193,6 +193,36 @@ def _science_package(sealed: bytes) -> bytes:
     return _archive(files)
 
 
+def _record_score(challenge_id: str, run_id: str, trial_id: str, operation_id: str, sealed: bytes,
+                  manifest: dict[str, Any], science: dict[str, Any]) -> dict[str, Any]:
+    """Persist a verified sandbox score with its exact science and trace inputs."""
+    science_hashes = mailboxes._science_artifact_hashes(sealed)
+    manifest_science_sha = _manifest_science_sha(sealed)
+    trace = predict_trace(sealed)
+    predicted = science['score'] * max(0.0, min(1.0, (trace['trace_score'] - 30.0) / 40.0))
+    package_sha = hashlib.sha256(sealed).hexdigest()
+    score_id = 'ls_' + uuid.uuid4().hex[:12]
+    with db.transaction() as conn:
+        prior = conn.execute('SELECT * FROM local_scores WHERE sandbox_operation_id=?',
+                             (operation_id,)).fetchone()
+        if prior:
+            if (prior['run_id'] != run_id or prior['trial_id'] != trial_id
+                    or prior['package_sha256'] != package_sha
+                    or prior['scorer_version'] != manifest['scorer_version']):
+                raise LocalScoreError('OPERATION_CONFLICT', '评分操作 ID 已绑定不同输入')
+            return dict(prior) | {'deduplicated': True}
+        conn.execute('INSERT INTO local_scores(id,challenge_id,run_id,trial_id,package_sha256,'
+                     'science_artifact_hashes_json,manifest_science_sha256,science_score,science_result_json,'
+                     'trace_prediction_json,predicted_display_score,scorer_version,scorer_file_hashes_json,'
+                     'feature_version,model_version,sandbox_operation_id,created_at)'
+                     ' VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+                     (score_id,challenge_id,run_id,trial_id,package_sha,
+                      _canonical(science_hashes),manifest_science_sha,science['score'],_canonical(science),
+                      _canonical(trace),predicted,manifest['scorer_version'],
+                      _canonical(manifest['file_hashes']),FEATURE_VERSION,MODEL_VERSION,operation_id,db.utcnow()))
+    return dict(db.query_one('SELECT * FROM local_scores WHERE id=?', (score_id,)))
+
+
 def evaluate(run_id: str, trial_id: str, sandbox_id: str,
              operation_id: str, package_path: str | None = None,
              *, preflight: dict[str, Any] | None = None,
@@ -206,7 +236,13 @@ def evaluate(run_id: str, trial_id: str, sandbox_id: str,
             raise LocalScoreError('OPERATION_CONFLICT', '评分 operation_id 已绑定其他 Run/Trial')
         return dict(existing) | {'deduplicated': True}
     run = db.query_one('SELECT challenge_id,current_trial_id,phase,gate FROM runs WHERE id=?', (run_id,))
-    if not run or run['current_trial_id'] != trial_id or run['phase'] not in ('running', 'eval_scoring') or run['gate'] != 'open':
+    eval_retry = False
+    if (run and run['phase'] == 'finished' and db.eval_mode(run_id)
+            and operation_id.startswith('eval-score-') and operation_id.endswith('-retry')):
+        from . import evaluations
+        eval_retry = evaluations.retry_authorized(
+            run_id, operation_id[len('eval-score-'):-len('-retry')])
+    if not run or run['current_trial_id'] != trial_id or (run['phase'] not in ('running', 'eval_scoring') and not eval_retry) or run['gate'] != 'open':
         raise LocalScoreError('RUN_NOT_RUNNING', '本地评分需要当前运行中的 Trial')
     manifest = scorer_manifest(run['challenge_id'])
     sandbox = db.query_one('SELECT * FROM compute_sandboxes WHERE run_id=? AND sandbox_id=?',
@@ -221,9 +257,6 @@ def evaluate(run_id: str, trial_id: str, sandbox_id: str,
     if check['error_code']:
         raise LocalScoreError(check['error_code'], '封存包未通过本地准入')
     sealed = check['sealed_bytes']
-    package_sha = hashlib.sha256(sealed).hexdigest()
-    science_hashes = mailboxes._science_artifact_hashes(sealed)
-    manifest_science_sha = _manifest_science_sha(sealed)
     trial_dir = config.WORKSPACE_DIR / 'runs' / run_id / 'trials' / trial_id
     stage = trial_dir / 'local_scorer' / operation_id
     stage.mkdir(parents=True, exist_ok=True)
@@ -251,6 +284,11 @@ def evaluate(run_id: str, trial_id: str, sandbox_id: str,
         if result['status'] != 'completed':
             raise LocalScoreError('SCORE_EXECUTION_UNKNOWN', f'沙箱 {name} 阶段未确认完成')
     resource_env = ''
+    if run['challenge_id'] == 'flowforge-paired-block-boundary-projection-v10-fe06025a':
+        from . import lean_runtime
+        lean_runtime.prepare(run_id, sandbox_id, stage, operation_id)
+        resource_env = ('PATH=/workspace/lean/bin:$PATH '
+                        'CS_LEAN_PROJECT=/workspace/paired-block-project ')
     if public_resource_zip is not None:
         if not db.eval_mode(run_id):
             raise LocalScoreError('INVALID_ARGUMENT', '公开评测数据只供评测 Run 使用')
@@ -274,7 +312,7 @@ def evaluate(run_id: str, trial_id: str, sandbox_id: str,
     dependency_command = ''
     if public_resource_zip is not None and 'requirements.txt' in manifest['files']:
         dependency_command = (' && python3 -m pip install --disable-pip-version-check'
-                              ' --no-input --no-cache-dir -r scorer/requirements.txt')
+                              ' --no-input --no-cache-dir -r scorer/requirements.txt 1>&2')
     command = ('cd ' + shlex.quote(remote) + ' && python3 -m zipfile -e scorer.zip scorer'
                + dependency_command
                + ' && ' + resource_env + 'CS_SCORER_VERSION=' + shlex.quote(manifest['scorer_version'])
@@ -283,21 +321,8 @@ def evaluate(run_id: str, trial_id: str, sandbox_id: str,
     if result['status'] != 'completed':
         raise LocalScoreError('SCORE_EXECUTION_UNKNOWN', '沙箱评分执行未确认成功')
     science = _score_output(result, manifest['scorer_version'])
-    trace = predict_trace(sealed)
-    predicted = science['score'] * max(0.0, min(1.0, (trace['trace_score'] - 30.0) / 40.0))
-    score_id = 'ls_' + uuid.uuid4().hex[:12]
-    with db.transaction() as conn:
-        conn.execute('INSERT INTO local_scores(id,challenge_id,run_id,trial_id,package_sha256,'
-                     'science_artifact_hashes_json,manifest_science_sha256,science_score,science_result_json,'
-                     'trace_prediction_json,predicted_display_score,scorer_version,scorer_file_hashes_json,'
-                     'feature_version,model_version,sandbox_operation_id,created_at)'
-                     ' VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
-                     (score_id,run['challenge_id'],run_id,trial_id,package_sha,
-                      _canonical(science_hashes),manifest_science_sha,science['score'],_canonical(science),
-                      _canonical(trace),predicted,manifest['scorer_version'],
-                      _canonical(manifest['file_hashes']),
-                      FEATURE_VERSION,MODEL_VERSION,operation_id,db.utcnow()))
-    return dict(db.query_one('SELECT * FROM local_scores WHERE id=?', (score_id,)))
+    return _record_score(run['challenge_id'], run_id, trial_id, operation_id,
+                         sealed, manifest, science)
 
 
 def bind_submission_tx(conn, submission_id: str, sealed: bytes) -> str | None:

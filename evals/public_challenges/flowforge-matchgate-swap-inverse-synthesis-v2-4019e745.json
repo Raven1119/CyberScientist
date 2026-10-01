@@ -1,0 +1,122 @@
+{
+  "content": "﻿# Endpoint inverse synthesis with Gaussian blocks and SWAPs\n\nInput manifest: start from `environment/resources.yaml`; it enumerates the immutable instances, starter files, and locked requirements.\n\n## Task and scope\n\n### Objective\n\nFor each of four supplied finite, number-conserving fermionic instances, find any circuit that maps the supplied Gaussian input state to the supplied target state. The required alternating normal form is\n\n$$\n|\\widehat\\psi\\rangle = \\Gamma(U_t)S_{i_t}\\Gamma(U_{t-1})\\cdots S_{i_1}\\Gamma(U_0)|\\psi_{\\mathrm{in}}\\rangle.\n$$\n\nRead the circuit from right to left. Each $U_j\\in U(n)$ is one unrestricted number-conserving Gaussian block. Each $S_i$ is one ordinary qubit SWAP on adjacent modes $(i,i+1)$, acting on occupation bit strings without a fermionic exchange sign. A Gaussian block is a compressed arbitrary Matchgate circuit, not one two-qubit gate, and may later be decomposed into nearest-neighbor Givens rotations.\n\nThe endpoints do not identify a unique planted circuit. Any valid endpoint-equivalent circuit is accepted.\n\n### Instances\n\n| Case | Modes $n$ | Particles $k$ | Required SWAPs $t$ | Points |\n|---|---:|---:|---:|---:|\n| Q1 | 12 | 6 | 3 | 25 |\n| Q2 | 16 | 8 | 4 | 25 |\n| Q3 | 20 | 10 | 5 | 25 |\n| Q4 | 24 | 12 | 6 | 25 |\n\nFor every case, the exact-resource promise is that the target has exact ordinary-SWAP cost $t$ when number-conserving Gaussian unitaries are free. The organizer holds a private constructive upper-bound circuit and an independent exact lower-bound certificate. Candidate scoring never compares a submission with the planted circuit.\n\n## Method and steps\n\n### Supplied endpoint states\n\nQ1--Q3 use one monolithic `instances/Q*_*.npz` file containing `n`, `k`, `t`, lexicographically ordered occupied-mode tuples `configs`, the occupied-orbital matrix `initial_orbitals`, and normalized `target_amplitudes`.\n\nQ4 is the same mathematical endpoint in a lossless sharded storage layout:\n\n- `Q4_meta_t6_n24.npz` contains `n`, `k`, `t`, `configuration_count`, `shard_count`, and the $n\\times k$ `initial_orbitals` matrix;\n- `Q4_target_part_*.npz` contain contiguous `complex128` slices of `target_amplitudes`, with exact `start` and `stop` indices;\n- Q4 `configs` are not duplicated on disk. Reconstruct them exactly as the lexicographically ordered tuples from `itertools.combinations(range(n), k)`.\n\nThe public `INSTANCE_MANIFEST.json` fixes every resource hash, shard boundary, target dtype, target byte hash, and ordering convention. Concatenating Q4 target shards in manifest order reproduces the original target array bit for bit.\n\nFor $x=(x_1<\\cdots<x_k)$, the input Slater amplitude is $\\det V[x,:]$. A Gaussian block acts as $V\\mapsto UV$. Mode indices are zero based.\n\n### Independent verification\n\nThe hidden verifier loads the immutable supplied endpoints, independently replays the submitted circuit, and computes\n\n$$\nF=|\\langle\\psi_{\\mathrm{target}}|\\widehat\\psi\\rangle|^2.\n$$\n\nIt does not load the private reference circuit while checking a candidate.\n\n## Environment and assets\n\n### Platform paths\n\nThe four immutable endpoint instances are available in `/app/instances`. Write exactly one circuit-only JSON file to `/app/outputs/submission.json`. The verifier ignores all other output files. A schema example and an identity-circuit generator are available in `/app/starter`.\n\n## Deliverables\n\n### Circuit-only submission\n\nSubmit one JSON object following `starter/submission_schema.json`. For every case provide exactly $t$ adjacent SWAP pairs in time order and exactly $t+1$ Gaussian matrices $U_0,\\ldots,U_t$. Store each complex matrix as separate rectangular `real` and `imag` arrays. The submission contains only the circuit; do not submit a claimed fidelity, score, state vector, executable, or explanation.\n\nA matrix is valid when $\\|U^\\dagger U-I\\|_F\\leq10^{-8}$. Non-finite entries, wrong dimensions, non-adjacent SWAPs, a wrong gate count, malformed data, or extra fields make that case invalid.\n\n## Scoring and constraints\n\n### Reward and score\n\nFor each case, the normalized reward decreases from one as endpoint quality falls:\n\n$$\nr(F)=\\operatorname{clip}\\left(\\frac{F-0.80}{0.99-0.80},0,1\\right).\n$$\n\nThe case score is $25r(F)$ and the total score is the sum over the four cases. Therefore $F\\leq0.80$ gives reward 0, $F=0.90$ gives reward about $0.5263$, and $F\\geq0.99$ gives reward 1. An invalid case receives zero without invalidating other cases.\n\nThe promise $R_{\\mathrm{SWAP}}=t$ concerns exact preparation. Numerical partial credit does not assert an approximate-resource lower bound.\n\n### Compute profile\n\nClassical exact, sampled, optimization, learned, and hybrid synthesis methods are allowed. The intended ceiling is one A100-class GPU or a CPU-only method, with a suggested total wall-clock budget of two hours.\n",
+  "id": "flowforge-matchgate-swap-inverse-synthesis-v2-4019e745",
+  "resources": [
+    {
+      "description": "Immutable endpoint resource manifest.",
+      "kind": "bundled",
+      "name": "instance-manifest"
+    },
+    {
+      "description": "Endpoint instance Q1.",
+      "kind": "bundled",
+      "name": "q1-instance"
+    },
+    {
+      "description": "Endpoint instance Q2.",
+      "kind": "bundled",
+      "name": "q2-instance"
+    },
+    {
+      "description": "Endpoint instance Q3.",
+      "kind": "bundled",
+      "name": "q3-instance"
+    },
+    {
+      "description": "Q4 metadata and initial occupied orbitals.",
+      "kind": "bundled",
+      "name": "q4-metadata"
+    },
+    {
+      "description": "Q4 complex128 target amplitudes, contiguous shard 0.",
+      "kind": "bundled",
+      "name": "q4-target-000"
+    },
+    {
+      "description": "Q4 complex128 target amplitudes, contiguous shard 1.",
+      "kind": "bundled",
+      "name": "q4-target-001"
+    },
+    {
+      "description": "Q4 complex128 target amplitudes, contiguous shard 2.",
+      "kind": "bundled",
+      "name": "q4-target-002"
+    },
+    {
+      "description": "Q4 complex128 target amplitudes, contiguous shard 3.",
+      "kind": "bundled",
+      "name": "q4-target-003"
+    },
+    {
+      "description": "Q4 complex128 target amplitudes, contiguous shard 4.",
+      "kind": "bundled",
+      "name": "q4-target-004"
+    },
+    {
+      "description": "Q4 complex128 target amplitudes, contiguous shard 5.",
+      "kind": "bundled",
+      "name": "q4-target-005"
+    },
+    {
+      "description": "Q4 complex128 target amplitudes, contiguous shard 6.",
+      "kind": "bundled",
+      "name": "q4-target-006"
+    },
+    {
+      "description": "Q4 complex128 target amplitudes, contiguous shard 7.",
+      "kind": "bundled",
+      "name": "q4-target-007"
+    },
+    {
+      "description": "Locked Python runtime requirements.",
+      "kind": "bundled",
+      "name": "requirements-lock"
+    },
+    {
+      "description": "Identity-circuit submission generator.",
+      "kind": "bundled",
+      "name": "identity-generator"
+    },
+    {
+      "description": "Submission JSON schema.",
+      "kind": "bundled",
+      "name": "submission-schema"
+    },
+    {
+      "bytes": 24137739,
+      "dataset_id": "paper2arm-public-s4r4-matchgate-4019e745",
+      "description": "Statement-required public task data; pinned immutable Wenyon version.",
+      "kind": "dataset",
+      "name": "statement-required-public-data",
+      "retrieval_ref": "wenyon://dataset/paper2arm-public-s4r4-matchgate-4019e745@1",
+      "role": "task-public-data",
+      "sha256": "3ed0a9a79f63504b8a6d7c84022dee9bc458aaf15bc23096d4e60b5c3f316e74",
+      "source": "wenyon",
+      "type": "dataset",
+      "version": "1",
+      "version_id": "1"
+    }
+  ],
+  "roundEndAt": "2026-08-22T12:00:00+00:00",
+  "roundStartAt": "2026-08-21T12:00:00+00:00",
+  "scoring": {
+    "characterization_schema": "/api/schemas/characterization/v1",
+    "expected_metrics": [],
+    "formula_summary": "No per-challenge grader registered. Score derives from characterization.deviations_from_paper in the ARM bundle. SSIM contributions to result_fidelity are capped at 0.3.",
+    "grader_name": null,
+    "protocol_url": "/api/protocol",
+    "score_range": [
+      0,
+      100
+    ],
+    "strategy": "arm_v1_1_generic"
+  },
+  "snapshot_provenance": {
+    "captured_at": "2026-09-28 public GET snapshot",
+    "source_kind": "public_get_snapshot",
+    "source_sha256": "0320a1aad35810d01790eba34b760fc39cae9bf24928b5948fc5549652c90aab"
+  },
+  "status": "open",
+  "title": "flowforge/matchgate-swap-inverse-synthesis-v2",
+  "title_zh": null
+}

@@ -116,6 +116,31 @@ def test_local_billing_confirmation_rejection_does_not_reserve_minutes(run,monke
     assert row['status']=='failed' and row['deleted_at'] is not None
 
 
+def test_local_dns_socket_denial_never_reserves_remote_sandbox_minutes(run, monkeypatch):
+    _, rid, _, calls, _ = run
+    receipt = {'ok': False, 'exit_code': 1, 'stdout': json.dumps({
+        'ok': False, 'error': {'code': 'NETWORK_ERROR',
+        'message': 'Post https://open.bohrium.com/openapi/v4/sandbox_work/sandboxes: '
+                   'dial tcp: lookup open.bohrium.com on 10.0.0.1:53: '
+                   'dial udp 10.0.0.1:53: socket: operation not permitted'}}),
+        'stderr': ''}
+    monkeypatch.setattr(compute, '_native', lambda *args, **kwargs: receipt)
+    assert sandboxes.create(rid, 'dns-denied', {'timeout': 120})['status'] == 'failed'
+    row = db.query_one('SELECT status,created_at,deleted_at FROM compute_sandboxes'
+                       ' WHERE operation_id=?', ('dns-denied',))
+    assert row['status'] == 'failed' and row['deleted_at'] == row['created_at']
+    now = db.utcnow()
+    db.execute('INSERT INTO compute_sandboxes(operation_id,run_id,trial_id,request_json,status,'
+               'created_at,expires_at,receipt_json,updated_at) VALUES(?,?,?,?,?,?,?,?,?)',
+               ('old-dns-denied', rid, 'trial_sandbox', '{}', 'unknown', now, now,
+                json.dumps(receipt), now))
+    assert sandboxes.reconcile_create(rid, 'old-dns-denied')['status'] == 'failed'
+    old = db.query_one('SELECT created_at,deleted_at FROM compute_sandboxes'
+                       ' WHERE operation_id=?', ('old-dns-denied',))
+    assert old['deleted_at'] == old['created_at']
+    assert calls == []
+
+
 def test_invalid_cpu_is_rejected_before_remote_create(run):
     _,rid,_,calls,_=run
     with pytest.raises(compute.ComputeError, match='2c4g'):

@@ -795,6 +795,40 @@ async def test_v2_finish_rejects_other_run_evidence(monkeypatch):
     assert controller.run_snapshot(rid)['phase']=='running'
 
 
+async def test_sparse_brain_receives_invalid_finish_refs_without_stall_wait(monkeypatch):
+    controller, rid = _run()
+    monkeypatch.setattr(controller, '_make_prime', lambda settings: object())
+    db.append_event(rid, 'controller', 'checkpoint.created', {'checkpoint_id': 'real'})
+    seq = db.query_one('SELECT MAX(seq) AS n FROM events WHERE run_id=?', (rid,))['n']
+    invalid = 'ReviewPacket.feedback.checkpoint_summaries'
+    decision = {'schema_version': 2, 'decision_id': 'bad-finish', 'run_id': rid,
+                'observed_state_version': 0, 'summary': 'finished', 'evidence_refs': [],
+                'experience_proposals': [],
+                'actions': [{'op': 'finish', 'reason': 'claimed complete',
+                             'objective_assessment': {'status': 'achieved',
+                                                      'evidence_refs': [f'event:{rid}:{seq}', invalid],
+                                                      'remaining_md': ''}}]}
+    await controller._apply_decision(rid, decision, {}, None, None)
+    assert controller.run_snapshot(rid)['phase'] == 'running'
+    request = db.query_one("SELECT trigger FROM review_requests WHERE run_id=?"
+                           " AND trigger='finish_rejected' ORDER BY rowid DESC LIMIT 1", (rid,))
+    assert request is not None
+    rejection = db.query_one("SELECT payload FROM events WHERE run_id=?"
+                             " AND type='brain.action_rejected' ORDER BY seq DESC LIMIT 1", (rid,))
+    assert json.loads(rejection['payload'])['invalid_refs'] == [invalid]
+    packet = controller._lifecycle_packet(
+        db.query_one('SELECT * FROM runs WHERE id=?', (rid,)), 'finish_rejected', sparse=True)
+    assert any(invalid in e.get('excerpt', '') for e in packet['new_events_since_last_review'])
+    assert any(e['type'] == 'brain.action_rejected'
+               for e in packet['feedback']['notable_events'])
+    for index in (2, 3):
+        await controller._apply_decision(rid, decision | {'decision_id': f'bad-finish-{index}'},
+                                         {}, None, None)
+    assert controller.run_snapshot(rid)['phase'] == 'paused'
+    assert db.query_one("SELECT COUNT(*) AS n FROM review_requests WHERE run_id=?"
+                        " AND trigger='finish_rejected'", (rid,))['n'] == 2
+
+
 async def test_review_metrics_and_read_only_csv(monkeypatch, tmp_path):
     controller, rid = _run()
     review_id = 'rev_ev'

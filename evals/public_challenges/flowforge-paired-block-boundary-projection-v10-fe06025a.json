@@ -1,0 +1,73 @@
+{
+  "content": "# Boundary Projection for Paired Blocks and Branch Rigidity\n\n## Task and scope\n\nRead the immutable Lean project and templates in `/app/project`. Write the final `Problem.lean` and optional `PHYSICS_MATCH.json` to `/app/outputs`. Do not modify `PairCore.lean`, `PHYSICS_MATCH_OPTIONS.json`, `PHYSICS_MATCH.schema.json`, `validate_physics_match.py`, `lean-toolchain`, `lakefile.toml`, or `lake-manifest.json`.\n\n## Method and steps\n\nLet $N\\in\\mathbb N$, let $[N]=\\{0,\\ldots,N-1\\}$, and let $u:[N]\\to\\mathbb R$ satisfy\n\n$$\n0\\le u_j\\le \\frac12\n\\qquad (j\\in[N]).\n$$\n\nFor $u\\in[0,1/2]$, define the real $2\\times2$ cell\n\n$$\nC(u)=\n\\begin{pmatrix}\n0&1-2u\\\\\n-(1-2u)&0\n\\end{pmatrix},\n$$\n\nand define the block-diagonal matrix\n\n$$\nA(u)=\\bigoplus_{j\\in[N]}C(u_j)\\in\\mathbb R^{2N\\times2N}.\n$$\n\nFor a real square matrix $X$, write\n\n$$\n\\lVert X\\rVert_F^2=\\operatorname{tr}(X^TX),\n\\qquad\nd^2(X,Y)=\\frac12\\lVert X-Y\\rVert_F^2.\n$$\n\nDefine\n\n$$\n\\mathcal B_N=\\{J\\in\\mathbb R^{2N\\times2N}:J^T=-J\\text{ and }J^TJ=I\\},\n$$\n\n$$\nJ_\\star=A(0),\n\\qquad\nC_{\\mathrm{comp}}(u)=4\\sum_{j\\in[N]}u_j^2,\n\\qquad\nD_{\\mathrm{quad}}(u)=4\\sum_{j\\in[N]}u_j(1-u_j).\n$$\n\nThe supplied Lean definitions `pairNormal`, `halfDistanceSq`, `IsBoundaryPoint`, `boundaryPoint`, `completionCost`, and `quadraticDefect` implement these objects exactly, using `Fin N` and the index set `Fin 2 × Fin N`.\n\nFor Part II, let $E$ be a complex inner-product space and let $v_0,v_1,w_0,w_1\\in E$ satisfy\n\n$$\n\\lVert v_0\\rVert^2+\\lVert v_1\\rVert^2=1,\n\\qquad\n\\lVert w_0\\rVert^2+\\lVert w_1\\rVert^2=1.\n$$\n\nDefine\n\n$$\nb(v_0,v_1)=\\lVert v_0\\rVert^2-\\lVert v_1\\rVert^2,\n$$\n\n$$\n\\omega(v,w)=|\\langle v,w\\rangle|^2,\n$$\n\nand\n\n$$\nG(v_0,v_1,w_0,w_1)\n=4+\\bigl(b(v_0,v_1)-b(w_0,w_1)\\bigr)^2\n-8\\bigl(\\omega(v_0,w_1)+\\omega(v_1,w_0)\\bigr).\n$$\n\nFinally, `Aligned v w` means\n\n$$\nv=0\\quad\\text{or}\\quad \\exists c\\in\\mathbb C,\\;w=cv.\n$$\n\nThis convention is exactly the equality condition relevant to the corresponding inner-product bound, including zero-vector cases.\n\n### Required Lean proofs: 90 points\n\n### Part I: boundary projection — 40 points\n\nProve `PairStructure.partOne_boundaryProjection` with exactly the type supplied in `Problem.lean`. Its conclusion simultaneously states\n\n$$\nJ_\\star\\in\\mathcal B_N,\n$$\n\n$$\nd^2(A(u),J_\\star)=C_{\\mathrm{comp}}(u),\n$$\n\n$$\nd^2(A(u),J_\\star)\\le d^2(A(u),J)\n\\qquad\\text{for every }J\\in\\mathcal B_N,\n$$\n\nand\n\n$$\nC_{\\mathrm{comp}}(u)\\le D_{\\mathrm{quad}}(u).\n$$\n\n### Part II-A: gap nonnegativity — 30 points\n\nProve `PairStructure.partTwo_gapNonnegative` with exactly the supplied type, establishing\n\n$$\nG(v_0,v_1,w_0,w_1)\\ge0.\n$$\n\n### Part II-B: zero-gap rigidity — 20 points\n\nProve `PairStructure.partTwo_branchRigidity` with exactly the supplied type, establishing\n\n$$\nG(v_0,v_1,w_0,w_1)=0\n$$\n\nif and only if\n\n$$\nb(v_0,v_1)+b(w_0,w_1)=0,\n$$\n\n`Aligned v0 w1`, and `Aligned v1 w0`.\n\n### Optional theorem--physics matching question: 10 points\n\nAfter obtaining all 90 Lean points, match the three scored Lean theorems T1--T3 to physical-result candidates R1--R10 in `PHYSICS_MATCH.json`. Exactly three result statements are the intended correspondences; the other seven are distractors.\n\n- T1, `partOne_boundaryProjection`: 4 points.\n- T2, `partTwo_gapNonnegative`: 3 points.\n- T3, `partTwo_branchRigidity`: 3 points.\n- Choose one distinct result id for each theorem.\n- Missing or format-invalid matching: 0 bonus; the Lean score is unchanged.\n- Scoring is exact and deterministic, with no human or LLM judgment.\n\nFrom `/app/project` (or `environment/project` in the author package), run:\n\n```powershell\npython3 validate_physics_match.py --submission PHYSICS_MATCH.json --options PHYSICS_MATCH_OPTIONS.json\n```\n\n## Environment and assets\n\n`environment/resources.yaml` is the authoritative resource manifest. The immutable project is under `/app/project`; use its pinned Lean toolchain, dependency manifest, supplied definitions, theorem template, matching options, JSON schema, and public format validator. Internet access is not required for the proof or deterministic matching task.\n\n## Deliverables\n\n- Required: `Problem.lean`.\n- Optional matching answer: `PHYSICS_MATCH.json`.\n- Do not modify `PairCore.lean`, `PHYSICS_MATCH_OPTIONS.json`, or the pinned Lean files.\n- Maximum score: 90 Lean points plus 10 matching points.\n\n## Scoring and constraints\n\nThe kernel-checked result remains exactly the three theorem types in `Problem.lean`. A correct physical matching does not formalize the external state construction or a global Gaussian-protocol theorem.\n\n## Submission interface\n\nCreate `/app/outputs/Problem.lean` as the required scored artifact. Optionally create `/app/outputs/PHYSICS_MATCH.json` for the deterministic 10-point theorem--physics matching component. The verifier reads only these output paths; the files under `/app/project` are templates and immutable inputs.\n",
+  "id": "flowforge-paired-block-boundary-projection-v10-fe06025a",
+  "resources": [
+    {
+      "description": "Locked Lean dependency manifest.",
+      "kind": "bundled",
+      "name": "lake-manifest"
+    },
+    {
+      "description": "Lean project configuration.",
+      "kind": "bundled",
+      "name": "lakefile"
+    },
+    {
+      "description": "Pinned Lean toolchain.",
+      "kind": "bundled",
+      "name": "lean-toolchain"
+    },
+    {
+      "description": "Immutable supplied definitions.",
+      "kind": "bundled",
+      "name": "supplied-definitions"
+    },
+    {
+      "description": "Lean submission template.",
+      "kind": "bundled",
+      "name": "submission-template"
+    },
+    {
+      "description": "Optional three-to-ten matching submission template.",
+      "kind": "bundled",
+      "name": "matching-template"
+    },
+    {
+      "description": "Public theorem and result candidates.",
+      "kind": "bundled",
+      "name": "matching-options"
+    },
+    {
+      "description": "Public matching submission schema.",
+      "kind": "bundled",
+      "name": "matching-schema"
+    },
+    {
+      "description": "Public format-only validator with no answer key.",
+      "kind": "bundled",
+      "name": "matching-validator"
+    }
+  ],
+  "roundEndAt": "2026-08-22T12:00:00+00:00",
+  "roundStartAt": "2026-08-21T12:00:00+00:00",
+  "scoring": {
+    "characterization_schema": "/api/schemas/characterization/v1",
+    "expected_metrics": [],
+    "formula_summary": "No per-challenge grader registered. Score derives from characterization.deviations_from_paper in the ARM bundle. SSIM contributions to result_fidelity are capped at 0.3.",
+    "grader_name": null,
+    "protocol_url": "/api/protocol",
+    "score_range": [
+      0,
+      100
+    ],
+    "strategy": "arm_v1_1_generic"
+  },
+  "snapshot_provenance": {
+    "captured_at": "2026-08-21T13:59:33.747620Z",
+    "source_kind": "owned_public_challenge_snapshot",
+    "source_sha256": "260c75a2953d32653d3ebd9e34ff855c7df50f7e869b82b966381984083dc4f6"
+  },
+  "status": "open",
+  "title": "flowforge/paired-block-boundary-projection-v10",
+  "title_zh": null
+}

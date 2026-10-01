@@ -32,7 +32,8 @@ _NOTABLE = (
     "trial.stalled", "trial.done", "trial.reported_complete",
     "trial.created", "run.blocked", "run.pausing", "run.paused",
     "run.resumed", "run.time_limit", "brain.decision",
-    "brain.decision_rejected", "guidance.sent", "guidance.acknowledged",
+    "brain.decision_rejected", "brain.action_rejected",
+    "guidance.sent", "guidance.acknowledged",
     "guidance.superseded", "prime.error", "prime.approval.rejected",
     "checkpoint.created", "submission.scored", "submission.score_corrected",
 )
@@ -248,7 +249,8 @@ def build_frame(run_id: str, *, mode: str, frame_id: str,
         if e["type"] in _NOTABLE and (not sparse or e["type"] in (
                 "trial.stalled", "trial.done", "trial.reported_complete",
                 "submission.scored",
-                "submission.score_corrected", "run.blocked")):
+                "submission.score_corrected", "run.blocked",
+                "brain.action_rejected", "brain.decision_rejected")):
             notable.append({"seq": e["seq"], "source": e["source"],
                             "type": e["type"],
                             "excerpt": strip_secrets(json.dumps(
@@ -299,7 +301,8 @@ def build_frame(run_id: str, *, mode: str, frame_id: str,
         notable = [e for e in notable if e["type"] in (
             "trial.stalled", "trial.done", "trial.reported_complete",
             "submission.scored",
-            "submission.score_corrected", "run.blocked")]
+            "submission.score_corrected", "run.blocked",
+            "brain.action_rejected", "brain.decision_rejected")]
         for item in notable:
             item["excerpt"] = item["excerpt"][:120]
 

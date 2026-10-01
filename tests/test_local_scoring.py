@@ -191,6 +191,46 @@ def test_fake_sandbox_scorer_records_and_calibrates(monkeypatch):
                             (changed['package_sha256'],))
 
 
+def test_public_resource_dependency_logs_do_not_pollute_score_stdout(monkeypatch, tmp_path):
+    rid, tid, package, *_ = _fixture()
+    scorer_dir = _scorer()
+    (scorer_dir / 'requirements.txt').write_text('numpy==2.2.6\n')
+    row = db.query_one('SELECT config_snapshot FROM runs WHERE id=?', (rid,))
+    snapshot = json.loads(row['config_snapshot'])
+    snapshot['eval_mode'] = {'enabled': True}
+    db.execute("UPDATE runs SET phase='eval_scoring',gate='open',config_snapshot=? WHERE id=?",
+               (json.dumps(snapshot), rid))
+    sid = 'fake-resource-sandbox'
+    now = db.utcnow()
+    db.execute('INSERT INTO compute_sandboxes(operation_id,run_id,trial_id,sandbox_id,'
+               'request_json,status,created_at,expires_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)',
+               ('resource-create', rid, tid, sid,
+                json.dumps({'image': 'registry.example/challenge:v1'}), 'active', now, now, now))
+    public_zip = tmp_path / 'public.zip'
+    with zipfile.ZipFile(public_zip, 'w') as archive:
+        archive.writestr('input.txt', 'public')
+    version = local_scoring.scorer_manifest('MB_CH')['scorer_version']
+    commands = []
+    def fake_execute(run_id, sandbox_id, command, timeout, operation_id):
+        commands.append(command)
+        if operation_id.endswith('-run'):
+            result = {'score': 20, 'components': {}, 'confidence': 'medium',
+                      'notes': 'synthetic', 'scorer_version': version}
+            stdout = json.dumps(result)
+            if 'requirements.txt 1>&2' not in command:
+                stdout = 'Successfully installed numpy\n' + stdout
+            return {'status': 'completed', 'receipt': {'stdout': json.dumps({
+                'data': {'stdout': stdout}})}}
+        return {'status': 'completed'}
+    monkeypatch.setattr(sandboxes, 'execute', fake_execute)
+    monkeypatch.setattr(sandboxes, 'transfer', lambda *args, **kwargs: {'status': 'completed'})
+    result = local_scoring.evaluate(rid, tid, sid, 'score-public-resource',
+                                    preflight={'error_code': None, 'sealed_bytes': package},
+                                    public_resource_zip=public_zip)
+    assert result['science_score'] == 20
+    assert any('requirements.txt 1>&2' in command for command in commands)
+
+
 def test_calibration_source_migration_is_additive_and_idempotent():
     conn = sqlite3.connect(':memory:')
     conn.row_factory = sqlite3.Row

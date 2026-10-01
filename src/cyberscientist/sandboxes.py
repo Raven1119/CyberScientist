@@ -62,6 +62,16 @@ def _sandbox_id(value: Any) -> str | None:
     return None
 
 
+def _local_dns_denied(value: dict) -> bool:
+    """A local socket denial during DNS lookup precedes any create request."""
+    body = _body(value)
+    error = body.get('error') if isinstance(body, dict) else None
+    message = error.get('message') if isinstance(error, dict) else None
+    return (error.get('code') == 'NETWORK_ERROR' if isinstance(error, dict) else False) and (
+        isinstance(message, str) and 'lookup open.bohrium.com' in message
+        and 'socket: operation not permitted' in message)
+
+
 def _remote_items(value: Any) -> list[dict]:
     node = _data(value)
     if isinstance(node, dict):
@@ -143,7 +153,13 @@ def create(run_id: str, operation_id: str, request: dict) -> dict:
                     'status': prior['status'], 'deduplicated': True}
         run = conn.execute('SELECT * FROM runs WHERE id=?', (run_id,)).fetchone()
         eval_scoring = (run and run['phase'] == 'eval_scoring' and db.eval_mode(run_id))
-        if not run or run['mode'] != 'connected' or (run['phase'] != 'running' and not eval_scoring) or run['gate'] != 'open' or not run['current_trial_id']:
+        eval_retry = False
+        if (run and run['phase'] == 'finished' and db.eval_mode(run_id)
+                and operation_id.startswith('eval-scorer-') and operation_id.endswith('-retry')):
+            from . import evaluations
+            eval_retry = evaluations.retry_authorized(
+                run_id, operation_id[len('eval-scorer-'):-len('-retry')])
+        if not run or run['mode'] != 'connected' or (run['phase'] != 'running' and not eval_scoring and not eval_retry) or run['gate'] != 'open' or not run['current_trial_id']:
             raise compute.ComputeError('RUN_NOT_RUNNING', 'Run 未运行或研究门禁关闭，不能创建沙箱')
         auth = conn.execute('SELECT * FROM authorizations WHERE id=?', (run['authorization_id'],)).fetchone()
         if not auth or auth['max_sandboxes'] <= 0 or auth['max_sandbox_minutes'] <= 0:
@@ -184,8 +200,9 @@ def create(run_id: str, operation_id: str, request: dict) -> dict:
     confirmed_not_started = isinstance(error,dict) and error.get('code') == 'CONFIRMATION_REQUIRED'
     rejected_arguments = (isinstance(error,dict) and error.get('code') == 'INVALID_ARGUMENTS'
                           and error.get('http') == 400 and error.get('retryable') is False)
+    local_dns_denied = _local_dns_denied(receipt)
     status = ('active' if sid else 'failed' if (receipt.get('not_started')
-              or confirmed_not_started or rejected_arguments) else 'unknown')
+              or confirmed_not_started or rejected_arguments or local_dns_denied) else 'unknown')
     with db.transaction() as conn:
         conn.execute('UPDATE compute_sandboxes SET sandbox_id=?,status=?,deleted_at=?,receipt_json=?,updated_at=?'
                      ' WHERE operation_id=?', (sid,status,now if status == 'failed' else None,
@@ -193,7 +210,7 @@ def create(run_id: str, operation_id: str, request: dict) -> dict:
         db.append_event_tx(conn,run_id,'controller',f'sandbox.{status}',
                            {'operation_id':operation_id,'sandbox_id':sid,
                             'exit_code':receipt.get('exit_code')},trial_id=run['current_trial_id'])
-    if sid and compute._run(run_id)['phase'] in TERMINAL_RUN:
+    if sid and compute._run(run_id)['phase'] in TERMINAL_RUN and not eval_retry:
         status = delete(run_id,sid)['status']
     return {'operation_id':operation_id,'sandbox_id':sid,'status':status,
             'receipt':_receipt(receipt)}
@@ -206,6 +223,15 @@ def reconcile_create(run_id: str, operation_id: str) -> dict:
         raise compute.ComputeError('NOT_FOUND','沙箱创建记录不存在')
     if row['status'] not in ('creating','unknown'):
         return {'operation_id':operation_id,'status':row['status'],'sandbox_id':row['sandbox_id']}
+    original_receipt = json.loads(row['receipt_json'] or '{}')
+    if row['sandbox_id'] is None and _local_dns_denied(original_receipt):
+        db.execute("UPDATE compute_sandboxes SET status='failed',deleted_at=created_at,updated_at=?"
+                   " WHERE operation_id=?", (db.utcnow(), operation_id))
+        db.append_event(run_id, 'controller', 'sandbox.failed',
+                        {'operation_id': operation_id, 'sandbox_id': None,
+                         'reason': 'local_dns_socket_denied'}, trial_id=row['trial_id'])
+        return {'operation_id': operation_id, 'status': 'failed', 'sandbox_id': None,
+                'receipt': original_receipt}
     receipt = compute._native(['sandbox','describe','--create-request-id',operation_id,
                                '--no-interactive','-o','json'])
     sid = _sandbox_id(_body(receipt)) if receipt.get('ok') else None

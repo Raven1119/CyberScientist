@@ -95,6 +95,8 @@ def main() -> None:
     eval_run.add_argument('--label', default='')
     eval_report = evaluation_sub.add_parser('report', help='重建 Markdown 和 JSON 报告')
     eval_report.add_argument('eval_id')
+    eval_rescore = evaluation_sub.add_parser('rescore', help='原 Run 封存包的一次受控补评分')
+    eval_rescore.add_argument('result_id')
     args = parser.parse_args()
 
     if args.command == 'eval':
@@ -107,6 +109,16 @@ def main() -> None:
                 parser.error(str(exc))
             print(json.dumps({'markdown': str(markdown), 'json': str(structured)},
                              ensure_ascii=False))
+            return
+        if args.eval_command == 'rescore':
+            from . import db, evaluations
+            db.init_db()
+            try:
+                updated = evaluations.retry_unavailable_score(args.result_id)
+            except evaluations.EvaluationError as exc:
+                parser.error(str(exc))
+            print(json.dumps({'eval_id': updated['id'], 'result_id': args.result_id,
+                              'status': updated['status']}, ensure_ascii=False))
             return
         from . import config
         settings = config.load_settings()

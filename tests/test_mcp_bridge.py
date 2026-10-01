@@ -54,3 +54,17 @@ def test_sandbox_and_scoring_calls_wait_without_replay(monkeypatch):
                                    'params':{'name':name,'arguments':{'action':'list'}}})
         assert result['result']['isError'] is True
     assert calls == [180,180]
+
+
+def test_job_mutations_wait_for_large_upload_without_replay(monkeypatch):
+    calls = []
+    def unreachable(request, timeout):
+        calls.append(timeout)
+        raise OSError('timed out')
+    monkeypatch.setattr(mcp_bridge.urllib.request, 'urlopen', unreachable)
+    for action in ('submit', 'stop'):
+        result = mcp_bridge._handle({'jsonrpc': '2.0', 'id': 1, 'method': 'tools/call',
+            'params': {'name': 'research_job',
+                       'arguments': {'action': action, 'operation_id': 'fixed'}}})
+        assert result['result']['isError'] is True
+    assert calls == [1350, 120]

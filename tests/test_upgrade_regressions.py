@@ -107,11 +107,12 @@ def test_kimi_receipt_retains_tool_identity_and_output():
 def test_job_mcp_uses_controlled_route_and_preserves_unknown(monkeypatch):
     from cyberscientist import mcp_bridge
     calls = []
-    monkeypatch.setattr(mcp_bridge, '_post', lambda path, args: calls.append((path, args)) or {'status': 'unknown', 'operation_id': args['operation_id']})
+    monkeypatch.setattr(mcp_bridge, '_post', lambda path, args, **kwargs: calls.append((path, args, kwargs)) or {'status': 'unknown', 'operation_id': args['operation_id']})
     msg = {'id': 1, 'method': 'tools/call', 'params': {'name': 'research_job', 'arguments': {'action': 'submit'}}}
     assert mcp_bridge._handle(msg)['result']['isError'] and not calls
     msg['params']['arguments']['operation_id'] = 'stable-create'
     result = mcp_bridge._handle(msg)['result']
     assert result['isError']
     assert calls[0][0] == '/api/v1/tools/job'
+    assert calls[0][2] == {'timeout': 1350, 'retry_transient': False}
     assert json.loads(result['content'][0]['text'])['operation_id'] == 'stable-create'

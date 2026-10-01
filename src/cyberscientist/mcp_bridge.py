@@ -206,7 +206,10 @@ def _handle(msg: dict) -> dict | None:
             if args.get("action") in ("submit", "stop") and not args.get("operation_id"):
                 out = {"error": "submit/stop 需要稳定的 operation_id"}
             else:
-                out = _post("/api/v1/tools/job", args)
+                action = args.get("action")
+                out = _post("/api/v1/tools/job", args,
+                            timeout=1350 if action == "submit" else 120 if action == "stop" else 30,
+                            retry_transient=action not in ("submit", "stop"))
         elif name == "research_sandbox":
             out = _post("/api/v1/tools/sandbox", args, timeout=180,
                         retry_transient=False)

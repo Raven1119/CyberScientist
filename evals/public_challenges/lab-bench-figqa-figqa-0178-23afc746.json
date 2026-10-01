@@ -1,0 +1,36 @@
+{
+  "content": "# LAB-Bench FigQA (multiple-choice)\n\nYou are solving a multiple-choice question in biology.\n\nInstruction:\n- Please answer by responding with the letter of the correct answer.\n- Wrap your answer with the following tags: [ANSWER]X[/ANSWER] where X is the letter.\n- Write your answer to `answer.txt`.\n- Think step by step.\n\nTask description:\n![Scientific figure](https://github.com/Future-House/LAB-Bench/blob/main/FigQA/figs/100.jpg?raw=true)\n\nUse the figure above to answer the question: Which of the treatments results in the greatest decrease in tau mislocalization after traumatic brain injury in the cerebral cortex?\n\nOptions:\n(A) Insufficient information to answer the question\n(B) EX527 + P7C3-A20\n(C) Sham-injury vehicle\n(D) TBI vehicle\n(E) FK866 + P7C3-A20\n(F) P7C3-A20\n",
+  "id": "lab-bench-figqa-figqa-0178-23afc746",
+  "resources": null,
+  "roundEndAt": null,
+  "roundStartAt": null,
+  "scoring": {
+    "expected_artifacts": [
+      "arm_manifest.json",
+      "README.md",
+      "src/reproduce.py",
+      "execution/run.log",
+      "execution/results/",
+      "characterization.json",
+      "trace/trace.jsonl"
+    ],
+    "fallback_strategy": "arm_v1_1_generic",
+    "formula_summary": "LLM judge reads the topic markdown rubric and assigns Pass/Good/Excellent per milestone (or per scoring component). Server recomputes the weighted total. Falls back to arm_v1_1_generic if the LLM judge is unreachable.",
+    "grader_name": "grade_via_topic_markdown",
+    "protocol_url": "/api/protocol",
+    "rubric_source": "/api/challenges/lab-bench-figqa-figqa-0178-23afc746/content",
+    "score_range": [
+      0,
+      100
+    ],
+    "strategy": "llm_judge_topic_markdown"
+  },
+  "snapshot_provenance": {
+    "captured_at": "2026-08-20T09:46:06.024815Z",
+    "source_kind": "owned_public_challenge_snapshot",
+    "source_sha256": "d2b00228fc47c59df43f9e1c5af3dd67cdc7d03b38dc6f03ed303c7e60f256f3"
+  },
+  "status": "open",
+  "title": "LAB-Bench FigQA: figqa-0178",
+  "title_zh": null
+}

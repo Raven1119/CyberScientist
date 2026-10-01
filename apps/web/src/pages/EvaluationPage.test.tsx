@@ -16,12 +16,16 @@ describe('evaluation page', () => {
         { id: 'er_1', challenge_id: 'figqa', repeat_index: 1, run_id: 'run_one', status: 'complete',
           error: null, result: { science_score: 100, trace_checklist_score: 80,
             trace_qualified_cap: null, display_interval: { lower: 30, upper: 100 },
-            wall_seconds: 42, bohrium_amount: 'unknown', final_status: 'finished' } },
+            wall_seconds: 42, job_count: 2, job_unknown_count: 1,
+            sandbox_minutes: 3.5, sandbox_minutes_status: 'confirmed',
+            bohrium_amount: 'unknown', final_status: 'finished' } },
       ] })
     post.mockResolvedValue({ id: 'eval_two', suite: 'hard', status: 'running', results: [] })
     render(<EvaluationPage />)
     expect(await screen.findByText(/完成 1\/1/)).toBeTruthy()
     expect(screen.getByText('[30, 100]')).toBeTruthy()
+    expect(screen.getByText('2 (+1 unknown)')).toBeTruthy()
+    expect(screen.getByText('3.5')).toBeTruthy()
     expect(screen.getByText(/只做本地科学评分/)).toBeTruthy()
     await userEvent.setup().click(screen.getByRole('button', { name: '运行困难层' }))
     expect(post).toHaveBeenCalledWith('/api/v1/evals', { suite: 'hard', repeats: 2, label: '' })

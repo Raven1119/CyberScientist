@@ -7,7 +7,8 @@ type Result = { id: string; challenge_id: string; repeat_index: number; run_id: 
   status: string; error: string | null; result: null | { science_score: number | null;
     trace_checklist_score: number | null; trace_qualified_cap: number | null;
     display_interval: { lower: number | null; upper: number | null }; wall_seconds: number | null;
-    bohrium_amount: string; final_status: string } }
+    job_count?: number; job_unknown_count?: number; sandbox_minutes?: number;
+    sandbox_minutes_status?: string; bohrium_amount: string; final_status: string } }
 type Detail = { id: string; suite: string; status: string; results: Result[] }
 
 export default function EvaluationPage() {
@@ -64,13 +65,16 @@ export default function EvaluationPage() {
     </select></label>
     {detail && <>
       <p>评测 {detail.id} · {detail.status} · 完成 {detail.results.filter((item) => item.status === 'complete').length}/{detail.results.length}</p>
-      <div className="evaluation-table-wrap"><table><thead><tr><th>题目</th><th>重复</th><th>Run</th><th>科学分</th><th>轨迹 C</th><th>达标上限</th><th>展示分区间</th><th>耗时</th><th>金额</th><th>状态</th></tr></thead>
+      <div className="evaluation-table-wrap"><table><thead><tr><th>题目</th><th>重复</th><th>Run</th><th>科学分</th><th>轨迹 C</th><th>达标上限</th><th>展示分区间</th><th>耗时</th><th>Job</th><th>沙箱分钟</th><th>金额</th><th>状态</th></tr></thead>
         <tbody>{detail.results.map((item) => <tr key={item.id}>
           <td>{item.challenge_id}</td><td>{item.repeat_index}</td><td>{item.run_id || '—'}</td>
           <td>{item.result?.science_score ?? 'unknown'}</td><td>{item.result?.trace_checklist_score ?? 'unknown'}</td>
           <td>{item.result?.trace_qualified_cap ?? '—'}</td>
           <td>{item.result ? `[${item.result.display_interval.lower ?? '?'}, ${item.result.display_interval.upper ?? '?'}]` : '—'}</td>
-          <td>{item.result?.wall_seconds ?? '—'}</td><td>{item.result?.bohrium_amount ?? 'unknown'}</td>
+          <td>{item.result?.wall_seconds ?? '—'}</td>
+          <td>{item.result?.job_count ?? '—'}{item.result?.job_unknown_count ? ` (+${item.result.job_unknown_count} unknown)` : ''}</td>
+          <td title={item.result?.sandbox_minutes_status || undefined}>{item.result?.sandbox_minutes ?? '—'}</td>
+          <td>{item.result?.bohrium_amount ?? 'unknown'}</td>
           <td title={item.error || undefined}>{item.status}</td>
         </tr>)}</tbody></table></div>
       <a href={`/api/v1/evals/${encodeURIComponent(detail.id)}/report`} target="_blank" rel="noreferrer">查看 JSON 报告 ↗</a>

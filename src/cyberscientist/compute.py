@@ -164,6 +164,11 @@ def _native(args: list[str], *, timeout: int = 90) -> dict:
                 'stdout': '', 'stderr': redact(str(exc), [key])[:1000]}
 
 
+def _submit_timeout(total_bytes: int) -> int:
+    """A frozen input near 1 GiB can take much longer than a control RPC."""
+    return 1200 if total_bytes > 256 * 1024**2 else 180
+
+
 def list_jobs(run_id: str) -> dict:
     _run(run_id)
     items = []
@@ -309,23 +314,36 @@ def submit(run_id: str, operation_id: str, spec: dict, input_directory: str,
                 raise ValueError('冻结输入期间路径改变')
             dest = staging / 'input' / rel
             dest.parent.mkdir(parents=True, exist_ok=True)
-            with os.fdopen(os.open(src, os.O_RDONLY | os.O_NOFOLLOW), 'rb') as stream:
-                data = stream.read()
-            if hashlib.sha256(data).hexdigest() != sha:
+            file_digest = hashlib.sha256()
+            secret = key.encode() if key else b''
+            overlap = b''
+            with os.fdopen(os.open(src, os.O_RDONLY | os.O_NOFOLLOW), 'rb') as stream, \
+                    dest.open('xb') as output:
+                for data in iter(lambda: stream.read(1024 * 1024), b''):
+                    file_digest.update(data)
+                    if secret and secret in overlap + data:
+                        raise ValueError('Job 输入包含账号密钥')
+                    overlap = (overlap + data)[-len(secret) + 1:] if len(secret) > 1 else b''
+                    output.write(data)
+            if file_digest.hexdigest() != sha:
                 raise ValueError('冻结输入时文件改变')
-            if key and key.encode() in data:
-                raise ValueError('Job 输入包含账号密钥')
-            dest.write_bytes(data)
         (staging / 'job.json').write_text(_json(effective))
         (staging / 'manifest.json').write_text(_json({'request_hash': digest, 'files': manifest}))
         # Pause may have arrived while copying; never dispatch from a stopped Run.
         current_run = _run(run_id)
         if current_run['phase'] != 'running' or current_run['gate'] != 'open' or current_run['current_trial_id'] != run['current_trial_id']:
             raise ValueError('冻结输入期间 Run 已暂停')
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError, TypeError) as exc:
         receipt = {'ok': False, 'not_started': True, 'stderr': str(exc)[:500]}
     else:
-        receipt = _native(['job', 'submit', '-i', str(staging / 'job.json'), '-p', str(staging / 'input')], timeout=180)
+        try:
+            receipt = _native(['job', 'submit', '-i', str(staging / 'job.json'), '-p', str(staging / 'input')],
+                              timeout=_submit_timeout(total))
+        except Exception as exc:
+            # A gateway/client error after dispatch cannot establish that no
+            # remote Job exists. Keep the reservation and expose uncertainty.
+            receipt = {'ok': False, 'unknown': True, 'exit_code': None,
+                       'stdout': '', 'stderr': 'Bohrium 提交未确认: ' + type(exc).__name__}
         if _local_project_parse_failure(receipt):
             receipt['not_started'] = True
     matches = re.findall(r'\bJobId:\s*(\d+)', receipt.get('stdout', ''), re.I)
@@ -340,6 +358,25 @@ def submit(run_id: str, operation_id: str, spec: dict, input_directory: str,
         db.append_event_tx(conn, run_id, 'controller', 'job.' + status,
                            {'operation_id': operation_id, 'platform_job_id': job_id, 'status': status, 'receipt': receipt}, trial_id=run['current_trial_id'])
     return {'operation_id': operation_id, 'platform_job_id': job_id, 'status': status, 'receipt': receipt}
+
+
+def mark_terminal_pending_unknown(run_id: str) -> int:
+    """A terminal Run cannot leave a create reservation claiming active dispatch."""
+    with db.transaction() as conn:
+        run = conn.execute('SELECT phase FROM runs WHERE id=?', (run_id,)).fetchone()
+        if not run or run['phase'] not in ('finished', 'failed', 'cancelled'):
+            return 0
+        rows = conn.execute("SELECT operation_id,trial_id FROM compute_jobs"
+                            " WHERE run_id=? AND status='submitting'", (run_id,)).fetchall()
+        for row in rows:
+            conn.execute("UPDATE compute_jobs SET status='unknown',updated_at=?"
+                         " WHERE operation_id=? AND status='submitting'",
+                         (db.utcnow(), row['operation_id']))
+            db.append_event_tx(conn, run_id, 'controller', 'job.unknown',
+                               {'operation_id': row['operation_id'],
+                                'reason': 'Run 已终结而创建回执仍未确认；只读对账，不重发'},
+                               trial_id=row['trial_id'])
+        return len(rows)
 
 
 def resolve_local_parse_failure(run_id: str, operation_id: str) -> dict:

@@ -1,0 +1,25 @@
+{
+  "files": {
+    "flowforge-matchgate-swap-inverse-synthesis-v2-4019e745": {
+      "content_sha256": "a56aea5c34fdfd861200398523470aa0786af3aad33b60d379ff9c6f3dc15d58",
+      "file_sha256": "4ba056af3e774715a29e71020992b208a547353e45429a511543f4d44a127b5b",
+      "source_sha256": "0320a1aad35810d01790eba34b760fc39cae9bf24928b5948fc5549652c90aab"
+    },
+    "flowforge-paired-block-boundary-projection-v10-fe06025a": {
+      "content_sha256": "fa484f8b8c2421c22eeea9408d897f8c236d22860fc1618f3ec51a1144c443ed",
+      "file_sha256": "239714fe5d0314e48145cb77d98b5e7d493caf56c062c41865b9dde0b88c9302",
+      "source_sha256": "260c75a2953d32653d3ebd9e34ff855c7df50f7e869b82b966381984083dc4f6"
+    },
+    "lab-bench-figqa-figqa-0177-b4156bee": {
+      "content_sha256": "02fc942b28b537c456697e91e81f1dcc416f18cd05af08f4d9e8cd8e6ff8f5ad",
+      "file_sha256": "dd87d202160f219a12afdf8dc4f7292a173117ce3cafdd21938fc562ee722b68",
+      "source_sha256": "0e401e3a59d6298cceb67bb53ee59ca27cfa8e47b9e16e1b6c10e90d0beba0d5"
+    },
+    "lab-bench-figqa-figqa-0178-23afc746": {
+      "content_sha256": "c0d59e345d18cf5a206679ee13af1b436df407659ced19078c394e79402b4149",
+      "file_sha256": "0f51c39487916e6815c4644f006f7463bd38ba036348648b53965cb04ab544cf",
+      "source_sha256": "d2b00228fc47c59df43f9e1c5af3dd67cdc7d03b38dc6f03ed303c7e60f256f3"
+    }
+  },
+  "schema_version": "cs-up-05-public-challenge-snapshots/v1"
+}

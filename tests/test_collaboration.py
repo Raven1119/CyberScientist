@@ -1317,6 +1317,30 @@ async def test_reconcile_and_resume_after_restart():
     await c.control(rid, "terminate", None, "op-term-rec")
 
 
+async def test_recovery_reprompts_authorized_active_trial_when_brain_waits():
+    _seed_challenge()
+    c, brain, ex = _rig(shadow=False)
+    rid = c.create_run("COLLAB_CH", shadow_enabled=False)["id"]
+    c.authorize(rid, "demo", True, 10, 30, 0, None)
+    tid = "trial_recovery_active"
+    db.execute("INSERT INTO trials(id,run_id,goal,success_check,status,created_at)"
+               " VALUES(?,?,?,?,?,?)", (tid,rid,"核对已有远端操作","保留未知结果","active",db.utcnow()))
+    db.execute("UPDATE runs SET phase='running',gate='open',current_trial_id=?,started_at=?"
+               " WHERE id=?", (tid,db.utcnow(),rid))
+    assert c.reconcile_on_startup() == [rid]
+    result = await c.control(rid, "resume", None, "op-resume-active")
+    assert result["status"] == "confirmed"
+    assert await _wait(lambda: len(ex.prompts) == 1)
+    assert "核对已有远端操作" in ex.prompts[0][1]
+    await brain.results.put({"decision": _decision(
+        [{"op": "wait", "reason": "等待远端对账"}], rid=rid)})
+    await asyncio.sleep(0.2)
+    assert len(ex.prompts) == 1
+    assert db.query_one("SELECT 1 FROM events WHERE run_id=? AND type='prime.task_resumed'",
+                        (rid,))
+    await c.control(rid, "terminate", None, "op-term-active")
+
+
 async def test_periodic_shadow_wakes_brain_when_executor_silent():
     """Old Run snapshots retain their periodic supervision semantics."""
     _seed_challenge()

@@ -1,0 +1,36 @@
+{
+  "content": "# LAB-Bench FigQA (multiple-choice)\n\nYou are solving a multiple-choice question in biology.\n\nInstruction:\n- Please answer by responding with the letter of the correct answer.\n- Wrap your answer with the following tags: [ANSWER]X[/ANSWER] where X is the letter.\n- Write your answer to `answer.txt`.\n- Think step by step.\n\nTask description:\n![Scientific figure](https://github.com/Future-House/LAB-Bench/blob/main/FigQA/figs/020.jpg?raw=true)\n\nUse the figure above to answer the question: Which of the layers has a calcium response that reaches below baseline from Mi1 signaling?\n\nOptions:\n(A) Cell body\n(B) M10\n(C) M5\n(D) M1\n(E) Insufficient information to answer the question\n",
+  "id": "lab-bench-figqa-figqa-0177-b4156bee",
+  "resources": null,
+  "roundEndAt": null,
+  "roundStartAt": null,
+  "scoring": {
+    "expected_artifacts": [
+      "arm_manifest.json",
+      "README.md",
+      "src/reproduce.py",
+      "execution/run.log",
+      "execution/results/",
+      "characterization.json",
+      "trace/trace.jsonl"
+    ],
+    "fallback_strategy": "arm_v1_1_generic",
+    "formula_summary": "LLM judge reads the topic markdown rubric and assigns Pass/Good/Excellent per milestone (or per scoring component). Server recomputes the weighted total. Falls back to arm_v1_1_generic if the LLM judge is unreachable.",
+    "grader_name": "grade_via_topic_markdown",
+    "protocol_url": "/api/protocol",
+    "rubric_source": "/api/challenges/lab-bench-figqa-figqa-0177-b4156bee/content",
+    "score_range": [
+      0,
+      100
+    ],
+    "strategy": "llm_judge_topic_markdown"
+  },
+  "snapshot_provenance": {
+    "captured_at": "2026-08-20T09:46:06.035240Z",
+    "source_kind": "owned_public_challenge_snapshot",
+    "source_sha256": "0e401e3a59d6298cceb67bb53ee59ca27cfa8e47b9e16e1b6c10e90d0beba0d5"
+  },
+  "status": "open",
+  "title": "LAB-Bench FigQA: figqa-0177",
+  "title_zh": null
+}
