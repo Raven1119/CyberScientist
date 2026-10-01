@@ -2,6 +2,8 @@
 
 ## 已实现
 
+- CS-UP-06 W0：新增 `docs/EVAL_V1_RUN_AUDIT.md`，逐 Run 分类审计 v1 10 次评测，按严重程度列出 W1 输入；系统缺陷与科学决策分开，已修复的旧后端问题单列。原有未跟踪文件保留。
+
 - CS-UP-05 W0–W2：设计约束已同步；目录收录 abc、FigQA-0177/0178、Paired-block Lean、Matchgate/SWAP，新增两道科学评分器。评测可用 `cyberscientist eval run --suite fast|hard --repeats 2` 启动，SQLite 持久队列按现有 Run 容量创建 connected Run，冻结经验、模型、监督和 skills 快照；评测 Run 禁止平台提交与经验写入，结束前封存、本地科学评分和公开 v6 轨迹诊断。`eval report <eval_id>` 重建 Markdown/JSON；前端评测页显示进度、分数区间与状态。原始评测包和回执仍留本机忽略目录。
 - CS-UP-05 W3：公开题目当前 GET 不可取回时，评测可导入仓库中按文件和题面哈希固定的历史公开题面快照；Run 与结果记录题面内容哈希和来源。此回退仅用于目录内预先固定的题目，不替代当前平台状态确认。
 
@@ -60,6 +62,8 @@
 - CS-SB-01 稀疏输入与唤醒修复：可选短研究摘要独立存储；新 Run 普通检查点不唤醒 shadow，Job/Trial 研究级重复状态按 ID 去重。详见 `docs/SPARSE_BRAIN_INPUT_WAKE_FIX_2026-09-24.md`。
 
 ## 已实际验证
+
+- CS-UP-06 W0：实际 HEAD `55b8c8c1741866e6e50fd0ca970674d3f214f96a`，已跟踪工作区开工时干净；以只读 SQLite URI 审读 7,220 条事件和 65 份审阅帧，核对已落地产物与回执。没有模型 turn、Job、沙箱或 Bohrium 请求。`.venv/bin/pytest -q` 为 640 passed、2 skipped（沙箱禁止回环监听）；前端 `npm --prefix apps/web test -- --run` 为 40 passed，`npm --prefix apps/web run build`、`.venv/bin/python -m compileall -q src tests checks` 和 `git diff --check` 通过。后端结果留本机 `.package-checks/cs-up-06/w0-checks/`；首个未保存结果的会话句柄丢失，因此不声称它通过，以保存退出码的完整执行为准。
 
 - CS-UP-05 W2：迁移前 SQLite 已备份到本机忽略目录 `.package-checks/cs-up-05/pre-eval-migration.sqlite`（22,241,280 B），原库连续两次 `db.init_db()` 后 `eval_runs`、`eval_results` 均存在且初始 0 行。fake 两题×两次验收覆盖容量、重启续跑、去重、报告与零提交/零经验修订；评测提交和经验写入拒绝会记事件。`.venv/bin/pytest -q`：622 passed、2 skipped；`PATH=/home/wmywb/.local/bin:$PATH npm --prefix apps/web test -- --run`：40 passed；同一 PATH 下 `npm --prefix apps/web run build`、`.venv/bin/python -m compileall -q src tests`、`git diff --check` 通过。W2 未启动真实模型、Job、沙箱或 Attempt。
 - CS-UP-05 W3 真实基线：快速层 `eval_3630add80ac7` 6/6、困难层 `eval_34ef954c5c78` 4/4 Run 完成；6/10 次有本地科学分。abc 两次均 20，FigQA-0177/0178 各一次 100、一次因封存路径不在已验证评分范围而 unknown；Paired-block Lean 两次 unknown（评分环境传输失败或封存缺入口）；Matchgate 两次 0（按最终封存包评分），后者两次轨迹 C=100。两次 Matchgate 本地分 0 的差及样本方差均为 0；Lean 和 FigQA 的缺失重复不按 0 处理。全表、耗时、模型 token、Job、沙箱分钟、证据边界见 `docs/EVAL_BASELINE_2026-10.md`，可由 `eval report` 重建。
@@ -163,6 +167,8 @@
 
 ## 尚未验证
 
+- CS-UP-06 W1/W2 尚未实施或启动；W1 验证额度及 W2 两层预算均未使用。当前配置的原生 Codex 0.155.1 完整 `model/list(includeHidden=true, limit=100)` 返回 9 个模型，无 `gpt-6.1-sol`；零模型 turn，原始元数据留本机。继续 W1，在准确模型可用性未成立前不启动 W2，不替换其他模型。
+
 - CS-UP-05 W2 的真实模型、Bohrium 沙箱/Job、Matchgate 全规模计时和 Lean 项目准备尚未验收；这些属于 W3 基线任务。公开 v6 轨迹检查表仅对历史 v8 可见代码作条件比较，不能给出官方展示分保证。Bohrium 金额无可靠接口时记录 unknown。
 
 - CS-UP-04 没有取得完整 v8 评分器、服务端最终归一化轨迹或模型裁判值；条件分级与本地上限不能当作新题目的官方得分保证。只有现有 Linux CLI 0.1.33 与 Node 22 的本机离线诊断已测；其他安装环境的打包轮子、CLI 版本和真实平台新包尚未验证。诊断缺少固定依赖或匹配哈希时返回 unavailable。
@@ -202,6 +208,8 @@
 - CS-SB-01 当轮未重跑 CLI 关闭测试，也未验证未经包装的完整 pytest；该轮未修改 UI，故未重跑前端测试与构建。本轮 CS-EV-01 的前端测试与构建结果见上方。
 
 ## 阻塞项
+
+- CS-UP-06 W2：当前配置的 Codex 原生模型列表没有任务卡要求的 `gpt-6.1-sol`。按用户“模型不可用时完成 W0–W1、不跑 W2”的边界保留此项，不将 `gpt-6-sol` 或 Astra 作为替代。
 
 - CS-UP-05 W2 代码与 fake 流程无已知阻塞；W3 真实评分是否能取得各题科学分，须由授权内的真实 Run 核实。未取得结果时保持 unknown，不补造分数。
 
