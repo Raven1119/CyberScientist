@@ -69,6 +69,8 @@
 
 ## 已实际验证
 
+- CS-UP-06 剩余门槛只读复核（15:12 UTC）：原生 model/list 内容已变，仍九项，逐项 id/model/displayName 未出现准确 gpt-6.1-sol；Daybreak无已验证映射，零模型turn。SQLite 中目标标签v2评测0组、verified预置环境0项。公开替代环境核对：锁定 Mathlib上游镜像未预装Mathlib，Kimina默认Lean4.26.0，均未验证满足本卡版本；不据失效搜索或不同版本镜像冒称环境可用。应用代码未再次变动，沿用上一提交677 passed/2 skipped与前端40 passed的实际验证。
+
 - CS-UP-06 W1 接续最终检查：`.venv/bin/pytest -q` 677 passed、2 skipped；`npm --prefix apps/web test -- --run` 40 passed，`npm --prefix apps/web run build`、compileall、diff --check 通过（Node/npm 使用用户已安装 Linux 路径）。两层 `eval report` 实际重生成，科学分不变；九个有沙箱的 v1 Run 按当前沙箱公开报价与账本生命周期估算合计0.4065 CNY，标注非账单、不与 Job 未知币种金额混加。只读原生 SKU 报价和模板硬件源哈希均保留本机，公开文档只有脱敏统计。
 
 - CS-UP-06 W1 首轮检查：`.venv/bin/pytest -q` 664 passed、2 skipped（现有回环监听限制）；`npm --prefix apps/web test -- --run` 40 passed，`npm --prefix apps/web run build`、`.venv/bin/python -m compileall -q src tests`、`git diff --check` 通过。此前一轮 661 passed 后新增暂停竞态、诊断数值排除和冻结包防篡改测试，最终全套已重跑。新 fake 场景覆盖分项退步/确认、缓存无沙箱、输入变化失效、路径冲突、授权事实、目标、脱敏、分页部分失败、保留 unknown、预置环境不可用和大输入创建前提示。
@@ -229,6 +231,8 @@
 - CS-UP-06 F4 实际总账单仍 unknown；已有当前沙箱公开单价的明确标注估算，Job cost 币种及两个无 ID 预约无法判定，不把局部估算当完整金额。
 
 - CS-UP-06 W2：当前配置的 Codex 原生模型列表没有任务卡要求的 `gpt-6.1-sol`。按用户“模型不可用时完成 W0–W1、不跑 W2”的边界保留此项，不将 `gpt-6-sol` 或 Astra 作为替代。
+
+- CS-UP-06 剩余真实验收在原始任务和两次接续都未跨过相同外部门槛；可安全实施的应用修复、测试与脱敏文档已交付。仍需平台确认未知镜像创建并提供准确模型的原生可用元数据，才能推进F3/W2；不扩大资源权限、追加未知创建或填造评测结果。
 
 - CS-UP-05 W2 代码与 fake 流程无已知阻塞；W3 真实评分是否能取得各题科学分，须由授权内的真实 Run 核实。未取得结果时保持 unknown，不补造分数。
 
