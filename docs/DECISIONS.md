@@ -121,6 +121,10 @@ fake现在复现正式总分/两子项分数均0、两项质量已登记更好�
 
 固定revision的上游blueprint配方及Docker CI进一步证实：相关官方镜像名称不代表预置Mathlib缓存；blueprint说明其在启动后才下载。Kimina公共标签查询仅得到连接超时，不能用网络失败证明不存在固定版本。只记录这些证据，不拿明知未满足缓存前提的环境占用W1算力做无效验收；全部原响应与错误记录留本机忽略目录。
 
+后续按公开工具页面确认详情索引采用owner_repository键，而非短仓库名。Lean4及Mathlib4详情均HTTP200/code0并包含镜像URI；元数据分别标v4.12.0-rc1/v4.27.0-rc1。Lean配方安装stable工具链且没有Mathlib；Mathlib配方只clone未固定分支，没有缓存获取或构建步骤。这些是目录/配方事实，不能冒充镜像内固定4.32.2/905b958环境的实测。子域目录返回ClickHouse连接超时，短名详情的no rows也不能推断平台没有工具。不执行混合/向量检索，不调用模型或租VM验证已知缺少固定缓存的声明。
+
+22:22:55 UTC经受控_native使用既有镜像客户端bohr2.7.8的默认私有列表，正确参数为`image list --size 512 --no-interactive --output json`，退出0/ok=true/items=[]/total=0/has_more=false。此前`--json`只在本机报不支持，不算平台目录结果；技能示例的type字符串与已取得OpenAPI整数schema不一致，另用原生默认查询避免依赖该筛选。空目录仍不能确认旧v2异步创建已经明确失败，未知资源预约保留；没有另发build、修改认证或切换Job客户端。原始回执和公开配方仅留本机，哈希见EVAL_V2。
+
 
 | 决策 | 替换的设计 | 原因与影响 |
 |---|---|---|

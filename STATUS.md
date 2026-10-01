@@ -80,6 +80,8 @@
 
 ## 已实际验证
 
+- CS-UP-06 F3工具目录补证：只读详情确认平台有Lean4/Mathlib4公共镜像；元数据版本分别为v4.12.0-rc1/v4.27.0-rc1，配方使用未固定工具链/分支，未声明固定Mathlib构建缓存，不能据此通过本卡环境验收。目录子域查询返回平台ClickHouse超时，未当作空结果。22:22:55 UTC原生bohr 2.7.8 `image list --size 512 --no-interactive --output json`成功、total=0/has_more=false；仍保留原创建unknown，Job客户端不变，无新算力。
+
 - CS-UP-06 F3只读目录复核：官方公共分类GET完整返回20类；Basic Image 21/21、Third-party software 42/42版本描述未标出Lean/Mathlib，Tools for Agents只检查首100/88,011条，同样未发现版本证据。未穷尽代理工具目录，不能断言平台没有合适环境；未知私有创建预约不变，无新建资源或额外验证Run。
 
 - CS-UP-06 F3上游容器复核：固定Mathlib revision的blueprint配方明确未预装Mathlib；官方Docker CI只构建lean/gitpod/gitpod-blueprint，不能由包名证明固定缓存就绪。Kimina公共标签GET连接超时，无响应、未重试；仍未判定其可用标签。没有拉取镜像、执行配方或使用科学算力。
