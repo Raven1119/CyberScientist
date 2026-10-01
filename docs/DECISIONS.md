@@ -125,6 +125,14 @@ fake现在复现正式总分/两子项分数均0、两项质量已登记更好�
 
 22:22:55 UTC经受控_native使用既有镜像客户端bohr2.7.8的默认私有列表，正确参数为`image list --size 512 --no-interactive --output json`，退出0/ok=true/items=[]/total=0/has_more=false。此前`--json`只在本机报不支持，不算平台目录结果；技能示例的type字符串与已取得OpenAPI整数schema不一致，另用原生默认查询避免依赖该筛选。空目录仍不能确认旧v2异步创建已经明确失败，未知资源预约保留；没有另发build、修改认证或切换Job客户端。原始回执和公开配方仅留本机，哈希见EVAL_V2。
 
+### W2只读核查暴露：临时下载凭证脱敏缺口
+
+旧Job客户端1.1.0的只读详细describe输出带临时签名URL；原脱敏只处理已知账户密钥及accessKey，未处理未知OSSAccessKeyId/Signature等下载凭证。通用修复只遮蔽URL查询中的凭证值，涵盖OSS/AWS/GCS及SAS形式和JSON/HTML/整URL编码，不按Job、题目或供应商账号分支。科学结构中的普通signature字段与分数保持不变，下载仍在原生CLI内部完成，不改变结果文件。新探针回执在本机补脱敏并保留旧/新SHA映射，没有重写冻结科研轨迹；原始回执与链接不入Git。
+
+38个fake在旧规则失败，新增编码值内部的分隔符边界后定向110 passed、全量754 passed/2 skipped；compileall/diff通过。前端未修改，沿用本轮40 passed/build。此代码尚待安全重载，原后台进程仍旧版本；不能把源码检查冒充已全面部署的真实防护。
+
+F4同时取得Job场景完整55机型目录，当前c2_m2_cpu/c2_m4_cpu为0.16、c4_m8_cpu为0.32，引用[官方费用计价页](https://bohrium-doc.dp.tech/docs/bohrctl/pricing/)的Job元/小时单位。与沙箱机型报价分别保存，不能用Node或Sandbox报价替代Job单价；也不能据此改写旧API cost字段币种。目录查询不新建/停止资源，不修改Job客户端或全局CLI设置。完整目录回执SHA为03691d5f180d0b184f51bb81cd3f256df9e13b8d27de03e9b9bd692787108957；应用Job估算尚待接入。
+
 
 | 决策 | 替换的设计 | 原因与影响 |
 |---|---|---|

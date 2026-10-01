@@ -2,6 +2,8 @@
 
 ## 已实现
 
+- CS-UP-06回执脱敏补修：未知OSS/AWS/GCS签名下载链接的临时凭证参数纳入通用脱敏，覆盖普通URL、JSON/HTML分隔转义及整条URL编码；保留科学数据里的普通signature字段、正式分数及下载文件。后端进程尚未重载，不能声称原生回执路径已全面部署。
+
 - CS-UP-06 F1补修：同分平台期可由已审查评分器声明单调计分输入参与候选对账；原始数值/正式分数分别保留，不猜诊断方向。比较声明按评分器哈希冻结，与评分及产物哈希原子登记；缓存不租沙箱，大脑明确确认入口保留。
 
 - CS-UP-06报告修复：无Run的环境预检失败使用eval_results.error展示原因，科学分保持unknown；原困难层组已建立，无额外重复。
@@ -79,6 +81,9 @@
 - CS-SB-01 稀疏输入与唤醒修复：可选短研究摘要独立存储；新 Run 普通检查点不唤醒 shadow，Job/Trial 研究级重复状态按 ID 去重。详见 `docs/SPARSE_BRAIN_INPUT_WAKE_FIX_2026-09-24.md`。
 
 ## 已实际验证
+
+- CS-UP-06签名回执缺陷先由38个fake场景在旧代码复现；新增编码分隔边界后定向110 passed，全量`.venv/bin/pytest -q`为754 passed、2 skipped（既有回环限制）；compileall/diff --check通过。前端源码未变，沿用本轮40 passed/build。没有额外科学Run或付费算力。
+- CS-UP-06 Job价格只读核实：原生`machine list --choose-type cpu --scene job --no-interactive --output json`返回55/55机型，c2_m2_cpu/c2_m4_cpu的price为0.16，c4_m8_cpu为0.32；官方费用页注明Job以元/小时计价。这是当前机型报价，尚未当作原API cost字段的币种或最终账单；不与沙箱4c8g的0.80报价混用。
 
 - CS-UP-06 F3工具目录补证：只读详情确认平台有Lean4/Mathlib4公共镜像；元数据版本分别为v4.12.0-rc1/v4.27.0-rc1，配方使用未固定工具链/分支，未声明固定Mathlib构建缓存，不能据此通过本卡环境验收。目录子域查询返回平台ClickHouse超时，未当作空结果。22:22:55 UTC原生bohr 2.7.8 `image list --size 512 --no-interactive --output json`成功、total=0/has_more=false；仍保留原创建unknown，Job客户端不变，无新算力。
 

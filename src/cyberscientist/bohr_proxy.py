@@ -14,12 +14,22 @@ from typing import Iterable
 from urllib.parse import quote, quote_plus
 
 
-_ACCESS_KEY_QUERY = re.compile(r"([?&]access_?key=)[^&\s\"'<>]+", re.IGNORECASE)
+_URL_CREDENTIAL = (
+    r'access_?key|access_token|(?:oss|aws)accesskeyid|signature|sig|'
+    r'x-(?:amz|goog)-(?:signature|credential|security-token)|securitytoken'
+)
+_ACCESS_KEY_QUERY = re.compile(
+    r'((?:[?&]|\\u0026|&amp;)(?:' + _URL_CREDENTIAL + r')=)'
+    r'(?:(?!\\u0026)[^&\s\"\'<>])+', re.IGNORECASE)
+_ENCODED_URL = re.compile(r'https?%3a%2f%2f[^\s\"\'<>]+', re.IGNORECASE)
+_ENCODED_CREDENTIAL = re.compile(
+    r'((?:%3f|%26)(?:' + _URL_CREDENTIAL + r')%3d)'
+    r'(?:(?!%26)[^\s\"\'<>])+', re.IGNORECASE)
 _SECRET_ENV_NAMES = ("BOHR_ACCESS_KEY", "ACCESS_KEY", "BOHRCTL_ACCESS_KEY", "CS_TOOL_TOKEN")
 
 
 def redact(text: str, secret_values: Iterable[str]) -> str:
-    """Remove known credential values and unknown keys echoed inside URLs."""
+    """Remove account keys and temporary signed URL credentials in diagnostics."""
     variants = {
         variant
         for value in secret_values if value
@@ -28,6 +38,8 @@ def redact(text: str, secret_values: Iterable[str]) -> str:
     for value in sorted(variants, key=len, reverse=True):
         text = text.replace(value, "[REDACTED]")
     text = _ACCESS_KEY_QUERY.sub(r"\1[REDACTED]", text)
+    text = _ENCODED_URL.sub(
+        lambda match: _ENCODED_CREDENTIAL.sub(r'\1[REDACTED]', match[0]), text)
     text = re.sub(r'(?i)(\b(?:BOHR_ACCESS_KEY|ACCESS_KEY|CS_TOOL_TOKEN|API_KEY)\s*=\s*)[^\s"\']+', r'\1[REDACTED]', text)
     text = re.sub(r'(?i)("(?:access[_-]?key|api[_-]?key|authorization|token)"\s*:\s*")[^"]*', r'\1[REDACTED]', text)
     return re.sub(r"(?i)(Bearer\s+)[A-Za-z0-9_.~+/=-]+", r"\1[REDACTED]", text)

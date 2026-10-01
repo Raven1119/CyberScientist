@@ -3,6 +3,9 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+from urllib.parse import quote
+
+import pytest
 
 from cyberscientist import bohr_proxy
 
@@ -13,6 +16,57 @@ def test_redacts_known_values_encoded_values_and_unknown_url_keys():
     result = bohr_proxy.redact(text, ['a/b+c'])
     assert result == ('known=[REDACTED] unknown=https://host/path?accessKey=[REDACTED]&x=1 '
                       'encoded=[REDACTED] alternate=https://host/?ACCESS_KEY=[REDACTED]')
+
+
+@pytest.mark.parametrize('key', ['Signature', 'sig', 'OSSAccessKeyId', 'AWSAccessKeyId',
+    'X-Amz-Signature', 'X-Amz-Credential', 'X-Amz-Security-Token',
+    'X-Goog-Signature', 'access_token'])
+@pytest.mark.parametrize('encoding', ['plain', 'json_amp', 'html_amp', 'encoded_url'])
+def test_unknown_presigned_url_credentials_are_redacted(key, encoding):
+    url = f'https://example.invalid/out.zip?Expires=123&{key}=temporary%2Bsecret&download=1'
+    expected = f'https://example.invalid/out.zip?Expires=123&{key}=[REDACTED]&download=1'
+    if encoding == 'json_amp':
+        url, expected = (s.replace('&', r'\u0026') for s in (url, expected))
+    elif encoding == 'html_amp':
+        url, expected = (s.replace('&', '&amp;') for s in (url, expected))
+    elif encoding == 'encoded_url':
+        url = quote(url, safe='')
+        expected = quote(expected, safe='').replace('%5BREDACTED%5D', '[REDACTED]')
+    assert bohr_proxy.redact(url, []) == expected
+
+
+def test_presigned_redaction_keeps_json_valid_and_unrelated_scientific_fields():
+    import json
+    payload = {'signature': 'scientific signature', 'score': 100,
+        'link': 'https://example.invalid/out.zip?OSSAccessKeyId=temporary-id&Signature=temporary-signature'}
+    stdout = json.dumps(payload).replace('&', r'\u0026')
+    result = json.loads(bohr_proxy.redact(stdout, []))
+    assert result['signature'] == 'scientific signature' and result['score'] == 100
+    assert 'temporary-id' not in result['link'] and 'temporary-signature' not in result['link']
+
+
+def test_encoded_ampersand_inside_credential_is_not_a_parameter_separator():
+    url = 'https://example.invalid/out.zip?Signature=fake%26nested%3Dsecret&download=1'
+    assert bohr_proxy.redact(url, []) == 'https://example.invalid/out.zip?Signature=[REDACTED]&download=1'
+    encoded = quote(url, safe='')
+    assert 'fake' not in bohr_proxy.redact(encoded, [])
+    assert 'secret' not in bohr_proxy.redact(encoded, [])
+
+
+def test_native_receipt_redacts_unknown_signed_links_in_both_streams(monkeypatch):
+    from cyberscientist import compute
+    link = 'https://example.invalid/out.zip?Expires=123&OSSAccessKeyId=temporary-id&Signature=temporary-signature'
+    calls = []
+    def native(command, **kwargs):
+        calls.append(command)
+        return subprocess.CompletedProcess(command, 0, link, 'download URL: ' + link)
+    monkeypatch.setattr(subprocess, 'run', native)
+    receipt = compute._native(['job', 'describe', '-j', '123', '-l'])
+    assert receipt['ok'] and len(calls) == 1
+    for stream in ('stdout', 'stderr'):
+        assert 'temporary-id' not in receipt[stream]
+        assert 'temporary-signature' not in receipt[stream]
+        assert 'Expires=123' in receipt[stream]
 
 
 def test_proxy_dispatches_once_with_capability_and_redacts_receipt(monkeypatch, capsys):
