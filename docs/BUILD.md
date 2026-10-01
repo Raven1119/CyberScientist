@@ -8,6 +8,8 @@
 
 后端从 Linux shell 启动，大脑和执行器使用该 Linux 环境中的原生 CLI 与登录态。前端「连接与设置」中的两处可执行文件路径填写 Linux 路径，或留空使用后端 PATH。历史 Windows 探针只作为协议参考，不能视为 Linux 联调通过。
 
+Codex 可以在项目忽略目录单独更新，保留旧客户端供回退。例如 `npm install --prefix .package-checks/codex-runtime-0.159.3 @openai/codex@0.159.3`，然后在两处连接设置填写该安装中的 Linux 原生二进制路径；无需修改全局 CLI 配置或认证。模型 ID 是自由输入字段，新模型不需要加入应用白名单。先核对更新后原生 `model/list` 和会话返回的模型/思考强度，再在题目级选择 `gpt-6.1-sol` / `xhigh`。这些检查不等于真实模型 turn 成功，后者须由实际 Run 证据确认。
+
 先检查工具是否能被当前 shell 找到。若工具已安装在 `~/.local/bin` 但不在 PATH，只需在当前 shell 加入该目录，无需修改全局 CLI 配置：
 
 ```bash

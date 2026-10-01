@@ -1,4 +1,4 @@
-"""Shared native app-server protocol, verified against Linux CLI 0.155.1.
+"""Shared native app-server protocol, verified with Linux CLI 0.155.1/0.159.3.
 
 Thread configuration travels over stdio, never through command arguments or a
 global config file. Model/effort requests are not silently downgraded.

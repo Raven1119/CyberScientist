@@ -70,9 +70,10 @@ class FakeRpc:
             yield await self.requests.get()
 
 
-async def test_brain_native_fields_and_concurrent_approval(monkeypatch, tmp_path):
+@pytest.mark.parametrize('model', ['gpt-6-astra', 'gpt-6.1-sol'])
+async def test_brain_native_fields_and_concurrent_approval(monkeypatch, tmp_path, model):
     monkeypatch.setattr('cyberscientist.brains.codex.JsonRpcStdio', FakeRpc)
-    brain = CodexBrain('/bin/true', 'gpt-6-astra', 'xhigh')
+    brain = CodexBrain('/bin/true', model, 'xhigh')
     session = await brain.open({'working_directory': str(tmp_path), 'instructions': 'test'})
     try:
         async def collect():
@@ -85,6 +86,7 @@ async def test_brain_native_fields_and_concurrent_approval(monkeypatch, tmp_path
         assert any(p['detail'] == 'Reading public evidence.' for p in progress)
         assert 'PRIVATE_REASONING_FIXTURE' not in repr(events)
         params = next(p for m, p in brain.rpc.calls if m == 'thread/start')
+        assert params['model'] == model
         assert params['developerInstructions'] == 'test'
         assert params['sandbox'] == 'read-only'
     finally:
@@ -148,11 +150,14 @@ def test_other_mcp_server_does_not_inherit_bridge_approval():
     assert 'default_tools_approval_mode' not in params['config']['mcp_servers']['other']
 
 
-async def test_executor_turn_is_not_trial_delivery(monkeypatch, tmp_path):
+@pytest.mark.parametrize('model', ['gpt-6-astra', 'gpt-6.1-sol'])
+async def test_executor_turn_is_not_trial_delivery(monkeypatch, tmp_path, model):
     monkeypatch.setattr('cyberscientist.prime.codex_exec.JsonRpcStdio', FakeRpc)
-    exe = CodexExecutor('/bin/true', 'gpt-6-astra', 'medium')
+    exe = CodexExecutor('/bin/true', model, 'medium')
     sid = await exe.start({'working_directory': str(tmp_path)})
     try:
+        params = next(p for m, p in exe._sessions[sid].rpc.calls if m == 'thread/start')
+        assert params['model'] == model
         assert (await exe.prompt(sid, 'probe')).status == 'accepted'
         async def collect():
             out = []
