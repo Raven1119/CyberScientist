@@ -16,7 +16,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from . import compute, config, db, experience_context, local_scoring, mailboxes, sandboxes, skills
+from . import (challenge_models, compute, config, db, experience_context,
+               local_scoring, mailboxes, sandboxes, skills)
 
 CATALOG = Path(__file__).resolve().parents[2] / 'evals' / 'catalog.json'
 PUBLIC_SNAPSHOTS = CATALOG.parent / 'public_challenges'
@@ -26,10 +27,6 @@ UNCAPPED_LOWER_FACTOR = .30
 TERMINAL = {'finished', 'failed', 'cancelled'}
 MATCHGATE_ID = 'flowforge-matchgate-swap-inverse-synthesis-v2-4019e745'
 MATCHGATE_RESOURCE_SHA256 = '3ed0a9a79f63504b8a6d7c84022dee9bc458aaf15bc23096d4e60b5c3f316e74'
-FIGQA_IDS = frozenset((
-    'lab-bench-figqa-figqa-0177-b4156bee',
-    'lab-bench-figqa-figqa-0178-23afc746',
-))
 
 
 class EvaluationError(ValueError):
@@ -146,10 +143,11 @@ def create_evaluation(suite: str, repeats: int = 2, label: str = '') -> dict[str
     frozen = {}
     for item in entries:
         cid = item['challenge_id']
-        challenge = db.query_one('SELECT content_hash,platform_snapshot_json FROM challenges WHERE id=?',
+        challenge = db.query_one('SELECT * FROM challenges WHERE id=?',
                                  (cid,))
         public_snapshot = json.loads(challenge['platform_snapshot_json'] or '{}')
         frozen[cid] = {
+            'models': challenge_models.from_challenge(challenge, settings),
             'challenge_content_sha256': challenge['content_hash'],
             'challenge_source': public_snapshot.get('source_kind', 'existing_import'),
             'experience_manifests': {role: experience_context.select(cid, role=role)
@@ -158,11 +156,11 @@ def create_evaluation(suite: str, repeats: int = 2, label: str = '') -> dict[str
                        for role in ('brain', 'executor')},
         }
     config_snapshot = {
-        'schema': 'cyberscientist-evaluation/v1', 'catalog_sha256': hashlib.sha256(CATALOG.read_bytes()).hexdigest(),
+        'schema': 'cyberscientist-evaluation/v2', 'catalog_sha256': hashlib.sha256(CATALOG.read_bytes()).hexdigest(),
         'suite': suite, 'repeats': repeats, 'label': label,
         'entries': entries, 'frozen': frozen,
-        'models': {role: {'runtime': 'codex', 'model_id': 'gpt-6-sol',
-                          'reasoning_effort': 'xhigh'} for role in ('brain', 'executor')},
+        'models': (frozen[entries[0]['challenge_id']]['models']
+                   if len({_canonical(item['models']) for item in frozen.values()}) == 1 else None),
         'shadow_enabled': bool(settings.get('shadow', {}).get('enabled', False)),
         'settings_revision': settings.get('revision'),
     }
@@ -229,6 +227,7 @@ def get_evaluation(eval_id: str) -> dict[str, Any]:
             confirmed_jobs, unknown_jobs = _job_usage(result['run_id'])
             item['result']['job_count'] = confirmed_jobs
             item['result']['job_unknown_count'] = unknown_jobs
+            item['result']['bohrium_cost_details'] = compute.costs(result['run_id'])
         output.append(item)
     return {'id': row['id'], 'suite': row['suite'], 'label': row['label'],
             'status': row['status'], 'repeats': row['repeats'], 'created_at': row['created_at'],
@@ -244,15 +243,16 @@ def list_evaluations() -> list[dict[str, Any]]:
 def _marker(config_snapshot: dict[str, Any], item: dict[str, Any], result_id: str) -> dict[str, Any]:
     cid = item['challenge_id']
     frozen = config_snapshot['frozen'][cid]
+    models = frozen.get('models') or config_snapshot['models']
     return {'enabled': True, 'result_id': result_id,
             'challenge_content_sha256': frozen['challenge_content_sha256'],
             'challenge_source': frozen['challenge_source'],
-            'models': config_snapshot['models'], 'experience_manifests': frozen['experience_manifests'],
+            'models': models, 'experience_manifests': frozen['experience_manifests'],
             'experience_sha256': _sha(frozen['experience_manifests']),
             'skills': frozen['skills'], 'skills_sha256': _sha(frozen['skills']),
             'switches': {'experience_enabled': True,
                          'shadow_enabled': config_snapshot['shadow_enabled'],
-                         'models': config_snapshot['models'],
+                         'models': models,
                          'skill_ids': {role: [skill['id'] for skill in frozen['skills'][role]]
                                        for role in ('brain', 'executor')}}}
 
@@ -291,11 +291,14 @@ async def advance(controller: Any) -> None:
             if run['phase'] == 'created':
                 limit = _limits(evaluation['suite'])
                 if not run['authorization_id']:
+                    challenge = db.query_one('SELECT content FROM challenges WHERE id=?',
+                                             (result['challenge_id'],))
                     controller.authorize(rid, 'connected', True, 0, limit['minutes'], 0,
-                        'CS-UP-05 local-only evaluation; no platform submission',
+                        'Local-only evaluation; no platform submission; no experience writes',
                         max_jobs=limit['jobs'], allow_data_download=True,
                         max_sandboxes=2, max_sandbox_minutes=limit['sandbox_minutes'],
-                        allow_sandbox_gpu=False)
+                        allow_sandbox_gpu=False,
+                        objective=challenge['content'])
                 try:
                     await controller.start_async(rid)
                 except Exception as exc:
@@ -343,18 +346,12 @@ async def advance(controller: Any) -> None:
 
 
 def _check_scorer_input_path(challenge_id: str, sealed: bytes) -> None:
-    """Reject known unsupported package layouts before renting a scorer sandbox."""
-    if challenge_id not in FIGQA_IDS:
-        return
-    with zipfile.ZipFile(io.BytesIO(sealed)) as archive:
-        names = archive.namelist()
-    supported = [name for name in names if name == 'outputs/answer.txt'
-                 or name.endswith('/outputs/answer.txt')]
-    if len(supported) != 1:
-        root_answer = 'answer.txt' in names
-        raise EvaluationError('FigQA 评分器需唯一 outputs/answer.txt；'
-                              + ('封存包只有根目录 answer.txt，科学分 unknown'
-                                 if root_answer else '封存包缺少或重复该路径，科学分 unknown'))
+    """Check scorer-declared inputs; no challenge-ID-specific path rules."""
+    from . import artifact_contracts
+    try:
+        artifact_contracts.require_supported(challenge_id, sealed)
+    except local_scoring.LocalScoreError as exc:
+        raise EvaluationError(str(exc)) from exc
 
 
 def retry_authorized(run_id: str, result_id: str) -> bool:
@@ -375,6 +372,46 @@ def retry_authorized(run_id: str, result_id: str) -> bool:
                              (run_id, result_id)))
 
 
+def score_preflight(run, preflight: dict[str, Any], score_op: str, sandbox_op: str) -> dict[str, Any]:
+    """Shared controller scoring entry; exact input cache precedes resource rental."""
+    run_id, trial_id = run['id'], run['current_trial_id']
+    _check_scorer_input_path(run['challenge_id'], preflight['sealed_bytes'])
+    manifest = local_scoring.scorer_manifest(run['challenge_id'])
+    cached = local_scoring.reuse_score(run_id, trial_id, score_op,
+                                       preflight['sealed_bytes'], manifest)
+    if cached:
+        return cached
+    runtime = manifest.get('runtime', {})
+    if runtime.get('environment_id'):
+        from . import runtime_environments
+        runtime_environments.resolve(runtime['environment_id'])
+    public_resource = None
+    if runtime.get('public_resource'):
+        declared = runtime['public_resource']
+        public_resource = (config.WORKSPACE_ROOT / declared['path']).resolve()
+        if (not public_resource.is_relative_to(config.WORKSPACE_ROOT.resolve())
+                or not public_resource.is_file() or public_resource.is_symlink()
+                or hashlib.sha256(public_resource.read_bytes()).hexdigest() != declared['sha256']):
+            raise EvaluationError('公开评分资源缺失或哈希不符；科学分 unknown')
+    active = db.query_one('SELECT sandbox_id FROM compute_sandboxes WHERE run_id=?'
+                          " AND trial_id=? AND status='active' AND json_extract(request_json,'$.image')=?"
+                          ' ORDER BY created_at DESC LIMIT 1',
+                          (run_id, trial_id, manifest['image']))
+    sid = active['sandbox_id'] if active else None
+    if sid is None:
+        created = sandboxes.create(run_id, sandbox_op,
+            {'image': manifest['image'], 'cpu': '4c8g',
+             'timeout': runtime.get('sandbox_timeout', 600)})
+        sid = created.get('sandbox_id') if created.get('status') == 'active' else None
+    if not sid:
+        raise EvaluationError('评分沙箱未确认 active')
+    return local_scoring.evaluate(run_id, trial_id, sid, score_op,
+                                   preflight=preflight,
+                                   public_resource_zip=public_resource,
+                                   score_timeout=runtime.get('score_timeout', 120),
+                                   _controller_preflight=True)
+
+
 def _score_run(run_id: str, result_id: str, *, retry: bool = False) -> tuple[str, str | None]:
     run = db.query_one('SELECT * FROM runs WHERE id=?', (run_id,))
     trial_id = run['current_trial_id']
@@ -392,6 +429,20 @@ def _score_run(run_id: str, result_id: str, *, retry: bool = False) -> tuple[str
             sealed_path = sealed_dir / 'sealed_package.zip'
             if sealed_dir.is_symlink() or sealed_path.is_symlink():
                 raise EvaluationError('评测封存路径含符号链接')
+            candidate_path = config.WORKSPACE_DIR / 'runs' / run_id / 'final_candidate' / 'sealed_package.zip'
+            if not sealed_path.exists() and candidate_path.is_file():
+                if candidate_path.is_symlink() or candidate_path.parent.is_symlink():
+                    raise EvaluationError('最终包路径含符号链接')
+                accepted = db.query_one("SELECT payload FROM events WHERE run_id=?"
+                    " AND type IN ('run.final_package_checked','run.final_package_confirmed')"
+                    " ORDER BY seq DESC LIMIT 1", (run_id,))
+                facts = json.loads(accepted['payload']).get('final_package_check', {}) if accepted else {}
+                local = db.query_one('SELECT package_sha256 FROM local_scores WHERE id=? AND run_id=?',
+                                     (facts.get('local_score_id'), run_id))
+                candidate_bytes = candidate_path.read_bytes()
+                if not local or hashlib.sha256(candidate_bytes).hexdigest() != local['package_sha256']:
+                    raise EvaluationError('最终包与已对账并接受的评分输入不一致')
+                sealed_path.write_bytes(candidate_bytes)
             if sealed_path.exists():
                 from . import trace_diagnostics
                 sealed = sealed_path.read_bytes()
@@ -431,36 +482,7 @@ def _score_run(run_id: str, result_id: str, *, retry: bool = False) -> tuple[str
                              'advisory_cap': diagnostic.get('advisory_cap'),
                              'checklist_cap': diagnostic.get('checklist_cap'),
                              'reason': diagnostic.get('reason')}, trial_id=trial_id)
-            _check_scorer_input_path(run['challenge_id'], preflight['sealed_bytes'])
-            manifest = local_scoring.scorer_manifest(run['challenge_id'])
-            public_resource = None
-            if run['challenge_id'] == MATCHGATE_ID:
-                public_resource = (config.WORKSPACE_ROOT / '.package-checks' / 'cs-up-05' /
-                                   'matchgate-public' / 'out-net' / 'matchgate.zip')
-                if not public_resource.is_file() or hashlib.sha256(public_resource.read_bytes()).hexdigest() != MATCHGATE_RESOURCE_SHA256:
-                    raise EvaluationError('Matchgate 公开数据缺失或哈希不符；科学分 unknown')
-            if run['challenge_id'] == 'flowforge-paired-block-boundary-projection-v10-fe06025a':
-                from . import lean_runtime
-                lean_runtime.validate_source()
-            active = db.query_one('SELECT sandbox_id FROM compute_sandboxes WHERE run_id=?'
-                                  " AND trial_id=? AND status='active' AND json_extract(request_json,'$.image')=?"
-                                  ' ORDER BY created_at DESC LIMIT 1',
-                                  (run_id, trial_id, manifest['image']))
-            sid = active['sandbox_id'] if active else None
-            if sid is None:
-                hard = run['challenge_id'] in (MATCHGATE_ID,
-                    'flowforge-paired-block-boundary-projection-v10-fe06025a')
-                created = sandboxes.create(run_id, sandbox_op,
-                    {'image': manifest['image'], 'cpu': '4c8g',
-                     'timeout': 1800 if hard else 600})
-                sid = created.get('sandbox_id') if created.get('status') == 'active' else None
-            if not sid:
-                raise EvaluationError('评分沙箱未确认 active')
-            local = local_scoring.evaluate(run_id, trial_id, sid, score_op,
-                                           preflight=preflight,
-                                           public_resource_zip=public_resource,
-                                           score_timeout=1200 if public_resource else 600 if
-                                           run['challenge_id'].startswith('flowforge-paired-block') else 120)
+            local = score_preflight(run, preflight, score_op, sandbox_op)
             status = 'scored' if local.get('science_score') is not None else 'unavailable'
             db.append_event(run_id, 'controller', 'evaluation.local_scored',
                             {'local_score_id': local['id'], 'status': status}, trial_id=trial_id)
@@ -674,6 +696,7 @@ def _finish_result(result_id: str, run_id: str, *, scoring_status: str | None = 
         'job_count': jobs, 'job_unknown_count': unknown_jobs,
         'sandbox_minutes': minutes,
         'sandbox_minutes_status': minutes_status, 'bohrium_amount': 'unknown',
+        'bohrium_cost_details': compute.costs(run_id),
         'attention_events': sum(e['type'] in (
             'run.stall_detected', 'run.needs_attention', 'run.paused',
             'trial.stalled', 'model.rate_limit_attention')

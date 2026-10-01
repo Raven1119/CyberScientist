@@ -2,5 +2,10 @@
   "entrypoint": "score.py",
   "image": "registry.dp.tech/dptech/ubuntu:20.04-py3.10",
   "version": "figqa0178-canonical-1",
-  "contract_version": 1
+  "contract_version": 1,
+  "input_contract": {
+    "artifact_paths": ["outputs/answer.txt"],
+    "required": true,
+    "verification": "docs/EVAL_BASELINE_2026-10.md: completed canonical artifact scoring"
+  }
 }

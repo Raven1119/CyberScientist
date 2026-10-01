@@ -1,0 +1,11 @@
+{
+  "id": "lean-4.32.2",
+  "identity": {
+    "lean_version": "4.32.2",
+    "mathlib_revision": "905b95818eb32af7874a58b427f50c1711a5e96c"
+  },
+  "lean_bin": "/opt/cs-lean/bin",
+  "mathlib_root": "/opt/cs-mathlib",
+  "descriptor_path": "/opt/cs-lean-environment.json",
+  "usage": "Use the verified image for a CPU Job or scoring sandbox. Link pinned packages from mathlib_root into the fixed project .lake/packages. No runtime downloads or cache uploads."
+}

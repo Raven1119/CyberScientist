@@ -46,6 +46,21 @@ def install_proxy(bin_dir: Path) -> Path:
     return entry
 
 
+def redact_value(value, secret_values: Iterable[str]):
+    """Redact strings before JSON encoding so diagnostic quotes stay escaped."""
+    secrets = tuple(secret_values)
+    if isinstance(value, str):
+        return redact(value, secrets)
+    if isinstance(value, list):
+        return [redact_value(item, secrets) for item in value]
+    if isinstance(value, dict):
+        return {redact(str(key), secrets): (
+            '[REDACTED]' if re.fullmatch(r'access[_-]?key|api[_-]?key|authorization|token',
+                                         str(key), re.I)
+            else redact_value(item, secrets)) for key, item in value.items()}
+    return value
+
+
 def main() -> int:
     """Credential-free client. Dispatch once; an uncertain response is never retried."""
     import json
@@ -68,7 +83,7 @@ def main() -> int:
     except (OSError, ValueError) as exc:
         print(redact(f"请求结果 unknown；请先查询 Run Job 账本：{exc}", [token]), file=sys.stderr)
         return 75
-    print(redact(json.dumps(result, ensure_ascii=False), [token]))
+    print(json.dumps(redact_value(result, [token]), ensure_ascii=False))
     if result.get("platform_job_id"):
         print(f"JobId: {result['platform_job_id']}")
     return 0 if result.get("ok", True) and result.get("status") not in ("unknown", "not_started") else 1

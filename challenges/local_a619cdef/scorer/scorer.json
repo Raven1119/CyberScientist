@@ -2,5 +2,10 @@
   "entrypoint": "score.py",
   "image": "registry.dp.tech/dptech/ubuntu:20.04-py3.10",
   "version": "abc-rubric-1",
-  "contract_version": 1
+  "contract_version": 1,
+  "input_contract": {
+    "artifact_paths": ["outputs/triple.json"],
+    "required": true,
+    "verification": "docs/EVAL_BASELINE_2026-10.md: completed artifact scoring"
+  }
 }

@@ -2,5 +2,22 @@
   "entrypoint": "score.py",
   "image": "registry.dp.tech/dptech/ubuntu:20.04-py3.10",
   "version": "matchgate-public-endpoints-1",
-  "contract_version": 1
+  "contract_version": 1,
+  "input_contract": {
+    "artifact_paths": [
+      "outputs/submission.json"
+    ],
+    "required": true,
+    "verification": "docs/EVAL_BASELINE_2026-10.md: completed artifact scoring"
+  },
+  "runtime": {
+    "public_resource": {
+      "path": ".package-checks/cs-up-05/matchgate-public/out-net/matchgate.zip",
+      "sha256": "3ed0a9a79f63504b8a6d7c84022dee9bc458aaf15bc23096d4e60b5c3f316e74",
+      "environment_variable": "CS_MATCHGATE_INSTANCE_DIR",
+      "directory": "public/resources/instances"
+    },
+    "score_timeout": 1200,
+    "sandbox_timeout": 1800
+  }
 }

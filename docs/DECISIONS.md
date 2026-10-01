@@ -15,9 +15,24 @@
 - W0 交付检查：`.venv/bin/pytest -q` 640 passed、2 skipped（回环监听被沙箱禁止），前端 40 passed，TypeScript/Vite 构建、compileall 和 diff --check 通过。原始审计材料不暂存；没有改动 v1 数据库、封存包或经验。
 - 模型前置检查仅调用当前配置的 Linux 原生 Codex 0.155.1 的 initialize 与完整 model/list（includeHidden，100/页，一页结束）；返回 9 个模型，没有 `gpt-6.1-sol`。没有线程、模型 turn 或全局设置修改。沙箱内原生握手因进程关闭失败，允许原生认证/缓存访问后完成只读检查。继续 W1，准确目标不可用时不跑 W2、不用其他模型替代。
 
-### W1 / W2
+### W1：通用修复与未完成验收
 
-尚未实施或启动；本节将按实际完成与验证结果追加，不将任务要求写成已实现事实。
+- F1：所有受控本地评分经 `_record_score` 保存完整科学结果、科学输入哈希、评分器哈希和产物哈希，并写 `local_score.registered`。按 Run 和当前评分器版本跨 Trial 求各显式 score/points/\*_score 子项的最佳成绩；诊断数值不当成绩。finish 在封存前给实际完整包评分，退步以 `brain.action_rejected.final_package_check` 回给大脑，包含子项、两边数值和候选哈希。稀疏生命周期帧和审阅帧都有完整反馈，不要求主动读轨迹。大脑修正或提供绑定科学输入、评分器和最佳成绩快照的确认 token 与原因；明确确认写 `run.final_package_confirmed`，控制器不组合或替换产物。暂停竞态和最终快照篡改均拒绝。候选包按接受的评分记录哈希核验后用于评测封存。
+- F1 缓存：同 Run、确定性科学输入 ZIP（剔除轨迹且规范化 manifest）、评分器哈希相同，直接派生新的轨迹诊断记录，沙箱创建之前复用。修改产物、manifest 或评分器均失效；旧无输入哈希的记录不擅自认定命中。仅加 `local_scores.science_input_sha256`，已备份 SQLite 并实际验证幂等迁移。skill 仅说明正式候选登记接口及控制器确认协议，没有题目方法、参数或答案。
+- F2：评分器可声明经过验证的输入路径；启动 Trial 的共用文本和封存预检同时展示题面输出相关路径及评分器接受路径。路径提取明确标为可能不完整；布局不同时提示执行器自行决定，不搬运或补写科学文件。评分前通用校验取代 FigQA ID 特例。五份 scorer.json 只补既有输入/环境协议；科学评分 Python 源码未修改。
+- F3：固定公开 Lean 4.32.2（工具链 SHA 固定）与 Mathlib 905b95818eb32af7874a58b427f50c1711a5e96c 的镜像配方，仅含公开工具链/缓存，不含题目证明或答案。配方存在不等于环境可用：后台注册表只接受版本相符的镜像观察回执，公共事实标明 verified/unverified。评分环境声明及固定公开项目的路径/哈希由 scorer.json 配置，不按题目 ID 分支。新准备路径只传小的固定项目归档，连接镜像里的缓存，运行时不下载工具链/Mathlib，不分块传大归档。Job 输入超过 256 MiB 时，预约和创建之前返回实际字节数、预置环境状态及明确确认方式。注册表只加表，科学依赖验证未在本机进行。
+- F3 **真实验收阻塞**：Dockerfile 校验 HTTP 200/code 0/result=true。首次创建因 projectId 字符串不能解析为 uint64 被明确拒绝；确认列表无同名项后改整数发送。本次唯一资源创建返回 HTTP 200/code 148888/rpc error，无 ID，结果 unknown。新主机完整私有列表 total=0、同名 0；旧主机只读列表 HTTP 401/code 2000，不能用于否定创建。官方公开 schema 对 projectId/buildType 写成 string，与实际 Go 解码不符，不能照 schema 冒充正确协议。未知预约占用这次唯一私有资源额度，不再次创建，也不改建数据集。两次沙箱、两次 CPU Job 的离线构建及历史证明重评分均 **未执行**，F3 未验收。真实请求用的 Dockerfile SHA 与后续只补描述字段的当前配方 SHA 分别记录在本机账本；两者都没有验证成可用镜像。[官方自定义软件说明](https://bohrium-doc.dp.tech/docs/software/OtherSoftwares/)、[官方 OpenAPI](https://raw.githubusercontent.com/dptech-corp/bohrium-skills/main/docs/api/openapi.json)供核对，真实回执优先。
+- F4：旧 Job API 的 pageSize=100 实际有效，perPage 和 jobName 过滤在探针中无效。后台采用最多三页的只读适配器；后页失败不丢前页证据，只匹配控制器唯一名称和已有 ID，不记录其他账号 Job 的信息。数字状态 2 经十个既有 Finished Job 核对；其他未确认数字状态仍保持未知。匹配不到或多重匹配不释放预约。v1 两个 unknown 各做了一次有界观察，仍未找到同名项，保持 unknown；本机事件 Lean #1588、Matchgate 第一轮 #1358 保存这次结论。
+- F4 费用 **部分完成**：十个有 ID 的 v1 Job 取得平台 cost 字段，原始金额合计 0.34，币种未注明；0.00 是平台显示精度下的数值，不能推断免费。沙箱、无回执任务和实际总账单仍 unknown。GET 官方 node/resources/price 返回 HTTP 400/code 148888，未得到可匹配单价；公开 Job 定价页只有 JS 容器，不能据此编造费率。`eval report` 从本机 Job 回执投影重新生成原始金额、覆盖项数和缺项；前端保留总额 unknown，同时标明 Job 原始金额“币种未确认，非总费用”。[官方计价说明](https://bohrium-doc.dp.tech/docs/bohrctl/pricing/)说明 Job 机时价格随机型，未证实旧 API cost 的币种和沙箱费率，因此不外推或硬填估算。完整账单/估算验收仍未满足。
+- F5：评测 authorize 的 objective 明确传完整题面，授权备注不再当研究目标；生命周期与 shadow/requested 共用包含 Job、沙箱、GPU、下载和评测隔离边界的授权事实。共用执行任务文本明确反映已授权 Job/沙箱，而非误写只能 Job。结构化 bohr 输出逐字符串脱敏后再序列化，修复引号破坏 JSON。评测冻结题目级模型选择，兼容旧冻结记录，不改全局 CLI、认证或默认设置。这些修复基于接口事实，不调整科学策略、停止规则或题目经验。
+- 验证额度：W1 新科学沙箱 0 分钟、新 CPU Job 0、新真实研究 Run 0；唯一私有镜像请求保留 unknown，其费用 unknown。应用单测全部是假协议/临时 SQLite；新环境不因 fake 通过而标成真实可用。SQLite 在 `.package-checks/cs-up-06/migrations/` 做一致备份后才加列/表，两次初始化通过；原有 recovering Run 未启动、重启或修改其授权。
+
+- W1 有界代码审查核对：不加入评测题方法/参数/答案；通用 scorer 输入/环境声明替代运行时题目 ID 分支；真实环境没有凭 fake 晋升；最终快照须与接受的评分记录绑定；评分期间暂停不得被 finish 覆盖；只读成本查询不覆盖原创建回执。最终完整 pytest 664 passed、2 skipped，前端 40 passed、构建/compileall/diff --check 通过。F3 实环境和 F4 完整金额仍未验收，代码通过不等于整个 W1 已满足。
+
+### W2：准确模型缺失时遵守停跑边界
+
+当前配置的 Linux Codex 0.155.1 完整原生 model/list 有 9 个模型，无准确 `gpt-6.1-sol`；PATH 中也没有另一份 codex。未作模型 turn，不把 gpt-6-sol 当成目标模型。按本卡仅完成可推进的 W0/W1，W2 两个 eval run 命令不执行，不建假结果或填零分。后续报告 `docs/EVAL_V2_2026-10.md` 如实列明 0/10、模型门槛和 F3/F4 未完成验收；不声称“基础设施未知科学分已归零”，也不拆分修复/模型因果。
+
 
 | 决策 | 替换的设计 | 原因与影响 |
 |---|---|---|

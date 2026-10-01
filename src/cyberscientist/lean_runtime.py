@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import shlex
 import tarfile
 from pathlib import Path
@@ -27,7 +26,6 @@ PROJECT_HASHES = {
     'lakefile.toml': 'd9698381e02837db51d2b5e5bd746d7514db9b57a805015b7d8f4a80eb79d2e3',
     'lake-manifest.json': '7d78a9a7f1ff478f6a609653c74817d10e199b9425daf26d9c1027fa53375fef',
 }
-CHUNK_BYTES = 64 * 1024 * 1024
 SOURCE = (config.WORKSPACE_ROOT / '.package-checks' /
           'paired-block-final-20260928' / 'staged')
 
@@ -62,89 +60,49 @@ def _completed(result: dict, step: str) -> None:
 
 
 def prepare(run_id: str, sandbox_id: str, stage: Path, operation_id: str,
-            *, source: Path = SOURCE) -> None:
-    """Copy only pinned public dependencies; never transfer prior answers/cases."""
-    validate_source(source)
-    upload = stage / 'lean_runtime'
-    upload.mkdir(parents=True, exist_ok=True)
-    remote = '/workspace/cs-lean-stage'
-    _completed(sandboxes.execute(run_id, sandbox_id,
-        'mkdir -p ' + remote + ' /workspace/paired-block-project/.lake/packages'
-        ' /workspace/lean /workspace/mathlib-cache', 30, operation_id + '-runtime-mkdir'),
-        'mkdir')
-
-    project_archive = upload / 'project.tar.gz'
-    temporary = upload / 'project.tar.gz.tmp'
-    with tarfile.open(temporary, 'w:gz') as archive:
-        for name in sorted(PROJECT_HASHES):
-            archive.add(source / 'project' / name, arcname=name, recursive=False)
-    temporary.replace(project_archive)
-
-    transfer_files = [project_archive, source / 'packages.tar.gz',
-                      source / 'curl-7.88.1',
-                      *(source / name for name in ARCHIVES if name.endswith('.ltar'))]
-    for path in transfer_files:
-        local = upload / path.name
-        if path != local and not local.exists():
-            os.link(path, local)
-        _completed(sandboxes.transfer(run_id, 'write', sandbox_id,
-            remote + '/' + path.name, local_path=str(local),
-            operation_id=operation_id + '-runtime-' + path.name.replace('.', '-')),
-            path.name)
-
-    parts = []
-    with (source / 'lean.tar.zst').open('rb') as stream:
-        index = 0
-        while chunk := stream.read(CHUNK_BYTES):
-            name = f'lean-{index:02d}.part'
-            local = upload / name
-            if local.exists() and local.read_bytes() != chunk:
-                raise LeanRuntimeUnavailable('Lean 分块与冻结源不一致: ' + name)
-            if not local.exists():
-                local.write_bytes(chunk)
-            _completed(sandboxes.transfer(run_id, 'write', sandbox_id,
-                remote + '/' + name, local_path=str(local),
-                operation_id=operation_id + '-runtime-' + name.replace('.', '-')),
-                name)
-            parts.append(name)
-            index += 1
-    if not parts:
-        raise LeanRuntimeUnavailable('Lean 归档为空')
-
-    parts_arg = ' '.join(shlex.quote(remote + '/' + name) for name in parts)
-    checksum = ARCHIVES['lean.tar.zst']
-    remote_checks = ' && '.join(
-        'echo ' + shlex.quote(expected + '  ' + remote + '/' + name)
-        + ' | sha256sum -c -'
-        for name, expected in ARCHIVES.items() if name != 'lean.tar.zst')
-    project_check = ('echo ' + shlex.quote(_sha256(project_archive) + '  '
-                                      + remote + '/project.tar.gz') + ' | sha256sum -c -')
-    command = (
-        f'cat {parts_arg} > {remote}/lean.tar.zst && '
-        f'echo {shlex.quote(checksum + "  " + remote + "/lean.tar.zst")} | sha256sum -c - && '
-        + remote_checks + ' && ' + project_check + ' && '
-        f'cd /workspace/paired-block-project && '
-        f'tar -xzf {remote}/project.tar.gz && '
-        f'tar -xzf {remote}/packages.tar.gz -C .lake/packages && '
-        f'tar --zstd -xf {remote}/lean.tar.zst --no-same-owner '
-        f'--strip-components=1 -C /workspace/lean && '
-        f'cp {remote}/*.ltar /workspace/mathlib-cache/ && '
-        f'cp {remote}/curl-7.88.1 /workspace/mathlib-cache/ && '
-        f'chmod 755 /workspace/mathlib-cache/curl-7.88.1 && '
-        'PATH=/workspace/lean/bin:$PATH lean --version')
-    _completed(sandboxes.execute(run_id, sandbox_id, command, 300,
-                                 operation_id + '-runtime-unpack'), 'unpack')
-
-    manifest = json.loads((source / 'project' / 'lake-manifest.json').read_text())
-    checks = ' && '.join(
-        f'test "$(git -C .lake/packages/{shlex.quote(item["name"])} rev-parse HEAD)" = '
-        + shlex.quote(item['rev']) for item in manifest['packages'])
-    modules = [line.split()[1] for line in
-               (source / 'project' / 'PairCore.lean').read_text().splitlines()
-               if line.startswith('import ')]
-    env = 'PATH=/workspace/lean/bin:$PATH NO_PROXY=* no_proxy=* MATHLIB_CACHE_DIR=/workspace/mathlib-cache'
-    build = ('cd /workspace/paired-block-project && ' + checks + ' && '
-             + env + ' lake exe cache get ' + ' '.join(map(shlex.quote, modules))
-             + ' && ' + env + ' lake build PairCore')
-    _completed(sandboxes.execute(run_id, sandbox_id, build, 600,
-                                 operation_id + '-runtime-build'), 'build')
+            *, project: dict, environment_id: str) -> str:
+    """Stage only the immutable small public project into the verified image."""
+    from . import db, runtime_environments
+    environment = runtime_environments.resolve(environment_id)
+    sandbox = db.query_one('SELECT request_json FROM compute_sandboxes'
+                           ' WHERE run_id=? AND sandbox_id=?', (run_id, sandbox_id))
+    if not sandbox or json.loads(sandbox['request_json']).get('image') != environment['image']:
+        raise LeanRuntimeUnavailable('Lean 沙箱没有使用已验证的预置镜像')
+    source = (config.WORKSPACE_ROOT / project['path']).resolve()
+    if not source.is_relative_to(config.WORKSPACE_ROOT.resolve()):
+        raise LeanRuntimeUnavailable('固定公开项目路径越界')
+    for name, expected in project['files'].items():
+        path = source / name
+        if not path.is_file() or path.is_symlink() or _sha256(path) != expected:
+            raise LeanRuntimeUnavailable('Lean 固定项目缺失或哈希不符: ' + name)
+    project_archive = stage / 'public_project.tar.gz'
+    stage.mkdir(parents=True, exist_ok=True)
+    with tarfile.open(project_archive, 'w:gz') as archive:
+        for name in sorted(project['files']):
+            archive.add(source / name, arcname=name, recursive=False)
+    if project_archive.stat().st_size > 2_000_000:
+        raise LeanRuntimeUnavailable('固定项目异常过大；不传输工具链或缓存')
+    remote = '/workspace/cs-public-lean-project-' + operation_id
+    command = 'mkdir -p ' + shlex.quote(remote)
+    _completed(sandboxes.execute(run_id, sandbox_id, command, 30,
+                                operation_id + '-project-mkdir'), 'mkdir')
+    _completed(sandboxes.transfer(run_id, 'write', sandbox_id, remote + '/project.tar.gz',
+        local_path=str(project_archive), operation_id=operation_id + '-public-project'), 'public-project')
+    # The descriptor and all dependency commits are checked in the container;
+    # all links point to prebuilt public caches. No curl, git fetch or cache get.
+    setup = ("import json, pathlib, subprocess; p=pathlib.Path(" + repr(remote) + "); "
+             "e=json.loads(pathlib.Path(" + repr(environment['descriptor_path']) + ").read_text()); "
+             "assert all(e[k]==v for k,v in " + repr(environment['identity']) + ".items()); "
+             "m=json.loads((p/'lake-manifest.json').read_text()); "
+             "roots={n:pathlib.Path(" + repr(environment['mathlib_root']) + ")/'.lake/packages'/n "
+             "for n in e['packages']}; roots['mathlib']=pathlib.Path(" + repr(environment['mathlib_root']) + "); "
+             "assert all(e['packages'][x['name']]==x['rev'] for x in m['packages']); "
+             "q=p/'.lake/packages'; q.mkdir(parents=True,exist_ok=True); "
+             "[(q/x['name']).symlink_to(roots[x['name']],target_is_directory=True) "
+             "for x in m['packages'] if not (q/x['name']).exists()]")
+    command = ('tar -xzf ' + shlex.quote(remote + '/project.tar.gz') + ' -C ' + shlex.quote(remote)
+               + ' && python3 -c ' + shlex.quote(setup))
+    _completed(sandboxes.execute(run_id, sandbox_id, command, 60,
+                                operation_id + '-project-link'), 'project-link')
+    return ('PATH=' + shlex.quote(environment['lean_bin']) + ':$PATH '
+            'CS_LEAN_PROJECT=' + shlex.quote(remote) + ' ')

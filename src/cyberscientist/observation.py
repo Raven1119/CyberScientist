@@ -56,6 +56,30 @@ def strip_secrets(text: str) -> str:
     return redact(_SECRET_TOKEN_RE.sub(r"\1***", text), secrets)
 
 
+def authority_facts(run_id: str) -> dict[str, Any]:
+    """One non-secret authorization projection for every brain review surface."""
+    auth = db.query_one('SELECT a.* FROM authorizations a JOIN runs r'
+                        ' ON r.authorization_id=a.id AND a.run_id=r.id WHERE r.id=?', (run_id,))
+    values = ({name: auth[name] for name in (
+        'note', 'max_jobs', 'max_sandboxes', 'max_sandbox_minutes',
+        'max_submissions', 'max_run_minutes')} if auth else None)
+    if values is not None:
+        values['note'] = strip_secrets(values['note']) if values['note'] else values['note']
+        values.update(allow_sandbox_gpu=bool(auth['allow_sandbox_gpu']),
+                      allow_data_download=bool(auth['allow_data_download']))
+    from . import runtime_environments
+    result: dict[str, Any] = {'authorization': values,
+                              'runtime_environments': runtime_environments.facts()}
+    if db.eval_mode(run_id):
+        result['evaluation_handoff'] = {
+            'platform_submission_allowed': False,
+            'experience_write_allowed': False,
+            'local_scoring_after_finish': True,
+            'agent_scoring_sandbox_required_for_finish': False,
+        }
+    return result
+
+
 def _clip(text: str | None, limit: int) -> tuple[str, bool]:
     t = text or ""
     if len(t) <= limit:
@@ -306,10 +330,13 @@ def build_frame(run_id: str, *, mode: str, frame_id: str,
         for item in notable:
             item["excerpt"] = item["excerpt"][:120]
 
+    from . import local_scoring
     return {
         "frame_id": frame_id,
         "mode": mode,
         "run_id": run_id,
+        **authority_facts(run_id),
+        **local_scoring.latest_final_check(run_id),
         "gate": run["gate"],
         "trial_id": trial["id"] if trial else None,
         "trial_status": trial["status"] if trial else None,

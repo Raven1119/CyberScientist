@@ -464,6 +464,7 @@ def test_science_score_still_runs_when_trace_admission_blocks(monkeypatch):
                               'advisories': [], 'advisory_cap': None},
         'error_code': 'TRACE_ADMISSION_BLOCKED'})
     monkeypatch.setattr(evaluations.local_scoring, 'scorer_manifest', lambda _: {'image': 'fake-image'})
+    monkeypatch.setattr(local_scoring, 'reuse_score', lambda *args: None)
     seen = []
     def fake_evaluate(*args, **kwargs):
         seen.append(kwargs['preflight']['error_code'])
@@ -513,6 +514,7 @@ def test_public_challenge_fallback_rejects_changed_snapshot(monkeypatch, tmp_pat
 
 def test_figqa_unsupported_answer_path_is_caught_before_scoring(monkeypatch):
     challenge = 'lab-bench-figqa-figqa-0177-b4156bee'
+    _challenge(challenge)
 
     def bundle(paths):
         stream = io.BytesIO()
@@ -527,7 +529,6 @@ def test_figqa_unsupported_answer_path_is_caught_before_scoring(monkeypatch):
     with pytest.raises(evaluations.EvaluationError, match='缺少或重复'):
         evaluations._check_scorer_input_path(
             challenge, bundle(['outputs/answer.txt', 'nested/outputs/answer.txt']))
-    _challenge(challenge)
     rid, trial_id = 'run_figqa_path', 'trial_figqa_path'
     db.execute('INSERT INTO runs(id,challenge_id,mode,phase,config_snapshot,created_at,'
                'current_trial_id) VALUES(?,?,?,?,?,?,?)',

@@ -36,6 +36,45 @@ def _canonical(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(',', ':'))
 
 
+def validate_runtime(value: Any) -> dict:
+    if not isinstance(value, dict) or set(value) - {
+            'environment_id', 'adapter', 'project', 'public_resource', 'score_timeout', 'sandbox_timeout'}:
+        raise LocalScoreError('INVALID_SCORER', '评分器运行环境声明无效')
+    for name in ('score_timeout', 'sandbox_timeout'):
+        if name in value and (type(value[name]) is not int or not 1 <= value[name] <= 3600):
+            raise LocalScoreError('INVALID_SCORER', '评分器时限无效')
+    if 'environment_id' in value and (not isinstance(value['environment_id'], str)
+            or not re.fullmatch(r'[A-Za-z0-9_.-]{1,100}', value['environment_id'])):
+        raise LocalScoreError('INVALID_SCORER', '评分环境标识无效')
+    if 'adapter' in value and (value['adapter'] != 'lean_project' or 'environment_id' not in value or 'project' not in value):
+        raise LocalScoreError('INVALID_SCORER', '评分器环境适配器无效')
+    project = value.get('project')
+    if project is not None:
+        if (not isinstance(project, dict) or set(project) != {'path', 'files'}
+                or not isinstance(project['path'], str) or not project['path']
+                or project['path'].startswith('/') or '\\' in project['path']
+                or '..' in Path(project['path']).parts or not isinstance(project['files'], dict)
+                or not 1 <= len(project['files']) <= 100
+                or any(not isinstance(name, str) or not _ENTRYPOINT.fullmatch(name)
+                       and not re.fullmatch(r'[A-Za-z0-9_.-]{1,100}', name)
+                       or not isinstance(digest, str) or not re.fullmatch(r'[a-f0-9]{64}', digest)
+                       for name, digest in project['files'].items())):
+            raise LocalScoreError('INVALID_SCORER', '固定公开项目声明无效')
+    public = value.get('public_resource')
+    if public is not None:
+        if (not isinstance(public, dict) or set(public) != {
+                'path', 'sha256', 'environment_variable', 'directory'}
+                or not isinstance(public['sha256'], str)
+                or not re.fullmatch(r'[a-f0-9]{64}', public['sha256'])
+                or not isinstance(public['environment_variable'], str)
+                or not re.fullmatch(r'CS_[A-Z0-9_]+', public['environment_variable'])
+                or any(not isinstance(public[name], str) or not public[name]
+                       or public[name].startswith('/') or '\\' in public[name]
+                       or '..' in Path(public[name]).parts for name in ('path', 'directory'))):
+            raise LocalScoreError('INVALID_SCORER', '公开评分资源声明无效')
+    return value
+
+
 def scorer_manifest(challenge_id: str) -> dict[str, Any]:
     if not db.query_one('SELECT 1 FROM challenges WHERE id=?', (challenge_id,)):
         raise LocalScoreError('NOT_FOUND', '题目不存在')
@@ -78,7 +117,9 @@ def scorer_manifest(challenge_id: str) -> dict[str, Any]:
         manifest = json.loads(files['scorer.json'])
     except (KeyError, ValueError, UnicodeDecodeError) as exc:
         raise LocalScoreError('INVALID_SCORER', 'scorer.json 缺失或无法解析') from exc
-    if not isinstance(manifest, dict) or set(manifest) != {'entrypoint', 'image', 'version', 'contract_version'}:
+    required = {'entrypoint', 'image', 'version', 'contract_version'}
+    if (not isinstance(manifest, dict) or not required <= set(manifest)
+            or not set(manifest) <= required | {'input_contract', 'runtime'}):
         raise LocalScoreError('INVALID_SCORER', 'scorer.json 字段必须为 entrypoint/image/version/contract_version')
     entry, image = manifest['entrypoint'], manifest['image']
     if (not isinstance(entry, str) or not _ENTRYPOINT.fullmatch(entry)
@@ -87,10 +128,34 @@ def scorer_manifest(challenge_id: str) -> dict[str, Any]:
             or len(manifest['version']) > 80
             or type(manifest['contract_version']) is not int or manifest['contract_version'] != 1):
         raise LocalScoreError('INVALID_SCORER', '评分器入口、镜像或契约版本无效')
+    contract = manifest.get('input_contract')
+    if contract is not None:
+        if (not isinstance(contract, dict)
+                or set(contract) != {'artifact_paths', 'required', 'verification'}
+                or not isinstance(contract['artifact_paths'], list)
+                or not 1 <= len(contract['artifact_paths']) <= 40
+                or any(not isinstance(path, str) or not path or path.startswith('/')
+                       or '\\' in path or '..' in Path(path).parts
+                       for path in contract['artifact_paths'])
+                or len(set(contract['artifact_paths'])) != len(contract['artifact_paths'])
+                or type(contract['required']) is not bool
+                or not isinstance(contract['verification'], str) or not contract['verification']):
+            raise LocalScoreError('INVALID_SCORER', '评分器输入路径声明无效')
+    runtime = validate_runtime(manifest.get('runtime', {}))
     hashes = {name: hashlib.sha256(raw).hexdigest() for name, raw in files.items()}
+    if runtime.get('environment_id'):
+        from . import runtime_environments
+        try:
+            environment = runtime_environments.recipe(runtime['environment_id'])
+            hashes['@environment_recipe'] = environment['recipe_sha256']
+            hashes['@environment_dockerfile'] = environment['dockerfile_sha256']
+            image = runtime_environments.resolve(runtime['environment_id'])['image']
+        except runtime_environments.EnvironmentUnavailable:
+            pass
     version = hashlib.sha256(_canonical(hashes).encode()).hexdigest()
     return {'entrypoint': entry, 'image': image, 'version': manifest['version'], 'contract_version': 1,
-            'scorer_version': version, 'file_hashes': hashes, 'files': files}
+            'scorer_version': version, 'file_hashes': hashes, 'files': files, 'runtime': runtime,
+            **({'input_contract': contract} if contract is not None else {})}
 
 
 def predict_trace(sealed: bytes) -> dict[str, Any]:
@@ -193,11 +258,118 @@ def _science_package(sealed: bytes) -> bytes:
     return _archive(files)
 
 
+def component_scores(science: dict[str, Any]) -> dict[str, float]:
+    """Named higher-is-better score fields, excluding unrelated diagnostics.
+
+    Nested objects use explicit score/points fields or *_score names.
+    Boolean checks, fidelities and timings are not scores.
+    """
+    result = {'/score': float(science['score'])}
+
+    def visit(value, path, named=False):
+        if type(value) in (int, float) and math.isfinite(value) and named:
+            result[path] = float(value)
+        elif isinstance(value, dict):
+            for key, item in value.items():
+                part = str(key).replace('~', '~0').replace('/', '~1')
+                visit(item, path + '/' + part,
+                      named or key in ('score', 'points') or key.endswith('_score'))
+    visit(science.get('components', {}), '/components')
+    return result
+
+
+def reuse_score(run_id: str, trial_id: str, operation_id: str, sealed: bytes,
+                manifest: dict[str, Any]) -> dict[str, Any] | None:
+    """Reuse only exact deterministic scorer inputs within this Run."""
+    digest = hashlib.sha256(_science_package(sealed)).hexdigest()
+    source = db.query_one('SELECT * FROM local_scores WHERE run_id=?'
+                          ' AND science_input_sha256=? AND scorer_version=?'
+                          ' AND science_score IS NOT NULL ORDER BY created_at,id LIMIT 1',
+                          (run_id, digest, manifest['scorer_version']))
+    if not source:
+        return None
+    return _record_score(manifest.get('challenge_id') or source['challenge_id'],
+                         run_id, trial_id, operation_id, sealed, manifest,
+                         json.loads(source['science_result_json']),
+                         source_local_score_id=source['id'])
+
+
+def final_package_check(run_id: str, candidate: dict[str, Any]) -> dict[str, Any]:
+    """Compare the full candidate against every registered per-component best."""
+    current = component_scores(json.loads(candidate['science_result_json']))
+    best = {}
+    for row in db.query('SELECT * FROM local_scores WHERE run_id=? AND scorer_version=?'
+                         ' AND science_score IS NOT NULL ORDER BY created_at,id',
+                         (run_id, candidate['scorer_version'])):
+        for component, score in component_scores(json.loads(row['science_result_json'])).items():
+            if component not in best or score > best[component]['best_score']:
+                best[component] = {'component': component, 'best_score': score,
+                    'candidate_local_score_id': row['id'],
+                    'candidate_package_sha256': row['package_sha256'],
+                    'candidate_artifact_hashes': json.loads(row['science_artifact_hashes_json'])}
+    regressions = [value | {'current_score': current.get(component)}
+                   for component, value in sorted(best.items())
+                   if component not in current or current[component] < value['best_score']]
+    facts = {'run_id': run_id, 'local_score_id': candidate['id'],
+             'science_input_sha256': candidate['science_input_sha256'],
+             'scorer_version': candidate['scorer_version'], 'regressions': regressions}
+    # Trace-only reseals and duplicate score rows cannot invalidate confirmation;
+    # changes to science, scorer or registered best scores do invalidate it.
+    binding = {key: facts[key] for key in ('run_id', 'science_input_sha256', 'scorer_version')}
+    binding['best'] = {key: value['best_score'] for key, value in sorted(best.items())}
+    facts['confirmation_token'] = hashlib.sha256(_canonical(binding).encode()).hexdigest()
+    return facts
+
+
+def latest_final_check(run_id: str) -> dict[str, Any]:
+    row = db.query_one("SELECT payload FROM events WHERE run_id=?"
+                        " AND type='brain.action_rejected'"
+                        " AND json_type(payload,'$.final_package_check')='object'"
+                        " ORDER BY seq DESC LIMIT 1", (run_id,))
+    return {'final_package_check': json.loads(row['payload'])['final_package_check']} if row else {}
+
+
+def score_candidate(run_id: str) -> dict[str, Any]:
+    run = db.query_one('SELECT * FROM runs WHERE id=?', (run_id,))
+    if not run or run['phase'] != 'running' or run['gate'] != 'open' or not run['current_trial_id']:
+        raise LocalScoreError('RUN_NOT_RUNNING', '最终包评分需要正在运行的 Trial')
+    manifest = scorer_manifest(run['challenge_id'])
+    check = mailboxes.preflight_submission(run_id, run['current_trial_id'], None,
+                                          allow_proxy_evidence=bool(db.eval_mode(run_id)))
+    # Local evaluation measures science even if trace admission is blocked.
+    if db.eval_mode(run_id) and check['error_code'] in (
+            'TRACE_ADMISSION_BLOCKED', 'TRACE_ADMISSION_INDETERMINATE', 'PROXY_EVIDENCE'):
+        check = check | {'error_code': None}
+    if check['error_code']:
+        raise LocalScoreError(check['error_code'], '最终包未通过本地预检')
+    digest = hashlib.sha256(check['sealed_bytes'] +
+                            manifest['scorer_version'].encode()).hexdigest()
+    from . import evaluations
+    row = evaluations.score_preflight(run, check, 'finish-score-' + digest[:30],
+                                     'finish-scorer-' + digest[:30])
+    current = db.query_one('SELECT phase,gate,current_trial_id FROM runs WHERE id=?', (run_id,))
+    if (not current or current['phase'] != 'running' or current['gate'] != 'open'
+            or current['current_trial_id'] != run['current_trial_id']):
+        raise LocalScoreError('FINAL_PACKAGE_STATE_CHANGED', '最终包评分期间 Run/Trial 已变化')
+    # Freeze the exact prospective candidate, including unchanged user artifacts.
+    folder = config.WORKSPACE_DIR / 'runs' / run_id / 'final_candidate'
+    if folder.is_symlink():
+        raise LocalScoreError('INVALID_PACKAGE', '最终包路径含符号链接')
+    folder.mkdir(parents=True, exist_ok=True)
+    path = folder / 'sealed_package.zip'
+    if path.is_symlink():
+        raise LocalScoreError('INVALID_PACKAGE', '最终包路径含符号链接')
+    path.write_bytes(check['sealed_bytes'])
+    return row
+
+
 def _record_score(challenge_id: str, run_id: str, trial_id: str, operation_id: str, sealed: bytes,
-                  manifest: dict[str, Any], science: dict[str, Any]) -> dict[str, Any]:
+                  manifest: dict[str, Any], science: dict[str, Any],
+                  *, source_local_score_id: str | None = None) -> dict[str, Any]:
     """Persist a verified sandbox score with its exact science and trace inputs."""
     science_hashes = mailboxes._science_artifact_hashes(sealed)
     manifest_science_sha = _manifest_science_sha(sealed)
+    science_input_sha = hashlib.sha256(_science_package(sealed)).hexdigest()
     trace = predict_trace(sealed)
     predicted = science['score'] * max(0.0, min(1.0, (trace['trace_score'] - 30.0) / 40.0))
     package_sha = hashlib.sha256(sealed).hexdigest()
@@ -214,12 +386,19 @@ def _record_score(challenge_id: str, run_id: str, trial_id: str, operation_id: s
         conn.execute('INSERT INTO local_scores(id,challenge_id,run_id,trial_id,package_sha256,'
                      'science_artifact_hashes_json,manifest_science_sha256,science_score,science_result_json,'
                      'trace_prediction_json,predicted_display_score,scorer_version,scorer_file_hashes_json,'
-                     'feature_version,model_version,sandbox_operation_id,created_at)'
-                     ' VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+                     'feature_version,model_version,sandbox_operation_id,created_at,science_input_sha256,source_local_score_id)'
+                     ' VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
                      (score_id,challenge_id,run_id,trial_id,package_sha,
                       _canonical(science_hashes),manifest_science_sha,science['score'],_canonical(science),
                       _canonical(trace),predicted,manifest['scorer_version'],
-                      _canonical(manifest['file_hashes']),FEATURE_VERSION,MODEL_VERSION,operation_id,db.utcnow()))
+                      _canonical(manifest['file_hashes']),FEATURE_VERSION,MODEL_VERSION,operation_id,db.utcnow(),
+                      science_input_sha,source_local_score_id))
+    db.append_event(run_id, 'controller', 'local_score.registered',
+                    {'local_score_id': score_id, 'scorer_version': manifest['scorer_version'],
+                     'science_input_sha256': science_input_sha,
+                     'components': component_scores(science),
+                     'artifact_hashes': science_hashes,
+                     'source_local_score_id': source_local_score_id}, trial_id=trial_id)
     return dict(db.query_one('SELECT * FROM local_scores WHERE id=?', (score_id,)))
 
 
@@ -227,7 +406,8 @@ def evaluate(run_id: str, trial_id: str, sandbox_id: str,
              operation_id: str, package_path: str | None = None,
              *, preflight: dict[str, Any] | None = None,
              public_resource_zip: Path | None = None,
-             score_timeout: int = 120) -> dict[str, Any]:
+             score_timeout: int = 120,
+             _controller_preflight: bool = False) -> dict[str, Any]:
     if not isinstance(operation_id, str) or not _OPERATION.fullmatch(operation_id):
         raise LocalScoreError('INVALID_OPERATION', '需要有界的稳定评分 operation_id')
     existing = db.query_one('SELECT * FROM local_scores WHERE sandbox_operation_id=?', (operation_id,))
@@ -247,16 +427,26 @@ def evaluate(run_id: str, trial_id: str, sandbox_id: str,
     manifest = scorer_manifest(run['challenge_id'])
     sandbox = db.query_one('SELECT * FROM compute_sandboxes WHERE run_id=? AND sandbox_id=?',
                            (run_id, sandbox_id))
-    if (not sandbox or sandbox['trial_id'] != trial_id or sandbox['status'] != 'active'
-            or json.loads(sandbox['request_json']).get('image') != manifest['image']):
-        raise LocalScoreError('SCORER_IMAGE_MISMATCH', '需要当前 Trial 在评分器声明镜像中的活跃沙箱')
-    if preflight is not None and not db.eval_mode(run_id):
-        raise LocalScoreError('INVALID_ARGUMENT', '冻结预检仅供评测 Run 使用')
+    if sandbox and json.loads(sandbox['request_json']).get('image') != manifest['image']:
+        raise LocalScoreError('SCORER_IMAGE_MISMATCH', '评分沙箱镜像与声明不符')
+    if preflight is not None and not db.eval_mode(run_id) and not _controller_preflight:
+        raise LocalScoreError('INVALID_ARGUMENT', '冻结预检仅供评测或控制器使用')
     check = preflight if preflight is not None else mailboxes.preflight_submission(
-        run_id, trial_id, package_path)
+        run_id, trial_id, package_path, allow_proxy_evidence=bool(db.eval_mode(run_id)))
+    if db.eval_mode(run_id) and check['error_code'] in (
+            'TRACE_ADMISSION_BLOCKED', 'TRACE_ADMISSION_INDETERMINATE', 'PROXY_EVIDENCE'):
+        check = check | {'error_code': None}
     if check['error_code']:
         raise LocalScoreError(check['error_code'], '封存包未通过本地准入')
     sealed = check['sealed_bytes']
+    reused = reuse_score(run_id, trial_id, operation_id, sealed, manifest)
+    if reused:
+        return reused
+    sandbox = db.query_one('SELECT * FROM compute_sandboxes WHERE run_id=? AND sandbox_id=?',
+                           (run_id, sandbox_id))
+    if (not sandbox or sandbox['trial_id'] != trial_id or sandbox['status'] != 'active'
+            or json.loads(sandbox['request_json']).get('image') != manifest['image']):
+        raise LocalScoreError('SCORER_IMAGE_MISMATCH', '需要当前 Trial 在评分器声明镜像中的活跃沙箱')
     trial_dir = config.WORKSPACE_DIR / 'runs' / run_id / 'trials' / trial_id
     stage = trial_dir / 'local_scorer' / operation_id
     stage.mkdir(parents=True, exist_ok=True)
@@ -284,14 +474,14 @@ def evaluate(run_id: str, trial_id: str, sandbox_id: str,
         if result['status'] != 'completed':
             raise LocalScoreError('SCORE_EXECUTION_UNKNOWN', f'沙箱 {name} 阶段未确认完成')
     resource_env = ''
-    if run['challenge_id'] == 'flowforge-paired-block-boundary-projection-v10-fe06025a':
+    runtime = manifest.get('runtime', {})
+    if runtime.get('adapter') == 'lean_project':
         from . import lean_runtime
-        lean_runtime.prepare(run_id, sandbox_id, stage, operation_id)
-        resource_env = ('PATH=/workspace/lean/bin:$PATH '
-                        'CS_LEAN_PROJECT=/workspace/paired-block-project ')
+        resource_env = lean_runtime.prepare(run_id, sandbox_id, stage, operation_id,
+                                            environment_id=runtime['environment_id'], project=runtime['project'])
     if public_resource_zip is not None:
-        if not db.eval_mode(run_id):
-            raise LocalScoreError('INVALID_ARGUMENT', '公开评测数据只供评测 Run 使用')
+        if not db.eval_mode(run_id) and not _controller_preflight:
+            raise LocalScoreError('INVALID_ARGUMENT', '公开评分数据仅供受控评分使用')
         staged_resource = stage / 'public_resource.zip'
         resource = public_resource_zip.read_bytes()
         if staged_resource.exists() and staged_resource.read_bytes() != resource:
@@ -308,7 +498,12 @@ def evaluate(run_id: str, trial_id: str, sandbox_id: str,
             120, operation_id + '-unpack')
         if unpacked['status'] != 'completed':
             raise LocalScoreError('SCORE_EXECUTION_UNKNOWN', '公开资源解压未确认完成')
-        resource_env = 'CS_MATCHGATE_INSTANCE_DIR=' + shlex.quote(remote + '/public/resources/instances') + ' '
+        declared = runtime.get('public_resource')
+        if declared:
+            if hashlib.sha256(resource).hexdigest() != declared['sha256']:
+                raise LocalScoreError('PUBLIC_RESOURCE_MISMATCH', '公开评分资源哈希不符')
+            resource_env += declared['environment_variable'] + '=' + shlex.quote(
+                remote + '/' + declared['directory']) + ' '
     dependency_command = ''
     if public_resource_zip is not None and 'requirements.txt' in manifest['files']:
         dependency_command = (' && python3 -m pip install --disable-pip-version-check'

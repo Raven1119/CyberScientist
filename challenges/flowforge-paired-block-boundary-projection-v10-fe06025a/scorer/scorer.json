@@ -2,5 +2,28 @@
   "entrypoint": "score.py",
   "image": "registry.dp.tech/dptech/ubuntu:20.04-py3.10",
   "version": "paired-block-rubric-1",
-  "contract_version": 1
+  "contract_version": 1,
+  "input_contract": {
+    "artifact_paths": [
+      "outputs/Problem.lean"
+    ],
+    "required": false,
+    "verification": "docs/PAIRED_BLOCK_SCORER_REPLAY_2026-09-28.md: historical proof artifacts"
+  },
+  "runtime": {
+    "environment_id": "lean-4.32.2",
+    "adapter": "lean_project",
+    "score_timeout": 600,
+    "sandbox_timeout": 1800,
+    "project": {
+      "path": ".package-checks/paired-block-final-20260928/staged/project",
+      "files": {
+        "PairCore.lean": "26e3be2cee9df5d5b021f3c4662386db3974b51fbb0b07a03616b9fb36a73415",
+        "Problem.lean": "e2ef57d93676b310b8dc43d836c40dfcdebdfe7f3476bf66b5c40c7bd82d5cdb",
+        "lean-toolchain": "2bdc48adfa58d0017e538a0ad117c5d73d35deec879978f909406a80c8037273",
+        "lakefile.toml": "d9698381e02837db51d2b5e5bd746d7514db9b57a805015b7d8f4a80eb79d2e3",
+        "lake-manifest.json": "7d78a9a7f1ff478f6a609653c74817d10e199b9425daf26d9c1027fa53375fef"
+      }
+    }
+  }
 }

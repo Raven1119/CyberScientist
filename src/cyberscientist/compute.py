@@ -243,6 +243,15 @@ def submit(run_id: str, operation_id: str, spec: dict, input_directory: str,
             with path.open('rb') as stream:
                 sha = hashlib.file_digest(stream, 'sha256').hexdigest()
             manifest.append((str(path.relative_to(source)), sha))
+    if total > 256 * 1024**2 and (preflight or {}).get('confirmed_input_bytes') != total:
+        from . import runtime_environments
+        details = {'input_bytes': total, 'threshold_bytes': 256 * 1024**2,
+                   'prebuilt_environments': runtime_environments.facts(),
+                   'reservation_created': False,
+                   'remedy': '检查预置环境；仍需上传时在 preflight.confirmed_input_bytes 明确确认当前字节数'}
+        db.append_event(run_id, 'controller', 'job.input_warning',
+                        {'operation_id': operation_id, **details}, trial_id=run['current_trial_id'])
+        raise ComputeError('LARGE_INPUT_CONFIRMATION_REQUIRED', '输入超过 256 MiB；创建前需要确认', details)
     from . import job_preflight
     files = {rel: (source / rel).read_bytes() for rel, _ in manifest
              if Path(rel).suffix in ('.py', '.txt') and (source / rel).stat().st_size <= 2_000_000}
@@ -414,11 +423,68 @@ def resolve_local_parse_failure(run_id: str, operation_id: str) -> dict:
     return {'operation_id': operation_id, 'status': 'not_started'}
 
 
+def _job_page(page: int) -> dict:
+    """One credential-injected read. Errors never expose a URL containing keys."""
+    import httpx
+    cfg = config.load_settings()['bohrium']
+    key = config.resolve_secret(cfg.get('access_key_secret_ref', ''))
+    if not key:
+        raise ComputeError('MISSING_CREDENTIAL', 'Job 只读对账缺少后端密钥')
+    host = client_host_overrides(cfg, wenyon=False)['OPENAPI_HOST']
+    try:
+        response = httpx.get(host + '/openapi/v1/job/list',
+            params={'accessKey': key, 'groupId': -1, 'page': page, 'pageSize': 100}, timeout=15)
+        response.raise_for_status()
+        value = response.json()
+    except Exception as exc:
+        raise ComputeError('JOB_OBSERVATION_UNKNOWN', type(exc).__name__) from None
+    if not isinstance(value, dict) or value.get('code') != 0:
+        raise ComputeError('JOB_OBSERVATION_UNKNOWN', 'Job API 未确认成功')
+    data = value.get('data')
+    if (not isinstance(data, dict) or not isinstance(data.get('items'), list)
+            or any(not isinstance(item, dict) for item in data['items'])
+            or data.get('page') != page or type(data.get('totalPage')) is not int):
+        raise ComputeError('JOB_OBSERVATION_UNKNOWN', 'Job API 分页结构未确认')
+    # Account-wide metadata stays out of application events and research frames.
+    fields = ('id', 'jobName', 'status', 'cost', 'spendTime', 'createTime')
+    return {'items': [{field: item[field] for field in fields if field in item}
+                      for item in data['items']],
+            'page': page, 'total_pages': data['totalPage']}
+
+
+def _read_job_pages(rows: list[dict], max_pages: int = 3) -> tuple[list[dict], dict]:
+    remote, pages, failure = [], 0, None
+    wanted = {row['spec']['job_name'] for row in rows}
+    for page in range(1, max_pages + 1):
+        try:
+            result = _job_page(page)
+        except ComputeError as exc:
+            failure = exc.code
+            break
+        pages += 1
+        remote.extend(result['items'])
+        # A later failed page cannot erase facts already received on earlier pages.
+        if wanted <= {item.get('jobName') for item in remote} or page >= result['total_pages']:
+            break
+    return remote, {'source': 'job_list_api', 'pages_received': pages,
+                    'max_pages': max_pages, 'error_code': failure,
+                    'status': 'partial' if failure or pages == max_pages else 'received',
+                    'absence_does_not_prove_not_created': True}
+
+
 def reconcile(run_id: str) -> dict:
     rows = list_jobs(run_id)['items']
     if not rows:
         return list_jobs(run_id)
-    receipt = _native(['job', 'list', '-n', '100', '--json'])
+    cfg = config.load_settings()['bohrium']
+    use_api = bool(config.resolve_secret(cfg.get('access_key_secret_ref', '')))
+    if use_api:
+        remote, metadata = _read_job_pages(rows)
+        receipt = {'ok': bool(metadata['pages_received']), 'stdout': _json(remote),
+                   'observation': metadata}
+    else:
+        # Retain the native adapter for installations without configured API auth.
+        receipt = _native(['job', 'list', '-n', '100', '--json'])
     try:
         remote = json.loads(receipt['stdout']) if receipt['ok'] and not receipt.get('truncated') else None
         if not isinstance(remote, list) or any(not isinstance(j, dict) for j in remote):
@@ -431,7 +497,7 @@ def reconcile(run_id: str) -> dict:
     host = client_host_overrides(bohrium_cfg,wenyon=False)['OPENAPI_HOST']
     host_fact = {'client':'legacy_job','host':host}
     try:
-        if config.resolve_secret(bohrium_cfg.get('access_key_secret_ref','')) and \
+        if not db.eval_mode(run_id) and config.resolve_secret(bohrium_cfg.get('access_key_secret_ref','')) and \
                 environment_facts.needs_refresh('bohrium:legacy_job:host',host_fact):
             event=db.append_event(run_id,'controller','environment.host_observed',
                                   {'client':'legacy_job','host':host,
@@ -439,13 +505,29 @@ def reconcile(run_id: str) -> dict:
             environment_facts.record('bohrium:legacy_job:host','Bohrium Job 客户端主机',host_fact,event)
     except Exception:
         log.exception('Could not record Job host environment fact')
+    return _settle_observations(run_id, rows, remote, use_api, receipt.get('observation'))
+
+
+def _settle_observations(run_id: str, rows: list[dict], remote: list[dict],
+                         use_api: bool, observation: dict | None) -> dict:
+    """Persist only owned exact matches from an already received read-only page."""
     for row in rows:
         name = row['spec']['job_name']
         matches = [j for j in remote if j.get('jobName') == name and (
             row['platform_job_id'] is None or j.get('id') == row['platform_job_id'])]
-        if len(matches) != 1 or matches[0].get('status') not in TERMINAL | {'Running', 'Pending', 'Scheduling'}:
+        if len(matches) != 1:
+            db.append_event(run_id, 'controller', 'job.reservation_unresolved',
+                            {'operation_id': row['operation_id'], 'matches': len(matches),
+                             'observation': observation, 'status': row['status']},
+                            trial_id=row['trial_id'])
+            continue
+        found = dict(matches[0])
+        # Numeric 2 was verified against nine existing Finished Job receipts.
+        # Other undocumented numeric states remain unknown.
+        if use_api and type(found.get('status')) is int and found['status'] == 2:
+            found['status'] = 'Finished'
+        if found.get('status') not in TERMINAL | {'Running', 'Pending', 'Scheduling'}:
             continue  # Absence never releases a reservation or authorizes a retry.
-        found = matches[0]
         if type(found.get('id')) is not int:
             continue
         status = found['status']
@@ -456,6 +538,25 @@ def reconcile(run_id: str) -> dict:
                 status = current['status']
             conn.execute('UPDATE compute_jobs SET platform_job_id=?,status=?,observed_at=?,updated_at=? WHERE operation_id=?',
                          (found['id'], status, db.utcnow(), db.utcnow(), row['operation_id']))
+            if use_api:
+                from decimal import Decimal, InvalidOperation
+                try:
+                    amount = Decimal(str(found.get('cost')))
+                    if not amount.is_finite() or amount < 0:
+                        raise ValueError()
+                except (InvalidOperation, ValueError):
+                    amount = None
+                billing = {'native_amount': str(amount) if amount is not None else None,
+                           'currency': None, 'status': 'platform_reported' if amount is not None else 'unknown',
+                           'source': '/openapi/v1/job/list:cost', 'observed_at': db.utcnow(),
+                           'spend_seconds': found.get('spendTime')}
+                stored = json.loads(current['receipt_json'] or '{}')
+                stored['billing'] = billing
+                conn.execute('UPDATE compute_jobs SET receipt_json=? WHERE operation_id=?',
+                             (_json(stored), row['operation_id']))
+                db.append_event_tx(conn, run_id, 'controller', 'job.cost_observed',
+                                   {'operation_id': row['operation_id'], 'billing': billing},
+                                   trial_id=row['trial_id'])
             if current['status'] != status:
                 db.append_event_tx(conn, run_id, 'controller', 'job.observed',
                                    {'operation_id': row['operation_id'], 'platform_job_id': found['id'],
@@ -484,6 +585,21 @@ def stop(run_id: str, operation_id: str) -> dict:
                (_json(receipt), db.utcnow(), operation_id))
     db.append_event(run_id, 'controller', 'job.stop_receipt', {'operation_id': operation_id, 'receipt': receipt})
     return reconcile(run_id)
+
+
+def costs(run_id: str) -> dict:
+    """Report incomplete native amounts without claiming a currency or total bill."""
+    from decimal import Decimal
+    rows = list_jobs(run_id)['items']
+    billed = [row.get('receipt', {}).get('billing', {}) for row in rows]
+    values = [item['native_amount'] for item in billed
+              if item.get('native_amount') is not None]
+    return {'status': 'partial' if values else 'unknown',
+            'job_native_amount_total': str(sum((Decimal(value) for value in values), Decimal(0)))
+                                       if values else None,
+            'currency': None, 'job_cost_count': len(values), 'job_count': len(rows),
+            'sandbox_amount': None, 'total_amount': None,
+            'notice': '平台 cost 字段；币种、沙箱费用和未回执任务费用尚未确认，不是总账单'}
 
 
 def recover_pending() -> None:

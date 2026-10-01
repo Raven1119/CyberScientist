@@ -369,6 +369,16 @@ CREATE TABLE IF NOT EXISTS curation_requests (
 """
 
 SCHEMA_LOCAL_SCORING = """
+CREATE TABLE IF NOT EXISTS runtime_environments (
+    id TEXT PRIMARY KEY,
+    recipe_sha256 TEXT NOT NULL,
+    dockerfile_sha256 TEXT NOT NULL,
+    image_address TEXT NOT NULL,
+    platform_image_id TEXT NOT NULL,
+    status TEXT NOT NULL,
+    receipt_sha256 TEXT NOT NULL,
+    observed_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS local_scores (
     id TEXT PRIMARY KEY,
     challenge_id TEXT NOT NULL REFERENCES challenges(id),
@@ -472,7 +482,8 @@ SUBMISSION_V2_COLUMNS = {
     "score_last_polled_at": "TEXT",
 }
 GUIDANCE_PREDICTION_COLUMNS = {"prediction_md": "TEXT"}
-LOCAL_SCORE_V2_COLUMNS = {"scorer_file_hashes_json": "TEXT NOT NULL DEFAULT '{}'"}
+LOCAL_SCORE_V2_COLUMNS = {"scorer_file_hashes_json": "TEXT NOT NULL DEFAULT '{}'",
+                          "science_input_sha256": "TEXT"}
 
 # checkpoints 表 v2 新增列（对既有库做幂等 ALTER）
 CHECKPOINT_V2_COLUMNS = {

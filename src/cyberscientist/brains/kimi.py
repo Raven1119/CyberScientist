@@ -413,7 +413,9 @@ class KimiBrain:
             + ('- {"op":"finish","reason":"...","objective_assessment":{"status":"achieved|partial|not_achievable|stopped","evidence_refs":[],"remaining_md":"..."}}\n'
                '若 ReviewPacket 有 pending_intent，顶层必须给 pending_intent_resolution=replay|revise|drop；replay 重放原动作。\n'
                if packet.get("lifecycle_version") == 2 else '- {"op":"finish","reason":"..."}\n')
-            + "旧 request_submission 会被明确拒绝：bundle_manifest_ref 尚无冻结包解析契约。"
+            + "若最终包对账返回退步，可修正产物后 finish，或在 finish 中增加 "
+            "finish_confirmation={token:反馈中的 confirmation_token,reason_md:明确确认原因}。\n"
+            "旧 request_submission 会被明确拒绝：bundle_manifest_ref 尚无冻结包解析契约。"
             "提交建议仅在 requested/shadow 的 ReviewResult 中用 guidance.kind=submit，"
             "经现有授权、预算和去重检查执行实验邮箱提交；不扩大正式提交授权。"
             "不要在当前 Decision 中混入 ReviewResult。\n"

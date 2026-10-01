@@ -354,6 +354,11 @@ class RunController:
                             model=exec_cfg.get("model_id"),
                             effort=exec_cfg.get("reasoning_effort"))
 
+    @staticmethod
+    def _artifact_facts(challenge_id: str) -> dict[str, Any]:
+        from . import artifact_contracts
+        return artifact_contracts.inspect(challenge_id)
+
     def _prime_spec(self, run_id: str, settings: dict[str, Any]) -> dict[str, Any]:
         """执行器启动参数：工作目录 + 运行时专有配置。"""
         import os
@@ -2501,10 +2506,6 @@ class RunController:
                     sparse=self._sparse_brain(run))
                 packet["protocol"] = "review_result"
                 packet["sparse_brain_version"] = 1 if self._sparse_brain(run) else 0
-                authorization = db.query_one(
-                    "SELECT note,max_jobs,max_submissions,max_run_minutes FROM authorizations WHERE id=?",
-                    (run["authorization_id"],))
-                packet["authorization"] = dict(authorization) if authorization else None
         except Exception as exc:  # noqa: BLE001
             self._finish_request(req["id"], "error",
                                  error=f"frame 构建失败: {exc}"[:300])
@@ -2964,31 +2965,17 @@ class RunController:
                 - run["brain_reviews_used"],
                 "model_turns": (auth["max_model_turns"] if auth else 0),
             },
-            "authorization": {
-                "note": auth["note"],
-                "max_jobs": auth["max_jobs"],
-                "max_sandboxes": auth["max_sandboxes"],
-                "max_sandbox_minutes": auth["max_sandbox_minutes"],
-                "allow_sandbox_gpu": bool(auth["allow_sandbox_gpu"]),
-                "allow_data_download": bool(auth["allow_data_download"]),
-                "max_submissions": auth["max_submissions"],
-                "max_run_minutes": auth["max_run_minutes"],
-            } if auth else None,
+            **observation.authority_facts(run_id),
             "experience_manifest": self._memory_manifest(run, settings),
         }
+        from . import local_scoring
+        packet.update(local_scoring.latest_final_check(run_id))
         if self._lifecycle_v2(run):
             packet.pop("current_intention", None)
             packet["lifecycle_version"] = 2
             packet["run_objective"] = run["objective_md"]
             packet["current_trial_goal"] = trial["goal"] if trial else None
             packet["pending_intent"] = json.loads(run["pending_action_json"]) if run["pending_action_json"] else None
-        if db.eval_mode(run_id):
-            packet["evaluation_handoff"] = {
-                "platform_submission_allowed": False,
-                "experience_write_allowed": False,
-                "local_scoring_after_finish": True,
-                "agent_scoring_sandbox_required_for_finish": False,
-            }
         packet["data_status"] = datasets.status(run["challenge_id"])["items"]
         # 题目信息进帧：大脑开局必须亲自核实任务要素（数据/工具链/评分契约），
         # 不再只能依赖执行器转述（2026-09-19：大脑因帧内无题面，
@@ -3238,13 +3225,15 @@ class RunController:
                              "该目录允许写入。用检查点报告交付，交由控制器提交。\n"
                              f"本轮授权与用户目标：{json.dumps(packet.get('authorization'), ensure_ascii=False)}\n"
                              f"题目与平台契约：{json.dumps(dict(db.query_one('SELECT title,content,resources_json,platform_snapshot_json FROM challenges WHERE id=?', (run['challenge_id'],))), ensure_ascii=False)}\n"
+                             f"产物路径事实（题面提取与评分器验证范围）：{json.dumps(self._artifact_facts(run['challenge_id']), ensure_ascii=False)}\n"
+                             f"预置环境事实：{json.dumps(observation.authority_facts(run_id).get('runtime_environments', []), ensure_ascii=False)}\n"
                              f"公开数据物化状态：{json.dumps(datasets.status(run['challenge_id'])['items'], ensure_ascii=False)}\n"
                              "提交包会追加真实事件轨迹并接受准入检查；自有 trace.jsonl 只能使用七种合法 step_type，artifact_path 必须是包内现存文件，禁止编造工具调用或费用。\n"
                              "冻结经验（只使用这份正文；采用时在检查点声明版本）：\n"
                              f"{experience_context.encode(experience_context.for_trial(run_id,trial_id))}\n"
                              f"{executor_instruction_suffix()}"
                              f"{skills_mod.prompt_segment(enabled_skills)}\n"
-                             "运行环境：Linux；科学计算只能在 Bohrium Job 中执行。\n"
+                             "运行环境：Linux；科学计算使用已授权的 Bohrium Job 或沙箱，分别受本轮额度约束。\n"
                              "使用 PATH 中的 bohr；它会脱敏原生 CLI 错误输出，不得绕过代理执行原始 CLI。\n"
                              f"Bohrium 项目 ID：{(settings.get('bohrium') or {}).get('project_id') or '未配置'}。"
                              "认证通过进程环境提供，不得打印、记录或写入提交包。\n")
@@ -3341,6 +3330,51 @@ class RunController:
                                 self._pause_needs_attention(
                                     run_id, "目标完成动作连续缺少可解析证据引用；已尝试两次自动复审")
                             continue
+                from . import local_scoring
+                try:
+                    local_scoring.scorer_manifest(run["challenge_id"])
+                except local_scoring.LocalScoreError as exc:
+                    has_scorer = exc.code != 'SCORER_MISSING'
+                else:
+                    has_scorer = True
+                if has_scorer:
+                    try:
+                        candidate = await asyncio.to_thread(local_scoring.score_candidate, run_id)
+                        current = db.query_one('SELECT phase,gate,current_trial_id FROM runs WHERE id=?', (run_id,))
+                        if (not current or current['phase'] != 'running' or current['gate'] != 'open'
+                                or current['current_trial_id'] != run['current_trial_id']):
+                            db.append_event(run_id, 'brain', 'brain.action_rejected',
+                                {'op': op, 'reason': '最终包评分期间 Run/Trial 状态已变化',
+                                 'error_code': 'FINAL_PACKAGE_STATE_CHANGED'})
+                            continue
+                        facts = local_scoring.final_package_check(run_id, candidate)
+                        confirmation = action.get('finish_confirmation') or {}
+                        if facts['regressions'] and confirmation.get('token') != facts['confirmation_token']:
+                            db.append_event(run_id, 'brain', 'brain.action_rejected',
+                                {'op': op, 'reason': '最终包子项低于本 Run 已登记最佳成绩',
+                                 'final_package_check': facts})
+                            self._enqueue_lifecycle(run_id, trigger='finish_rejected')
+                            continue
+                        if facts['regressions']:
+                            db.append_event(run_id, 'brain', 'run.final_package_confirmed',
+                                {'final_package_check': facts,
+                                 'reason_md': _redact(confirmation['reason_md'], 2000)})
+                        else:
+                            db.append_event(run_id, 'controller', 'run.final_package_checked',
+                                            {'final_package_check': facts})
+                    except Exception as exc:
+                        db.append_event(run_id, 'brain', 'brain.action_rejected',
+                            {'op': op, 'reason': '最终包评分未确认：' + _redact(str(exc), 300),
+                             'error_code': getattr(exc, 'code', type(exc).__name__)})
+                        retries = db.query_one(
+                            "SELECT COUNT(*) AS n FROM review_requests WHERE run_id=?"
+                            " AND trigger='finish_rejected'", (run_id,))['n']
+                        if retries < 2:
+                            self._enqueue_lifecycle(run_id, trigger='finish_rejected')
+                        else:
+                            self._pause_needs_attention(run_id, '最终包评分未确认；已尝试两次自动复审')
+                        continue
+                if v2:
                     db.execute("UPDATE runs SET objective_status=?,end_reason=? WHERE id=?",
                                (assessment["status"], action["reason"], run_id))
                 # Run 终态前先自动整理本题经验（一轮 curation 生命周期审阅），

@@ -563,7 +563,14 @@ def preflight_submission(run_id: str, trial_id: str | None,
             "data_inputs": data, "trace_diagnostics": diagnostic,
             "allow_proxy_evidence": allow_proxy_evidence,
             "allow_indeterminate_admission": allow_indeterminate_admission,
-            "error_code": code}
+            "error_code": code,
+            "artifact_contract": _artifact_contract(run_id, sealed)}
+
+
+def _artifact_contract(run_id: str, sealed: bytes) -> dict[str, Any]:
+    from . import artifact_contracts
+    run = db.query_one('SELECT challenge_id FROM runs WHERE id=?', (run_id,))
+    return artifact_contracts.inspect(run['challenge_id'], sealed)
 
 
 def inspect_trace_narrative(run_id: str, trial_id: str | None,

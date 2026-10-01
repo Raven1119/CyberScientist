@@ -4,7 +4,7 @@ import tarfile
 
 import pytest
 
-from cyberscientist import lean_runtime
+from cyberscientist import lean_runtime, db
 
 
 def test_pinned_lean_runtime_rejects_missing_or_changed_input(tmp_path, monkeypatch):
@@ -39,7 +39,13 @@ def test_paired_block_runtime_stages_only_trusted_project(tmp_path, monkeypatch)
     monkeypatch.setattr(lean_runtime, 'PROJECT_HASHES', {
         name: hashlib.sha256((project / name).read_bytes()).hexdigest()
         for name in ('PairCore.lean', 'lake-manifest.json')})
-    monkeypatch.setattr(lean_runtime, 'CHUNK_BYTES', 4)
+    from cyberscientist import runtime_environments
+    monkeypatch.setattr(runtime_environments, 'resolve', lambda _: {
+        'image': 'registry.example/prebuilt:fixed', 'identity': {},
+        'descriptor_path': '/opt/environment.json', 'mathlib_root': '/opt/mathlib',
+        'lean_bin': '/opt/lean/bin'})
+    monkeypatch.setattr(db, 'query_one', lambda *args: {
+        'request_json': '{"image":"registry.example/prebuilt:fixed"}'})
     transferred = []
     commands = []
     def transfer(_run, _action, _sandbox, remote, *, local_path, operation_id):
@@ -51,12 +57,16 @@ def test_paired_block_runtime_stages_only_trusted_project(tmp_path, monkeypatch)
     monkeypatch.setattr(lean_runtime.sandboxes, 'transfer', transfer)
     monkeypatch.setattr(lean_runtime.sandboxes, 'execute', execute)
 
-    lean_runtime.prepare('run-test', 'sandbox-test', tmp_path / 'stage', 'op-test', source=source)
+    monkeypatch.setattr(lean_runtime.config, 'WORKSPACE_ROOT', tmp_path)
+    lean_runtime.prepare('run-test', 'sandbox-test', tmp_path / 'stage', 'op-test',
+        project={'path': 'source/project', 'files': lean_runtime.PROJECT_HASHES},
+        environment_id='synthetic-environment')
 
     names = {path.rsplit('/', 1)[-1] for path, _, _ in transferred}
-    assert names == {'project.tar.gz', 'packages.tar.gz', 'curl-7.88.1',
-                     'lean-00.part', 'lean-01.part'}
-    with tarfile.open(tmp_path / 'stage' / 'lean_runtime' / 'project.tar.gz') as archive:
+    assert names == {'project.tar.gz'}
+    assert all('curl' not in command and 'cache get' not in command and 'git fetch' not in command
+               for command in commands)
+    with tarfile.open(tmp_path / 'stage' / 'public_project.tar.gz') as archive:
         assert set(archive.getnames()) == {'PairCore.lean', 'lake-manifest.json'}
     assert all('labels.json' not in command and 'answer.lean' not in command
                for command in commands)
