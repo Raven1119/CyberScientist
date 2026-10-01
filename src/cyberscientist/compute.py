@@ -522,10 +522,11 @@ def _settle_observations(run_id: str, rows: list[dict], remote: list[dict],
                             trial_id=row['trial_id'])
             continue
         found = dict(matches[0])
-        # Numeric 2 was verified against nine existing Finished Job receipts.
-        # Other undocumented numeric states remain unknown.
-        if use_api and type(found.get('status')) is int and found['status'] == 2:
-            found['status'] = 'Finished'
+        # Old API codes: 2 was matched to Finished receipts; -1 was matched
+        # to an owned Failed describe receipt. The CLI's separate numeric
+        # status field is not the list API code. Other codes stay unknown.
+        if use_api and type(found.get('status')) is int:
+            found['status'] = {2: 'Finished', -1: 'Failed'}.get(found['status'], found['status'])
         if found.get('status') not in TERMINAL | {'Running', 'Pending', 'Scheduling'}:
             continue  # Absence never releases a reservation or authorizes a retry.
         if type(found.get('id')) is not int:

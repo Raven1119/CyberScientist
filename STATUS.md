@@ -2,6 +2,8 @@
 
 ## 已实现
 
+- CS-UP-06真实v2新缺陷：旧Job列表已验证的-1映射为Failed，修复accepted账本未同步；精确ID/名称匹配与未知保守边界保持。失败Job占累计额度、释放活跃槽位，CLI其他数字字段不混用。
+
 - CS-UP-06 W1 接续：固定公开项目在预置 Lean 环境中先离线构建，失败/unknown 不进入评分；模板沙箱实际规格独立留痕，回执逐字符串脱敏。接入沙箱自身公开报价与生命周期估算，前端、JSON/Markdown 评测报告均单独显示估算及未定价项，不混算币种未知的 Job cost。
 
 - CS-UP-06模型更新与W2：项目内Linux Codex独立更新至0.159.3，保留旧客户端；两个应用执行路径及五个评测题目已配置gpt-6.1-sol/xhigh，全局CLI配置、认证、默认模型不变。原计划六次快速层已建立eval_95a39bcde778，无额外验证Run。
@@ -68,6 +70,10 @@
 - CS-SB-01 稀疏输入与唤醒修复：可选短研究摘要独立存储；新 Run 普通检查点不唤醒 shadow，Job/Trial 研究级重复状态按 ID 去重。详见 `docs/SPARSE_BRAIN_INPUT_WAKE_FIX_2026-09-24.md`。
 
 ## 已实际验证
+
+- CS-UP-06失败状态：同一真实Job的列表-1与受控_native原生Failed/exitCode1一致，账本已用此只读证据结算；定向49 passed、全套682 passed/2 skipped。科研脚本未修改；后端有界重载后同Run已恢复running，started_at及authorization_id不变；#452/#453/#456记录恢复和执行器续跑。
+
+- CS-UP-06原生补审计：只读定位十个v1 Run的27个现存Codex rollout（15大脑/12执行器），核对归属/哈希，解析11,604条记录、44,391,466字节。EVAL_V1_RUN_AUDIT新增原生行号及覆盖表，纠正此前未查到和未显示跨Run读取的观察；原始材料仅留本机，未调用模型或科学算力。
 
 - CS-UP-06模型更新：官方固定包完整性校验、Codex --version=0.159.3、原生清单11项含gpt-6.1-sol，两角色会话确认xhigh。正式run_224c5edd1b已有真实输出和用量，线程元数据同样确认准确模型/xhigh。执行原计划fast/repeats2命令及eval report；pytest 679 passed、2 skipped（回环限制），前端40 passed、build、compileall（src/tests/checks）、diff --check通过。原始证据仅留本机。
 

@@ -7,7 +7,7 @@
 大脑判断方向 · 执行器自主研究 · Bohrium 远程科学计算
 
 [![Linux 实验](https://img.shields.io/badge/Linux-%E7%9C%9F%E5%AE%9E%E5%AE%9E%E9%AA%8C-216d63)](#当前状态)
-[![Codex 原生运行时](https://img.shields.io/badge/Codex%20app--server-0.155.1-496da0)](docs/BUILD.md)
+[![Codex 原生运行时](https://img.shields.io/badge/Codex%20app--server-0.159.3-496da0)](docs/BUILD.md)
 [![License](https://img.shields.io/badge/%E8%AE%B8%E5%8F%AF%E8%AF%81-%E6%9C%AA%E5%AE%9A-lightgrey)]()
 
 </div>

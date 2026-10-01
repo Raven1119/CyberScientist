@@ -72,7 +72,8 @@ def test_partial_page_failure_preserves_exact_match_and_does_not_release_absence
     assert db.query_one("SELECT 1 FROM events WHERE run_id=? AND type='job.reservation_unresolved'", (rid,))
 
 
-def test_unverified_numeric_status_cannot_resolve_unknown(run, monkeypatch):
+@pytest.mark.parametrize('status', [999, 0])
+def test_unverified_numeric_status_cannot_resolve_unknown(run, monkeypatch, status):
     rid, source = run
     monkeypatch.setattr(compute, '_native', lambda *args, **kwargs: receipt('', False))
     compute.submit(rid, 'unknown-state', spec(), str(source))
@@ -80,7 +81,42 @@ def test_unverified_numeric_status_cannot_resolve_unknown(run, monkeypatch):
     _api_credentials()
     monkeypatch.setattr(compute, '_job_page', lambda page: {
         'page': 1, 'total_pages': 1, 'items': [{'id': 123,
-            'jobName': row['spec']['job_name'], 'status': 999}]})
+            'jobName': row['spec']['job_name'], 'status': status}]})
     compute.reconcile(rid)
     job = compute.list_jobs(rid)['items'][0]
     assert job['platform_job_id'] is None and job['status'] == 'unknown'
+
+
+def test_failed_api_receipt_settles_accepted_job_without_releasing_lifetime_quota(run, monkeypatch):
+    rid, source = run
+    monkeypatch.setattr(compute, '_native', lambda *args, **kwargs: receipt('JobId: 123'))
+    compute.submit(rid, 'accepted-but-failed', spec(), str(source))
+    row = compute.list_jobs(rid)['items'][0]
+    _api_credentials()
+    monkeypatch.setattr(compute, '_job_page', lambda page: {
+        'page': 1, 'total_pages': 1, 'items': [{'id': 123,
+            'jobName': row['spec']['job_name'], 'status': -1, 'cost': '0.01', 'spendTime': 9}]})
+    result = compute.reconcile(rid)
+    assert result['items'][0]['status'] == 'Failed'
+    assert result['items'][0]['platform_job_id'] == 123
+    assert result['reserved_jobs'] == 1  # Failure still consumed a real Job.
+    assert result['active_or_unknown'] == 0
+    event = db.query_one("SELECT payload FROM events WHERE run_id=? AND type='job.observed'", (rid,))
+    assert json.loads(event['payload'])['status'] == 'Failed'
+    assert compute.costs(rid)['job_native_amount_total'] == '0.01'
+    compute.reconcile(rid)
+    assert len(db.query("SELECT 1 FROM events WHERE run_id=? AND type='job.observed'", (rid,))) == 1
+
+
+def test_failed_api_record_for_foreign_job_cannot_settle_owned_job(run, monkeypatch):
+    rid, source = run
+    monkeypatch.setattr(compute, '_native', lambda *args, **kwargs: receipt('JobId: 123'))
+    compute.submit(rid, 'owned', spec(), str(source))
+    row = compute.list_jobs(rid)['items'][0]
+    _api_credentials()
+    monkeypatch.setattr(compute, '_job_page', lambda page: {
+        'page': 1, 'total_pages': 1, 'items': [{'id': 999,
+            'jobName': row['spec']['job_name'], 'status': -1}]})
+    compute.reconcile(rid)
+    assert compute.list_jobs(rid)['items'][0]['status'] == 'accepted'
+    assert db.query_one("SELECT 1 FROM events WHERE run_id=? AND type='job.observed'", (rid,)) is None
