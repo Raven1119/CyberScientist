@@ -833,7 +833,7 @@ def write_report(eval_id: str) -> tuple[Path, Path]:
         cost = item.get('bohrium_cost_details') or {}
         estimate = cost.get('sandbox_estimate') or {}
         observed = cost.get('sandbox_observed') or {}
-        reason = item.get('science_reason') or item.get('failure_reason')
+        reason = item.get('science_reason') or item.get('failure_reason') or row.get('error')
         reason_text = observation.strip_secrets(str(reason)).replace('\n', ' ')[:180] if reason else 'none'
         lines.append(f"- {row['run_id'] or 'pending'}: source={shown(item.get('challenge_source'))}; "
                      f"science_status={shown(item.get('science_status'))}; reason={reason_text}; "

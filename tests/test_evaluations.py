@@ -155,6 +155,8 @@ def test_required_environment_missing_blocks_only_affected_entries_before_paid_r
     assert len(blocked) == 2 and all(r['run_id'] is None and r['status'] == 'failed' for r in blocked)
     assert all('EnvironmentUnavailable' in r['error'] for r in blocked)
     assert not db.query("SELECT 1 FROM runs WHERE challenge_id='eval_a'")
+    markdown, _ = evaluations.write_report(evaluation['id'])
+    assert 'EnvironmentUnavailable: 固定公开环境未验证' in markdown.read_text()
     assert controller.starts
     assert all(db.query_one('SELECT challenge_id FROM runs WHERE id=?', (rid,))['challenge_id'] == 'eval_b'
                for rid in controller.starts)

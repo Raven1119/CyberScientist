@@ -97,6 +97,11 @@ fake覆盖原HTTP400/deadline、成功输出含deadline不误判、旧操作不�
 - 本阶段有界审查确认费用只归属自有资源、支付单位分别求和、报告不联网、真实回执不进Git、诊断不裁剪产物、环境门禁不新增科学策略。完整pytest708 passed/2 skipped，前端40 passed及build，compileall和diff --check通过。
 
 
+困难层原命令已实际执行并建立eval_c941ff072c61；两次Lean已在创建Run前记failed/EnvironmentUnavailable，两个Matchgate仍在原队列。首次CLI调用因命令沙箱拒绝回环健康检查而没有建组，未将此视为远端创建unknown；SQLite确认无组后，同一预算预约在允许回环环境执行，只有一个困难层组。最新修复已以同一FigQA-0177第二轮会话恢复部署，原started_at及授权未重置。两层创建命令总预算仍各一轮。
+
+报告生成器发现无Run的预检失败只有eval_results.error、没有result_json，原Markdown遗漏原因。通用报告现在回退到该行error，并有fake回归，科学分仍unknown；不伪造Run资源或数值。定向评测测试24 passed；本次修改后全量pytest708 passed/2 skipped，compileall与diff --check通过；前端源码未改，沿用本轮40 passed/build。FigQA-0177两轮正式科学分均100；第二轮abc20，原首轮缺分仍保留。删除尚未完成的沙箱分钟是过程下界，最终文档和API按deleted_at重新投影，不用早期值冒充最终值。
+
+
 | 决策 | 替换的设计 | 原因与影响 |
 |---|---|---|
 | 三类连接分别建模 | 把 Codex/Kimi、Prime LLM、Bohrium 都放进万能模型接口 | 原生代理有会话/认证/审批，模型有供应商协议，平台有 Job/提交；保留各自语义，避免错误抽象 |
