@@ -80,7 +80,7 @@
 
 - CS-UP-06费用与轨迹诊断修复完整回归：`.venv/bin/pytest -q`为708 passed、2 skipped（既有回环监听限制）；`npm --prefix apps/web test -- --run`为40 passed，`npm --prefix apps/web run build`通过；compileall和git diff --check通过。所有新增缺陷均有fake回归，未增加W1真实快速题验证。
 
-- CS-UP-06快速层第二轮abc run_a96d4666d4已finished，正式科学分20；原生完整包上传/评分成功，两个CPU Job Finished/retrieved。原封存包仅离线重做轨迹诊断后公开v6检查表100、91对工具调用，展示区间[6,20]；这不是官方轨迹分。沙箱已清理。FigQA-0177两轮run_cfb012c971/run_a9979ad18c均完成100，原队列进入FigQA-0178第一轮run_5c7f89d51c，没有新增重复、Attempt或经验写入。
+- CS-UP-06快速层第二轮abc run_a96d4666d4已finished，正式科学分20；原生完整包上传/评分成功，两个CPU Job Finished/retrieved。原封存包仅离线重做轨迹诊断后公开v6检查表100、91对工具调用，展示区间[6,20]；这不是官方轨迹分。沙箱已清理。FigQA-0177两轮run_cfb012c971/run_a9979ad18c均完成100，FigQA-0178两轮run_5c7f89d51c/run_938a02d72c也均完成100；困难层进入Matchgate第一轮run_ee8143cd3e，没有新增重复、Attempt或经验写入。
 - CS-UP-06费用真实只读来源：2026-10-01 19:06:41 UTC沙箱列表的自有资源投影，v1九个Run可见合计0.17 CNY，v2首轮0.08 CNY；只是查询时金额，缺项及最终结算仍未确认。原输出SHA-256为41912eafd920ae2c1cbdcefabf6c52dfaa7449f9163ee9dd2504f737c747492b；两层v1和当前v2已由eval report重生成。新版API真实返回首轮0.08 CNY及final_settlement_confirmed=false。
 
 - CS-UP-06接续：完整`.venv/bin/pytest -q`为693 passed、2 skipped（既有回环限制），传输/评分/授权到期的定向回归通过；compileall和git diff --check通过。前端源码未改，沿用本轮已执行的40 passed及build通过。
@@ -209,7 +209,7 @@
 - CS-UP-06原生对象存储传输在第二轮已取得完整包上传和正式评分成功；首轮基础设施缺分仍保留，不重跑或补造20分。F4应用查询费用已接入，最终结算和总账单尚未确认。
 
 - CS-UP-06 F3：新预置环境两次沙箱 + 两次 CPU Job 的无下载构建，以及已验证历史证明包重评分，均未执行。F4 已取得当前沙箱公开费率和有来源估算，但历史单价、Job cost 币种、两个 unknown 预约费用与实际总账单尚未确认。
-- CS-UP-06 W2：快速层首轮run_224c5edd1b已cancelled/budget_exhausted且正式科学分unknown；第二轮abc20，FigQA-0177两轮均已完成100，FigQA-0178第一轮运行中，其余快速层待调度。困难层原组eval_c941ff072c61已建立；两次Lean因固定环境未验证而在创建前失败、未创建Run，两次Matchgate待调度。最终能力、路径unknown和旧缺陷复发率待终态验证。
+- CS-UP-06 W2：快速层首轮run_224c5edd1b已cancelled/budget_exhausted且正式科学分unknown；第二轮abc20，快速层原6次均结束：abc首轮缺分、第二轮20，FigQA-0177/0178各两次100。困难层原组eval_c941ff072c61已建立；两次Lean因固定环境未验证而在创建前失败、未创建Run，Matchgate第一轮run_ee8143cd3e运行中、第二轮待调度。最终能力、路径unknown和旧缺陷复发率待终态验证。
 
 - CS-UP-06 W1通用修复已实施，Lean真实环境验收未完成；W1未新增研究Run、Job或科学沙箱，唯一私有镜像请求仍unknown。W2已开始原快速层，无预算扩大。
 

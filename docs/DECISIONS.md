@@ -102,6 +102,11 @@ fake覆盖原HTTP400/deadline、成功输出含deadline不误判、旧操作不�
 报告生成器发现无Run的预检失败只有eval_results.error、没有result_json，原Markdown遗漏原因。通用报告现在回退到该行error，并有fake回归，科学分仍unknown；不伪造Run资源或数值。定向评测测试24 passed；本次修改后全量pytest708 passed/2 skipped，compileall与diff --check通过；前端源码未改，沿用本轮40 passed/build。FigQA-0177两轮正式科学分均100；第二轮abc20，原首轮缺分仍保留。删除尚未完成的沙箱分钟是过程下界，最终文档和API按deleted_at重新投影，不用早期值冒充最终值。
 
 
+快速层eval_95a39bcde778现已complete_with_failures：原6次中5次正式评分，abc第二轮20，两道FigQA各两次100；首轮abc的基础设施缺分不重跑或按0计入。可评分子集均值84并非完整六次均值；FigQA两次重复差/样本方差均0。原困难层Matchgate第一轮run_ee8143cd3e已启动，首个CPU Job失败且产物取回，执行器在原额度内自主做CPU沙箱恢复；没有人工科学指导。两次Lean仍因固定环境阻塞未创建Run。比赛提交与产品经验写入保持0。
+
+有界验收复查记录两项统计/语义边界：token依当前累计usage差分算法重建，失败请求未返回usage时不计量，不能冒称供应商最终账单；F1只比较显式score/points，不猜诊断指标方向，同分区间的科学数值提升不触发退步拒绝。保留这一从严边界，不在本轮引入某题fidelity阈值或方法特例。实际最终候选退步拒绝的困难层验收仍待终态。
+
+
 | 决策 | 替换的设计 | 原因与影响 |
 |---|---|---|
 | 三类连接分别建模 | 把 Codex/Kimi、Prime LLM、Bohrium 都放进万能模型接口 | 原生代理有会话/认证/审批，模型有供应商协议，平台有 Job/提交；保留各自语义，避免错误抽象 |
