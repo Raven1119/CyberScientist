@@ -514,7 +514,8 @@ def evaluate(run_id: str, trial_id: str, sandbox_id: str,
     remote = f'{workspace}/cs-local-scorer-{operation_id}'
     commands = [
         ('mkdir', lambda: sandboxes.execute(run_id, sandbox_id,
-            'mkdir -p ' + shlex.quote(remote), 30, operation_id + '-mkdir')),
+            'mkdir -p ' + shlex.quote(remote),
+            sandboxes.bounded_execution_timeout(run_id, sandbox_id, 30), operation_id + '-mkdir')),
         ('scorer', lambda: sandboxes.transfer(run_id, 'write', sandbox_id,
             remote + '/scorer.zip', local_path=str(scorer_file),
             operation_id=operation_id + '-scorer')),
@@ -548,7 +549,7 @@ def evaluate(run_id: str, trial_id: str, sandbox_id: str,
             raise LocalScoreError('SCORE_EXECUTION_UNKNOWN', '公开资源传输未确认完成')
         unpacked = sandboxes.execute(run_id, sandbox_id,
             'cd ' + shlex.quote(remote) + ' && python3 -m zipfile -e public_resource.zip public',
-            120, operation_id + '-unpack')
+            sandboxes.bounded_execution_timeout(run_id, sandbox_id, 120), operation_id + '-unpack')
         if unpacked['status'] != 'completed':
             raise LocalScoreError('SCORE_EXECUTION_UNKNOWN', '公开资源解压未确认完成')
         declared = runtime.get('public_resource')
@@ -565,7 +566,8 @@ def evaluate(run_id: str, trial_id: str, sandbox_id: str,
                + dependency_command
                + ' && ' + resource_env + 'CS_SCORER_VERSION=' + shlex.quote(manifest['scorer_version'])
                + ' python3 ' + shlex.quote('scorer/' + manifest['entrypoint']) + ' package.zip')
-    result = sandboxes.execute(run_id, sandbox_id, command, score_timeout, operation_id + '-run')
+    result = sandboxes.execute(run_id, sandbox_id, command,
+        sandboxes.bounded_execution_timeout(run_id, sandbox_id, score_timeout), operation_id + '-run')
     if result['status'] != 'completed':
         raise LocalScoreError('SCORE_EXECUTION_UNKNOWN', '沙箱评分执行未确认成功')
     science = _score_output(result, manifest['scorer_version'])

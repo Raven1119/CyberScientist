@@ -171,6 +171,30 @@ def bounded_lifetime(run_id: str, requested: int) -> int:
     return seconds
 
 
+def bounded_execution_timeout(run_id: str, sandbox_id: str, requested: int) -> int:
+    """Shrink a controller command to the current sandbox and Run deadlines.
+
+    Recompute after staging/transfers. This never extends a sandbox or grant,
+    retries a command, or changes explicit executor timeout validation.
+    """
+    if type(requested) is not int or requested < 1:
+        raise compute.ComputeError('INVALID_COMMAND', '评分命令需要正整数超时')
+    row = _owned(run_id, sandbox_id)
+    if row['status'] != 'active':
+        raise compute.ComputeError('SANDBOX_NOT_ACTIVE', '评分沙箱未处于 active')
+    seconds = min(requested, _seconds_left(row) - 5)
+    run = compute._run(run_id)
+    auth = db.query_one('SELECT max_run_minutes FROM authorizations WHERE id=?',
+                        (run['authorization_id'],))
+    if auth and run['started_at'] and auth['max_run_minutes'] > 0:
+        remaining = auth['max_run_minutes'] * 60 - (datetime.now(timezone.utc) -
+                     datetime.fromisoformat(run['started_at'])).total_seconds()
+        seconds = min(seconds, math.floor(remaining) - 5)
+    if seconds < 1:
+        raise compute.ComputeError('SANDBOX_BUDGET', '评分命令的既有时长额度已耗尽')
+    return seconds
+
+
 def create(run_id: str, operation_id: str, request: dict, *, _session_id: str | None = None) -> dict:
     """Reserve the entire requested lifetime before a single remote create."""
     if not isinstance(operation_id, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,100}', operation_id):

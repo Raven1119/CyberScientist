@@ -8,6 +8,7 @@ import sqlite3
 import subprocess
 import sys
 import zipfile
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -113,7 +114,7 @@ def test_fake_sandbox_scorer_records_and_calibrates(monkeypatch, session_workspa
                ' VALUES(?,?,?,?,?,?,?,?,?)',
                ('fake-create',rid,tid,sid,json.dumps({'image':'registry.example/challenge:v1',
                  **({'session_id': rid} if session_workspace else {})}),
-                'active',now,now,now))
+                'active',now,(datetime.now(timezone.utc)+timedelta(hours=1)).isoformat(),now))
     monkeypatch.setattr(mailboxes.arm_admission, 'check',
                         lambda *_: {'verdict': 'admitted', 'signals': {}})
     calls = []
@@ -209,7 +210,8 @@ def test_public_resource_dependency_logs_do_not_pollute_score_stdout(monkeypatch
     db.execute('INSERT INTO compute_sandboxes(operation_id,run_id,trial_id,sandbox_id,'
                'request_json,status,created_at,expires_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)',
                ('resource-create', rid, tid, sid,
-                json.dumps({'image': 'registry.example/challenge:v1'}), 'active', now, now, now))
+                json.dumps({'image': 'registry.example/challenge:v1'}), 'active', now,
+                (datetime.now(timezone.utc)+timedelta(hours=1)).isoformat(),now))
     public_zip = tmp_path / 'public.zip'
     with zipfile.ZipFile(public_zip, 'w') as archive:
         archive.writestr('input.txt', 'public')
