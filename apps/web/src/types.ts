@@ -321,6 +321,7 @@ export interface SupervisionPendingRequest {
 
 export interface SupervisionGuidance {
   id: string
+  source?: string
   kind: string
   intent: string
   status: GuidanceStatus | string

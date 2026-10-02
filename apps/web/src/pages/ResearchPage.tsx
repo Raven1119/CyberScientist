@@ -2160,7 +2160,7 @@ const GUIDANCE_STATUS_TONES: Record<string, 'green' | 'blue' | 'neutral' | 'dang
 
 const GUIDANCE_TEXT_LIMIT = 200
 
-function GuidanceItem({ item }: { item: SupervisionGuidance }) {
+export function GuidanceItem({ item }: { item: SupervisionGuidance }) {
   const [expanded, setExpanded] = useState(false)
   const stale = item.status === 'invalidated' || item.status === 'superseded'
   const text = item.text_md ?? ''
@@ -2169,6 +2169,7 @@ function GuidanceItem({ item }: { item: SupervisionGuidance }) {
   return (
     <li className="row-item block">
       <div className="actions" style={{ marginBottom: 4 }}>
+        {item.source === 'controller' && <Badge tone="neutral">系统修复反馈</Badge>}
         <Badge tone="purple">{item.kind}</Badge>
         <Badge tone="neutral">{item.intent}</Badge>
         <span className={stale ? 'struck' : undefined}>

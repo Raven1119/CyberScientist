@@ -2004,7 +2004,12 @@ class RunController:
             return
         # 只有运行中且门禁开放才投递：暂停/等待大脑期间不准唤醒执行器
         run = self._require_run(run_id)
-        if run["phase"] != "running" or run["gate"] != "open":
+        if (run["phase"] != "running" or run["gate"] != "open"
+                or self._run_minutes_exceeded(run)):
+            return
+        try:
+            self._require_model_authorization(run_id)
+        except ControllerError:
             return
         with db.transaction() as conn:
             rows = collab.eligible_guidance(conn, run_id)
@@ -2017,7 +2022,8 @@ class RunController:
                 (db.utcnow(), g["id"])).rowcount == 1
             if not claimed:
                 return
-        text = (f"【大脑指导 {g['id']}】kind={g['kind']} intent={g['intent']}\n"
+        origin = "系统修复反馈" if g['source'] == 'controller' else "大脑指导"
+        text = (f"【{origin} {g['id']}】kind={g['kind']} intent={g['intent']}\n"
                 f"{g['text_md']}\n依据：{g['reason_md'] or ''}\n"
                 f"预期：{g['expected_change_md'] or ''}\n"
                 f"重新讨论条件：{g['revisit_when_md'] or ''}\n"
@@ -2059,6 +2065,64 @@ class RunController:
         if limit:
             self._record_model_limit(run_id, "executor", limit,
                                      trial_id=g["target_trial_id"])
+
+    async def _request_executor_repair(self, run_id: str, trial_id: str | None,
+                                       *, stage: str, code: str, detail: str,
+                                       event_seq: int) -> str | None:
+        """Return pipeline facts through the durable outbox, within the original grant.
+
+        This dispatches no Job, score or submission. An uncertain delivery remains
+        uncertain; it must not cause another native prompt or paid operation.
+        """
+        run = self._require_run(run_id)
+        if (run['phase'] != 'running' or run['gate'] != 'open'
+                or not trial_id or run['current_trial_id'] != trial_id
+                or self._run_minutes_exceeded(run)):
+            return None
+        try:
+            self._require_model_authorization(run_id)
+        except ControllerError:
+            return None
+        reason = f'controller repair: {stage}'
+        with db.transaction() as conn:
+            # Recheck after acquiring the transaction: a user pause wins.
+            current = conn.execute('SELECT * FROM runs WHERE id=?', (run_id,)).fetchone()
+            trial = conn.execute('SELECT status FROM trials WHERE id=? AND run_id=?',
+                                 (trial_id, run_id)).fetchone()
+            if (current['phase'] != 'running' or current['gate'] != 'open'
+                    or current['current_trial_id'] != trial_id
+                    or self._run_minutes_exceeded(current)
+                    or not trial or trial['status'] not in
+                    ('active', 'done', 'reported_complete', 'stalled')):
+                return None
+            existing = conn.execute(
+                "SELECT id FROM guidance WHERE run_id=? AND target_trial_id=?"
+                " AND source='controller' AND reason_md=?"
+                " AND status IN ('queued','sending','sent','unknown')"
+                " ORDER BY created_at DESC LIMIT 1", (run_id, trial_id, reason)).fetchone()
+            if existing:
+                gid = existing['id']
+            else:
+                gid = collab.create_guidance(conn, run_id, source='controller',
+                    target_trial_id=trial_id, review_request_id=None, frame_id=None,
+                    state_version=current['state_version'], evidence_revision=0, shadow_epoch=0,
+                    g={'kind': 'steer', 'intent': 'continue', 'reason_md': reason,
+                       'text_md': _redact(
+                           f'流程阻塞，阶段：{stage}；错误：{code}。\n{detail}\n'
+                           f'原始事实：{run_id}#{event_seq}。请检查并尝试修复后报告检查点。'
+                           '沿用当前 Run、Trial 和原授权；不能扩大预算或修改运行内核/评分器。'
+                           '未知的远端创建/提交或投递状态先只读对账，不重复创建或提交。'
+                           '这条反馈不授予新的模型、算力或比赛提交权限。'),
+                       'evidence_refs': [f'{run_id}#{event_seq}'],
+                       'expected_change_md': '修复可恢复的产物或流程错误，或报告具体阻塞证据。',
+                       'revisit_when_md': '修复后交付，或原授权内无法修复时请求审阅。'})
+            conn.execute("UPDATE trials SET status='active' WHERE id=? AND status IN"
+                         " ('done','reported_complete','stalled')", (trial_id,))
+            db.append_event_tx(conn, run_id, 'controller', 'executor.repair_requested',
+                {'guidance_id': gid, 'stage': stage, 'error_code': _redact(code, 120),
+                 'failure_seq': event_seq, 'deduplicated': bool(existing)}, trial_id=trial_id)
+        await self._deliver_queued_guidance(run_id)
+        return gid
 
     # ---------- 审阅调度（单飞 worker）----------
     def _enqueue_lifecycle(self, run_id: str, trigger: str,
@@ -2840,9 +2904,9 @@ class RunController:
                               trial_id: str | None) -> None:
         """大脑 submit 指导的执行体：实验邮箱自动提交（无需用户确认）。
 
-        幂等键绑定 guidance_id，重放不产生重复提交；失败只记事件并标
-        guidance failed，是否重试由大脑下一轮审阅决定——不自动重复
-        消耗配额的付费动作。提交成功后分数由服务端评分轮询异步拿回。
+        幂等键绑定 guidance_id，重放不产生重复提交；失败记事件并标
+        guidance failed，交由原执行器修复并报告，不自动重复提交。
+        提交成功后分数由服务端评分轮询异步拿回。
         """
         try:
             guidance=db.query_one('SELECT prediction_md FROM guidance WHERE id=?',(guidance_id,))
@@ -2856,11 +2920,13 @@ class RunController:
                 conn.execute(
                     "UPDATE guidance SET status='failed', updated_at=?"
                     " WHERE id=?", (db.utcnow(), guidance_id))
-                db.append_event_tx(
+                failed = db.append_event_tx(
                     conn, run_id, "controller", "submission.auto_failed",
                     {"guidance_id": guidance_id, "code": code,
-                     "error": str(exc)[:400]},
+                     "error": _redact(str(exc), 400)},
                     trial_id=trial_id)
+            await self._request_executor_repair(run_id, trial_id, stage='submission',
+                code=code, detail=str(exc), event_seq=failed['seq'])
             return
         ok = res.get("status") == "submitted"
         with db.transaction() as conn:
@@ -2872,13 +2938,18 @@ class RunController:
                              f"platform_ref:{res.get('platform_ref')}"],
                             ensure_ascii=False),
                  db.utcnow(), guidance_id))
-            db.append_event_tx(
+            result_event = db.append_event_tx(
                 conn, run_id, "controller",
                 "submission.auto_done" if ok else "submission.auto_failed",
                 {"guidance_id": guidance_id,
                  "submission_id": res.get("id"),
                  "platform_ref": res.get("platform_ref"),
-                 "error": res.get("error")}, trial_id=trial_id)
+                 "error": _redact(res.get("error"))}, trial_id=trial_id)
+        if not ok:
+            await self._request_executor_repair(run_id, trial_id, stage='submission',
+                code=str(res.get('status') or 'SUBMISSION_UNCONFIRMED'),
+                detail=str(res.get('error') or '提交状态未确认；先只读核对原预约。'),
+                event_seq=result_event['seq'])
 
     def _maybe_finalize_after_curation(self, request_id: str) -> None:
         """curation 审阅进入任何终态（done/error/obsolete）后，若它承载着被
@@ -3363,16 +3434,17 @@ class RunController:
                             db.append_event(run_id, 'controller', 'run.final_package_checked',
                                             {'final_package_check': facts})
                     except Exception as exc:
-                        db.append_event(run_id, 'brain', 'brain.action_rejected',
+                        failed = db.append_event(run_id, 'brain', 'brain.action_rejected',
                             {'op': op, 'reason': '最终包评分未确认：' + _redact(str(exc), 300),
                              'error_code': getattr(exc, 'code', type(exc).__name__)})
-                        retries = db.query_one(
-                            "SELECT COUNT(*) AS n FROM review_requests WHERE run_id=?"
-                            " AND trigger='finish_rejected'", (run_id,))['n']
-                        if retries < 2:
-                            self._enqueue_lifecycle(run_id, trigger='finish_rejected')
-                        else:
-                            self._pause_needs_attention(run_id, '最终包评分未确认；已尝试两次自动复审')
+                        repair = await self._request_executor_repair(
+                            run_id, run['current_trial_id'], stage='final_package_score',
+                            code=getattr(exc, 'code', type(exc).__name__),
+                            detail=str(exc), event_seq=failed['seq'])
+                        if not repair:
+                            db.append_event(run_id, 'controller', 'executor.repair_deferred',
+                                {'failure_seq': failed['seq'],
+                                 'reason': '当前 Run 状态、Trial 或原授权不允许执行器修复'})
                         continue
                 if v2:
                     db.execute("UPDATE runs SET objective_status=?,end_reason=? WHERE id=?",
@@ -3934,7 +4006,7 @@ class RunController:
             " AND status IN ('pending','running') ORDER BY created_at",
             (run_id,))
         guidance_rows = db.query(
-            "SELECT id, kind, intent, status, text_md, target_trial_id,"
+            "SELECT id, source, kind, intent, status, text_md, target_trial_id,"
             " ack_disposition, created_at FROM guidance WHERE run_id=?"
             " ORDER BY created_at DESC LIMIT 20", (run_id,))
         brain_running = db.query_one(

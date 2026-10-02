@@ -377,6 +377,33 @@ def latest_final_check(run_id: str) -> dict[str, Any]:
     return {'final_package_check': json.loads(row['payload'])['final_package_check']} if row else {}
 
 
+def _stage_score_inputs(stage: Path, sealed: bytes, manifest: dict[str, Any]) -> bool:
+    """Preserve immutable grading provenance before any remote operation can fail."""
+    if any(path.is_symlink() for path in (stage, *stage.parents)):
+        raise LocalScoreError('INVALID_PACKAGE', '评分输入路径含符号链接')
+    stage.mkdir(parents=True, exist_ok=True)
+    inputs = {'sealed_package.zip': sealed,
+              'science_package.zip': _science_package(sealed),
+              'scorer.zip': _archive(manifest['files'])}
+    descriptor = {'schema_version': 1, 'scorer_version': manifest['scorer_version'],
+        'scorer_file_hashes': manifest['file_hashes'],
+        'files': {name: {'bytes': len(raw), 'sha256': hashlib.sha256(raw).hexdigest()}
+                  for name, raw in inputs.items()}}
+    inputs['grading_inputs.json'] = _canonical(descriptor).encode()
+    fresh = not (stage / 'grading_inputs.json').exists()
+    # Verify every existing member before writing anything; never overwrite evidence.
+    for name, raw in inputs.items():
+        path = stage / name
+        if path.is_symlink() or (path.exists() and path.read_bytes() != raw):
+            raise LocalScoreError('OPERATION_CONFLICT', '评分操作 ID 对应的本地输入已变化')
+    for name, raw in inputs.items():
+        path = stage / name
+        if not path.exists():
+            with path.open('xb') as stream:
+                stream.write(raw)
+    return fresh
+
+
 def score_candidate(run_id: str) -> dict[str, Any]:
     run = db.query_one('SELECT * FROM runs WHERE id=?', (run_id,))
     if not run or run['phase'] != 'running' or run['gate'] != 'open' or not run['current_trial_id']:
@@ -392,6 +419,13 @@ def score_candidate(run_id: str) -> dict[str, Any]:
         raise LocalScoreError(check['error_code'], '最终包未通过本地预检')
     digest = hashlib.sha256(check['sealed_bytes'] +
                             manifest['scorer_version'].encode()).hexdigest()
+    frozen = config.WORKSPACE_DIR / 'runs' / run_id / 'final_candidate' / 'attempts' / digest
+    if _stage_score_inputs(frozen, check['sealed_bytes'], manifest):
+        db.append_event(run_id, 'controller', 'local_score.inputs_staged',
+            {'operation_id': 'finish-score-' + digest[:30],
+             'stage': str(frozen.relative_to(config.WORKSPACE_DIR)),
+             'sealed_package_sha256': hashlib.sha256(check['sealed_bytes']).hexdigest(),
+             'scorer_version': manifest['scorer_version']}, trial_id=run['current_trial_id'])
     from . import evaluations
     row = evaluations.score_preflight(run, check, 'finish-score-' + digest[:30],
                                      'finish-scorer-' + digest[:30])
@@ -500,15 +534,13 @@ def evaluate(run_id: str, trial_id: str, sandbox_id: str,
         raise LocalScoreError('SCORER_IMAGE_MISMATCH', '需要当前 Trial 在评分器声明镜像中的活跃沙箱')
     trial_dir = config.WORKSPACE_DIR / 'runs' / run_id / 'trials' / trial_id
     stage = trial_dir / 'local_scorer' / operation_id
-    stage.mkdir(parents=True, exist_ok=True)
     package_file, scorer_file = stage / 'science_package.zip', stage / 'scorer.zip'
-    scorer_bytes = _archive(manifest['files'])
-    for path, raw in ((package_file, _science_package(sealed)), (scorer_file, scorer_bytes)):
-        if path.exists() and path.read_bytes() != raw:
-            raise LocalScoreError('OPERATION_CONFLICT', '评分操作 ID 对应的本地输入已变化')
-        if not path.exists():
-            with path.open('xb') as stream:
-                stream.write(raw)
+    if _stage_score_inputs(stage, sealed, manifest):
+        db.append_event(run_id, 'controller', 'local_score.inputs_staged',
+            {'operation_id': operation_id,
+             'stage': str(stage.relative_to(config.WORKSPACE_DIR)),
+             'sealed_package_sha256': hashlib.sha256(sealed).hexdigest(),
+             'scorer_version': manifest['scorer_version']}, trial_id=trial_id)
     workspace = ('/bohr-workspace' if json.loads(sandbox['request_json']).get('session_id') == run_id
                  else '/tmp')
     remote = f'{workspace}/cs-local-scorer-{operation_id}'

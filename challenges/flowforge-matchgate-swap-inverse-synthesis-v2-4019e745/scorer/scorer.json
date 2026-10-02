@@ -19,5 +19,11 @@
     },
     "score_timeout": 1200,
     "sandbox_timeout": 1800
+  },
+  "comparison_contract": {
+    "higher_is_better": [
+      "/components/*/fidelity"
+    ],
+    "verification": "score.py:case_points is nondecreasing in each reported fidelity; no scoring formula or thresholds changed."
   }
 }

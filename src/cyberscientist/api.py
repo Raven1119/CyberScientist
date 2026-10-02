@@ -246,14 +246,14 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
                 import logging
                 logging.getLogger('cyberscientist.api').exception('Sandbox startup reconciliation failed')
         db.execute("UPDATE curation_requests SET status='failed',error='后端重启，整理中断；不会自动重复调用模型',updated_at=? WHERE status='running'", (db.utcnow(),))
-        for row in db.query("SELECT DISTINCT run_id FROM compute_jobs WHERE status NOT IN ('Finished','Failed','Stopped','not_started')"):
+        for run_id in compute.reconciliation_runs(startup=True):
             try:
-                await asyncio.to_thread(compute.reconcile, row['run_id'])
+                await asyncio.to_thread(compute.reconcile, run_id)
             except Exception:
                 # Other Runs still need their independent startup recovery.
                 import logging
                 logging.getLogger('cyberscientist.api').exception(
-                    'Job reconciliation failed for Run %s', row['run_id'])
+                    'Job reconciliation failed for Run %s', run_id)
         # 后台评分轮询：提交后进入评分等待，由这里异步拿回分数。
         # 评分器可能长时间排队或抽风（409 scoringInProgress / 5xx），
         # 全部吞掉下一轮再试；轮询失败绝不影响服务本身。
@@ -266,14 +266,14 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
                     result = await asyncio.to_thread(mailboxes.poll_pending_by_challenge)
                     _notify_scores(result)
                     await asyncio.to_thread(sandboxes.reconcile_deletions)
-                    for row in db.query("SELECT DISTINCT run_id FROM compute_jobs WHERE status NOT IN ('Finished','Failed','Stopped','not_started')"):
+                    for run_id in compute.reconciliation_runs():
                         try:
-                            await asyncio.to_thread(compute.reconcile, row['run_id'])
-                            controller.notify_run_change(row['run_id'])
+                            await asyncio.to_thread(compute.reconcile, run_id)
+                            controller.notify_run_change(run_id)
                         except Exception:
                             import logging
                             logging.getLogger('cyberscientist.api').exception(
-                                'Job polling failed for Run %s', row['run_id'])
+                                'Job polling failed for Run %s', run_id)
                 except Exception:
                     pass
                 try:

@@ -20,6 +20,7 @@ describe('evaluation page', () => {
             sandbox_minutes: 3.5, sandbox_minutes_status: 'confirmed',
             bohrium_amount: 'unknown', final_status: 'finished',
             bohrium_cost_details: { job_native_amount_total: '0.12', currency: null, total_amount: null,
+              job_estimate: { amount: '0.1200', currency: 'CNY', unpriced_count: 1 },
               sandbox_observed: { amounts: { CNY: '0.08', photons: '2.5' }, unmatched_count: 1 },
               sandbox_estimate: { amount: '0.0400', currency: 'CNY', status: 'estimated_partial', unpriced_count: 1 } } } },
       ] })
@@ -30,6 +31,7 @@ describe('evaluation page', () => {
     expect(screen.getByText('2 (+1 unknown)')).toBeTruthy()
     expect(screen.getByText('3.5')).toBeTruthy()
     expect(screen.getByText(/Job 原始金额 0.12（币种未确认，非总费用）/)).toBeTruthy()
+    expect(screen.getByText(/Job 条件估算 0.1200 CNY（时长暂按秒，单位未验证；未定价 1 项，非账单）/)).toBeTruthy()
     expect(screen.getByText(/沙箱估算 0.0400 CNY（未定价 1 项，非账单）/)).toBeTruthy()
     expect(screen.getByText(/沙箱查询费用 0.08 CNY（未确认最终结算；缺 1 项）/)).toBeTruthy()
     expect(screen.getByText(/沙箱查询费用 2.5 photons/)).toBeTruthy()

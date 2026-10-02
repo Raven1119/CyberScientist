@@ -1,9 +1,18 @@
 import { afterEach, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
-import { RunOverviewPanel } from './ResearchPage'
+import { GuidanceItem, RunOverviewPanel } from './ResearchPage'
 import type { RunOverview } from '../types'
 
 afterEach(cleanup)
+
+it('shows controller repair facts with truthful queued delivery status', () => {
+  render(<GuidanceItem item={{id: 'repair', source: 'controller', kind: 'steer', intent: 'continue',
+    status: 'queued', text_md: 'final_package_score: INVALID_COMMAND', target_trial_id: 'trial-a',
+    ack_disposition: null, created_at: '2026-10-02T00:00:00Z'}} />)
+  expect(screen.getByText('系统修复反馈')).toBeTruthy()
+  expect(screen.getByText('排队中')).toBeTruthy()
+  expect(screen.getByText('final_package_score: INVALID_COMMAND')).toBeTruthy()
+})
 
 it('shows all active Runs, score confidence and attention, and selects by Run ID', () => {
   const items: RunOverview[] = [

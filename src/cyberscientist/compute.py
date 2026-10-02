@@ -486,6 +486,15 @@ def _read_job_pages(rows: list[dict], max_pages: int = 3) -> tuple[list[dict], d
                     'absence_does_not_prove_not_created': True}
 
 
+def reconciliation_runs(*, startup: bool = False) -> list[str]:
+    """Poll live known resources; reconcile terminal no-ID reservations at startup."""
+    active = '' if startup else (
+        " AND (r.phase NOT IN ('finished','failed','cancelled') OR j.platform_job_id IS NOT NULL)")
+    return [row['run_id'] for row in db.query(
+        'SELECT DISTINCT j.run_id FROM compute_jobs j JOIN runs r ON r.id=j.run_id'
+        " WHERE j.status NOT IN ('Finished','Failed','Stopped','not_started')" + active)]
+
+
 def reconcile(run_id: str) -> dict:
     rows = list_jobs(run_id)['items']
     if not rows:
@@ -609,9 +618,10 @@ def costs(run_id: str) -> dict:
     billed = [row.get('receipt', {}).get('billing', {}) for row in rows]
     values = [item['native_amount'] for item in billed
               if item.get('native_amount') is not None]
-    from . import sandbox_costs
+    from . import sandbox_costs, job_costs
     observed = sandbox_costs.observed_costs(run_id)
-    return {'sandbox_estimate': sandbox_costs.estimate(run_id),
+    return {'job_estimate': job_costs.estimate(run_id),
+            'sandbox_estimate': sandbox_costs.estimate(run_id),
             'sandbox_observed': observed,
             'status': 'partial' if values or observed['matched_count'] else 'unknown',
             'job_native_amount_total': str(sum((Decimal(value) for value in values), Decimal(0)))

@@ -10,6 +10,7 @@ type Result = { id: string; challenge_id: string; repeat_index: number; run_id: 
     job_count?: number; job_unknown_count?: number; sandbox_minutes?: number;
     sandbox_minutes_status?: string; bohrium_amount: string; final_status: string;
     bohrium_cost_details?: { job_native_amount_total: string | null; currency: string | null;
+      job_estimate?: { amount: string | null; currency: string | null; unpriced_count: number };
       sandbox_observed?: { amounts: Record<string, string>; unmatched_count: number };
       total_amount: string | null; sandbox_estimate?: { amount: string | null;
         currency: string | null; status: string; unpriced_count: number } } } }
@@ -81,6 +82,8 @@ export default function EvaluationPage() {
           <td>{item.result?.bohrium_amount ?? 'unknown'}
             {item.result?.bohrium_cost_details?.job_native_amount_total != null &&
               <small> Job 原始金额 {item.result.bohrium_cost_details.job_native_amount_total}（币种未确认，非总费用）</small>}
+            {item.result?.bohrium_cost_details?.job_estimate &&
+              <small> Job 条件估算 {item.result.bohrium_cost_details.job_estimate.amount ?? 'unknown'} {item.result.bohrium_cost_details.job_estimate.currency}（时长暂按秒，单位未验证；未定价 {item.result.bohrium_cost_details.job_estimate.unpriced_count} 项，非账单）</small>}
             {item.result?.bohrium_cost_details?.sandbox_estimate?.amount != null &&
               <small> 沙箱估算 {item.result.bohrium_cost_details.sandbox_estimate.amount} {item.result.bohrium_cost_details.sandbox_estimate.currency}（未定价 {item.result.bohrium_cost_details.sandbox_estimate.unpriced_count} 项，非账单）</small>}
             {Object.entries(item.result?.bohrium_cost_details?.sandbox_observed?.amounts || {}).map(([currency, amount]) =>

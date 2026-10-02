@@ -265,7 +265,7 @@ def _limits(suite: str) -> dict[str, int]:
 
 async def advance(controller: Any) -> None:
     """One idempotent scheduling pass, called periodically by the backend."""
-    from . import sandbox_costs
+    from . import sandbox_costs, job_costs
     for evaluation in db.query("SELECT * FROM eval_runs WHERE status='running' ORDER BY created_at"):
         eid = evaluation['id']
         snapshot = json.loads(evaluation['config_json'])
@@ -322,6 +322,7 @@ async def advance(controller: Any) -> None:
                              'prior_failure_event_seq': prior['seq'] if prior else None})
                     await controller.control(rid, 'terminate', None, f'eval-expire-{rid}')
                     await asyncio.to_thread(sandbox_costs.refresh, rid)
+                    await asyncio.to_thread(job_costs.refresh, rid)
                     _finish_result(result['id'], rid, scoring_status='budget_exhausted',
                                    scoring_reason=reason)
                     continue
@@ -364,11 +365,13 @@ async def advance(controller: Any) -> None:
                            (db.utcnow(), result['id']))
                 score_status, score_reason = await asyncio.to_thread(_score_run, rid, result['id'])
                 await asyncio.to_thread(sandbox_costs.refresh, rid)
+                await asyncio.to_thread(job_costs.refresh, rid)
                 controller._finalize_run(rid, run['end_reason'] or 'evaluation completed')
                 _finish_result(result['id'], rid, scoring_status=score_status,
                                scoring_reason=score_reason)
             elif run['phase'] in TERMINAL:
                 await asyncio.to_thread(sandbox_costs.refresh, rid)
+                await asyncio.to_thread(job_costs.refresh, rid)
                 _finish_result(result['id'], rid)
             else:
                 db.execute('UPDATE eval_results SET status=?,updated_at=? WHERE id=?',
@@ -832,6 +835,7 @@ def write_report(eval_id: str) -> tuple[Path, Path]:
         item = row['result'] or {}
         cost = item.get('bohrium_cost_details') or {}
         estimate = cost.get('sandbox_estimate') or {}
+        job_estimate = cost.get('job_estimate') or {}
         observed = cost.get('sandbox_observed') or {}
         reason = item.get('science_reason') or item.get('failure_reason') or row.get('error')
         reason_text = observation.strip_secrets(str(reason)).replace('\n', ' ')[:180] if reason else 'none'
@@ -847,7 +851,10 @@ def write_report(eval_id: str) -> tuple[Path, Path]:
                      f"{shown(estimate.get('currency'))} "
                      f"(current rates, not a bill, unpriced={shown(estimate.get('unpriced_count'))}); "
                      f"job_native_amount={shown(cost.get('job_native_amount_total'))} "
-                     '(currency unknown, not total cost)')
+                     '(currency unknown, not total cost); '
+                     f"job_estimate={shown(job_estimate.get('amount'))} "
+                     f"{shown(job_estimate.get('currency'))} "
+                     f"(spendTime assumed seconds, unit unverified, not a bill, unpriced={shown(job_estimate.get('unpriced_count'))})")
     lines.extend(['', '## Per-challenge statistics', ''])
     for cid, stats in data['challenge_stats'].items():
         lines.append(f"- {cid}: observed_mean={shown(stats['science_mean'])}, "

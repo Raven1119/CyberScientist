@@ -20,7 +20,7 @@ _TOOLS = [
         "description": "在自然研究节点登记检查点：事实/解释/异常/问题/下一步/"
                        "恢复信息。review=none 继续工作；async 请大脑异步审阅；"
                        "blocking 交棒等待大脑（保存状态并结束当前 turn）。"
-                       "返回可能携带排队的大脑指导。",
+                       "返回可能携带排队的大脑指导或系统修复反馈。",
         "inputSchema": {
             "type": "object",
             "additionalProperties": False,
@@ -43,7 +43,7 @@ _TOOLS = [
     },
     {
         "name": "ack_guidance",
-        "description": "确认已投递的大脑指导：accepted 或 challenged 并给依据。"
+        "description": "确认已投递的指导或系统修复反馈：accepted 或 challenged 并给依据。"
                        "重复 ID 幂等；ACK 不代表已完成指导。",
         "inputSchema": {
             "type": "object",
