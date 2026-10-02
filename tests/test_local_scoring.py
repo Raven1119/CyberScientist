@@ -196,7 +196,7 @@ def test_fake_sandbox_scorer_records_and_calibrates(monkeypatch, session_workspa
                             (changed['package_sha256'],))
 
 
-def test_public_resource_dependency_logs_do_not_pollute_score_stdout(monkeypatch, tmp_path):
+def test_public_resource_scoring_does_not_install_dependencies_or_mix_setup_stdout(monkeypatch, tmp_path):
     rid, tid, package, *_ = _fixture()
     scorer_dir = _scorer()
     (scorer_dir / 'requirements.txt').write_text('numpy==2.2.6\n')
@@ -223,8 +223,7 @@ def test_public_resource_dependency_logs_do_not_pollute_score_stdout(monkeypatch
             result = {'score': 20, 'components': {}, 'confidence': 'medium',
                       'notes': 'synthetic', 'scorer_version': version}
             stdout = json.dumps(result)
-            if 'requirements.txt 1>&2' not in command:
-                stdout = 'Successfully installed numpy\n' + stdout
+            assert 'pip install' not in command
             return {'status': 'completed', 'receipt': {'stdout': json.dumps({
                 'data': {'stdout': stdout}})}}
         return {'status': 'completed'}
@@ -234,7 +233,10 @@ def test_public_resource_dependency_logs_do_not_pollute_score_stdout(monkeypatch
                                     preflight={'error_code': None, 'sealed_bytes': package},
                                     public_resource_zip=public_zip)
     assert result['science_score'] == 20
-    assert any('requirements.txt 1>&2' in command for command in commands)
+    assert all('pip install' not in command for command in commands)
+    with pytest.raises(local_scoring.LocalScoreError, match='单个有效评分 JSON'):
+        local_scoring._score_output({'receipt': {'stdout': json.dumps({'data': {
+            'stdout': 'Successfully installed numpy\n' + json.dumps({})}})}}, version)
 
 
 def test_calibration_source_migration_is_additive_and_idempotent():

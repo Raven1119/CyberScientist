@@ -68,6 +68,12 @@ CS-UP-03 W2 科学评分器放在 `workspace/challenges/<challenge_id>/scorer/`�
 
 Job 提交 `preflight` 与 `spec` 平级，不透传给 bohr。入口/本地导入/联网安装在预留前检查；显式 API 检查缺少镜像事实时返回 `IMAGE_FACTS_MISSING` 和最小探针模板，真实探针仍需现有 Job 授权。`GET /api/v1/runs/{id}` 的 Trial 增加按 `trial.reported_complete` 事件计算的 `delivered`，已交付后终止不改写交付状态。
 
+CS-UP-07 更新：上述科学依赖/API 预检和大输入门改为 advisory 事实，由执行器在原授权内选择操作；密钥、路径和资源授权校验保留。未验证环境不阻断 Run 创建。`research_operating_facts` 对大脑与执行器只读提供剩余时间、额度、CPU 报价/估算、评分耗时声明或可匹配观察以及环境/网络事实；未知保持 unknown。
+
+`research_local_score` 增加 `action:prepare|register`（默认 evaluate 沿用原入口）。prepare 接收当前 trial_id、稳定 operation_id、本 Trial 的 sandbox_id、可选 package_path/environment_paths，冻结输入并返回 transfers、固定 command、依赖及身份要求；环境由执行器准备。执行器通过受控 sandbox exec 执行该 command，register 仅接收 trial_id、计划 operation_id 与 execution_operation_id，不接受调用方分数或回执。后端按自己的计划、命令/回执哈希、退出码、单 JSON、固定评分器/科学/公开资源 ZIP 哈希和同次环境身份核对后写 `score_source=executor_verified`；缓存、分项最佳与封存派生记录继承来源，失败不登记分数。有声明身份的评分可使用执行器自建环境，经同次身份检查证明符合声明；未声明身份时仍检查固定镜像。
+
+受控工具失败返回 `failure_feedback`，包含 tool、cause/code、possible_remote_effect、operation_id、automatic_resend:false、原授权与程序性 choices。最终评分或实验提交阻塞经持久化 controller guidance 交回同一执行器并保留 Run；unknown 不自动重发。金额上限通过 `authorizations.max_compute_cost_cny` 与 Job/沙箱共享原子预约守住，账单观察、已花费条件估算和预约上限分别展示。新评测记录冻结 backend commit/runtime_sha256，每个 Run marker 继承同一身份；原有评测和授权不扩大。
+
 ### 事件
 
 ```json

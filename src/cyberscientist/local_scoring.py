@@ -27,9 +27,10 @@ _SCORE_REF = re.compile(r'(?<![A-Za-z0-9_])local_score:([A-Za-z0-9_]+)')
 
 
 class LocalScoreError(ValueError):
-    def __init__(self, code: str, message: str):
+    def __init__(self, code: str, message: str, details: dict | None = None):
         super().__init__(message)
         self.code = code
+        self.details = details or {}
 
 
 def _canonical(value: Any) -> str:
@@ -38,11 +39,15 @@ def _canonical(value: Any) -> str:
 
 def validate_runtime(value: Any) -> dict:
     if not isinstance(value, dict) or set(value) - {
-            'environment_id', 'adapter', 'project', 'public_resource', 'score_timeout', 'sandbox_timeout'}:
+            'environment_id', 'adapter', 'project', 'public_resource', 'score_timeout', 'sandbox_timeout',
+            'estimated_seconds'}:
         raise LocalScoreError('INVALID_SCORER', '评分器运行环境声明无效')
     for name in ('score_timeout', 'sandbox_timeout'):
         if name in value and (type(value[name]) is not int or not 1 <= value[name] <= 3600):
             raise LocalScoreError('INVALID_SCORER', '评分器时限无效')
+    if 'estimated_seconds' in value and (type(value['estimated_seconds']) not in (int, float)
+            or not math.isfinite(value['estimated_seconds']) or value['estimated_seconds'] <= 0):
+        raise LocalScoreError('INVALID_SCORER', '评分器预计耗时必须为有限正数')
     if 'environment_id' in value and (not isinstance(value['environment_id'], str)
             or not re.fullmatch(r'[A-Za-z0-9_.-]{1,100}', value['environment_id'])):
         raise LocalScoreError('INVALID_SCORER', '评分环境标识无效')
@@ -339,7 +344,7 @@ def reuse_score(run_id: str, trial_id: str, operation_id: str, sealed: bytes,
     return _record_score(manifest.get('challenge_id') or source['challenge_id'],
                          run_id, trial_id, operation_id, sealed, manifest,
                          json.loads(source['science_result_json']),
-                         source_local_score_id=source['id'])
+                         source_local_score_id=source['id'], score_source=source['score_source'])
 
 
 def final_package_check(run_id: str, candidate: dict[str, Any]) -> dict[str, Any]:
@@ -447,7 +452,7 @@ def score_candidate(run_id: str) -> dict[str, Any]:
 
 def _record_score(challenge_id: str, run_id: str, trial_id: str, operation_id: str, sealed: bytes,
                   manifest: dict[str, Any], science: dict[str, Any],
-                  *, source_local_score_id: str | None = None) -> dict[str, Any]:
+                  *, source_local_score_id: str | None = None, score_source: str = 'system') -> dict[str, Any]:
     """Persist a verified sandbox score with its exact science and trace inputs."""
     science_hashes = mailboxes._science_artifact_hashes(sealed)
     manifest_science_sha = _manifest_science_sha(sealed)
@@ -470,20 +475,20 @@ def _record_score(challenge_id: str, run_id: str, trial_id: str, operation_id: s
         conn.execute('INSERT INTO local_scores(id,challenge_id,run_id,trial_id,package_sha256,'
                      'science_artifact_hashes_json,manifest_science_sha256,science_score,science_result_json,'
                      'trace_prediction_json,predicted_display_score,scorer_version,scorer_file_hashes_json,'
-                     'feature_version,model_version,sandbox_operation_id,created_at,science_input_sha256,source_local_score_id)'
-                     ' VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+                     'feature_version,model_version,sandbox_operation_id,created_at,science_input_sha256,source_local_score_id,score_source)'
+                     ' VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
                      (score_id,challenge_id,run_id,trial_id,package_sha,
                       _canonical(science_hashes),manifest_science_sha,science['score'],_canonical(science),
                       _canonical(trace),predicted,manifest['scorer_version'],
                       _canonical(manifest['file_hashes']),FEATURE_VERSION,MODEL_VERSION,operation_id,db.utcnow(),
-                      science_input_sha,source_local_score_id))
+                      science_input_sha,source_local_score_id,score_source))
         db.append_event_tx(conn, run_id, 'controller', 'local_score.registered',
                     {'local_score_id': score_id, 'scorer_version': manifest['scorer_version'],
                      'science_input_sha256': science_input_sha,
                      'components': components,
                      'comparison_contract': comparison,
                      'artifact_hashes': science_hashes,
-                     'source_local_score_id': source_local_score_id}, trial_id=trial_id)
+                     'source_local_score_id': source_local_score_id, 'score_source': score_source}, trial_id=trial_id)
     return dict(db.query_one('SELECT * FROM local_scores WHERE id=?', (score_id,)))
 
 
@@ -558,13 +563,15 @@ def evaluate(run_id: str, trial_id: str, sandbox_id: str,
     for name, action in commands:
         result = action()
         if result['status'] != 'completed':
-            raise LocalScoreError('SCORE_EXECUTION_UNKNOWN', f'沙箱 {name} 阶段未确认完成')
+            raise LocalScoreError('SCORE_EXECUTION_UNKNOWN', f'沙箱 {name} 阶段未确认完成',
+                                  {'stage': name, 'result': result, 'sandbox_id': sandbox_id})
     resource_env = ''
     runtime = manifest.get('runtime', {})
     if runtime.get('adapter') == 'lean_project':
-        from . import lean_runtime
-        resource_env = lean_runtime.prepare(run_id, sandbox_id, stage, operation_id,
-                                            environment_id=runtime['environment_id'], project=runtime['project'])
+        raise LocalScoreError('ENVIRONMENT_PREPARATION_REQUIRED',
+            '评分环境由执行器自行准备；使用 prepare/受控 exec/register 通道核对同次执行的身份',
+            {'environment_id': runtime['environment_id'], 'project': runtime['project'],
+             'next_tool': 'research_local_score', 'action': 'prepare', 'sandbox_id': sandbox_id})
     if public_resource_zip is not None:
         if not db.eval_mode(run_id) and not _controller_preflight:
             raise LocalScoreError('INVALID_ARGUMENT', '公开评分数据仅供受控评分使用')
@@ -578,7 +585,8 @@ def evaluate(run_id: str, trial_id: str, sandbox_id: str,
             remote + '/public_resource.zip', local_path=str(staged_resource),
             operation_id=operation_id + '-resource')
         if transferred['status'] != 'completed':
-            raise LocalScoreError('SCORE_EXECUTION_UNKNOWN', '公开资源传输未确认完成')
+            raise LocalScoreError('SCORE_EXECUTION_UNKNOWN', '公开资源传输未确认完成',
+                                  {'stage': 'public_resource_transfer', 'result': transferred})
         unpacked = sandboxes.execute(run_id, sandbox_id,
             'cd ' + shlex.quote(remote) + ' && python3 -m zipfile -e public_resource.zip public',
             sandboxes.bounded_execution_timeout(run_id, sandbox_id, 120), operation_id + '-unpack')
@@ -591,9 +599,6 @@ def evaluate(run_id: str, trial_id: str, sandbox_id: str,
             resource_env += declared['environment_variable'] + '=' + shlex.quote(
                 remote + '/' + declared['directory']) + ' '
     dependency_command = ''
-    if public_resource_zip is not None and 'requirements.txt' in manifest['files']:
-        dependency_command = (' && python3 -m pip install --disable-pip-version-check'
-                              ' --no-input --no-cache-dir -r scorer/requirements.txt 1>&2')
     command = ('cd ' + shlex.quote(remote) + ' && python3 -m zipfile -e scorer.zip scorer'
                + dependency_command
                + ' && ' + resource_env + 'CS_SCORER_VERSION=' + shlex.quote(manifest['scorer_version'])
@@ -601,7 +606,8 @@ def evaluate(run_id: str, trial_id: str, sandbox_id: str,
     result = sandboxes.execute(run_id, sandbox_id, command,
         sandboxes.bounded_execution_timeout(run_id, sandbox_id, score_timeout), operation_id + '-run')
     if result['status'] != 'completed':
-        raise LocalScoreError('SCORE_EXECUTION_UNKNOWN', '沙箱评分执行未确认成功')
+        raise LocalScoreError('SCORE_EXECUTION_UNKNOWN', '沙箱评分执行未确认成功',
+                              {'stage': 'fixed_scorer', 'result': result, 'sandbox_id': sandbox_id})
     science = _score_output(result, manifest['scorer_version'])
     return _record_score(run['challenge_id'], run_id, trial_id, operation_id,
                          sealed, manifest, science)
@@ -643,13 +649,13 @@ def bind_submission_tx(conn, submission_id: str, sealed: bytes) -> str | None:
     conn.execute('INSERT INTO local_scores(id,challenge_id,run_id,trial_id,package_sha256,'
                  'science_artifact_hashes_json,manifest_science_sha256,source_local_score_id,'
                  'science_score,science_result_json,trace_prediction_json,predicted_display_score,'
-                 'scorer_version,scorer_file_hashes_json,feature_version,model_version,created_at)'
-                 ' VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+                 'scorer_version,scorer_file_hashes_json,feature_version,model_version,created_at,score_source)'
+                 ' VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
                  (score_id,source['challenge_id'],source['run_id'],source['trial_id'],
                   submission['package_sha256'],science_hashes,manifest_hash,source['id'],
                   source['science_score'],source['science_result_json'],_canonical(trace),predicted,
                   source['scorer_version'],source['scorer_file_hashes_json'],
-                  FEATURE_VERSION,MODEL_VERSION,db.utcnow()))
+                  FEATURE_VERSION,MODEL_VERSION,db.utcnow(),source['score_source']))
     return score_id
 
 

@@ -5,6 +5,7 @@ import { useApp } from '../app-context'
 type Item = { id: string; suite: string; label: string; status: string; created_at: string }
 type Result = { id: string; challenge_id: string; repeat_index: number; run_id: string | null;
   status: string; error: string | null; result: null | { science_score: number | null;
+    science_source?: 'system' | 'executor_verified' | null;
     trace_checklist_score: number | null; trace_qualified_cap: number | null;
     display_interval: { lower: number | null; upper: number | null }; wall_seconds: number | null;
     job_count?: number; job_unknown_count?: number; sandbox_minutes?: number;
@@ -14,7 +15,8 @@ type Result = { id: string; challenge_id: string; repeat_index: number; run_id: 
       sandbox_observed?: { amounts: Record<string, string>; unmatched_count: number };
       total_amount: string | null; sandbox_estimate?: { amount: string | null;
         currency: string | null; status: string; unpriced_count: number } } } }
-type Detail = { id: string; suite: string; status: string; results: Result[] }
+type Detail = { id: string; suite: string; status: string; results: Result[];
+  backend?: { commit: string | null; runtime_sha256: string } | null }
 
 export default function EvaluationPage() {
   const { toast, demoMode } = useApp()
@@ -59,7 +61,7 @@ export default function EvaluationPage() {
   return <section className="evaluation-page">
     <div className="page-head"><div><p className="eyebrow">LOCAL EVALUATION</p><h1>评测</h1></div></div>
     <p>每题运行 2 次真实研究 Run。只做本地科学评分与公开 v6 轨迹检查表诊断，不提交比赛 Attempt。v6 与历史 v8 只在可见代码上做过条件比较；金额无法读取时显示 unknown。</p>
-    <p>快速层每个 Run 最多 60 分钟、2 个 Job、60 沙箱分钟；困难层最多 180 分钟、5 个 Job、180 沙箱分钟。仅 CPU。</p>
+    <p>新评测快速层每个 Run 最多 60 分钟、2 个 Job、60 沙箱分钟；困难层最多 180 分钟、20 个 Job、同时 4 个沙箱、累计 600 沙箱分钟、公开单价估算 50 元。仅 CPU，单台最多 16 核。历史评测保留原授权。</p>
     <div className="actions">
       <button type="button" className="btn" disabled={busy || demoMode} onClick={() => void start('fast')}>运行快速层</button>
       <button type="button" className="btn" disabled={busy || demoMode} onClick={() => void start('hard')}>运行困难层</button>
@@ -70,10 +72,12 @@ export default function EvaluationPage() {
     </select></label>
     {detail && <>
       <p>评测 {detail.id} · {detail.status} · 完成 {detail.results.filter((item) => item.status === 'complete').length}/{detail.results.length}</p>
+      {detail.backend && <p>冻结后端 {detail.backend.commit?.slice(0, 12) ?? '未知'} · 代码哈希 {detail.backend.runtime_sha256.slice(0, 12)}</p>}
       <div className="evaluation-table-wrap"><table><thead><tr><th>题目</th><th>重复</th><th>Run</th><th>科学分</th><th>轨迹 C</th><th>达标上限</th><th>展示分区间</th><th>耗时</th><th>Job</th><th>沙箱分钟</th><th>金额</th><th>状态</th></tr></thead>
         <tbody>{detail.results.map((item) => <tr key={item.id}>
           <td>{item.challenge_id}</td><td>{item.repeat_index}</td><td>{item.run_id || '—'}</td>
-          <td>{item.result?.science_score ?? 'unknown'}</td><td>{item.result?.trace_checklist_score ?? 'unknown'}</td>
+          <td>{item.result?.science_score ?? 'unknown'}{item.result?.science_source &&
+            <small>{item.result.science_source === 'executor_verified' ? '执行器运行，经系统核对' : '系统评分'}</small>}</td><td>{item.result?.trace_checklist_score ?? 'unknown'}</td>
           <td>{item.result?.trace_qualified_cap ?? '—'}</td>
           <td>{item.result ? `[${item.result.display_interval.lower ?? '?'}, ${item.result.display_interval.upper ?? '?'}]` : '—'}</td>
           <td>{item.result?.wall_seconds ?? '—'}</td>

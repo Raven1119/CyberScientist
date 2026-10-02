@@ -68,3 +68,18 @@ def test_job_mutations_wait_for_large_upload_without_replay(monkeypatch):
                        'arguments': {'action': action, 'operation_id': 'fixed'}}})
         assert result['result']['isError'] is True
     assert calls == [1350, 120]
+
+
+def test_sandbox_wait_matches_bounded_execution_and_transfer_without_replay(monkeypatch):
+    calls = []
+    def unavailable(request, timeout):
+        calls.append(timeout)
+        raise OSError('lost response')
+    monkeypatch.setattr(mcp_bridge.urllib.request, 'urlopen', unavailable)
+    for arguments in ({'action': 'exec', 'timeout': 1200}, {'action': 'files.write'}):
+        result = mcp_bridge._handle({'jsonrpc': '2.0', 'id': 1, 'method': 'tools/call',
+                                    'params': {'name': 'research_sandbox', 'arguments': arguments}})
+        assert result['result']['isError']
+        feedback = json.loads(result['result']['content'][0]['text'])['failure_feedback']
+        assert feedback['possible_remote_effect'] == 'unknown' and not feedback['automatic_resend']
+    assert calls == [1245, 375]

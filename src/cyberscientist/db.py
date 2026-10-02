@@ -483,7 +483,9 @@ SUBMISSION_V2_COLUMNS = {
 }
 GUIDANCE_PREDICTION_COLUMNS = {"prediction_md": "TEXT"}
 LOCAL_SCORE_V2_COLUMNS = {"scorer_file_hashes_json": "TEXT NOT NULL DEFAULT '{}'",
-                          "science_input_sha256": "TEXT"}
+                          "science_input_sha256": "TEXT", "score_source": "TEXT NOT NULL DEFAULT 'system'"}
+
+SANDBOX_OPERATION_V3_COLUMNS = {'command_sha256': 'TEXT', 'receipt_sha256': 'TEXT'}
 
 # checkpoints 表 v2 新增列（对既有库做幂等 ALTER）
 CHECKPOINT_V2_COLUMNS = {
@@ -515,6 +517,7 @@ AUTHORIZATION_V2_COLUMNS = {
     "max_sandboxes": "INTEGER NOT NULL DEFAULT 0",
     "max_sandbox_minutes": "INTEGER NOT NULL DEFAULT 0",
     "allow_sandbox_gpu": "INTEGER NOT NULL DEFAULT 0",
+    "max_compute_cost_cny": "TEXT",
 }
 
 COMPUTE_V2_COLUMNS = {
@@ -546,6 +549,29 @@ def _ensure_columns(conn: sqlite3.Connection, table: str,
             conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")
 
 
+SCHEMA_COMPUTE_COST = """
+CREATE TABLE IF NOT EXISTS runtime_observations (
+    kind TEXT PRIMARY KEY, payload_json TEXT NOT NULL, observed_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS executor_score_plans (
+    operation_id TEXT PRIMARY KEY, run_id TEXT NOT NULL REFERENCES runs(id),
+    trial_id TEXT NOT NULL REFERENCES trials(id), sandbox_id TEXT NOT NULL,
+    plan_json TEXT NOT NULL, plan_sha256 TEXT NOT NULL, created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS compute_cost_reservations (
+    run_id TEXT NOT NULL REFERENCES runs(id),
+    operation_id TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK(kind IN ('job','sandbox')),
+    hourly_rate_cny TEXT NOT NULL,
+    duration_seconds INTEGER NOT NULL,
+    amount_cny TEXT NOT NULL,
+    quote_ref TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY(run_id,kind,operation_id)
+);
+"""
+
+
 def init_db() -> None:
     with _db_lock:
         conn = get_db()
@@ -557,6 +583,8 @@ def init_db() -> None:
         conn.executescript(SCHEMA_RELIABILITY)
         conn.executescript(SCHEMA_LOCAL_SCORING)
         conn.executescript(SCHEMA_EVALUATIONS)
+        conn.executescript(SCHEMA_COMPUTE_COST)
+        _ensure_columns(conn, 'compute_sandbox_operations', SANDBOX_OPERATION_V3_COLUMNS)
         _ensure_columns(conn, "checkpoints", CHECKPOINT_V2_COLUMNS)
         _ensure_columns(conn, "runs", RUN_V2_COLUMNS)
         _ensure_columns(conn, "submissions", SUBMISSION_V2_COLUMNS)

@@ -71,6 +71,21 @@ class FakeController:
                    (db.utcnow(), reason, run_id))
 
 
+def test_evaluation_records_frozen_backend_and_declines_different_runtime(monkeypatch, tmp_path):
+    from cyberscientist import backend_identity
+    _catalog(monkeypatch, tmp_path)
+    evaluation = evaluations.create_evaluation('fast', 2, 'frozen-fake')
+    expected = json.loads(db.query_one('SELECT config_json FROM eval_runs WHERE id=?',
+                                      (evaluation['id'],))['config_json'])['backend']
+    assert expected['commit'] and len(expected['runtime_sha256']) == 64
+    monkeypatch.setattr(backend_identity, 'matches', lambda identity: False)
+    controller = FakeController()
+    with pytest.raises(evaluations.EvaluationError, match='冻结版本不一致'):
+        asyncio.run(evaluations.advance(controller))
+    assert not controller.starts
+    assert not db.query('SELECT * FROM runs')
+
+
 def _fake_score(run_id: str, result_id: str):
     run = db.query_one('SELECT challenge_id,current_trial_id FROM runs WHERE id=?', (run_id,))
     score = 100.0 if run['challenge_id'] == 'eval_a' else 40.0
@@ -137,7 +152,7 @@ def test_paused_infrastructure_failure_expires_original_grant_and_releases_queue
     assert len(terminated) == 1
 
 
-def test_required_environment_missing_blocks_only_affected_entries_before_paid_run(monkeypatch, tmp_path):
+def test_unverified_environment_does_not_prevent_executor_from_attempting_task(monkeypatch, tmp_path):
     from cyberscientist import runtime_environments
     _catalog(monkeypatch, tmp_path)
     evaluation = evaluations.create_evaluation('fast', 2, 'environment-fixture')
@@ -150,16 +165,10 @@ def test_required_environment_missing_blocks_only_affected_entries_before_paid_r
     monkeypatch.setattr(evaluations, '_score_run', _fake_score)
     controller = FakeController()
     asyncio.run(evaluations.advance(controller))
-    blocked = db.query('SELECT run_id,status,error FROM eval_results WHERE eval_id=? AND challenge_id=?',
+    attempts = db.query('SELECT run_id,status,error FROM eval_results WHERE eval_id=? AND challenge_id=?',
                        (evaluation['id'], 'eval_a'))
-    assert len(blocked) == 2 and all(r['run_id'] is None and r['status'] == 'failed' for r in blocked)
-    assert all('EnvironmentUnavailable' in r['error'] for r in blocked)
-    assert not db.query("SELECT 1 FROM runs WHERE challenge_id='eval_a'")
-    markdown, _ = evaluations.write_report(evaluation['id'])
-    assert 'EnvironmentUnavailable: 固定公开环境未验证' in markdown.read_text()
-    assert controller.starts
-    assert all(db.query_one('SELECT challenge_id FROM runs WHERE id=?', (rid,))['challenge_id'] == 'eval_b'
-               for rid in controller.starts)
+    assert len(attempts) == 2 and all(r['run_id'] is not None for r in attempts)
+    assert {r['run_id'] for r in attempts} <= set(controller.starts)
 
 
 def test_two_by_two_evaluation_and_resume(monkeypatch, tmp_path):
@@ -182,7 +191,10 @@ def test_two_by_two_evaluation_and_resume(monkeypatch, tmp_path):
     assert packet['evaluation_handoff'] == {
         'platform_submission_allowed': False, 'experience_write_allowed': False,
         'local_scoring_after_finish': True,
-        'agent_scoring_sandbox_required_for_finish': False}
+        'agent_scoring_sandbox_required_for_finish': False,
+        'executor_verified_score_accepted': True,
+        'scoring_failure_returns_to_executor': True,
+        'environment_preparation': 'executor'}
     second = FakeController()       # process restart: persisted queue, new controller
     for _ in range(4):
         asyncio.run(evaluations.advance(second))

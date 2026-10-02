@@ -62,20 +62,24 @@ def authority_facts(run_id: str) -> dict[str, Any]:
                         ' ON r.authorization_id=a.id AND a.run_id=r.id WHERE r.id=?', (run_id,))
     values = ({name: auth[name] for name in (
         'note', 'max_jobs', 'max_sandboxes', 'max_sandbox_minutes',
-        'max_submissions', 'max_run_minutes')} if auth else None)
+        'max_submissions', 'max_run_minutes', 'max_compute_cost_cny')} if auth else None)
     if values is not None:
         values['note'] = strip_secrets(values['note']) if values['note'] else values['note']
         values.update(allow_sandbox_gpu=bool(auth['allow_sandbox_gpu']),
                       allow_data_download=bool(auth['allow_data_download']))
-    from . import runtime_environments
+    from . import runtime_environments, runtime_facts
     result: dict[str, Any] = {'authorization': values,
-                              'runtime_environments': runtime_environments.facts()}
+                              'runtime_environments': runtime_environments.facts(),
+                              'operating_facts': runtime_facts.facts(run_id)}
     if db.eval_mode(run_id):
         result['evaluation_handoff'] = {
             'platform_submission_allowed': False,
             'experience_write_allowed': False,
             'local_scoring_after_finish': True,
             'agent_scoring_sandbox_required_for_finish': False,
+            'executor_verified_score_accepted': True,
+            'scoring_failure_returns_to_executor': True,
+            'environment_preparation': 'executor',
         }
     return result
 

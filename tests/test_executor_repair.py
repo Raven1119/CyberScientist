@@ -11,7 +11,12 @@ from test_collaboration import FakeExecutor, _decision
 from test_final_candidate_integrity import _run_with_scorer, _score
 
 
-def test_repeated_finish_failure_reopens_same_trial_for_executor(monkeypatch):
+@pytest.mark.parametrize('code,cause', [
+    ('INVALID_COMMAND', 'command timeout exceeds remaining sandbox time'),
+    ('SCORE_EXECUTION_UNKNOWN', 'science package transfer timeout'),
+    ('ENVIRONMENT_UNAVAILABLE', 'declared toolchain has not been prepared'),
+    ('SANDBOX_BUDGET', 'remaining scoring time insufficient')])
+def test_repeated_finish_failure_reopens_same_trial_for_executor(monkeypatch, code, cause):
     rid, tid, *_ = _run_with_scorer()
     before = dict(db.query_one('SELECT * FROM runs WHERE id=?', (rid,)))
     for number in range(3):
@@ -19,7 +24,7 @@ def test_repeated_finish_failure_reopens_same_trial_for_executor(monkeypatch):
                    " VALUES(?,?,'lifecycle',0,'done','finish_rejected',?,?)",
                    (f'old-{number}', rid, db.utcnow(), db.utcnow()))
     def failed(*args, **kwargs):
-        raise local_scoring.LocalScoreError('INVALID_COMMAND', 'command timeout exceeds remaining sandbox time')
+        raise local_scoring.LocalScoreError(code, cause, {'observed_cause': cause})
     monkeypatch.setattr(local_scoring, 'score_candidate', failed)
     executor = FakeExecutor()
     controller = RunController()
@@ -34,7 +39,8 @@ def test_repeated_finish_failure_reopens_same_trial_for_executor(monkeypatch):
     assert db.query_one('SELECT status FROM trials WHERE id=?', (tid,))['status'] == 'active'
     guidance = db.query_one("SELECT * FROM guidance WHERE run_id=? AND source='controller'", (rid,))
     assert guidance['status'] == 'sent'
-    assert 'INVALID_COMMAND' in guidance['text_md']
+    assert code in guidance['text_md'] and cause in guidance['text_md']
+    assert 'possible_remote_effect' in guidance['text_md'] and 'choices' in guidance['text_md']
     assert '系统修复反馈' in executor.prompts[0][1]
     assert controller.supervision_status(rid)['guidance'][0]['source'] == 'controller'
     assert db.query_one("SELECT 1 FROM events WHERE run_id=? AND type='executor.repair_requested'", (rid,))

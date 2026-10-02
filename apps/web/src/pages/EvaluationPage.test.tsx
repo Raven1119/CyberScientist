@@ -14,7 +14,7 @@ describe('evaluation page', () => {
       { items: [{ id: 'eval_one', suite: 'fast', status: 'running', label: '', created_at: '' }] } :
       { id: 'eval_one', suite: 'fast', status: 'running', results: [
         { id: 'er_1', challenge_id: 'figqa', repeat_index: 1, run_id: 'run_one', status: 'complete',
-          error: null, result: { science_score: 100, trace_checklist_score: 80,
+          error: null, result: { science_score: 100, science_source: 'executor_verified', trace_checklist_score: 80,
             trace_qualified_cap: null, display_interval: { lower: 30, upper: 100 },
             wall_seconds: 42, job_count: 2, job_unknown_count: 1,
             sandbox_minutes: 3.5, sandbox_minutes_status: 'confirmed',
@@ -23,10 +23,13 @@ describe('evaluation page', () => {
               job_estimate: { amount: '0.1200', currency: 'CNY', unpriced_count: 1 },
               sandbox_observed: { amounts: { CNY: '0.08', photons: '2.5' }, unmatched_count: 1 },
               sandbox_estimate: { amount: '0.0400', currency: 'CNY', status: 'estimated_partial', unpriced_count: 1 } } } },
-      ] })
+      ], backend: { commit: 'abcdef1234567890', runtime_sha256: '987654321abc9999' } })
     post.mockResolvedValue({ id: 'eval_two', suite: 'hard', status: 'running', results: [] })
     render(<EvaluationPage />)
     expect(await screen.findByText(/完成 1\/1/)).toBeTruthy()
+    expect(screen.getByText('执行器运行，经系统核对')).toBeTruthy()
+    expect(screen.getByText(/冻结后端 abcdef123456/)).toBeTruthy()
+    expect(screen.getByText(/20 个 Job/)).toBeTruthy()
     expect(screen.getByText('[30, 100]')).toBeTruthy()
     expect(screen.getByText('2 (+1 unknown)')).toBeTruthy()
     expect(screen.getByText('3.5')).toBeTruthy()

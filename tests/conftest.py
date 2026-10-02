@@ -53,6 +53,8 @@ _use_write_for_sandboxed_asyncio_wakeup()
 
 @pytest.fixture(autouse=True)
 def isolated_workspace(tmp_path, monkeypatch):
+    from cyberscientist import backend_identity
+    monkeypatch.setattr(backend_identity, '_loaded', None)
     data = tmp_path / ".cyberscientist"
     ws = tmp_path / "workspace"
     exp = tmp_path / "experience"

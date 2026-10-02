@@ -162,6 +162,7 @@ class AuthorizeBody(BaseModel):
     max_sandboxes: int = 0
     max_sandbox_minutes: int = 0
     allow_sandbox_gpu: bool = False
+    max_compute_cost_cny: float | None = None
     job_limits: dict | None = None
     allow_data_download: bool = False
     objective: str | None = None
@@ -217,6 +218,8 @@ class ExperienceReview(BaseModel):
 
 
 def create_app(web_dist: Path | None = None) -> FastAPI:
+    from . import backend_identity
+    backend_identity.record_startup()
     config.ensure_dirs()
     db.init_db()
     for challenge in db.query("SELECT id,resources_json FROM challenges WHERE resources_json IS NOT NULL"):
@@ -370,17 +373,20 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
                        "warnings": exc.warnings}})
 
     @app.exception_handler(local_scoring.LocalScoreError)
-    async def local_score_error(_: Request, exc: local_scoring.LocalScoreError):
+    async def local_score_error(request: Request, exc: local_scoring.LocalScoreError):
+        from . import tool_feedback
         return JSONResponse(status_code=404 if exc.code == 'NOT_FOUND' else 409,
                             content={"detail": {"code": exc.code, "message": str(exc),
-                                                "recoverable": True, "details_ref": None}})
+                                                "recoverable": True, "details": exc.details},
+                                     'failure_feedback': tool_feedback.failure(
+                                         request.url.path, str(exc), code=exc.code)})
 
     # ---------------- 健康 ----------------
 
     @app.get("/api/v1/health")
     async def health() -> dict[str, Any]:
         return {"ok": True, "mode": config.load_settings()["app"]["mode"],
-                "time": db.utcnow()}
+                "time": db.utcnow(), 'backend': backend_identity.loaded()}
 
     # ---------------- 设置与秘密 ----------------
 
@@ -887,6 +893,7 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
                                     max_sandboxes=body.max_sandboxes,
                                     max_sandbox_minutes=body.max_sandbox_minutes,
                                     allow_sandbox_gpu=body.allow_sandbox_gpu,
+                                    max_compute_cost_cny=body.max_compute_cost_cny,
                                     objective=body.objective)
 
     @app.put("/api/v1/runs/{run_id}/budget")
@@ -986,9 +993,12 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
         return row
 
     @app.exception_handler(compute.ComputeError)
-    async def compute_error(_: Request, exc: compute.ComputeError):
+    async def compute_error(request: Request, exc: compute.ComputeError):
+        from . import tool_feedback
         return JSONResponse(status_code=409, content={"detail": {"code": exc.code, "message": str(exc),
-                                                         "details": exc.details}})
+                                                         "details": exc.details},
+            'failure_feedback': tool_feedback.failure(request.url.path, exc.details or str(exc),
+                code=exc.code, remote_effect='unknown')})
 
     @app.exception_handler(datasets.DataError)
     async def data_error(_: Request, exc: datasets.DataError):
@@ -1029,14 +1039,16 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
         body = await request.json()
         result = await asyncio.to_thread(compute.cli, identity["run_id"], body.get("args"), body.get("cwd", ""))
         controller.notify_run_change(identity["run_id"])
-        return result
+        from . import tool_feedback
+        return tool_feedback.attach(identity['run_id'], 'bohr', result)
 
     @app.post('/api/v1/tools/sandbox')
     async def tool_sandbox(request: Request) -> dict:
         identity = _tool_auth(request)
         result = await asyncio.to_thread(sandboxes.dispatch, identity['run_id'], await request.json())
         controller.notify_run_change(identity['run_id'])
-        return result
+        from . import tool_feedback
+        return tool_feedback.attach(identity['run_id'], 'sandbox', result)
 
     @app.get('/api/v1/runs/{run_id}/sandboxes')
     async def run_sandboxes(run_id: str) -> dict:
@@ -1067,7 +1079,8 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
         else:
             raise compute.ComputeError("INVALID_ACTION", "支持 submit/list/reconcile/stop")
         controller.notify_run_change(rid)
-        return result
+        from . import tool_feedback
+        return tool_feedback.attach(rid, 'job.' + str(action), result)
 
     @app.post("/api/v1/tools/package_check")
     async def tool_package_check(request: Request) -> dict:
@@ -1087,11 +1100,28 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
         return await asyncio.to_thread(mailboxes.inspect_trace_narrative,
             identity["run_id"], body.get("trial_id"), body.get("package_path"))
 
+    @app.post('/api/v1/tools/operating_facts')
+    async def tool_operating_facts(request: Request) -> dict:
+        from . import runtime_facts
+        identity = _tool_auth(request, role=None)
+        return await asyncio.to_thread(runtime_facts.facts, identity['run_id'])
+
     @app.post("/api/v1/tools/local_score")
     async def tool_local_score(request: Request) -> dict:
-        from . import local_scoring
+        from . import local_scoring, executor_scoring
         identity = _tool_auth(request)
         body = await request.json()
+        action = body.get('action', 'evaluate')
+        if action == 'prepare':
+            return await asyncio.to_thread(executor_scoring.prepare,
+                identity['run_id'], body.get('trial_id'), body.get('operation_id'),
+                body.get('sandbox_id'), body.get('package_path'), body.get('environment_paths'))
+        if action == 'register':
+            return await asyncio.to_thread(executor_scoring.register,
+                identity['run_id'], body.get('trial_id'), body.get('operation_id'),
+                body.get('execution_operation_id'))
+        if action != 'evaluate':
+            raise local_scoring.LocalScoreError('INVALID_ACTION', '支持 evaluate/prepare/register')
         return await asyncio.to_thread(local_scoring.evaluate,
             identity['run_id'], body.get('trial_id'), body.get('sandbox_id'),
             body.get('operation_id'), body.get('package_path'))

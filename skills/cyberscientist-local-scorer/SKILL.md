@@ -16,3 +16,7 @@ metadata:
 提交前对当前产物做本地评分，把评分器版本、封存包哈希和分项写入账本；每次实验提交写下可证伪的分数变化预测。平台分数只有在 `confirmed` 后才作为校准目标。对齐同一封存包哈希，分别看科学分、轨迹分和展示分；分数或回执修订时更新校准状态，不悄悄覆盖旧预测。将不一致归因于具体尚未复刻的规则，而非伪造更高本地分。
 
 子项候选只有经 `research_local_score` 评分并登记后，才进入本 Run 的正式候选记录；独立实验日志中的自报数值不会自动登记。评分器的 `components` 中，嵌套子项用 `score`、`points` 或 `*_score` 表示分数，其余字段为诊断。系统按 Run、评分器哈希和完整科学输入哈希复用评分；finish 会比较实际最终包与已登记的子项最佳成绩。退步时由大脑修正，或用反馈中的 `confirmation_token` 在 finish 动作的 `finish_confirmation` 中提供 token 和 reason_md，明确保留当前包；系统不替换产物。
+
+已有评分器的科研 Run 保持评分器只读。需要自行准备环境或系统评分失败时，用 `research_local_score(action=prepare)` 固定当前候选与评分输入；按返回的 transfers 在本 Trial 的受控沙箱中传输文件，自行准备依赖，再通过 `research_sandbox(action=exec)` 执行返回的完整 command。以同一次 exec 的 operation_id 作为 `execution_operation_id` 调用 `research_local_score(action=register)`；后端核对自己的回执后才登记正式分，来源为 `executor_verified`。有声明环境时，用 environment_paths 指定实际工具链、公共库和固定项目所在路径；身份和项目哈希在评分执行中核对。环境准备、评分器 ZIP、科学 ZIP 或公开数据有误时，按返回的事实修复后明确选择下一操作。
+
+提交或最终评分被拒绝时，继续当前 Run 并处理系统修复反馈。先通过 `research_operating_facts` 查看剩余时间、额度、价格和环境事实，自行安排环境准备与最终评分。远端状态 unknown 的原操作保持原 ID 并只读对账；反馈本身不新增授权，不自动重发。

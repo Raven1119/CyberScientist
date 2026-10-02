@@ -1849,6 +1849,8 @@ function SubmissionsPanel({
   const [items, setItems] = useState<Submission[] | null>(null)
   const [localScoring, setLocalScoring] = useState<{
     scorer: { scorer_version: string; version: string; image: string } | null
+    local_scores?: { id: string; run_id: string; science_score: number | null;
+      score_source: 'system' | 'executor_verified'; package_sha256: string }[]
     calibrations: { submission_id: string; predicted_display_score: number | null;
       platform_display_score: number | null; display_delta: number | null;
       science_delta: number | null; trace_delta: number | null; valid: number;
@@ -1945,6 +1947,11 @@ function SubmissionsPanel({
         <p className="small-text">{localScoring?.scorer
           ? `版本 ${localScoring.scorer.version} (${localScoring.scorer.scorer_version.slice(0, 12)}) · 镜像 ${localScoring.scorer.image}`
           : '本题尚未配置本地科学评分器'}</p>
+        {(localScoring?.local_scores ?? []).filter(score => !runId || score.run_id === runId).slice(0, 10).map(score => (
+          <p className="small-text" key={score.id}>科学分 {score.science_score ?? '未知'} ·
+            {score.score_source === 'executor_verified' ? '执行器运行，经系统核对' : '系统评分'} ·
+            封存包 {score.package_sha256.slice(0, 12)}</p>
+        ))}
       </div>
       {runId && <div className="callout" style={{ marginBottom: 12 }}>
         <strong>提交包只读预检</strong>

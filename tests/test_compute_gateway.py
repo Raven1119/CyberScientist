@@ -57,6 +57,28 @@ def test_large_job_input_timeout_and_streamed_secret_boundary(run, monkeypatch):
     assert secret.decode() not in json.dumps(result)
 
 
+def test_input_over_old_gib_threshold_is_advisory_and_executor_may_attempt(run, monkeypatch):
+    import os
+    rid, source = run
+    payload = source / 'synthetic-large-input.bin'
+    payload.write_bytes(b'synthetic payload')
+    original_stat = Path.stat
+    def reported_size(path, *args, **kwargs):
+        value = original_stat(path, *args, **kwargs)
+        if path == payload:
+            parts = list(value)
+            parts[6] = 1024**3 + 1
+            return os.stat_result(parts)
+        return value
+    monkeypatch.setattr(Path, 'stat', reported_size)
+    calls = []
+    monkeypatch.setattr(compute, '_native', lambda *a, **k: calls.append(a) or receipt('JobId: 123'))
+    result = compute.submit(rid, 'explicit-large-input', spec(), str(source))
+    assert result['platform_job_id'] == 123 and len(calls) == 1
+    event = db.query_one("SELECT payload FROM events WHERE run_id=? AND type='job.input_warning'", (rid,))
+    assert json.loads(event['payload'])['input_bytes'] > 1024**3
+
+
 def test_submit_exception_and_terminal_pending_reservation_remain_unknown(run, monkeypatch):
     rid, source = run
     def broken_native(*args, **kwargs):
@@ -298,17 +320,20 @@ def test_create_is_idempotent_and_quota_survives_unknown(run, monkeypatch):
     monkeypatch.setattr(compute, '_native', lambda args, **k: calls.append(args) or receipt('Error: no response', False))
     assert compute.submit(rid, 'create1', spec(), str(source))['status'] == 'unknown'
     assert compute.submit(rid, 'create1', spec(), str(source))['deduplicated']
-    with pytest.raises(compute.ComputeError, match='先对账'):
-        compute.submit(rid, 'create2', spec(), str(source))
-    assert len(calls) == 1
-    assert compute.list_jobs(rid)['reserved_jobs'] == 1
+    assert compute.submit(rid, 'create2', spec(), str(source))['status'] == 'unknown'
+    with pytest.raises(compute.ComputeError, match='并发额度'):
+        compute.submit(rid, 'create3', spec(), str(source))
+    assert len(calls) == 2  # Only explicit new operations dispatch; create1 never replayed.
+    assert compute.list_jobs(rid)['reserved_jobs'] == 2
     monkeypatch.setattr(compute, '_native', lambda *a, **k: receipt('[]'))
     compute.reconcile(rid)
-    assert compute.list_jobs(rid)['active_or_unknown'] == 1
+    assert compute.list_jobs(rid)['active_or_unknown'] == 2
 
 
 def test_concurrent_create_reserves_before_dispatch(run, monkeypatch):
     rid, source = run; entered = Event(); release = Event(); calls = []
+    limits = dict(compute.DEFAULT_LIMITS, max_concurrent_jobs=1)
+    db.execute('UPDATE authorizations SET job_limits_json=? WHERE run_id=?', (json.dumps(limits), rid))
     def native(args, **kw):
         calls.append(args); entered.set(); assert release.wait(3)
         return receipt('JobId: 123')
@@ -319,7 +344,7 @@ def test_concurrent_create_reserves_before_dispatch(run, monkeypatch):
         try:
             with pytest.raises(compute.ComputeError) as caught:
                 compute.submit(rid, 'two', spec(), str(source))
-            assert caught.value.code == 'CREATE_UNKNOWN'
+            assert caught.value.code == 'CONCURRENCY_LIMIT'
         finally:
             release.set()
         assert first.result()['platform_job_id'] == 123

@@ -33,16 +33,21 @@ def test_verified_identity_registry_exposes_public_environment_facts(monkeypatch
     assert runtime_environments.resolve('lean-4.32.2') == first
 
 
-def test_missing_prebuilt_environment_fails_before_sandbox_rental(monkeypatch):
+def test_missing_prebuilt_environment_does_not_block_controlled_attempt(monkeypatch):
     rid, tid, _, files, manifest = _run_with_scorer()
     manifest['runtime'] = {'environment_id': 'lean-4.32.2'}
     monkeypatch.setattr(local_scoring, 'scorer_manifest', lambda _: manifest)
     monkeypatch.setattr(local_scoring, 'reuse_score', lambda *args: None)
-    monkeypatch.setattr(sandboxes, 'create', lambda *args, **kwargs: pytest.fail('must fail before spending'))
+    monkeypatch.setattr(sandboxes, 'bounded_lifetime', lambda *args: 60)
+    attempts = []
+    monkeypatch.setattr(sandboxes, 'create', lambda *args, **kwargs:
+                        attempts.append(args) or {'status': 'active', 'sandbox_id': 'synthetic-score-sandbox'})
+    monkeypatch.setattr(local_scoring, 'evaluate', lambda *args, **kwargs: {'science_score': 10})
     row = db.query_one('SELECT * FROM runs WHERE id=?', (rid,))
     from test_trace_narrative import _zip
-    with pytest.raises(runtime_environments.EnvironmentUnavailable):
-        evaluations.score_preflight(row, {'sealed_bytes': _zip(files)}, 'synthetic-score', 'synthetic-sandbox')
+    assert evaluations.score_preflight(row, {'sealed_bytes': _zip(files)},
+                                       'synthetic-score', 'synthetic-sandbox')['science_score'] == 10
+    assert len(attempts) == 1
 
 
 def test_large_input_warns_before_reservation_and_lists_only_verified_availability(run, monkeypatch):
@@ -51,12 +56,13 @@ def test_large_input_warns_before_reservation_and_lists_only_verified_availabili
     with payload.open('wb') as stream:
         stream.truncate(256*1024**2 + 1)
     from cyberscientist import compute
-    with pytest.raises(compute.ComputeError) as error:
-        compute.submit(rid, 'large-input', spec(), str(source))
-    assert error.value.code == 'LARGE_INPUT_CONFIRMATION_REQUIRED'
-    facts = error.value.details
+    monkeypatch.setattr(compute, '_native', lambda *args, **kwargs:
+                        {'ok': False, 'not_started': True, 'stderr': 'synthetic no dispatch'})
+    assert compute.submit(rid, 'large-input', spec(), str(source))['status'] == 'not_started'
+    warning = db.query_one("SELECT payload FROM events WHERE run_id=? AND type='job.input_warning'", (rid,))
+    facts = json.loads(warning['payload'])
     assert facts['input_bytes'] > 256*1024**2
     assert facts['reservation_created'] is False
     assert facts['prebuilt_environments'][0]['status'] == 'unverified'
-    assert not db.query('SELECT 1 FROM compute_jobs WHERE run_id=?', (rid,))
+    assert db.query('SELECT 1 FROM compute_jobs WHERE run_id=?', (rid,))
     assert db.query_one("SELECT 1 FROM events WHERE run_id=? AND type='job.input_warning'", (rid,))

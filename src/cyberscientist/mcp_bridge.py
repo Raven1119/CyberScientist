@@ -104,13 +104,16 @@ _TOOLS.append(_NARRATIVE_TOOL)
 
 _TOOLS.append({
     "name": "research_local_score",
-    "description": "在当前 Trial 已授权、镜像匹配的 Bohrium 沙箱中运行题目本地科学评分器，记录封存包哈希和轨迹预测；不提交。",
+    "description": "本地评分：evaluate 系统执行；prepare 返回固定哈希输入与可信评分命令，执行器自行准备环境、传输并用 research_sandbox exec 执行；register 按 execution_operation_id 核对通道回执登记正式分。不得修改评分器；不提交。",
     "inputSchema": {"type": "object", "additionalProperties": False,
-        "properties": {"trial_id": {"type": "string"},
+        "properties": {"action": {"enum": ["evaluate", "prepare", "register"]},
+                       "trial_id": {"type": "string"},
                        "sandbox_id": {"type": "string"},
                        "operation_id": {"type": "string"},
-                       "package_path": {"type": "string"}},
-        "required": ["trial_id", "sandbox_id", "operation_id"]}})
+                       "package_path": {"type": "string"},
+                       "execution_operation_id": {"type": "string"},
+                       "environment_paths": {"type": "object"}},
+        "required": ["trial_id", "operation_id"]}})
 
 _DATA_TOOL = {
     "name": "research_data",
@@ -121,6 +124,12 @@ _DATA_TOOL = {
                        "operation_id": {"type": "string"}},
         "required": ["action"]}}
 _TOOLS.append(_DATA_TOOL)
+
+_FACTS_TOOL = {
+    'name': 'research_operating_facts',
+    'description': '只读查询原授权剩余时间、Job/沙箱额度、CPU价格、费用估算、环境和评分耗时事实；不创建资源。',
+    'inputSchema': {'type': 'object', 'additionalProperties': False, 'properties': {}}}
+_TOOLS.append(_FACTS_TOOL)
 
 _TRACE_TOOL = {
     "name": "research_trace",
@@ -163,17 +172,25 @@ def _post(path: str, payload: dict, *, timeout: int = 10,
             with urllib.request.urlopen(req, timeout=timeout) as resp:
                 return json.loads(resp.read().decode("utf-8"))
         except urllib.error.HTTPError as exc:
-            detail = exc.read().decode("utf-8", errors="replace")[:500]
-            return {"error": f"HTTP {exc.code}: {detail}"}  # 协议错误不重试
+            detail = exc.read(48000).decode("utf-8", errors="replace")
+            try:
+                structured = json.loads(detail)
+            except ValueError:
+                structured = {'detail': detail[:4000]}
+            return {'error': f'HTTP {exc.code}', **structured}  # 协议错误不重试
         except OSError as exc:
             last_err = exc
             if attempt + 1 < attempts:
                 time.sleep(1)
-    return {"error": f"后端不可达: {last_err}"}
+    return {'error': f'后端不可达: {last_err}', 'failure_feedback': {
+        'tool': path, 'cause': str(last_err), 'possible_remote_effect': 'unknown',
+        'automatic_resend': False,
+        'choices': ['只读核对原 operation_id；后端可能仍在执行，不自动重发'],
+        'authority': '此错误不改变原授权'}}
 
 
 def _tool_result(payload: dict) -> dict:
-    is_error = "error" in payload or payload.get("ok") is False or payload.get("status") in ("unknown", "not_started")
+    is_error = "error" in payload or payload.get("ok") is False or payload.get("status") in ("unknown", "not_started", "failed")
     return {"content": [{"type": "text",
                          "text": json.dumps(payload, ensure_ascii=False)}],
             "isError": is_error}
@@ -195,7 +212,7 @@ def _handle(msg: dict) -> dict | None:
     if method == "tools/list":
         role = os.environ.get("CS_TOOL_ROLE", "executor")
         return {"jsonrpc": "2.0", "id": mid, "result": {
-            "tools": [_TRACE_TOOL, _DATA_TOOL, _SCORES_TOOL, _NARRATIVE_TOOL] if role == "brain" else _TOOLS}}
+            "tools": [_TRACE_TOOL, _DATA_TOOL, _SCORES_TOOL, _NARRATIVE_TOOL, _FACTS_TOOL] if role == "brain" else _TOOLS}}
     if method == "tools/call":
         params = msg.get("params", {})
         name = params.get("name")
@@ -211,12 +228,18 @@ def _handle(msg: dict) -> dict | None:
                             timeout=1350 if action == "submit" else 120 if action == "stop" else 30,
                             retry_transient=action not in ("submit", "stop"))
         elif name == "research_sandbox":
-            out = _post("/api/v1/tools/sandbox", args, timeout=180,
+            requested = args.get('timeout')
+            wait = (max(180, requested + 45) if args.get('action') == 'exec'
+                    and type(requested) is int and 1 <= requested <= 10800 else
+                    375 if args.get('action') in ('files.read', 'files.write') else 180)
+            out = _post("/api/v1/tools/sandbox", args, timeout=wait,
                         retry_transient=False)
         elif name == "research_package_check":
             out = _post("/api/v1/tools/package_check", args)
         elif name == "research_trace_narrative_check":
             out = _post("/api/v1/tools/trace_narrative_check", args)
+        elif name == 'research_operating_facts':
+            out = _post('/api/v1/tools/operating_facts', {}, retry_transient=False)
         elif name == "research_local_score":
             out = _post("/api/v1/tools/local_score", args, timeout=180,
                         retry_transient=False)

@@ -213,8 +213,6 @@ def _authorized(conn, run_id):
     rows = conn.execute('SELECT status FROM compute_jobs WHERE run_id=?', (run_id,)).fetchall()
     if sum(r['status'] != 'not_started' for r in rows) >= auth['max_jobs']:
         raise ComputeError('JOB_LIMIT', '已达到 Job 总数上限（包括失败与 unknown）')
-    if any(r['status'] in ('submitting', 'unknown') for r in rows):
-        raise ComputeError('CREATE_UNKNOWN', '仍有未完成或未知的创建请求，必须先对账')
     if sum(r['status'] not in TERMINAL | {'not_started'} for r in rows) >= limits['max_concurrent_jobs']:
         raise ComputeError('CONCURRENCY_LIMIT', '运行中及未知任务已占满并发额度')
     return run, limits, remaining
@@ -252,20 +250,17 @@ def submit(run_id: str, operation_id: str, spec: dict, input_directory: str,
             if path.name in ('.env', 'secrets.json', 'auth.json', 'id_rsa', 'id_ed25519'):
                 raise ComputeError('SECRET_INPUT', '输入目录含凭据文件')
             total += path.stat().st_size
-            if total > 1024**3:
-                raise ComputeError('DATA_TOO_LARGE_FOR_INPUT', '输入超过 1 GiB；Wenyon 到 dataset_path 的挂载映射尚未验证')
             with path.open('rb') as stream:
                 sha = hashlib.file_digest(stream, 'sha256').hexdigest()
             manifest.append((str(path.relative_to(source)), sha))
-    if total > 256 * 1024**2 and (preflight or {}).get('confirmed_input_bytes') != total:
+    if total > 256 * 1024**2:
         from . import runtime_environments
         details = {'input_bytes': total, 'threshold_bytes': 256 * 1024**2,
                    'prebuilt_environments': runtime_environments.facts(),
                    'reservation_created': False,
-                   'remedy': '检查预置环境；仍需上传时在 preflight.confirmed_input_bytes 明确确认当前字节数'}
+                   'remedy': '输入较大；执行器自行决定上传或在已有授权算力中准备环境'}
         db.append_event(run_id, 'controller', 'job.input_warning',
                         {'operation_id': operation_id, **details}, trial_id=run['current_trial_id'])
-        raise ComputeError('LARGE_INPUT_CONFIRMATION_REQUIRED', '输入超过 256 MiB；创建前需要确认', details)
     from . import job_preflight
     files = {rel: (source / rel).read_bytes() for rel, _ in manifest
              if Path(rel).suffix in ('.py', '.txt') and (source / rel).stat().st_size <= 2_000_000}
@@ -286,11 +281,12 @@ def submit(run_id: str, operation_id: str, spec: dict, input_directory: str,
                         trial_id=run['current_trial_id'])
     except job_preflight.PreflightError as exc:
         db.append_event(run_id, 'controller', 'job.preflight',
-                        {'operation_id': operation_id, 'status': 'rejected',
-                         'code': exc.code, 'details': exc.details},
+                        {'operation_id': operation_id, 'status': 'advisory',
+                         'code': exc.code, 'details': exc.details, 'message': str(exc)},
                         trial_id=run['current_trial_id'])
-        raise ComputeError(exc.code, str(exc), exc.details) from exc
     digest = hashlib.sha256(_json([spec, manifest, str(source)]).encode()).hexdigest()
+    from . import compute_budget
+    price = compute_budget.rate(run_id, 'job', str(spec.get('machine_type', '')))
     # Persist a reservation before materializing/dispatching, under the SQLite writer lock.
     with db.transaction() as conn:
         old = conn.execute('SELECT * FROM compute_jobs WHERE operation_id=?', (operation_id,)).fetchone()
@@ -318,6 +314,7 @@ def submit(run_id: str, operation_id: str, spec: dict, input_directory: str,
         effective = dict(spec, project_id=project, nnode=1, max_reschedule_times=0, job_type='container', disk_size=disk,
                          job_name=f"cs-{run_id}-{hashlib.sha256(operation_id.encode()).hexdigest()[:16]}")
         now = db.utcnow()
+        compute_budget.reserve_tx(conn, run_id, 'job', operation_id, minutes * 60, price)
         conn.execute('INSERT INTO compute_jobs(operation_id,run_id,trial_id,request_hash,spec_json,input_directory,status,created_at,updated_at,data_refs_json,purpose)'
                      " VALUES(?,?,?,?,?,?,'submitting',?,?,?,?)", (operation_id, run_id, run['current_trial_id'], digest,
                      _json(effective), str(source), now, now, _json(data_refs),

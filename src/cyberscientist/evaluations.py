@@ -156,7 +156,8 @@ def create_evaluation(suite: str, repeats: int = 2, label: str = '') -> dict[str
                        for role in ('brain', 'executor')},
         }
     config_snapshot = {
-        'schema': 'cyberscientist-evaluation/v2', 'catalog_sha256': hashlib.sha256(CATALOG.read_bytes()).hexdigest(),
+        'schema': 'cyberscientist-evaluation/v3', 'catalog_sha256': hashlib.sha256(CATALOG.read_bytes()).hexdigest(),
+        'limits': _limits(suite),
         'suite': suite, 'repeats': repeats, 'label': label,
         'entries': entries, 'frozen': frozen,
         'models': (frozen[entries[0]['challenge_id']]['models']
@@ -164,6 +165,8 @@ def create_evaluation(suite: str, repeats: int = 2, label: str = '') -> dict[str
         'shadow_enabled': bool(settings.get('shadow', {}).get('enabled', False)),
         'settings_revision': settings.get('revision'),
     }
+    from . import backend_identity
+    config_snapshot['backend'] = backend_identity.capture()
     eid = 'eval_' + uuid.uuid4().hex[:12]
     now = db.utcnow()
     with db.transaction() as conn:
@@ -232,7 +235,7 @@ def get_evaluation(eval_id: str) -> dict[str, Any]:
     return {'id': row['id'], 'suite': row['suite'], 'label': row['label'],
             'status': row['status'], 'repeats': row['repeats'], 'created_at': row['created_at'],
             'ended_at': row['ended_at'],
-            'results': output}
+            'results': output, 'backend': json.loads(row['config_json']).get('backend')}
 
 
 def list_evaluations() -> list[dict[str, Any]]:
@@ -259,8 +262,11 @@ def _marker(config_snapshot: dict[str, Any], item: dict[str, Any], result_id: st
 
 def _limits(suite: str) -> dict[str, int]:
     return {'minutes': 60 if suite == 'fast' else 180,
-            'jobs': 2 if suite == 'fast' else 5,
-            'sandbox_minutes': 60 if suite == 'fast' else 180}
+            'jobs': 2 if suite == 'fast' else 20,
+            'sandbox_minutes': 60 if suite == 'fast' else 600,
+            'sandboxes': 2 if suite == 'fast' else 4,
+            'max_cpu': 16,
+            'max_compute_cost_cny': None if suite == 'fast' else 50}
 
 
 async def advance(controller: Any) -> None:
@@ -269,6 +275,9 @@ async def advance(controller: Any) -> None:
     for evaluation in db.query("SELECT * FROM eval_runs WHERE status='running' ORDER BY created_at"):
         eid = evaluation['id']
         snapshot = json.loads(evaluation['config_json'])
+        from . import backend_identity
+        if snapshot.get('backend') and not backend_identity.matches(snapshot['backend']):
+            raise EvaluationError('评测后端与冻结版本不一致；未继续调度或扩大额度')
         by_id = {item['challenge_id']: item for item in snapshot['entries']}
         for result in db.query('SELECT * FROM eval_results WHERE eval_id=? ORDER BY rowid', (eid,)):
             if result['status'] in ('complete', 'failed'):
@@ -276,21 +285,9 @@ async def advance(controller: Any) -> None:
             rid = result['run_id']
             if rid is None:
                 try:
-                    required = local_scoring.scorer_manifest(result['challenge_id']).get('runtime', {}).get('environment_id')
-                except local_scoring.LocalScoreError:
-                    required = None  # Preserve existing handling of legacy scorers.
-                if required:
-                    from . import runtime_environments
-                    try:
-                        runtime_environments.resolve(required)
-                    except runtime_environments.EnvironmentUnavailable as exc:
-                        # Declared immutable infrastructure must exist before
-                        # spending on an evaluation whose score requires it.
-                        _failure(result['id'], 'EnvironmentUnavailable: ' + str(exc))
-                        continue
-                try:
                     marker = _marker(snapshot, by_id[result['challenge_id']], result['id'])
                     marker['eval_id'] = eid
+                    marker['backend'] = snapshot.get('backend')
                     run = controller.create_run(result['challenge_id'], 'connected',
                                                 snapshot['shadow_enabled'], eval_mode=marker)
                 except Exception as exc:
@@ -327,14 +324,21 @@ async def advance(controller: Any) -> None:
                                    scoring_reason=reason)
                     continue
             if run['phase'] == 'created':
-                limit = _limits(evaluation['suite'])
+                # Historical frozen evaluations retain their original grants.
+                limit = snapshot.get('limits') or {
+                    'minutes': 60 if evaluation['suite'] == 'fast' else 180,
+                    'jobs': 2 if evaluation['suite'] == 'fast' else 5,
+                    'sandbox_minutes': 60 if evaluation['suite'] == 'fast' else 180,
+                    'sandboxes': 2, 'max_cpu': 16, 'max_compute_cost_cny': None}
                 if not run['authorization_id']:
                     challenge = db.query_one('SELECT content FROM challenges WHERE id=?',
                                              (result['challenge_id'],))
                     controller.authorize(rid, 'connected', True, 0, limit['minutes'], 0,
                         'Local-only evaluation; no platform submission; no experience writes',
                         max_jobs=limit['jobs'], allow_data_download=True,
-                        max_sandboxes=2, max_sandbox_minutes=limit['sandbox_minutes'],
+                        max_sandboxes=limit['sandboxes'], max_sandbox_minutes=limit['sandbox_minutes'],
+                        job_limits={'max_cpu': limit['max_cpu']},
+                        max_compute_cost_cny=limit['max_compute_cost_cny'],
                         allow_sandbox_gpu=False,
                         objective=challenge['content'])
                 try:
@@ -424,9 +428,6 @@ def score_preflight(run, preflight: dict[str, Any], score_op: str, sandbox_op: s
     if cached:
         return cached
     runtime = manifest.get('runtime', {})
-    if runtime.get('environment_id'):
-        from . import runtime_environments
-        runtime_environments.resolve(runtime['environment_id'])
     public_resource = None
     if runtime.get('public_resource'):
         declared = runtime['public_resource']
@@ -720,13 +721,15 @@ def _finish_result(result_id: str, run_id: str, *, scoring_status: str | None = 
     marker = db.eval_mode(run_id) or {}
     result = {
         'run_id': run_id, 'config_sha256': hashlib.sha256(row['config_snapshot'].encode()).hexdigest(),
+        'backend': marker.get('backend'),
         'experience_sha256': marker.get('experience_sha256'),
         'challenge_content_sha256': marker.get('challenge_content_sha256'),
         'challenge_source': marker.get('challenge_source'),
         'sealed_package_sha256': seal_info.get('sealed_package_sha256'),
         'data_evidence_class': seal_info.get('data_evidence_class'),
         'admission_error_code': seal_info.get('admission_error_code'),
-        'science_score': score, 'science_status': scoring_status or ('scored' if local else 'unavailable'),
+        'science_score': score, 'science_source': local['score_source'] if local else None,
+        'science_status': scoring_status or ('scored' if local else 'unavailable'),
         'science_reason': scoring_reason, 'scorer_version': local['scorer_version'] if local else None,
         'trace_checklist_score': checklist.get('checklist_score') if checklist else None,
         'trace_status': checklist.get('status') if checklist else 'unavailable',

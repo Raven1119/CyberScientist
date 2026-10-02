@@ -29,10 +29,13 @@ def _clean(value: Any) -> Any:
     return redact_value(value, secrets)
 
 
-def _receipt(value: dict) -> dict:
+def _receipt(value: dict, *, stdout_limit: int = 12000) -> dict:
     safe = _clean({k: value.get(k) for k in ('ok', 'exit_code', 'unknown', 'not_started',
                                            'stdout', 'stderr', 'truncated') if k in value})
-    if isinstance(safe.get('stdout'),str): safe['stdout']=safe['stdout'][:12000]
+    if isinstance(safe.get('stdout'),str):
+        if len(safe['stdout']) > stdout_limit:
+            safe['truncated'] = True
+        safe['stdout']=safe['stdout'][:stdout_limit]
     if isinstance(safe.get('stderr'),str): safe['stderr']=safe['stderr'][-4000:]
     return safe
 
@@ -221,6 +224,8 @@ def create(run_id: str, operation_id: str, request: dict, *, _session_id: str | 
         raise compute.ComputeError('INVALID_COMMAND', 'GPU 参数无效')
     project_id = compute._project_id(config.load_settings()['bohrium'].get('project_id'))
     now = db.utcnow()
+    from . import compute_budget
+    price = compute_budget.rate(run_id, 'sandbox', request.get('cpu', ''))
     with db.transaction() as conn:
         prior = conn.execute('SELECT * FROM compute_sandboxes WHERE operation_id=?',
                              (operation_id,)).fetchone()
@@ -244,6 +249,9 @@ def create(run_id: str, operation_id: str, request: dict, *, _session_id: str | 
             raise compute.ComputeError('NOT_AUTHORIZED', '本 Run 未授权沙箱数量和累计分钟数')
         if gpu and not auth['allow_sandbox_gpu']:
             raise compute.ComputeError('GPU_NOT_AUTHORIZED', '沙箱 GPU 未单独授权')
+        limits = compute.validate_limits(json.loads(auth['job_limits_json']))
+        if request.get('cpu') and int(request['cpu'].split('c')[0]) > limits['max_cpu']:
+            raise compute.ComputeError('RESOURCE_LIMIT', '沙箱CPU核心数超出本Run的机器授权')
         if not run['started_at'] or auth['max_run_minutes'] <= 0:
             raise compute.ComputeError('UNBOUNDED_SANDBOX', '沙箱需要本 Run 的时长上限')
         run_left = auth['max_run_minutes'] * 60 - (datetime.now(timezone.utc) -
@@ -261,6 +269,7 @@ def create(run_id: str, operation_id: str, request: dict, *, _session_id: str | 
         if timeout > run_left or reserved + timeout > auth['max_sandbox_minutes'] * 60:
             raise compute.ComputeError('SANDBOX_BUDGET', '沙箱时长超过本 Run 剩余额度')
         expires = (datetime.now(timezone.utc) + timedelta(seconds=timeout)).isoformat()
+        compute_budget.reserve_tx(conn, run_id, 'sandbox', operation_id, timeout, price)
         conn.execute('INSERT INTO compute_sandboxes(operation_id,run_id,trial_id,request_json,status,'
                      'created_at,expires_at,updated_at) VALUES(?,?,?,?,?,?,?,?)',
                      (operation_id,run_id,run['current_trial_id'],_json(request),'creating',now,expires,now))
@@ -369,16 +378,21 @@ def execute(run_id: str, sandbox_id: str, command: str, timeout: int,
         previous = conn.execute('SELECT * FROM compute_sandbox_operations WHERE operation_id=?',(op,)).fetchone()
         if previous:
             raise compute.ComputeError('OPERATION_CONFLICT','执行操作 ID 已使用；不自动重复执行')
-        conn.execute('INSERT INTO compute_sandbox_operations(operation_id,run_id,sandbox_id,action,status,started_at)'
-                     ' VALUES(?,?,?,?,?,?)',(op,run_id,sandbox_id,'exec','running',db.utcnow()))
+        conn.execute('INSERT INTO compute_sandbox_operations(operation_id,run_id,sandbox_id,action,status,started_at,command_sha256)'
+                     ' VALUES(?,?,?,?,?,?,?)',(op,run_id,sandbox_id,'exec','running',db.utcnow(),
+                                               hashlib.sha256(command.encode()).hexdigest()))
         db.append_event_tx(conn,run_id,'controller','sandbox.exec_started',
                            {'operation_id':op,'sandbox_id':sandbox_id,'command':_clean(command)},
                            trial_id=row['trial_id'])
     started = time.monotonic()
-    receipt = compute._native(['sandbox','exec',sandbox_id,'--command',command,'--timeout',
-                               str(timeout),'--no-interactive','-o','json'],timeout=timeout+30)
+    try:
+        receipt = compute._native(['sandbox','exec',sandbox_id,'--command',command,'--timeout',
+                                   str(timeout),'--no-interactive','-o','json'],timeout=timeout+30)
+    except Exception as exc:
+        receipt = {'ok': False, 'unknown': True, 'exit_code': None,
+                   'stdout': '', 'stderr': '沙箱执行回执未确认: ' + type(exc).__name__}
     duration = round(time.monotonic()-started,3)
-    safe = _receipt(receipt)
+    safe = _receipt(receipt, stdout_limit=48000)
     body = _body(receipt)
     outcome = _data(body)
     remote_exit = outcome.get('exit_code') if isinstance(outcome,dict) else None
@@ -389,10 +403,13 @@ def execute(run_id: str, sandbox_id: str, command: str, timeout: int,
     if not isinstance(output,str): output=safe.get('stdout','')
     if not isinstance(stderr,str): stderr=safe.get('stderr','')
     status = ('completed' if receipt.get('ok') and effective_exit == 0 and not remote_error
+              and (not isinstance(body, dict) or body.get('ok') is not False)
               else 'unknown' if receipt.get('unknown') else 'failed')
     with db.transaction() as conn:
-        conn.execute('UPDATE compute_sandbox_operations SET status=?,completed_at=?,receipt_json=?'
-                     ' WHERE operation_id=?',(status,db.utcnow(),_json(safe),op))
+        serialized = _json(safe)
+        conn.execute('UPDATE compute_sandbox_operations SET status=?,completed_at=?,receipt_json=?,receipt_sha256=?'
+                     ' WHERE operation_id=?',(status,db.utcnow(),serialized,
+                                             hashlib.sha256(serialized.encode()).hexdigest(),op))
         db.append_event_tx(conn,run_id,'controller','sandbox.exec_completed',
                            {'operation_id':op,'sandbox_id':sandbox_id,'command':_clean(command),
                             'exit_code':effective_exit,'duration_seconds':duration,
@@ -454,7 +471,11 @@ def transfer(run_id: str, action: str, sandbox_id: str, remote_path: str,
         conn.execute('INSERT INTO compute_sandbox_operations(operation_id,run_id,sandbox_id,action,status,started_at)'
                      ' VALUES(?,?,?,?,?,?)',(op,run_id,sandbox_id,'files.'+action,'running',db.utcnow()))
     argv += ['--no-interactive','-o','json']
-    receipt = compute._native(argv,timeout=min(330,max(30,_seconds_left(row))))
+    try:
+        receipt = compute._native(argv,timeout=min(330,max(30,_seconds_left(row))))
+    except Exception as exc:
+        receipt = {'ok': False, 'unknown': True, 'exit_code': None,
+                   'stdout': '', 'stderr': '沙箱传输回执未确认: ' + type(exc).__name__}
     files = input_files if action=='write' else (_hash_files(path) if path and path.exists() else [])
     if action=='read' and files==before: files=[]
     files = _clean(files)

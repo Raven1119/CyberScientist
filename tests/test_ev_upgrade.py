@@ -722,25 +722,24 @@ def test_probe_purpose_is_counted_and_old_submit_reports_unchecked_api(monkeypat
     assert all(item['report']['api_checked'] is False for item in reports)
 
 
-def test_compute_preflight_rejects_before_job_reservation(monkeypatch):
+def test_compute_preflight_returns_advice_without_blocking_executor_choice(monkeypatch):
     _, rid = _run()
     db.execute("UPDATE runs SET current_trial_id='t' WHERE id=?", (rid,))
     source = config.WORKSPACE_DIR / 'runs' / rid / 'trials' / 't' / 'input'
     source.mkdir(parents=True)
     (source / 'run.py').write_text('import probe\n')
-    monkeypatch.setattr(compute, '_native', lambda *a, **k: pytest.fail('must not dispatch'))
+    calls = []
+    monkeypatch.setattr(compute, '_native', lambda *a, **k: calls.append(a) or
+                        {'ok': False, 'not_started': True, 'stderr': 'synthetic no dispatch'})
     spec = {'command': 'python run.py', 'image_address': 'fixture/image:1',
             'machine_type': 'c2_m2_cpu', 'max_run_time': 5}
-    with pytest.raises(compute.ComputeError) as exc:
-        compute.submit(rid, 'missing-module', spec, str(source))
-    assert exc.value.code == 'MISSING_LOCAL_MODULE'
-    assert db.query_one('SELECT COUNT(*) AS n FROM compute_jobs')['n'] == 0
+    assert compute.submit(rid, 'missing-module', spec, str(source))['status'] == 'not_started'
     (source / 'run.py').write_text('print(1)\n')
-    with pytest.raises(compute.ComputeError) as facts:
-        compute.submit(rid, 'missing-facts', spec, str(source),
-            {'api_checks': [{'module': 'scipy.sparse.linalg', 'attr': 'gmres', 'params': ['rtol']}]})
-    assert facts.value.code == 'IMAGE_FACTS_MISSING'
-    assert db.query_one('SELECT COUNT(*) AS n FROM compute_jobs')['n'] == 0
+    assert compute.submit(rid, 'missing-facts', spec, str(source),
+            {'api_checks': [{'module': 'scipy.sparse.linalg', 'attr': 'gmres', 'params': ['rtol']}]})['status'] == 'not_started'
+    reports = [json.loads(item['payload']) for item in db.query("SELECT payload FROM events WHERE type='job.preflight'")]
+    assert [item['code'] for item in reports] == ['MISSING_LOCAL_MODULE', 'IMAGE_FACTS_MISSING']
+    assert all(item['status'] == 'advisory' for item in reports) and len(calls) == 2
 
 
 async def test_v2_finish_requires_objective_assessment(monkeypatch):

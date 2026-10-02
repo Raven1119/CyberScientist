@@ -50,6 +50,19 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.resetAllMocks(); vi.unstubAllGlobals(); stream.clear() })
 
 describe('research selection and lifecycle safety', () => {
+  it('shows formally registered executor scores with their source and package', async () => {
+    get.mockImplementation(async (path: string) => path === '/api/v1/challenges/A/submissions'
+      ? { items: [] } : path === '/api/v1/challenges/A/local-scores'
+        ? { scorer: null, calibrations: [], local_scores: [{ id: 'verified-score', run_id: 'run-A',
+          science_score: 64.79, score_source: 'executor_verified', package_sha256: 'abcdef1234569999' }] }
+        : data(path))
+    const user = userEvent.setup()
+    render(<ResearchPage />)
+    await screen.findByText('A intention')
+    await user.click(screen.getByRole('tab', { name: '提交与评分' }))
+    expect((await screen.findByText(/科学分 64.79/)).textContent).toContain('执行器运行，经系统核对')
+    expect(screen.getByText(/abcdef123456/)).toBeTruthy()
+  })
   it('does not show a stale package preflight after the package path changes', async () => {
     const old = deferred<unknown>()
     get.mockImplementation(async (path: string) => path === '/api/v1/challenges/A/submissions'

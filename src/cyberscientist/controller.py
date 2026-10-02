@@ -544,12 +544,15 @@ class RunController:
                   allow_data_download: bool = False,
                   max_sandboxes: int = 0, max_sandbox_minutes: int = 0,
                   allow_sandbox_gpu: bool = False,
+                  max_compute_cost_cny: float | str | None = None,
                   objective: str | None = None) -> dict[str, Any]:
         run = self._require_run(run_id)
         if run["phase"] not in ("created", "blocked"):
             raise ControllerError("INVALID_STATE", f"当前阶段 {run['phase']} 不能授权")
         from .compute import validate_limits
         limits = validate_limits(job_limits)
+        from . import compute_budget
+        cost_cap = compute_budget.validate_cap(max_compute_cost_cny)
         if any(type(v) is not int or v < 0 for v in (max_jobs, max_run_minutes,
                 max_submissions, max_model_turns, max_sandboxes, max_sandbox_minutes)):
             raise ControllerError('INVALID_ARGUMENT', '预算必须为非负整数')
@@ -560,12 +563,12 @@ class RunController:
             "INSERT INTO authorizations(id, run_id, scope, allow_model_calls,"
             " max_model_turns, max_run_minutes, max_submissions, max_jobs,"
             " granted_at, note, job_limits_json,allow_data_download,max_trials,"
-            " max_sandboxes,max_sandbox_minutes,allow_sandbox_gpu)"
-            " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            " max_sandboxes,max_sandbox_minutes,allow_sandbox_gpu,max_compute_cost_cny)"
+            " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (auth_id, run_id, scope, int(allow_model_calls), max_model_turns,
              max_run_minutes, max_submissions, max_jobs, db.utcnow(), note, json.dumps(limits),
              int(allow_data_download), config.load_settings()["run_defaults"]["max_trials"],
-             max_sandboxes,max_sandbox_minutes,int(allow_sandbox_gpu)))
+             max_sandboxes,max_sandbox_minutes,int(allow_sandbox_gpu),cost_cap))
         db.execute("UPDATE runs SET authorization_id=?, block_reason=NULL,objective_md=? WHERE id=?",
                    (auth_id, (objective if objective is not None else note), run_id))
         if run["phase"] == "blocked":
@@ -2068,7 +2071,7 @@ class RunController:
 
     async def _request_executor_repair(self, run_id: str, trial_id: str | None,
                                        *, stage: str, code: str, detail: str,
-                                       event_seq: int) -> str | None:
+                                       event_seq: int, failure_details: dict | None = None) -> str | None:
         """Return pipeline facts through the durable outbox, within the original grant.
 
         This dispatches no Job, score or submission. An uncertain delivery remains
@@ -2084,6 +2087,8 @@ class RunController:
         except ControllerError:
             return None
         reason = f'controller repair: {stage}'
+        from . import tool_feedback
+        feedback = tool_feedback.failure(stage, failure_details or detail, code=code)
         with db.transaction() as conn:
             # Recheck after acquiring the transaction: a user pause wins.
             current = conn.execute('SELECT * FROM runs WHERE id=?', (run_id,)).fetchone()
@@ -2110,7 +2115,8 @@ class RunController:
                        'text_md': _redact(
                            f'流程阻塞，阶段：{stage}；错误：{code}。\n{detail}\n'
                            f'原始事实：{run_id}#{event_seq}。请检查并尝试修复后报告检查点。'
-                           '沿用当前 Run、Trial 和原授权；不能扩大预算或修改运行内核/评分器。'
+                           + '\n受控工具反馈：' + json.dumps(feedback, ensure_ascii=False) + '\n'
+                           + '沿用当前 Run、Trial 和原授权；不能扩大预算或修改运行内核/评分器。'
                            '未知的远端创建/提交或投递状态先只读对账，不重复创建或提交。'
                            '这条反馈不授予新的模型、算力或比赛提交权限。'),
                        'evidence_refs': [f'{run_id}#{event_seq}'],
@@ -2120,7 +2126,8 @@ class RunController:
                          " ('done','reported_complete','stalled')", (trial_id,))
             db.append_event_tx(conn, run_id, 'controller', 'executor.repair_requested',
                 {'guidance_id': gid, 'stage': stage, 'error_code': _redact(code, 120),
-                 'failure_seq': event_seq, 'deduplicated': bool(existing)}, trial_id=trial_id)
+                 'failure_seq': event_seq, 'failure_feedback': feedback,
+                 'deduplicated': bool(existing)}, trial_id=trial_id)
         await self._deliver_queued_guidance(run_id)
         return gid
 
@@ -3298,6 +3305,7 @@ class RunController:
                              f"题目与平台契约：{json.dumps(dict(db.query_one('SELECT title,content,resources_json,platform_snapshot_json FROM challenges WHERE id=?', (run['challenge_id'],))), ensure_ascii=False)}\n"
                              f"产物路径事实（题面提取与评分器验证范围）：{json.dumps(self._artifact_facts(run['challenge_id']), ensure_ascii=False)}\n"
                              f"预置环境事实：{json.dumps(observation.authority_facts(run_id).get('runtime_environments', []), ensure_ascii=False)}\n"
+                             f"运行事实（时间、环境、网络、价格及剩余额度）：{json.dumps(observation.authority_facts(run_id).get('operating_facts'), ensure_ascii=False)}\n"
                              f"公开数据物化状态：{json.dumps(datasets.status(run['challenge_id'])['items'], ensure_ascii=False)}\n"
                              "提交包会追加真实事件轨迹并接受准入检查；自有 trace.jsonl 只能使用七种合法 step_type，artifact_path 必须是包内现存文件，禁止编造工具调用或费用。\n"
                              "冻结经验（只使用这份正文；采用时在检查点声明版本）：\n"
@@ -3440,7 +3448,8 @@ class RunController:
                         repair = await self._request_executor_repair(
                             run_id, run['current_trial_id'], stage='final_package_score',
                             code=getattr(exc, 'code', type(exc).__name__),
-                            detail=str(exc), event_seq=failed['seq'])
+                            detail=str(exc), event_seq=failed['seq'],
+                            failure_details=getattr(exc, 'details', None))
                         if not repair:
                             db.append_event(run_id, 'controller', 'executor.repair_deferred',
                                 {'failure_seq': failed['seq'],

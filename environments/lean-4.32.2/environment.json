@@ -4,8 +4,12 @@
     "lean_version": "4.32.2",
     "mathlib_revision": "905b95818eb32af7874a58b427f50c1711a5e96c"
   },
+  "identity_checks": {
+    "lean_version": {"argv": ["{lean_bin}/lean", "--version"], "prefix": "Lean (version "},
+    "mathlib_revision": {"argv": ["git", "-C", "{mathlib_root}", "rev-parse", "HEAD"]}
+  },
   "lean_bin": "/opt/cs-lean/bin",
   "mathlib_root": "/opt/cs-mathlib",
   "descriptor_path": "/opt/cs-lean-environment.json",
-  "usage": "Use the verified image for a CPU Job or scoring sandbox. Link pinned packages from mathlib_root into the fixed project .lake/packages. No runtime downloads or cache uploads."
+  "usage": "This declares the required toolchain and public library identity; verified image availability is a separate fact. The executor may prepare them in an authorized CPU Job or sandbox. For controlled grading, declare lean_bin, mathlib_root and project_root to prepare; the fixed runner checks identity and public project hashes in the same execution."
 }
