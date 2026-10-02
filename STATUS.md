@@ -2,28 +2,19 @@
 
 ## 已实现
 
-- CS-UP-06评分剩余时间修复：控制器mkdir/解压/评分每阶段均按当前沙箱及原Run剩余时长收缩命令超时，保留5秒余量；耗尽即拒绝，不续期、不新租算力、不自动重放。已部署应用修复，科学评分器与声明哈希不变。
+- CS-UP-06流程阻塞修复：最终包预检/评分、实验邮箱提交失败或未知，交由原执行器通过持久guidance队列接回同一Trial修复，失败次数不自动暂停。保留原授权/门禁、用户及大脑显式暂停；未知投递或提交不重发。评分前冻结完整封存包、科学包、评分器和哈希清单，失败不登记分数；前端显示系统修复反馈及投递状态。无新增迁移。
 
-- CS-UP-06回执脱敏补修：未知OSS/AWS/GCS签名下载链接的临时凭证参数纳入通用脱敏，覆盖普通URL、JSON/HTML分隔转义及整条URL编码；保留科学数据里的普通signature字段、正式分数及下载文件。后续已随命令时间修复安全重载应用；未改科学评分器声明。
+- CS-UP-06 W0逐Run审计完成，系统缺陷与科学决策分开，原生证据引用及严重程度见docs/EVAL_V1_RUN_AUDIT.md。原有用户文件保留。
 
-- CS-UP-06 F1补修：同分平台期可由已审查评分器声明单调计分输入参与候选对账；原始数值/正式分数分别保留，不猜诊断方向。比较声明按评分器哈希冻结，与评分及产物哈希原子登记；缓存不租沙箱，大脑明确确认入口保留。
+- CS-UP-06 W1通用修复：最终完整包与分项候选哈希对账、明确确认事件、相同输入/评分器缓存、双路径产物契约、授权/objective事实、题目级模型冻结、原生回执脱敏、预约分页精确匹配、256 MiB输入提示和固定环境注册表；不加入评测科学方法或答案。
 
-- CS-UP-06报告修复：无Run的环境预检失败使用eval_results.error展示原因，科学分保持unknown；原困难层组已建立，无额外重复。
+- CS-UP-06运行中修复：旧Job -1终态映射、完整科学包对象存储传输、原授权到期收尾、128 MiB有界轨迹证据、临时签名URL脱敏、各评分命令按当前Run/沙箱剩余时长收缩。结束Run的未知预约仅启动时对账，常规后台轮询非终态Run及已知ID的非终态Job；账本unknown保留。
 
-- CS-UP-06 F4：按自有 sandbox ID/operation 精确匹配原生查询费用，CNY与光子分别汇总；缺项不填零，前端及eval report区分查询时金额、估算与最终总账单。源查询时间与落账时间分别记录，原始脱敏回执只留本机。评测创建前检查评分器声明的固定环境，不可用时保留该项基础设施失败并继续其他原计划项。
-- CS-UP-06运行中轨迹诊断修复：原20 MB产物证据上限导致合法39 MB声明产物报unavailable；通用有界上限改为128 MiB，完整字节/哈希保留，超限仍拒绝；评分器源码及科学结果不变。
+- CS-UP-06 F1单调输入声明在受影响两次Run及两组评测均终态后配置，原科学score.py不变；不能追溯声称本轮已受新声明保护。
 
-- CS-UP-06真实v2收尾修复：CLI HTTP deadline保留unknown；控制器评分沙箱按Run绑定原生工作区，科学包走CLI对象存储大文件通道，不分块上传工具链、不替换产物。评分沙箱存活时长受原Run及累计沙箱剩余额度约束。评测Run即使因故障暂停，原授权到期也收尾并保留缺分，不阻塞后续队列、不追加评分。
+- CS-UP-06 F4前端及eval report分别显示沙箱查询费用、沙箱估算、Job条件估算及未定价项；旧Job spendTime暂按秒、单位未独立验证，cost币种/总账单不强行确认。报价投影保留原观察时间和来源哈希，不含账号余额。
 
-- CS-UP-06真实v2新缺陷：旧Job列表已验证的-1映射为Failed，修复accepted账本未同步；精确ID/名称匹配与未知保守边界保持。失败Job占累计额度、释放活跃槽位，CLI其他数字字段不混用。
-
-- CS-UP-06 W1 接续：固定公开项目在预置 Lean 环境中先离线构建，失败/unknown 不进入评分；模板沙箱实际规格独立留痕，回执逐字符串脱敏。接入沙箱自身公开报价与生命周期估算，前端、JSON/Markdown 评测报告均单独显示估算及未定价项，不混算币种未知的 Job cost。
-
-- CS-UP-06模型更新与W2：项目内Linux Codex独立更新至0.159.3，保留旧客户端；两个应用执行路径及五个评测题目已配置gpt-6.1-sol/xhigh，全局CLI配置、认证、默认模型不变。原计划六次快速层已建立eval_95a39bcde778，无额外验证Run。
-
-- CS-UP-06 W1：最终包分项最佳候选对账、明确确认事件、同科学输入/评分器评分复用、双路径契约、跨审阅授权事实、题面 objective、题目级评测模型冻结和 JSON 脱敏修复。每项均有回归测试；没有调整题目科研方法或停止策略。固定 Lean 配方/已验证环境注册表及 256 MiB Job 创建前提示已接入，但配方尚无可用镜像。只读 Job 分页保留局部成功、预约精确匹配和平台原始费用投影已接入，前端显示费用缺项。详情见 DECISIONS 的 CS-UP-06。
-
-- CS-UP-06 W0：新增 `docs/EVAL_V1_RUN_AUDIT.md`，逐 Run 分类审计 v1 10 次评测，按严重程度列出 W1 输入；系统缺陷与科学决策分开，已修复的旧后端问题单列。原有未跟踪文件保留。
+- CS-UP-06模型更新：项目内Linux Codex0.159.3，原0.155.1保留；两个应用原生路径与五题选择gpt-6.1-sol/xhigh，默认及全局CLI配置/认证不变。
 
 - CS-UP-05 W0–W2：设计约束已同步；目录收录 abc、FigQA-0177/0178、Paired-block Lean、Matchgate/SWAP，新增两道科学评分器。评测可用 `cyberscientist eval run --suite fast|hard --repeats 2` 启动，SQLite 持久队列按现有 Run 容量创建 connected Run，冻结经验、模型、监督和 skills 快照；评测 Run 禁止平台提交与经验写入，结束前封存、本地科学评分和公开 v6 轨迹诊断。`eval report <eval_id>` 重建 Markdown/JSON；前端评测页显示进度、分数区间与状态。原始评测包和回执仍留本机忽略目录。
 - CS-UP-05 W3：公开题目当前 GET 不可取回时，评测可导入仓库中按文件和题面哈希固定的历史公开题面快照；Run 与结果记录题面内容哈希和来源。此回退仅用于目录内预先固定的题目，不替代当前平台状态确认。
@@ -84,44 +75,19 @@
 
 ## 已实际验证
 
-- CS-UP-06 Matchgate首轮新缺陷：run_ee8143cd3e #2201因固定1200秒评分超时超过已收缩沙箱寿命而拒收；#2463大脑暂停，原授权到期关闭。原队列第二轮run_a654e422fd启动，没有追加重复。fake先复现INVALID_COMMAND，再验证传输后重算及到期/外来沙箱拒绝，定向78 passed、全量760 passed/2 skipped；compileall/diff通过。部署后实际后端PID30348/健康200，同一第二轮#432/#434恢复，started_at、授权和模型快照均未改变；真实评分新分支仍待验收。
+- CS-UP-06原计划两层各一轮、每题两次，10项均终态，8个实际Run；两次Lean创建前EnvironmentUnavailable。正式科学分5项：FigQA-0177/0178各两次100，abc第二次20；其他5项unknown。未补跑快速题或扩大W2额度；详见docs/EVAL_V2_2026-10.md。
 
-- CS-UP-06签名回执缺陷先由38个fake场景在旧代码复现；新增编码分隔边界后定向110 passed，全量`.venv/bin/pytest -q`为754 passed、2 skipped（既有回环限制）；compileall/diff --check通过。前端源码未变，沿用本轮40 passed/build。没有额外科学Run或付费算力。
-- CS-UP-06 Job价格只读核实：原生`machine list --choose-type cpu --scene job --no-interactive --output json`返回55/55机型，c2_m2_cpu/c2_m4_cpu的price为0.16，c4_m8_cpu为0.32；官方费用页注明Job以元/小时计价。这是当前机型报价，尚未当作原API cost字段的币种或最终账单；不与沙箱4c8g的0.80报价混用。
+- CS-UP-06原队列进程中断：10-02实测旧后端/监控进程不存在，用户确认手动关机，原Matchgate第二轮授权已过期；通过原生控制器收尾，封闭模型启动/恢复，原开始时间、授权、配置不变。最终测试后11:57 UTC将自有后端4789重载为37608，健康200、前端构建资源及评测费用API核对通过；原授权、科学评分器、模型事件、算力/提交/经验数量不变，常规Job对账队列0。这是观察时状态，不保证持续存活。
 
-- CS-UP-06 F3工具目录补证：只读详情确认平台有Lean4/Mathlib4公共镜像；元数据版本分别为v4.12.0-rc1/v4.27.0-rc1，配方使用未固定工具链/分支，未声明固定Mathlib构建缓存，不能据此通过本卡环境验收。目录子域查询返回平台ClickHouse超时，未当作空结果。22:22:55 UTC原生bohr 2.7.8 `image list --size 512 --no-interactive --output json`成功、total=0/has_more=false；仍保留原创建unknown，Job客户端不变，无新算力。
+- CS-UP-06评测原始SQLite核对：平台提交记录/事件0，W2开始后经验修订0，经验写入拒绝事件21；自有W2活跃沙箱0。W1额外真实验证Run0、CPU Job0、科学沙箱0分钟。
 
-- CS-UP-06 F3只读目录复核：官方公共分类GET完整返回20类；Basic Image 21/21、Third-party software 42/42版本描述未标出Lean/Mathlib，Tools for Agents只检查首100/88,011条，同样未发现版本证据。未穷尽代理工具目录，不能断言平台没有合适环境；未知私有创建预约不变，无新建资源或额外验证Run。
+- CS-UP-06独立原生审计27个rollout、11604条JSONL/44391466字节，证实存在自有历史资料复用，重复非盲态独立。不得把得分差归因单一模型或修复。
 
-- CS-UP-06 F3上游容器复核：固定Mathlib revision的blueprint配方明确未预装Mathlib；官方Docker CI只构建lean/gitpod/gitpod-blueprint，不能由包名证明固定缓存就绪。Kimina公共标签GET连接超时，无响应、未重试；仍未判定其可用标签。没有拉取镜像、执行配方或使用科学算力。
+- CS-UP-06最终交付回归：.venv/bin/pytest -q实测803 passed、2 skipped（376.56秒，沙箱禁回环相关测试明确跳过）；执行器修复/最终包/协作定向94 passed。npm --prefix apps/web test -- --run实测41 passed，npm --prefix apps/web run build、compileall、git diff --check通过。原始测试日志留本机忽略目录。
 
-- CS-UP-06 F1同分退步补修：定向49 passed，全量`.venv/bin/pytest -q`为715 passed、2 skipped（既有回环限制）；compileall及diff --check通过。前端未改，沿用本轮40 passed/build。fake验证正式分数不变、两项指标退步拒绝/明确确认、契约冻结、事件与评分原子回滚及缓存不创建沙箱。
+- CS-UP-06 F3最新只读image list成功total0/has_more=false，回执SHA-256 05112965ee1925ab06edcada7fe51d4e56a26629dafe43a561d781f9327edc65；空目录不能证明异步未知创建已失败，无第二次资源创建。
 
-- CS-UP-06费用与轨迹诊断修复完整回归：`.venv/bin/pytest -q`为708 passed、2 skipped（既有回环监听限制）；`npm --prefix apps/web test -- --run`为40 passed，`npm --prefix apps/web run build`通过；compileall和git diff --check通过。所有新增缺陷均有fake回归，未增加W1真实快速题验证。
-
-- CS-UP-06快速层第二轮abc run_a96d4666d4已finished，正式科学分20；原生完整包上传/评分成功，两个CPU Job Finished/retrieved。原封存包仅离线重做轨迹诊断后公开v6检查表100、91对工具调用，展示区间[6,20]；这不是官方轨迹分。沙箱已清理。FigQA-0177两轮run_cfb012c971/run_a9979ad18c均完成100，FigQA-0178两轮run_5c7f89d51c/run_938a02d72c也均完成100；困难层进入Matchgate第一轮run_ee8143cd3e，没有新增重复、Attempt或经验写入。
-- CS-UP-06费用真实只读来源：2026-10-01 19:06:41 UTC沙箱列表的自有资源投影，v1九个Run可见合计0.17 CNY，v2首轮0.08 CNY；只是查询时金额，缺项及最终结算仍未确认。原输出SHA-256为41912eafd920ae2c1cbdcefabf6c52dfaa7449f9163ee9dd2504f737c747492b；两层v1和当前v2已由eval report重生成。新版API真实返回首轮0.08 CNY及final_settlement_confirmed=false。
-
-- CS-UP-06接续：完整`.venv/bin/pytest -q`为693 passed、2 skipped（既有回环限制），传输/评分/授权到期的定向回归通过；compileall和git diff --check通过。前端源码未改，沿用本轮已执行的40 passed及build通过。
-- CS-UP-06快速层：首轮run_224c5edd1b因33,513,990字节完整科学包传输deadline而未取得正式科学分，失败证据保留；原授权到期后新增evaluation.budget_exhausted事件并关闭，未追加其时间或计算。原队列第二轮run_a96d4666d4于19:05 UTC启动，两角色冻结gpt-6.1-sol/xhigh；eval report已从数据库重建首轮缺分、token、2 Job及7.009沙箱分钟。没有额外验证Run。
-- CS-UP-06额外只读核对：新CLI账单接口成功返回1条通用消费记录但无资源ID，不能归因到Run；沙箱历史列表能精确对应13个已登记评测沙箱的费用字段，首轮沙箱cost=0.08/paymentType=0，按CLI契约为CNY，查询时观测值不视为最终结算。原始账单只留本机，应用账单接入仍待完成。镜像CLI的零副作用dry-run显示v4构建入口，与先前v2私有镜像请求不同；未知创建预约仍保留。
-
-- CS-UP-06失败状态：同一真实Job的列表-1与受控_native原生Failed/exitCode1一致，账本已用此只读证据结算；定向49 passed、全套682 passed/2 skipped。科研脚本未修改；后端有界重载后同Run已恢复running，started_at及authorization_id不变；#452/#453/#456记录恢复和执行器续跑。
-
-- CS-UP-06原生补审计：只读定位十个v1 Run的27个现存Codex rollout（15大脑/12执行器），核对归属/哈希，解析11,604条记录、44,391,466字节。EVAL_V1_RUN_AUDIT新增原生行号及覆盖表，纠正此前未查到和未显示跨Run读取的观察；原始材料仅留本机，未调用模型或科学算力。
-
-- CS-UP-06模型更新：官方固定包完整性校验、Codex --version=0.159.3、原生清单11项含gpt-6.1-sol，两角色会话确认xhigh。正式run_224c5edd1b已有真实输出和用量，线程元数据同样确认准确模型/xhigh。执行原计划fast/repeats2命令及eval report；pytest 679 passed、2 skipped（回环限制），前端40 passed、build、compileall（src/tests/checks）、diff --check通过。原始证据仅留本机。
-
-- CS-UP-06 剩余门槛只读复核（15:12 UTC）：原生 model/list 内容已变，仍九项，逐项 id/model/displayName 未出现准确 gpt-6.1-sol；Daybreak无已验证映射，零模型turn。SQLite 中目标标签v2评测0组、verified预置环境0项。公开替代环境核对：锁定 Mathlib上游镜像未预装Mathlib，Kimina默认Lean4.26.0，均未验证满足本卡版本；不据失效搜索或不同版本镜像冒称环境可用。应用代码未再次变动，沿用上一提交677 passed/2 skipped与前端40 passed的实际验证。
-
-- CS-UP-06 W1 接续最终检查：`.venv/bin/pytest -q` 677 passed、2 skipped；`npm --prefix apps/web test -- --run` 40 passed，`npm --prefix apps/web run build`、compileall、diff --check 通过（Node/npm 使用用户已安装 Linux 路径）。两层 `eval report` 实际重生成，科学分不变；九个有沙箱的 v1 Run 按当前沙箱公开报价与账本生命周期估算合计0.4065 CNY，标注非账单、不与 Job 未知币种金额混加。只读原生 SKU 报价和模板硬件源哈希均保留本机，公开文档只有脱敏统计。
-
-- CS-UP-06 W1 首轮检查：`.venv/bin/pytest -q` 664 passed、2 skipped（现有回环监听限制）；`npm --prefix apps/web test -- --run` 40 passed，`npm --prefix apps/web run build`、`.venv/bin/python -m compileall -q src tests`、`git diff --check` 通过。此前一轮 661 passed 后新增暂停竞态、诊断数值排除和冻结包防篡改测试，最终全套已重跑。新 fake 场景覆盖分项退步/确认、缓存无沙箱、输入变化失效、路径冲突、授权事实、目标、脱敏、分页部分失败、保留 unknown、预置环境不可用和大输入创建前提示。
-
-- CS-UP-06 W1：本机 SQLite 一致备份后新增 science_input_sha256 列和 runtime_environments 表，两次 init_db 幂等；已从真实只读 Job 列表核对 v1 十个已知 Job 的 cost 字段。Lean #1588 和 Matchgate 第一轮 #1358 记录两个无 ID 预约仍 unknown，未重发。现有两个 eval report 命令已实际从数据库重建含费用缺项的本机报告；原科学分未改变。
-- CS-UP-06 W1 外部前置：镜像 Dockerfile 检查成功；整数 projectId 创建请求收到 code 148888/rpc error、没有镜像 ID。新主机私有列表 total=0；旧主机返回 401/code 2000。官方资源价格查询返回 HTTP 400/code 148888，没有取得单价。均只记录真实观察，不把 HTTP 成功当资源创建成功。
-
-- CS-UP-06 W0：实际 HEAD `55b8c8c1741866e6e50fd0ca970674d3f214f96a`，已跟踪工作区开工时干净；以只读 SQLite URI 审读 7,220 条事件和 65 份审阅帧，核对已落地产物与回执。没有模型 turn、Job、沙箱或 Bohrium 请求。`.venv/bin/pytest -q` 为 640 passed、2 skipped（沙箱禁止回环监听）；前端 `npm --prefix apps/web test -- --run` 为 40 passed，`npm --prefix apps/web run build`、`.venv/bin/python -m compileall -q src tests checks` 和 `git diff --check` 通过。后端结果留本机 `.package-checks/cs-up-06/w0-checks/`；首个未保存结果的会话句柄丢失，因此不声称它通过，以保存退出码的完整执行为准。
+- CS-UP-06 Job场景报价55/55：c2_m2_cpu/c2_m4_cpu 0.16、c4_m8_cpu 0.32元/小时，官方费用页提供单位；这是报价而非旧cost币种确认。原报价仅离线投影已有自有Run，无额外科学算力。
 
 - CS-UP-05 W2：迁移前 SQLite 已备份到本机忽略目录 `.package-checks/cs-up-05/pre-eval-migration.sqlite`（22,241,280 B），原库连续两次 `db.init_db()` 后 `eval_runs`、`eval_results` 均存在且初始 0 行。fake 两题×两次验收覆盖容量、重启续跑、去重、报告与零提交/零经验修订；评测提交和经验写入拒绝会记事件。`.venv/bin/pytest -q`：622 passed、2 skipped；`PATH=/home/wmywb/.local/bin:$PATH npm --prefix apps/web test -- --run`：40 passed；同一 PATH 下 `npm --prefix apps/web run build`、`.venv/bin/python -m compileall -q src tests`、`git diff --check` 通过。W2 未启动真实模型、Job、沙箱或 Attempt。
 - CS-UP-05 W3 真实基线：快速层 `eval_3630add80ac7` 6/6、困难层 `eval_34ef954c5c78` 4/4 Run 完成；6/10 次有本地科学分。abc 两次均 20，FigQA-0177/0178 各一次 100、一次因封存路径不在已验证评分范围而 unknown；Paired-block Lean 两次 unknown（评分环境传输失败或封存缺入口）；Matchgate 两次 0（按最终封存包评分），后者两次轨迹 C=100。两次 Matchgate 本地分 0 的差及样本方差均为 0；Lean 和 FigQA 的缺失重复不按 0 处理。全表、耗时、模型 token、Job、沙箱分钟、证据边界见 `docs/EVAL_BASELINE_2026-10.md`，可由 `eval report` 重建。
@@ -225,14 +191,15 @@
 
 ## 尚未验证
 
-- CS-UP-06 F1比较输入声明尚未配置到真实Matchgate评分器，评分器声明仍为原状态。自动审批拒绝活动Run中重载并修改评分器声明，理由是会改变评测语义；该脚本未执行、真实scorer.json未改变。采用安全替代：等两次受影响Run均结束后再配置。后续批准的仅应用超时修复重载没有加入此声明，当前结果不得声称已受新增同分门禁保护。
+- CS-UP-06新执行器修复闭环已fake验证，尚未在新的真实Run/模型中验收；本轮原评测授权已到期，没有为验收追加真实调用。历史Matchgate评分科学包比当前原始产物多provenance/data_inputs.json，其余成员哈希一致；完整旧封存包缺失，64.7854恢复文件不计正式最终分。
 
-- CS-UP-06原生对象存储传输在第二轮已取得完整包上传和正式评分成功；首轮基础设施缺分仍保留，不重跑或补造20分。F4应用查询费用已接入，最终结算和总账单尚未确认。
+- CS-UP-06 F3固定Lean4.32.2/锁定Mathlib缓存尚无verified环境；两次新沙箱及两次CPU Job离线构建、历史已验证证明重评分均未完成。
 
-- CS-UP-06 F3：新预置环境两次沙箱 + 两次 CPU Job 的无下载构建，以及已验证历史证明包重评分，均未执行。F4 已取得当前沙箱公开费率和有来源估算，但历史单价、Job cost 币种、两个 unknown 预约费用与实际总账单尚未确认。
-- CS-UP-06 W2：快速层原6次结束，abc首次因传输缺分、第二次20，FigQA-0177/0178各两次100。困难层两次Lean在创建前因固定环境失败；Matchgate第一轮run_ee8143cd3e因评分命令时间缺陷/预算到期cancelled，正式科学分unknown，原科学包另有运行内恢复记录64.7854但未登记；第二轮run_a654e422fd在服务进程消失后未完成，2026-10-02按原截止时间收尾cancelled；没有晚启动模型或补跑。仍不能称为十Run干净基线。
+- CS-UP-06 F1新单调声明及评分缩时分支尚缺真实完成包科学验收；Matchgate首轮恢复文件64.7854未对应正式local_scores/最终封存包，正式分仍unknown。新声明仅下次Run可用。
 
-- CS-UP-06 W1通用修复已实施，Lean真实环境验收未完成；W1未新增研究Run、Job或科学沙箱，唯一私有镜像请求仍unknown。W2已开始原快速层，无预算扩大。
+- CS-UP-06 W2未达到基础设施缺分为0：abc首轮传输deadline、Lean两次环境失败、Matchgate首轮命令时间缺陷；第二轮因用户手动关机未完成（非程序缺陷）。用户已确认手动关机，当前环境11:06:47 UTC启动；该中断非应用崩溃或未修复程序缺陷，不把墙钟停机延迟当计算时长。
+
+- CS-UP-06完整金额未确认：Job时长单位独立验证、旧cost币种、最终账单、两个v1及一个v2无ID预约状态/费用仍unknown，不将局部条件估算当完整金额。
 
 - CS-UP-05 W2 的真实模型、Bohrium 沙箱/Job、Matchgate 全规模计时和 Lean 项目准备尚未验收；这些属于 W3 基线任务。公开 v6 轨迹检查表仅对历史 v8 可见代码作条件比较，不能给出官方展示分保证。Bohrium 金额无可靠接口时记录 unknown。
 
@@ -274,12 +241,9 @@
 
 ## 阻塞项
 
-- CS-UP-06 F3：唯一私有镜像请求无 ID 且返回 rpc error，创建结果 unknown，占用本卡唯一环境资源预约；未增加资源重试、数据集或开发节点。预置环境不可用于验收；当前镜像配方不能标为真实可用。
-- CS-UP-06 F4 实际总账单仍 unknown；已有当前沙箱公开单价的明确标注估算，Job cost 币种及两个无 ID 预约无法判定，不把局部估算当完整金额。
+- CS-UP-06 F3唯一私有镜像请求无ID/code148888 rpc error，创建结果unknown，占用本卡唯一环境资源预约。目录复核仍不能权威释放，不重复创建、改建数据集或新增节点；固定环境验收受阻。
 
-
-
-- CS-UP-06剩余前置：固定Lean镜像创建unknown尚未解决，困难层Lean环境验收不能完成；模型门槛已通过客户端更新解决。不重复未知创建或扩大一次资源上限。
+- CS-UP-06 W2原队列已终态、原时长预算到期；剩余真实科学验收不能用追加Run/评分补齐。本轮如实交付非干净结果，不标成全部验收完成。
 
 - CS-UP-05 W2 代码与 fake 流程无已知阻塞；W3 真实评分是否能取得各题科学分，须由授权内的真实 Run 核实。未取得结果时保持 unknown，不补造分数。
 
