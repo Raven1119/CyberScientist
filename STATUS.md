@@ -1,4 +1,4 @@
-# 当前状态（2026-10-02）
+# 当前状态（2026-10-04）
 
 ## 已实现
 
@@ -80,6 +80,16 @@
 - CS-SB-01 稀疏输入与唤醒修复：可选短研究摘要独立存储；新 Run 普通检查点不唤醒 shadow，Job/Trial 研究级重复状态按 ID 去重。详见 `docs/SPARSE_BRAIN_INPUT_WAKE_FIX_2026-09-24.md`。
 
 ## 已实际验证
+
+- CS-UP-07 W2最终收尾（2026-10-03 19:13 UTC／北京时间10月4日03:13）：用户要求现在收尾，原生控制接口结束已由大脑暂停的run_cc0251a839，HTTP200/status confirmed，#1552终止、#1553会话abort确认；原截止未到，未记为预算耗尽。原fast组complete、hard组complete_with_failures，10项全部终态、6项正式科学分（abc两次20/system、FigQA四次100/system），两次Lean与两次Matchgate均unknown。最后Run墙钟10249.972秒、1个Finished Job、2个unknown预约、沙箱0；全部原始证据保留，未追加Run/评分或重发未知操作。
+
+- CS-UP-07最终只读审计：10个Run和两层冻结身份均为df91723／运行源码SHA-256 6714fcc655a88083aec2460578fb91c6e01f866ba9dab33844e4b2efa902955d；20个原生角色gpt-6.1-sol/xhigh、Codex0.159.3，稳定公开记录及哈希核对通过。实际资源请求和预留未超原授权；平台提交0、经验修订0，没有新建镜像/数据集/节点、运行中后端修改或例外整层重跑。用户关机后只恢复原版本及队列，第二Lean原授权过期，不重置时钟。
+
+- CS-UP-07最终数值再生成：实际执行 `.venv/bin/cyberscientist eval report eval_bc60841fc279` 与 `eval report eval_2d41d12345f0` 均退出0，完整导出JSON逐字段等于数据库报告（6+4行）。`docs/EVAL_V3_2026-10.md`记录10项正式结果/用量、v1/v2/v3条件差异、逐Run历史阅读、实际恢复、四项缺分和六个新应用缺陷；候选90、基线fidelity、ACK及准入标记不替代正式科学分。
+
+- CS-UP-07交付检查：2026-10-03 19:31 UTC实际执行 `.venv/bin/python -m compileall -q src tests` 与 `git diff --check` 通过；三份文档逐行核对十项结果/用量，摘要7行、四类STATUS事实、六项缺陷保留，已配置密钥和已知私有平台ID匹配0。W1测试日志哈希与冻结源码仍相符，本轮只改文档，未追加重复测试或科学探针。19:32原后端PID7777健康和冻结身份通过；观察器最后快照19:13已确认两层终态并按设计退出，旧检查要求观察器存活的误报不是后端故障。
+
+- CS-UP-07真实恢复：首Lean最终评分失败通过#1730/#1739及两次后续指导到达同一执行器，环境仍未准备完而到期；第二Lean编译T2/T3成功后用户关机中断正式评分。Matchgate首轮最终传输unknown未恢复而到期；第二轮#680/#700成功取回7166字节基线归档及独立回放，第六Trial投递竞态由#1192/#1195恢复，但两个unknown占满Job并发后大脑选择暂停，沙箱额度仍可用。反馈送达与最终修复成功分别记录，没有操作员科学指导或额度扩大。
 
 - CS-UP-07 W1：Linux `.venv/bin/python -m compileall -q src/cyberscientist tests`、`git diff --check`通过。`npm --prefix apps/web test -- --run`为42 passed，`npm --prefix apps/web run build`通过。完整 `.venv/bin/pytest -q` 最终审阅版为841 passed、2 skipped，退出0；两项回环监听测试按现有沙箱限制显式跳过。W1真实Run/Job/沙箱均0，无真实模型turn、比赛Attempt或经验写入。只读 bohr 2.7.8 `image search lean` 和 `image search mathlib` 均ok=true/exit0/items=[]；仅表示该两次关键词搜索为空，不外推目录不存在或版本不兼容。完整回执仅在本机忽略目录，运行事实缓存只投影公开字段与源哈希，未改历史研究事件。
 
@@ -201,9 +211,9 @@
 
 ## 尚未验证
 
-- CS-UP-07 W1最终全套回归已通过；提交后部署健康及W2真实v3尚未完成。fake的64.79恢复与可信登记、拒绝伪造和原Run修复路径不代表真实科学评分或环境搭建成功；真实执行结果按后续v3报告记录。W2尚未启动，代码尚未冻结，不宣称满足10个Run或零缺分。
+- CS-UP-07真实executor_verified登记仍未观察到：fake的64.79恢复、可信回执核对与拒绝伪造不等于真实通道已完整验收；实际六项正式分均system。四项缺分及六个新缺陷未因收尾解决；最后Run按用户明确要求提前终止。未知Job身份/费用、Job计费单位/币种及最终模型/算力账单仍未确认。
 
-- CS-UP-07 W1 A～D及v3两层尚未完成；W0仅修改设计决定和事实记录，不将旧v2缺分或CS-UP-06真实环境验收记为已解决。
+- CS-UP-07 W1 A～D已实现并经fake测试；v3首Lean已在CPU Job中自行完成固定版本环境与证明编译，第二轮Lean沙箱T2/T3编译实测通过，两轮正式评分登记均未完成；Matchgate第二轮已实测成功取回基线，但正式评分未执行。旧v2缺分和CS-UP-06真实预置环境缺项仍保留，未被新Run或单项恢复成功追溯解决。
 
 - CS-UP-06新执行器修复闭环已fake验证，尚未在新的真实Run/模型中验收；本轮原评测授权已到期，没有为验收追加真实调用。历史Matchgate评分科学包比当前原始产物多provenance/data_inputs.json，其余成员哈希一致；完整旧封存包缺失，64.7854恢复文件不计正式最终分。
 
@@ -254,6 +264,18 @@
 - CS-SB-01 当轮未重跑 CLI 关闭测试，也未验证未经包装的完整 pytest；该轮未修改 UI，故未重跑前端测试与构建。本轮 CS-EV-01 的前端测试与构建结果见上方。
 
 ## 阻塞项
+
+- CS-UP-07 W2新确认：本地前置拒绝被反馈为远端unknown。run_cc0251a839#1283的CONCURRENCY_LIMIT在compute._authorized、预约及原生调用前拒绝，无新Job行或预约；API ComputeError处理统一possible_remote_effect=unknown、operation_id=null。原两个真实unknown保持不变，不能把本次反馈错误作为清预约的依据；科学分影响未确认，评测后修正失败阶段与操作身份。
+
+- CS-UP-07 W2新确认：新Trial先active/current再投递，旧回合忙时投递rejected后无持久待投递，旧尾部事件错归新Trial（run_cc0251a839#1154/#1157/#1162/#1167，controller.start_trial/_handle_signal）。本次原停滞检测#1186空闲307秒后，大脑#1192经持久指导恢复，非永久失联；应用竞态仍未修复，评测后补通用投递及事件归属测试。
+
+- CS-UP-07 W2新确认：有效Job硬件及并发限额未进入大脑运行事实。run_cc0251a839实际job_limits_json为16核/16GB/10GB/Job并发2，首帧与后续交棒ReviewPacket的authorization/operating_facts均遗漏这组字段；三次目标仍提出c8_m32_cpu，首请求被正确门禁拒绝后执行器自行缩小。实际成绩影响未确认。按冻结规则记录，留作评测后事实投影修复，不扩大授权。
+
+- CS-UP-07 W2新确认：Job帧状态投影混入预检（observation.py::job_states）。run_cc0251a839#66预检passed后资源请求被拒、该operation没有compute_jobs行，但截止#78的持久审阅帧仍把它列为Job状态passed。只读重投影与原帧完全一致；大脑#94没有把它认作执行成功，科学成绩影响未确认。遵守冻结规则，记录为评测后修复项，不热修运行中后端。
+
+- CS-UP-07 W2新发现：固定执行器评分包装程序在已实测Python3.10.6中调用hashlib.file_digest报AttributeError（run_6a1cfd461c#191，scoring_runner.py:15）。该通道兼容问题尚未修复；首轮通过系统最终评分取得100，整层仍继续。遵守W2冻结规则，仅记录，评测后再修。
+
+- CS-UP-07 W2新暴露：Job输入冻结丢失执行权限（compute.py:341），源zstd在提交前原生line234已chmod0755；冻结副本0644、字节/SHA-256相同，首Job在Lean启动前PermissionDenied。远端探针另观察到上传文件0666，平台后续模式变化也存在。执行器在原授权内绕过并成功编译，但应用冻结缺陷未修复，遵守两层终态前冻结规则保留为后续修复项，不构成整层无法继续。
 
 - CS-UP-06 F3唯一私有镜像请求无ID/code148888 rpc error，创建结果unknown，占用本卡唯一环境资源预约。目录复核仍不能权威释放，不重复创建、改建数据集或新增节点；固定环境验收受阻。
 
