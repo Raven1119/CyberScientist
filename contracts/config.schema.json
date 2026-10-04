@@ -301,6 +301,33 @@
       ],
       "additionalProperties": false
     },
+    "resources": {
+      "type": "object",
+      "properties": {
+        "provider_sessions": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "max_concurrent_jobs": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1
+        },
+        "max_concurrent_sandboxes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1
+        }
+      },
+      "additionalProperties": false
+    },
     "run_defaults": {
       "type": "object",
       "properties": {

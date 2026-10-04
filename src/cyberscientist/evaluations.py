@@ -273,6 +273,10 @@ async def advance(controller: Any) -> None:
     """One idempotent scheduling pass, called periodically by the backend."""
     from . import sandbox_costs, job_costs
     for evaluation in db.query("SELECT * FROM eval_runs WHERE status='running' ORDER BY created_at"):
+        if evaluation['suite'] == 'competition':
+            from . import competition
+            await competition.advance_round(controller, evaluation)
+            continue
         eid = evaluation['id']
         snapshot = json.loads(evaluation['config_json'])
         from . import backend_identity

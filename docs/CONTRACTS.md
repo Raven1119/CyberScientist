@@ -180,3 +180,12 @@ CyberScientist/
 
 
 CS-UP-06 候选对账允许评分器额外声明 `comparison_contract`：`higher_is_better` 是 `/components/` 下的 JSON Pointer 列表（`*` 仅匹配一层字典键或数组位置），`verification` 引用该字段是单调计分输入的已审查证据。仅显式声明的输入参与比较，不猜计时、误差或其他诊断字段的方向；保留原始数值，不转换为正式分数。声明参与评分器哈希，并与科学输入哈希、原评分值和产物哈希在同一事务内写入 `local_score.registered`；之后修改声明不重新解释旧候选。完整包退步事实包含原字段路径、两侧值、候选哈希及可确认 token，大脑仍可明确确认，不自动替换产物。旧评分器没有该声明时沿用明确 score/points 比较；同包及同评分器哈希仍复用评分，不创建沙箱。
+
+## CS-UP-08 比赛轮次
+
+- `POST /api/v1/rounds/import` 接收 `challenge_ids` 或 `season/round_seq`，仅导入公开题面。公开轮次读取已核对的 `/hackathon/seasons/by-slug/<slug>/rounds`。已有平台题目复用本地 ID。
+- `POST /api/v1/rounds/<id>/triage` 的 `allow_model_calls` 仅授权一次每题只读分诊，建议不形成 Run 授权；失败/缺资料保留 unknown。
+- `POST /api/v1/rounds/<id>/confirm` 接收 `template` 与按 challenge_id 的 `overrides`。模板含 `model_config`、`authorization`、`shadow_enabled`、`solver_note`；确认后才排队。每轮记录经验索引快照 SHA-256。
+- `POST /api/v1/rounds/<id>/runs` 为同一题目追加 Run；`PUT /api/v1/rounds/<id>/items/<item>` 更新 priority/paused。队列与历史评测共用原持久表。
+- 新工作区默认 Run 上限 6、各提供方会话上限 10；两角色分别占会话。`resources` 配置全局 Job/沙箱并发，上限在创建预约的同一 SQLite 写事务检查。状态不明仍留账本，W3 实施十分钟释放并发。
+- 总览展示分诊、Run、正式本地最好分、暂定/确认平台分、轨迹诊断、原生用量与费用来源、阻塞和下一步。未知金额不填 0。

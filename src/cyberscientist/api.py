@@ -20,6 +20,7 @@ from .brains.codex import CodexBrain
 from .brains.demo import DemoBrain
 from .brains.kimi import KimiBrain
 from .controller import ControllerError, RunController
+from .resource_coordinator import ResourceWait
 from .prime import CodexExecutor, DemoPrime, KimiExecutor, PrimeRpc
 
 controller = RunController()
@@ -130,6 +131,33 @@ class EvaluationCreate(BaseModel):
     suite: str
     repeats: int = 2
     label: str = ''
+
+
+class RoundImport(BaseModel):
+    challenge_ids: list[str] | None = None
+    season: str = ''
+    round_seq: int | None = None
+    label: str = ''
+    mode: str = 'connected'
+
+
+class RoundConfirm(BaseModel):
+    template: dict[str, Any]
+    overrides: dict[str, Any] | None = None
+
+
+class RoundAppend(BaseModel):
+    challenge_id: str
+    template: dict[str, Any] | None = None
+
+
+class RoundItemPut(BaseModel):
+    priority: int | None = None
+    paused: bool | None = None
+
+
+class RoundTriage(BaseModel):
+    allow_model_calls: bool = False
 
 
 class ReviewRequestCreate(BaseModel):
@@ -332,6 +360,11 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
                   lifespan=lifespan)
     app.state.web_dist = web_dist
 
+    @app.exception_handler(ResourceWait)
+    async def resource_wait(_: Request, exc: ResourceWait):
+        return JSONResponse(status_code=409, content={'detail': {
+            'code': 'RESOURCE_WAIT', 'message': str(exc), 'recoverable': True}})
+
     @app.exception_handler(ControllerError)
     async def controller_error(_: Request, exc: ControllerError):
         status = {"NOT_FOUND": 404, "NEEDS_AUTHORIZATION": 403,
@@ -415,6 +448,14 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
             incoming = {k: v for k, v in body.settings.items()
                         if k != "_status"}  # _status 是 GET 响应的瞬态字段，不落盘
             merged.update(incoming)
+            resources = merged.get('resources', {})
+            providers = resources.get('provider_sessions', {}) if isinstance(resources, dict) else None
+            if not isinstance(providers, dict) or any(type(v) is not int or v < 1 for v in providers.values()):
+                raise HTTPException(422, detail={'message': '提供方会话上限须为正整数'})
+            for key in ('max_concurrent_jobs', 'max_concurrent_sandboxes'):
+                value = resources.get(key)
+                if value is not None and (type(value) is not int or value < 1):
+                    raise HTTPException(422, detail={'message': '全局算力并发上限须为正整数或留空'})
             limit = (merged.get("run_defaults") or {}).get("max_active_runs")
             if type(limit) is not int or not 1 <= limit <= 20:
                 raise HTTPException(422, detail={"code": "INVALID_SETTINGS",
@@ -836,6 +877,49 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
         return {"challenge_id": cid, "bound": bound}
 
     # ---------------- Run ----------------
+
+    @app.post('/api/v1/rounds/import')
+    async def import_round(body: RoundImport):
+        from . import competition
+        try:
+            return await asyncio.to_thread(competition.import_round, **body.model_dump())
+        except (ValueError, compute.ComputeError) as exc:
+            raise HTTPException(422, detail={'message': str(exc)}) from exc
+
+    @app.get('/api/v1/rounds')
+    async def list_rounds():
+        return {'items': [dict(r) for r in db.query("SELECT id,label,status,created_at FROM eval_runs"
+                                                   " WHERE suite='competition' ORDER BY created_at DESC")]}
+
+    @app.get('/api/v1/rounds/{round_id}')
+    async def read_round(round_id: str):
+        from . import competition
+        try: return competition.get_round(round_id)
+        except ValueError as exc: raise HTTPException(404, detail={'message': str(exc)}) from exc
+
+    @app.post('/api/v1/rounds/{round_id}/triage')
+    async def triage_round(round_id: str, body: RoundTriage):
+        from . import competition
+        try: return await competition.triage(round_id, controller, body.allow_model_calls)
+        except ValueError as exc: raise HTTPException(422, detail={'message': str(exc)}) from exc
+
+    @app.post('/api/v1/rounds/{round_id}/confirm')
+    async def confirm_round(round_id: str, body: RoundConfirm):
+        from . import competition
+        try: return competition.confirm(round_id, **body.model_dump())
+        except ValueError as exc: raise HTTPException(422, detail={'message': str(exc)}) from exc
+
+    @app.post('/api/v1/rounds/{round_id}/runs')
+    async def append_round_run(round_id: str, body: RoundAppend):
+        from . import competition
+        try: return competition.append_run(round_id, **body.model_dump())
+        except ValueError as exc: raise HTTPException(422, detail={'message': str(exc)}) from exc
+
+    @app.put('/api/v1/rounds/{round_id}/items/{item_id}')
+    async def update_round_item(round_id: str, item_id: str, body: RoundItemPut):
+        from . import competition
+        try: return competition.update_item(round_id, item_id, **body.model_dump())
+        except ValueError as exc: raise HTTPException(422, detail={'message': str(exc)}) from exc
 
     @app.post('/api/v1/evals')
     async def create_evaluation(body: EvaluationCreate) -> dict[str, Any]:

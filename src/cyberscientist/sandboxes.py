@@ -235,6 +235,8 @@ def create(run_id: str, operation_id: str, request: dict, *, _session_id: str | 
             return {'operation_id': operation_id, 'sandbox_id': prior['sandbox_id'],
                     'status': prior['status'], 'deduplicated': True}
         run = conn.execute('SELECT * FROM runs WHERE id=?', (run_id,)).fetchone()
+        from . import resource_coordinator
+        resource_coordinator.require_compute_slot_tx(conn, 'sandbox')
         eval_scoring = (run and run['phase'] == 'eval_scoring' and db.eval_mode(run_id))
         eval_retry = False
         if (run and run['phase'] == 'finished' and db.eval_mode(run_id)

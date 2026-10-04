@@ -295,6 +295,8 @@ def submit(run_id: str, operation_id: str, spec: dict, input_directory: str,
                 raise ComputeError('CONFLICT', '操作 ID 已绑定其他请求，不能覆盖或重发')
             return dict(old) | {'deduplicated': True}
         run, limits, remaining = _authorized(conn, run_id)
+        from . import resource_coordinator
+        resource_coordinator.require_compute_slot_tx(conn, 'job')
         machine = re.fullmatch(r'c(\d+)_m(\d+)_cpu', str(spec.get('machine_type', '')))
         if not machine or not (1 <= int(machine[1]) <= limits['max_cpu'] and 1 <= int(machine[2]) <= limits['max_memory_gb']):
             raise ComputeError('RESOURCE_LIMIT', '当前受控入口仅接受授权范围内的 CPU 机型')

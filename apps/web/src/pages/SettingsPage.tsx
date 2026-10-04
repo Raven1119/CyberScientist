@@ -215,6 +215,22 @@ export default function SettingsPage() {
                 ...s.run_defaults, max_active_runs: Number(event.target.value),
               } }))} />
             <p className="inline-note">新建、暂停、等待恢复的 Run 均占一个名额；每个 Run 单独授权。</p>
+            {(['codex', 'deepseek', 'kimi', 'prime'] as const).map(provider => <label key={provider}>
+              {provider} 并发会话上限
+              <input type="number" min={1} value={settings.resources?.provider_sessions[provider] ?? 10}
+                onChange={event => update(s => ({ ...s, resources: {
+                  max_concurrent_jobs: null, max_concurrent_sandboxes: null, ...s.resources,
+                  provider_sessions: { ...s.resources?.provider_sessions, [provider]: Number(event.target.value) },
+                } }))} />
+            </label>)}
+            {(['max_concurrent_jobs', 'max_concurrent_sandboxes'] as const).map(key => <label key={key}>
+              全局{key === 'max_concurrent_jobs' ? ' Job' : '沙箱'}并发上限（留空使用各 Run 授权）
+              <input type="number" min={1} value={settings.resources?.[key] ?? ''}
+                onChange={event => update(s => ({ ...s, resources: {
+                  provider_sessions: {}, max_concurrent_jobs: null, max_concurrent_sandboxes: null, ...s.resources,
+                  [key]: event.target.value === '' ? null : Number(event.target.value),
+                } }))} />
+            </label>)}
             <label htmlFor="stall-seconds">无进展检测（秒）</label>
             <input id="stall-seconds" type="number" min={1} max={86400}
               value={settings.run_defaults.stall_seconds}

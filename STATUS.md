@@ -1,6 +1,10 @@
 # 当前状态（2026-10-04）
 
+进度：2026-10-04 21:20 北京时间 · CS-UP-08 · W0 完成并推送 · commit 7e600d83689062fb64749a55d6377a9fbf82885d
+
 ## 已实现
+
+- CS-UP-08 W1：比赛轮次公开导入、原生模型分诊、整轮与逐题模板、确认授权、持久优先级队列、追加 Run、总览面板已接通。提供方会话租约和 429 退避持久化；全局 Job/沙箱并发在写事务内检查。新默认 Run6/提供方10，原显式设置保留。
 
 - CS-UP-08 W0：Lightchaser 第一目标与 D-28–D-41 已写入设计文档，D-07/D-23 保留原文并标注替代关系。
 
@@ -83,7 +87,9 @@
 
 ## 已实际验证
 
-- CS-UP-08 W0：HEAD/main 与工作区已核对；fallback-0 指向 5940418 并已推送；SQLite backup API 一致性备份已留在 .package-checks/cs-up-08。设计验收脚本、compileall、git diff --check 通过；前端 42 passed，构建通过。完整后端基线回归正在执行，不先写最终数字。
+- CS-UP-08 W1：.venv/bin/pytest -q → 851 passed；前端 43 passed，构建通过；compileall 与 git diff --check 通过。10 题合成轮次覆盖限额、429 退避、重建调度器续跑、追加 Run、优先级与暂停；迁移两次初始化幂等。有界审阅补齐经验整理会话的提供方额度及释放。指定三旧题已在独立状态目录真实导入为 draft，模型/计算/提交未启动，历史远程账本为空。
+
+- CS-UP-08 W0：HEAD/main 与工作区已核对；fallback-0 指向 5940418 并已推送；SQLite backup API 一致性备份已留在 .package-checks/cs-up-08。设计验收脚本、compileall、git diff --check 通过；前端 42 passed，构建通过。完整后端基线为 843 passed。
 
 - CS-UP-07 W2最终收尾（2026-10-03 19:13 UTC／北京时间10月4日03:13）：用户要求现在收尾，原生控制接口结束已由大脑暂停的run_cc0251a839，HTTP200/status confirmed，#1552终止、#1553会话abort确认；原截止未到，未记为预算耗尽。原fast组complete、hard组complete_with_failures，10项全部终态、6项正式科学分（abc两次20/system、FigQA四次100/system），两次Lean与两次Matchgate均unknown。最后Run墙钟10249.972秒、1个Finished Job、2个unknown预约、沙箱0；全部原始证据保留，未追加Run/评分或重发未知操作。
 
@@ -214,6 +220,8 @@
 - 本轮测试进程定时唤醒包装下，协作及 Kimi/Codex 相关回归 95 passed；排除 CLI 关闭测试的 Python 回归 285 passed。默认协作测试曾以 120 秒超时退出，未记为通过。
 
 ## 尚未验证
+
+- CS-UP-08 W1–W4 授权的三个真实快速层 Run 尚未开始，将在执行底座与经验投递完成后通过比赛模式运行；提交授权为 0。
 
 - CS-UP-07真实executor_verified登记仍未观察到：fake的64.79恢复、可信回执核对与拒绝伪造不等于真实通道已完整验收；实际六项正式分均system。四项缺分及六个新缺陷未因收尾解决；最后Run按用户明确要求提前终止。未知Job身份/费用、Job计费单位/币种及最终模型/算力账单仍未确认。
 

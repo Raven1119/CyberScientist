@@ -68,7 +68,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "policy": {"science_compute": "bohrium_only",
                "default_authorization": "read_only",
                "allow_formal_submission": False},
-    "run_defaults": {"max_active_runs": 3, "max_trials": 3,
+    "run_defaults": {"max_active_runs": 6, "max_trials": 3,
                      "max_brain_reviews": 20, "max_run_minutes": 30,
                      "max_model_turns": 0, "max_jobs": 3, "max_submissions": 0,
                      "stall_seconds": 300, "max_brain_wait_seconds": 3600,
@@ -80,6 +80,9 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "polling": {"disabled_challenges": [], "score_confirmation_seconds": 600,
                 "confirmed_interval_seconds": 3600},
     "skills": {"always_on": []},
+    "resources": {"provider_sessions": {"codex": 10, "deepseek": 10, "kimi": 10,
+                                       "prime": 10},
+                  "max_concurrent_jobs": None, "max_concurrent_sandboxes": None},
     "memory": {"root": str(EXPERIENCE_DIR), "max_global_entries": 20,
                "max_challenge_entries": 10, "max_injected_characters": 6000},
 }

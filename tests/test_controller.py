@@ -48,6 +48,10 @@ def test_create_run_requires_challenge():
 
 def test_active_run_limit_is_configurable():
     _seed_challenge()
+    # Exercise the existing explicit three-slot grant; the new default is six.
+    settings = config.load_settings()
+    settings['run_defaults']['max_active_runs'] = 3
+    config.save_settings(settings)
     c = _controller()
     for _ in range(3):
         c.create_run("DEMO_CHALLENGE")

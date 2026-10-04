@@ -24,6 +24,11 @@ class DemoBrain:
 
     async def review(self, session: SessionRef,
                      packet: dict[str, Any]) -> AsyncIterator[BrainEvent]:
+        if packet.get('protocol') == 'role_task' and packet.get('task') == 'competition_triage':
+            yield BrainEvent('task_result', {'result': {
+                'difficulty': 'unknown', 'estimated_minutes': None, 'estimated_cost_cny': None,
+                'recommended_model': 'gpt-6.1-sol', 'reason': 'Demo 分诊，无真实模型判断'}})
+            return
         if packet.get("protocol") == "executor_question":
             yield BrainEvent("question_answer", {
                 "schema_version": 1, "message_type": "research_answer",

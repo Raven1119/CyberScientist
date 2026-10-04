@@ -27,6 +27,11 @@ def _challenge(cid: str) -> None:
 
 
 def _catalog(monkeypatch, tmp_path) -> None:
+    # Keep the original three-slot queue scenario explicit after the product's
+    # default grows to six; its capacity-release assertions remain unchanged.
+    settings = config.load_settings()
+    settings['run_defaults']['max_active_runs'] = 3
+    config.save_settings(settings)
     path = tmp_path / 'catalog.json'
     path.write_text(json.dumps({'challenges': [
         {'challenge_id': cid, 'platform_challenge_id': cid,

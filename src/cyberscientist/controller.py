@@ -472,7 +472,8 @@ class RunController:
 
     def create_run(self, challenge_id: str, mode: str | None = None,
                    shadow_enabled: bool | None = None,
-                   eval_mode: dict[str, Any] | None = None) -> dict[str, Any]:
+                   eval_mode: dict[str, Any] | None = None,
+                   model_config: dict[str, Any] | None = None) -> dict[str, Any]:
         settings = config.load_settings()
         mode = mode if mode is not None else settings["app"]["mode"]
         if mode not in ("demo", "connected"):
@@ -485,6 +486,9 @@ class RunController:
             selected = (challenge_models.from_challenge(challenge, settings) if eval_mode is None
                         else {role: challenge_models.choose(role, eval_mode['models'][role], settings)
                               for role in ('brain', 'executor')})
+            if model_config is not None:
+                selected = {role: challenge_models.choose(role, model_config.get(role), settings)
+                            for role in ('brain', 'executor')}
         except (ValueError, TypeError, KeyError) as exc:
             raise ControllerError("INVALID_ARGUMENT", f"题目模型配置无效：{exc}") from exc
         for role, choice in selected.items():
@@ -687,12 +691,14 @@ class RunController:
                 raise ControllerError("MISSING_CREDENTIAL", "；".join(problems))
 
         # 原子抢占：并发 start（双击）只有一个能完成 created→running 转换
-        with db._db_lock:
-            conn = db.get_db()
+        from . import resource_coordinator
+        with db.transaction() as conn:
+            if run['mode'] == 'connected':
+                resource_coordinator.reserve_sessions_tx(conn, run_id,
+                    {role: settings[role] for role in ('brain', 'executor')})
             cur = conn.execute(
                 "UPDATE runs SET phase='running', started_at=? WHERE id=? AND phase='created'",
                 (db.utcnow(), run_id))
-            conn.commit()
             if cur.rowcount != 1:
                 raise ControllerError("INVALID_STATE",
                                       f"当前阶段不能启动（并发或状态已变化）")
@@ -807,6 +813,12 @@ class RunController:
         if action == "resume":
             self._require_model_authorization(run_id)
             if run["phase"] == "recovering":
+                from . import resource_coordinator
+                if run['mode'] == 'connected':
+                    settings = self._runtime_settings(run_id)
+                    with db.transaction() as conn:
+                        resource_coordinator.reserve_sessions_tx(conn, run_id,
+                            {role: settings[role] for role in ('brain', 'executor')})
                 # 后端重启后的恢复：重建事件循环与大脑/执行器会话，
                 # 以 recovery 生命周期审阅让大脑裁决下一步，不盲目续跑
                 if not db.record_operation(operation_id, run_id, f"control.{action}",
@@ -902,6 +914,7 @@ class RunController:
         进程内的会话/队列/任务都随旧进程消失，phase 停在 running/pausing/paused
         的 Run 不能假装还在跑：如实标记、切断悬空审阅，由用户选择恢复或终止。
         """
+        db.execute('DELETE FROM model_session_leases')
         zombies = db.query(
             "SELECT id, phase FROM runs"
             " WHERE phase IN ('running','pausing','paused')")
@@ -1425,6 +1438,9 @@ class RunController:
         attempts = previous["attempts"] + 1 if previous else 1
         delay = model_limits.retry_delay(attempts, info)
         next_at = model_limits.retry_at(now, delay)
+        from . import resource_coordinator
+        resource_coordinator.throttle(resource_coordinator.provider(
+            self._runtime_settings(run_id).get(role, {})), next_at)
         with db.transaction() as conn:
             conn.execute(
                 "INSERT INTO model_rate_limits(run_id,role,first_at,attempts,retry_at,state,trial_id)"
@@ -1677,6 +1693,7 @@ class RunController:
                         db.append_event(run_id,"controller","run.cleanup_error",{"error":str(exc)[:200]})
             with db.transaction() as conn:
                 collab.revoke_run_tokens(conn,run_id)
+                conn.execute('DELETE FROM model_session_leases WHERE owner=?', (run_id,))
             for mapping in (self._signals,self._tasks,self._prime_sessions,self._prime_instances,
                             self._brain_sessions,self._brain_instances,self._start_pump,self._review_wake,self._review_tasks,
                             self._executor_busy,self._prime_prompts,
@@ -2615,6 +2632,8 @@ class RunController:
         try:
             if req["trigger"] == "curation" and self._sparse_brain(run):
                 # Curation uses its own native conversation and evidence packet.
+                from . import resource_coordinator
+                resource_coordinator.reserve_auxiliary('maintenance-' + req['id'], self._runtime_settings(run_id))
                 maintenance_brain = self._make_brain(self._runtime_settings(run_id))
                 work = config.WORKSPACE_DIR / "runs" / run_id / "curation" / req["id"]
                 work.mkdir(parents=True, exist_ok=True)
@@ -2649,6 +2668,8 @@ class RunController:
                     await maintenance_brain.close(maintenance_session)
                 except Exception as exc:  # noqa: BLE001
                     error_msg = error_msg or f"维护会话关闭失败: {str(exc)[:200]}"
+            from . import resource_coordinator
+            resource_coordinator.release_sessions('maintenance-' + req['id'])
         if raw_parts:
             db.append_event(run_id, "brain", "brain.raw_output",
                             _runtime_event_payload({"text": "".join(raw_parts)}))
@@ -3826,8 +3847,11 @@ class RunController:
         # 失败都必须终态化，否则状态永远停在 running，前端永远「整理中」
         session = None
         brain: BrainRuntime | None = None
+        lease_owner = 'global-curation-' + uuid.uuid4().hex
         try:
             settings = config.load_settings()
+            from . import resource_coordinator
+            resource_coordinator.reserve_auxiliary(lease_owner, settings)
             brain = self._make_brain(settings)
             work = (config.WORKSPACE_DIR / "curation"
                     / db.utcnow().replace(":", "-").replace("+", "Z"))
@@ -3895,6 +3919,8 @@ class RunController:
                     await brain.close(session)
                 except Exception:  # noqa: BLE001
                     pass
+            from . import resource_coordinator
+            resource_coordinator.release_sessions(lease_owner)
 
     def _snapshot_memory(self, run_id: str, trial_id: str,
                          settings: dict[str, Any]) -> None:
@@ -3956,6 +3982,8 @@ class RunController:
         packet = json.loads(row['packet_json'])
         brain, session = None, None
         try:
+            from . import resource_coordinator
+            resource_coordinator.reserve_auxiliary('curation-' + request_id, config.load_settings())
             brain = self._make_brain(config.load_settings())
             work = config.WORKSPACE_DIR / 'curation' / request_id
             work.mkdir(parents=True, exist_ok=True)
@@ -3998,6 +4026,8 @@ class RunController:
                     await brain.close(session)
                 except Exception:
                     log.exception('Curation session close failed')
+            from . import resource_coordinator
+            resource_coordinator.release_sessions('curation-' + request_id)
 
     def _require_run(self, run_id: str) -> Any:
         run = db.query_one("SELECT * FROM runs WHERE id=?", (run_id,))

@@ -584,6 +584,17 @@ def init_db() -> None:
         conn.executescript(SCHEMA_LOCAL_SCORING)
         conn.executescript(SCHEMA_EVALUATIONS)
         conn.executescript(SCHEMA_COMPUTE_COST)
+        conn.executescript('''CREATE TABLE IF NOT EXISTS model_session_leases (
+            owner TEXT NOT NULL, role TEXT NOT NULL, provider TEXT NOT NULL,
+            created_at TEXT NOT NULL, PRIMARY KEY(owner,role));
+            CREATE TABLE IF NOT EXISTS model_provider_backoff (
+            provider TEXT PRIMARY KEY, retry_at TEXT NOT NULL, first_at TEXT NOT NULL);''')
+        _ensure_columns(conn, 'eval_results', {
+            'priority': 'INTEGER NOT NULL DEFAULT 0',
+            'paused': 'INTEGER NOT NULL DEFAULT 0',
+            'template_json': 'TEXT', 'triage_json': 'TEXT',
+            'retry_at': 'TEXT', 'retry_count': 'INTEGER NOT NULL DEFAULT 0',
+            'queue_paused': 'INTEGER NOT NULL DEFAULT 0'})
         _ensure_columns(conn, 'compute_sandbox_operations', SANDBOX_OPERATION_V3_COLUMNS)
         _ensure_columns(conn, "checkpoints", CHECKPOINT_V2_COLUMNS)
         _ensure_columns(conn, "runs", RUN_V2_COLUMNS)

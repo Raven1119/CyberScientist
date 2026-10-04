@@ -209,6 +209,13 @@ class CodexBrain:
             else:
                 yield BrainEvent("curation_result", {"result": result})
             return
+        if packet.get("protocol") == "role_task":
+            from ..role_tasks import extract
+            result = extract(joined)
+            yield BrainEvent("task_result" if result is not None else "error",
+                             {"result": result} if result is not None else
+                             {"message": "角色任务未返回 JSON 对象"})
+            return
         if packet.get("protocol") == "review_result":
             result = extract_review_result(joined)
             if result is None:
@@ -234,6 +241,9 @@ class CodexBrain:
 
     @staticmethod
     def _render_prompt(packet: dict[str, Any]) -> str:
+        if packet.get("protocol") == "role_task":
+            from ..role_tasks import prompt
+            return prompt(packet)
         optional_read = packet.get("sparse_brain_version") == 1
         if packet.get("protocol") == "experience_curation":
             from ..curation import prompt
