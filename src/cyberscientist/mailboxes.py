@@ -432,8 +432,8 @@ def _protocol_snapshot() -> dict[str, Any] | None:
 
 
 def _data_inputs(run_id: str, trial_id: str | None) -> dict[str, Any]:
-    run = db.query_one("SELECT c.content,c.resources_json FROM runs r JOIN challenges c"
-                       " ON c.id=r.challenge_id WHERE r.id=?", (run_id,))
+    from . import artifact_contracts
+    run = artifact_contracts.for_run(run_id)
     try:
         resources = json.loads(run["resources_json"] or "[]") if run else []
     except ValueError:
@@ -541,8 +541,8 @@ def preflight_submission(run_id: str, trial_id: str | None,
     diagnostic = trace_diagnostics.unavailable("non_ARM_bundle")
     if is_bundle:
         try:
-            challenge = db.query_one("SELECT c.content FROM challenges c JOIN runs r"
-                                     " ON r.challenge_id=c.id WHERE r.id=?", (run_id,))
+            from . import artifact_contracts
+            challenge = artifact_contracts.for_run(run_id)
             diagnostic = trace_diagnostics.diagnose_sealed_package(
                 sealed, challenge["content"] if challenge else "")
         except Exception as exc:
@@ -560,7 +560,7 @@ def preflight_submission(run_id: str, trial_id: str | None,
 def _artifact_contract(run_id: str, sealed: bytes) -> dict[str, Any]:
     from . import artifact_contracts
     run = db.query_one('SELECT challenge_id FROM runs WHERE id=?', (run_id,))
-    return artifact_contracts.inspect(run['challenge_id'], sealed)
+    return artifact_contracts.inspect(run['challenge_id'], sealed, task_content=artifact_contracts.for_run(run_id)['content'])
 
 
 def inspect_trace_narrative(run_id: str, trial_id: str | None,
@@ -724,6 +724,8 @@ def submit_experiment(run_id: str, trial_id: str | None,
         narrative_snapshot=variant_context['narrative_snapshot'] if variant_context else None,
         data_inputs_override=variant_context['data_inputs'] if variant_context else None)
     science_hashes = None
+    if check['source_package_sha256'] != source_digest:
+        raise MailboxError('PACKAGE_CHANGED', '包在提交冻结期间变化，未预约或发起提交')
     if variant_context is not None:
         science_hashes = _science_artifact_hashes(check['sealed_bytes'])
         if science_hashes != variant_context['science_artifact_hashes']:

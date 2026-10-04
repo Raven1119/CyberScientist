@@ -12,10 +12,26 @@ _PATH = re.compile(r'`([^`\s]+\.(?:txt|json|jsonl|lean|csv|npz|npy|zip|pdf|png))
 _OUTPUT = re.compile(r'output|artifact|deliver|submission|answer|产物|输出|答案|交付|提交', re.I)
 
 
-def inspect(challenge_id: str, sealed: bytes | None = None) -> dict[str, Any]:
+def for_run(run_id: str) -> dict:
+    row = db.query_one('SELECT c.title,c.content,c.resources_json,c.platform_snapshot_json,r.config_snapshot'
+                       ' FROM runs r JOIN challenges c ON c.id=r.challenge_id WHERE r.id=?', (run_id,))
+    if not row:
+        raise ValueError('Run 不存在')
+    import json
+    result = dict(row)
+    frozen = json.loads(row['config_snapshot']).get('competition', {}).get('challenge_snapshot')
+    if frozen:
+        result.update(title=frozen['title'], content=frozen['content'],
+                      resources_json=json.dumps(frozen['resources']), platform_snapshot_json=json.dumps(frozen['platform']))
+    result.pop('config_snapshot', None)
+    return result
+
+
+def inspect(challenge_id: str, sealed: bytes | None = None, *, task_content: str | None = None) -> dict[str, Any]:
     from . import local_scoring
     row = db.query_one('SELECT content FROM challenges WHERE id=?', (challenge_id,))
-    paths = sorted({match.group(1) for line in (row['content'] if row else '').splitlines()
+    content = task_content if task_content is not None else (row['content'] if row else '')
+    paths = sorted({match.group(1) for line in content.splitlines()
                     if _OUTPUT.search(line) for match in _PATH.finditer(line)})
     result: dict[str, Any] = {
         'task_paths': paths, 'task_paths_source': 'output-related task text; extraction may be incomplete',

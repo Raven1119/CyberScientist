@@ -380,6 +380,7 @@ class KimiBrain:
                 "kind=submit：结果包已可提交时发出；仅在已有 Run 授权、提交预算"
                 "和去重检查通过后，系统自动用实验邮箱提交（不投递给执行器），"
                 "随后异步等待评分；不扩大正式提交授权。\n"
+                "提交前可用 research_review_package(trial_id,operation_id,package_path) 调用全新只读审查者；问题清单是建议，PI 决定修复或在 submit guidance.text_md 写明理由后照常提交。\n"
                 "若 ObservationFrame.submission_prediction_version=1，submit guidance 可附 prediction_md，"
                 "说明本次改动和预计 displayScore/harbor_score/trace_score 哪些分量如何变化；"
                 "未提供则预测记为 unknown，不阻止已授权提交。可选 prediction_verdicts=[{submission_id,verdict:confirmed|refuted|unclear,note_md}]"

@@ -24,6 +24,9 @@ class DemoBrain:
 
     async def review(self, session: SessionRef,
                      packet: dict[str, Any]) -> AsyncIterator[BrainEvent]:
+        if packet.get('protocol') == 'role_task' and packet.get('task') == 'package_review':
+            yield BrainEvent('task_result', {'result': {'verdict': 'issues', 'issues': ['Demo 没有真实科学复跑证据'], 'summary_md': 'Demo 只读审查，无实际模型判断。'}})
+            return
         if packet.get('protocol') == 'role_task' and packet.get('task') == 'run_post_review':
             yield BrainEvent('task_result', {'result': {
                 'system_defects_md': 'Demo 复盘；没有实际模型读取或科研结论。',

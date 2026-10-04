@@ -617,6 +617,10 @@ def init_db() -> None:
         conn.execute('CREATE TABLE IF NOT EXISTS run_post_reviews ('
                      'run_id TEXT PRIMARY KEY REFERENCES runs(id),status TEXT NOT NULL,reason TEXT NOT NULL,'
                      'packet_json TEXT,result_json TEXT,report_path TEXT,error TEXT,created_at TEXT NOT NULL,updated_at TEXT NOT NULL)')
+        conn.execute('CREATE TABLE IF NOT EXISTS package_reviews ('
+                     'operation_id TEXT PRIMARY KEY,run_id TEXT NOT NULL REFERENCES runs(id),trial_id TEXT NOT NULL,'
+                     'source_sha256 TEXT NOT NULL,sealed_sha256 TEXT NOT NULL,status TEXT NOT NULL,'
+                     'packet_json TEXT NOT NULL,result_json TEXT,error TEXT,created_at TEXT NOT NULL,updated_at TEXT NOT NULL)')
         conn.execute('CREATE TABLE IF NOT EXISTS native_turn_trials (run_id TEXT NOT NULL,turn_id TEXT NOT NULL,trial_id TEXT,PRIMARY KEY(run_id,turn_id))')
         _ensure_columns(conn, "submissions", SUBMISSION_V2_COLUMNS)
         _ensure_columns(conn, "local_scores", LOCAL_SCORE_V2_COLUMNS)

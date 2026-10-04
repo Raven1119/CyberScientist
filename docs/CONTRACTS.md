@@ -217,3 +217,7 @@ CS-UP-09 W3：Decision 与 ReviewResult 均支持可选 research_brief，内含 
 ### CS-UP-09 W5 模型选择
 
 四角色支持provider/runtime/model_id/reasoning_effort；DeepSeek provider对应Codex原生运行时。GET/PUT settings提供solver_roster和model_pricing公开配置，拒绝密钥值。轮次模板solver_id在确认时解析并冻结规范条目；客户端solver_entry不接受。连接tool_call_probe需confirm_spend=true，ok须完成工具回执；usage和估价缺项unknown。
+
+### CS-UP-09 W6 新上下文审查
+
+PI MCP `research_review_package(trial_id,operation_id,package_path?)` 对应 POST tools/package_review，仅brain角色。返回持久status/result/source_sha256/sealed_sha256/advisory_only。读取 GET runs/{id}/package-reviews。result为verdict pass|issues、issues数组、summary_md；它不扩大提交授权也不拦截已授权实验提交。问题可由PI修复，或在已有submit guidance.text_md记录理由；事件记录实际提交的哈希是否仍匹配审查版本。运行中审查重启unknown不自动重发，pending可在有资源时再尝试。

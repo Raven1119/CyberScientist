@@ -211,6 +211,8 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
                 logging.getLogger('cyberscientist.api').exception('Sandbox startup reconciliation failed')
         from . import maintenance
         maintenance.reconcile_interrupted()
+        from . import package_reviews
+        package_reviews.reconcile_interrupted()
         for run_id in compute.reconciliation_runs(startup=True):
             try:
                 await asyncio.to_thread(compute.reconcile, run_id)
@@ -1174,6 +1176,22 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
         controller.notify_run_change(rid)
         from . import tool_feedback
         return tool_feedback.attach(rid, 'job.' + str(action), result)
+
+    @app.post('/api/v1/tools/package_review')
+    async def tool_package_review(request: Request):
+        from . import package_reviews
+        identity = _tool_auth(request, role='brain')
+        body = await request.json()
+        try:
+            return await package_reviews.review(controller, identity['run_id'], body.get('trial_id'), body.get('operation_id'), body.get('package_path'))
+        except ValueError as exc:
+            raise HTTPException(409, detail={'message': observation.strip_secrets(str(exc)), 'advisory_only': True}) from exc
+
+    @app.get('/api/v1/runs/{run_id}/package-reviews')
+    async def run_package_reviews(run_id: str):
+        from . import package_reviews
+        controller._require_run(run_id)
+        return {'items': [package_reviews.get(r['operation_id'], run_id) for r in db.query('SELECT operation_id FROM package_reviews WHERE run_id=? ORDER BY created_at', (run_id,))]}
 
     @app.post("/api/v1/tools/package_check")
     async def tool_package_check(request: Request) -> dict:

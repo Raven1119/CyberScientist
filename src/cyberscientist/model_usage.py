@@ -10,9 +10,10 @@ def summarize(run_id: str) -> dict:
     sessions = {}
     unknown = []
     for event in db.query("SELECT seq,type,payload FROM events WHERE run_id=? AND type IN"
-                          " ('brain.usage.updated','prime.usage.updated','maintenance.usage') ORDER BY seq", (run_id,)):
+                          " ('brain.usage.updated','prime.usage.updated','maintenance.usage','reviewer.usage.updated') ORDER BY seq", (run_id,)):
         payload = json.loads(event['payload'])
         role = ('executor' if event['type'].startswith('prime.') else
+                'reviewer' if event['type'].startswith('reviewer.') else
                 'post_review' if payload.get('kind') == 'postreview' else 'brain')
         wrapped = payload.get('usage') or {}
         # Maintenance retains the complete BrainEvent payload.

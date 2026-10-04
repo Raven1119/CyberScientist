@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import re
@@ -3071,7 +3072,8 @@ class RunController:
         提交成功后分数由服务端评分轮询异步拿回。
         """
         try:
-            guidance=db.query_one('SELECT prediction_md FROM guidance WHERE id=?',(guidance_id,))
+            guidance=db.query_one('SELECT prediction_md,text_md FROM guidance WHERE id=?',(guidance_id,))
+            reviewed = db.query_one("SELECT operation_id,result_json,source_sha256,sealed_sha256 FROM package_reviews WHERE run_id=? AND trial_id=? AND status='done' ORDER BY updated_at DESC LIMIT 1", (run_id, trial_id))
             prediction=guidance['prediction_md'] if guidance else None
             res = await asyncio.to_thread(
                 mailboxes.submit_experiment, run_id, trial_id, None,
@@ -3090,6 +3092,9 @@ class RunController:
             await self._request_executor_repair(run_id, trial_id, stage='submission',
                 code=code, detail=str(exc), event_seq=failed['seq'])
             return
+        if reviewed:
+            source_sha = res.get('source_package_sha256')
+            db.append_event(run_id, 'brain', 'package.review_pi_decision', {'operation_id': reviewed['operation_id'], 'result': json.loads(reviewed['result_json']), 'pi_reason': _redact(guidance['text_md'] if guidance else '', 4000), 'choice': 'submit', 'source_matches_review': source_sha == reviewed['source_sha256'] if source_sha else None, 'sealed_matches_review': res.get('package_sha256') == reviewed['sealed_sha256'], 'submission_id': res.get('id'), 'reviewed_source_sha256': reviewed['source_sha256'], 'reviewed_sealed_sha256': reviewed['sealed_sha256'], 'advisory_only': True}, trial_id=trial_id)
         ok = res.get("status") == "submitted"
         with db.transaction() as conn:
             conn.execute(

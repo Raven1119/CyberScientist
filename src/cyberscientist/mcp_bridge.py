@@ -159,6 +159,13 @@ _SCORES_TOOL = {
                     "properties": {}, "required": []}}
 
 
+_REVIEW_TOOL = {'name': 'research_review_package',
+    'description': '仅 PI：在全新只读原生会话审查本 Trial 封存包/契约/已登记评分/轨迹诊断。问题交回 PI，非提交门禁；需要稳定 operation_id，未知不重发。',
+    'inputSchema': {'type': 'object', 'additionalProperties': False, 'properties': {
+        'trial_id': {'type': 'string'}, 'operation_id': {'type': 'string', 'maxLength': 100},
+        'package_path': {'type': 'string'}}, 'required': ['trial_id', 'operation_id']}}
+
+
 def _post(path: str, payload: dict, *, timeout: int = 10,
           retry_transient: bool = True) -> dict:
     url = os.environ.get("CS_API_URL", "http://127.0.0.1:8765") + path
@@ -220,12 +227,17 @@ def _handle(msg: dict) -> dict | None:
     if method == "tools/list":
         role = os.environ.get("CS_TOOL_ROLE", "executor")
         return {"jsonrpc": "2.0", "id": mid, "result": {
-            "tools": [_TRACE_TOOL, _DATA_TOOL, _SCORES_TOOL, _NARRATIVE_TOOL, _FACTS_TOOL, _EXPERIENCE_TOOL] if role == "brain" else _TOOLS}}
+            "tools": [_REVIEW_TOOL, _TRACE_TOOL, _DATA_TOOL, _SCORES_TOOL, _NARRATIVE_TOOL, _FACTS_TOOL, _EXPERIENCE_TOOL] if role == "brain" else _TOOLS}}
     if method == "tools/call":
         params = msg.get("params", {})
         name = params.get("name")
         args = params.get("arguments") or {}
-        if name == "research_checkpoint":
+        if name == 'research_review_package':
+            if os.environ.get('CS_TOOL_ROLE') != 'brain':
+                out = {'error': '此工具仅 PI 可用'}
+            else:
+                out = _post('/api/v1/tools/package_review', args, timeout=960, retry_transient=False)
+        elif name == "research_checkpoint":
             out = _post("/api/v1/tools/checkpoint", args)
         elif name == "research_job":
             if args.get("action") in ("submit", "stop") and not args.get("operation_id"):
