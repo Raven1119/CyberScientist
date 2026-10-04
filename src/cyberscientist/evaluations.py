@@ -270,6 +270,9 @@ def _limits(suite: str) -> dict[str, int]:
 
 
 async def advance(controller: Any) -> None:
+    from . import power
+    if power.shutdown_requested():
+        return
     """One idempotent scheduling pass, called periodically by the backend."""
     from . import sandbox_costs, job_costs
     for evaluation in db.query("SELECT * FROM eval_runs WHERE status='running' ORDER BY created_at"):
@@ -306,8 +309,8 @@ async def advance(controller: Any) -> None:
             if run['phase'] not in TERMINAL and run['started_at'] and run['authorization_id']:
                 auth = db.query_one('SELECT max_run_minutes FROM authorizations WHERE id=?',
                                     (run['authorization_id'],))
-                elapsed = (datetime.fromisoformat(db.utcnow()) -
-                           datetime.fromisoformat(run['started_at'])).total_seconds()
+                from . import run_clock
+                elapsed = run_clock.elapsed(run)
                 if auth and auth['max_run_minutes'] > 0 and elapsed >= auth['max_run_minutes'] * 60:
                     # A paused infrastructure failure must not hold the queue
                     # forever after its original grant ends. Stop native work;

@@ -111,8 +111,12 @@ class CodexBrain:
         try:
             await self.rpc.start()
             await initialize(self.rpc)
-            result = await self.rpc.request("thread/start", thread_params(
-                spec, self.model, self.effort, writable=False), timeout=60)
+            params = thread_params(spec, self.model, self.effort, writable=False)
+            method = "thread/start"
+            if spec.get("resume_thread_id"):
+                method = "thread/resume"
+                params["threadId"] = spec["resume_thread_id"]
+            result = await self.rpc.request(method, params, timeout=60)
             verify_thread_config(result, self.model, self.effort)
         except BaseException:
             await self.rpc.stop()

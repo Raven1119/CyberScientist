@@ -182,3 +182,26 @@ async def test_interrupt_and_steer_use_current_turn():
     assert rpc.calls[-1] == ('turn/interrupt', {'threadId': 'thread-1', 'turnId': 'turn-2'})
     assert (await exe.steer('thread-1', 'guidance')).status == 'accepted'
     assert rpc.calls[-1][1]['expectedTurnId'] == 'turn-2'
+
+@pytest.mark.asyncio
+async def test_both_native_roles_resume_original_thread(monkeypatch):
+    class ResumeRpc(FakeRpc):
+        async def request(self,method,params=None,**kwargs):
+            if method=='thread/resume':
+                self.calls.append((method,params))
+                assert params['threadId']=='original-session'
+                return {'thread':{'id':params['threadId']},'model':params['model'],
+                        'reasoningEffort':params['config']['model_reasoning_effort']}
+            return await super().request(method,params,**kwargs)
+    monkeypatch.setattr('cyberscientist.brains.codex.JsonRpcStdio',ResumeRpc)
+    monkeypatch.setattr('cyberscientist.prime.codex_exec.JsonRpcStdio',ResumeRpc)
+    brain=CodexBrain('/bin/true','gpt-6.1-sol','xhigh')
+    session=await brain.open({'resume_thread_id':'original-session'})
+    assert session.session_id=='original-session'
+    assert not any(m=='thread/start' for m,p in brain.rpc.calls)
+    await brain.close(session)
+    solver=CodexExecutor('/bin/true','gpt-6.1-sol','xhigh')
+    sid=await solver.start({'resume_thread_id':'original-session'})
+    assert sid=='original-session'
+    assert not any(m=='thread/start' for m,p in solver._sessions[sid].rpc.calls)
+    await solver.close(sid)

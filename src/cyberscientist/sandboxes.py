@@ -159,8 +159,8 @@ def bounded_lifetime(run_id: str, requested: int) -> int:
                         (run['authorization_id'],))
     if not auth or not run['started_at']:
         raise compute.ComputeError('SANDBOX_BUDGET', '评分没有有效时长授权')
-    run_left = auth['max_run_minutes'] * 60 - (datetime.now(timezone.utc) -
-                datetime.fromisoformat(run['started_at'])).total_seconds()
+    from . import run_clock
+    run_left = run_clock.remaining(run, auth)
     reserved = sum((datetime.fromisoformat(row['expires_at']) -
                     datetime.fromisoformat(row['created_at'])).total_seconds()
                    if row['deleted_at'] is None else
@@ -190,8 +190,8 @@ def bounded_execution_timeout(run_id: str, sandbox_id: str, requested: int) -> i
     auth = db.query_one('SELECT max_run_minutes FROM authorizations WHERE id=?',
                         (run['authorization_id'],))
     if auth and run['started_at'] and auth['max_run_minutes'] > 0:
-        remaining = auth['max_run_minutes'] * 60 - (datetime.now(timezone.utc) -
-                     datetime.fromisoformat(run['started_at'])).total_seconds()
+        from . import run_clock
+        remaining = run_clock.remaining(run, auth)
         seconds = min(seconds, math.floor(remaining) - 5)
     if seconds < 1:
         raise compute.ComputeError('SANDBOX_BUDGET', '评分命令的既有时长额度已耗尽')
@@ -256,8 +256,8 @@ def create(run_id: str, operation_id: str, request: dict, *, _session_id: str | 
             raise compute.ComputeError('RESOURCE_LIMIT', '沙箱CPU核心数超出本Run的机器授权')
         if not run['started_at'] or auth['max_run_minutes'] <= 0:
             raise compute.ComputeError('UNBOUNDED_SANDBOX', '沙箱需要本 Run 的时长上限')
-        run_left = auth['max_run_minutes'] * 60 - (datetime.now(timezone.utc) -
-                   datetime.fromisoformat(run['started_at'])).total_seconds()
+        from . import run_clock
+        run_left = run_clock.remaining(run, auth)
         rows = conn.execute('SELECT status,created_at,expires_at,deleted_at FROM compute_sandboxes'
                             ' WHERE run_id=?', (run_id,)).fetchall()
         if sum(row['status'] in LIVE for row in rows) >= auth['max_sandboxes']:

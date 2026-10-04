@@ -2197,11 +2197,10 @@ async def test_time_limit_pauses_once_without_hot_loop():
     c, brain, ex = _rig(shadow=False)
     rid = c.create_run("COLLAB_CH", shadow_enabled=False)["id"]
     await _start(c, brain, rid)
-    # 把授权时长改为已在过去耗尽（started_at 前移，上限 1 分钟）
+    # 活动时间已经耗尽；离线墙钟不再扣额度（上限 1 分钟）
     db.execute("UPDATE authorizations SET max_run_minutes=1 WHERE run_id=?",
                (rid,))
-    db.execute("UPDATE runs SET started_at=? WHERE id=?",
-               ("2000-01-01T00:00:00+00:00", rid))
+    db.execute("UPDATE runs SET active_elapsed_seconds=61 WHERE id=?", (rid,))
     # 用不改变 phase 的信号唤醒主循环，使其在 running 状态下走到时长检查
     await ex.turn_done()
     ok = await _wait(lambda: c.run_snapshot(rid)["phase"] == "paused")

@@ -22,6 +22,7 @@ export default function CompetitionPage() {
   const [season, setSeason] = useState('')
   const [seq, setSeq] = useState(1)
   const [busy, setBusy] = useState(false)
+  const [shutdown, setShutdown] = useState<{ can_shutdown: boolean; message: string; remote_jobs: unknown[]; remote_sandboxes: unknown[] } | null>(null)
   const [overrides, setOverrides] = useState<Record<string, Template>>({})
   const [template, setTemplate] = useState<Template>({ model_config: { brain: choice('gpt-6.1-sol'), executor: choice('gpt-6.1-sol') },
     authorization: { allow_model_calls: true, max_run_minutes: 60, max_jobs: 2, max_submissions: 0,
@@ -52,6 +53,14 @@ export default function CompetitionPage() {
   }
   const url = `/api/v1/rounds/${encodeURIComponent(id)}`
   return <section><div className="page-head"><h1>比赛轮次</h1></div>
+    <button className="btn" disabled={busy} onClick={async () => {
+      setBusy(true)
+      try { setShutdown(await api.post('/api/v1/system/safe-shutdown', {})) }
+      catch (e) { toast(e instanceof Error ? e.message : '安全暂停失败') }
+      finally { setBusy(false) }
+    }}>安全关机</button>
+    {shutdown && <div role="status"><strong>{shutdown.message}</strong><p>远程任务继续运行和计费。</p>
+      <pre>{JSON.stringify({ jobs: shutdown.remote_jobs, sandboxes: shutdown.remote_sandboxes }, null, 2)}</pre></div>}
     <p>导入整轮，查看分诊，确认模型与有界授权后自动排队。默认同时最多 6 个 Run、每个提供方 10 个会话；连接设置可调整。未确认的分数显示 unknown。</p>
     <div className="form-grid">
       <label>赛季 slug<input value={season} onChange={e => setSeason(e.target.value)} /></label>

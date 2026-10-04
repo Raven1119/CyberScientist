@@ -87,6 +87,7 @@ def main() -> None:
     serve.add_argument("--mode", choices=["demo", "connected"], default=None)
     serve.add_argument("--brain-executable", default=None,
                        help="大脑 CLI 可执行文件路径（默认自动探测）")
+    sub.add_parser("shutdown", help="安全暂停、备份并列出远程任务")
     evaluation = sub.add_parser('eval', help='运行或生成本地评测报告')
     evaluation_sub = evaluation.add_subparsers(dest='eval_command', required=True)
     eval_run = evaluation_sub.add_parser('run', help='启动一层评测')
@@ -99,6 +100,17 @@ def main() -> None:
     eval_rescore.add_argument('result_id')
     args = parser.parse_args()
 
+    if args.command == 'shutdown':
+        from . import config
+        port = config.load_settings()['app']['port']
+        request = urllib.request.Request(f'http://127.0.0.1:{port}/api/v1/system/safe-shutdown', data=b'{}',
+                                         headers={'Content-Type': 'application/json'}, method='POST')
+        with urllib.request.urlopen(request, timeout=90) as response:
+            result = json.load(response)
+        print(json.dumps(result, ensure_ascii=False))
+        if not result['can_shutdown']:
+            raise SystemExit(1)
+        return
     if args.command == 'eval':
         if args.eval_command == 'report':
             from . import db, evaluations

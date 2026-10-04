@@ -206,7 +206,8 @@ def _authorized(conn, run_id):
         raise ComputeError('NOT_AUTHORIZED', '本轮没有真实算力授权')
     if not auth['max_run_minutes'] or not run['started_at']:
         raise ComputeError('UNBOUNDED_JOB', '真实算力需要明确的本轮时长上限')
-    remaining = auth['max_run_minutes'] * 60 - (datetime.now(timezone.utc) - datetime.fromisoformat(run['started_at'])).total_seconds()
+    from . import run_clock
+    remaining = run_clock.remaining(run, auth)
     if remaining < 60:
         raise ComputeError('AUTH_EXPIRED', '本轮算力授权已到期')
     limits = DEFAULT_LIMITS | json.loads(auth['job_limits_json'])

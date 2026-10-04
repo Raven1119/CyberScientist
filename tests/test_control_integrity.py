@@ -116,8 +116,7 @@ async def test_deadline_without_events_requests_abort_and_waits_for_terminal():
     rid = c.create_run("COLLAB_CH")["id"]
     c.authorize(rid,"demo",True,10,1,0,None)
     await c.start_async(rid)
-    db.execute("UPDATE runs SET started_at=? WHERE id=?",
-               ((datetime.now(timezone.utc)-timedelta(seconds=59.85)).isoformat(),rid))
+    db.execute("UPDATE runs SET active_elapsed_seconds=59.85 WHERE id=?", (rid,))
     try:
         assert await _wait(lambda: bool(executor.aborts), timeout=2)
         assert c.run_snapshot(rid)["phase"] == "pausing"

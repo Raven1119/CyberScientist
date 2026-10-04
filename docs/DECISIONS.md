@@ -724,3 +724,9 @@ W1推送后部署并冻结df91723c518f61327695160d28c6fd3073abafcb，运行源�
 - W0：依据用户任务卡，在 UPGRADE_DESIGN §1 更新 Lightchaser 第一目标，在 §5 追加 D-28–D-41，并保留 D-07/D-23 原文、标明替代关系。任务卡中本轮用户决定优先于设计中的历史决定，其余历史原文不重写。
 - 开工 HEAD 为 5940418dfb5af9be53141904971bcf2cd33a7de7，main；未跟踪任务卡和经验文件保留。lightchaser-fallback-0 指向该提交并已推送。
 - 迁移前使用 SQLite backup API 在 .package-checks/cs-up-08/ 保存一致性备份。历史 recovering Run 在部署前先对账；真实验证额度按任务卡独立记录，CS-UP-08 提交数为 0。
+
+### W2 活动时钟和关机屏障
+
+新增 Run 使用持久活动时间（15 秒心跳）；大于 45 秒的间隔视为离线，不扣科研 Run 时长。远程 Job/沙箱预约与费用仍按墙钟。旧时钟数据保持旧语义，避免将历史 recovering Run 自动启动。手动暂停不自动恢复；安全关机及意外中断的新 Run 先对账，再按原生 threadId 恢复。Codex 0.159.3 本机生成的 ThreadResumeParams/Response 已核实；Kimi/Prime 原生恢复仍未确认，不宣称内存恢复。
+
+关机先停止队列新增，取得执行器安全点，再关闭两类本地原生进程、冻结时钟、用 SQLite backup API 保存一致副本。任何未确认暂停或进程关闭超时均返回 can_shutdown=false。远程资源列表保留 unknown 和继续计费提示，不取消旧资源。有界审查覆盖重复迁移、离线断档、原会话身份和未确认暂停，并补齐其他暂停出口的时钟冻结；未绕过授权或重复投递远端操作。

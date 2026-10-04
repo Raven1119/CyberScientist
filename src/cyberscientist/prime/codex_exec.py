@@ -57,8 +57,12 @@ class CodexExecutor:
         try:
             await rpc.start()
             await initialize(rpc)
-            result = await rpc.request("thread/start", thread_params(
-                spec, self.model, self.effort, writable=True), timeout=60)
+            params = thread_params(spec, self.model, self.effort, writable=True)
+            method = "thread/start"
+            if spec.get("resume_thread_id"):
+                method = "thread/resume"
+                params["threadId"] = spec["resume_thread_id"]
+            result = await rpc.request(method, params, timeout=60)
             verify_thread_config(result, self.model, self.effort)
             tid = result["thread"]["id"]
         except BaseException:

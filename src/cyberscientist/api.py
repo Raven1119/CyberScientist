@@ -285,6 +285,8 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
                 import logging
                 logging.getLogger('cyberscientist.api').exception(
                     'Job reconciliation failed for Run %s', run_id)
+        from . import power
+        await power.recover(controller)
         # 后台评分轮询：提交后进入评分等待，由这里异步拿回分数。
         # 评分器可能长时间排队或抽风（409 scoringInProgress / 5xx），
         # 全部吞掉下一轮再试；轮询失败绝不影响服务本身。
@@ -320,6 +322,11 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
                     await asyncio.to_thread(sandboxes.expire_due)
                 except Exception:
                     logger.exception('Sandbox expiry cleanup failed')
+                from . import run_clock
+                try:
+                    run_clock.heartbeat()
+                except Exception:
+                    logger.exception('Active-time heartbeat failed')
                 for row in db.query("SELECT id FROM runs WHERE phase='running'"):
                     try:
                         controller.check_liveness(row['id'])
@@ -359,6 +366,12 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
     app = FastAPI(title="CyberScientist", docs_url=None, openapi_url=None,
                   lifespan=lifespan)
     app.state.web_dist = web_dist
+
+    @app.post('/api/v1/system/safe-shutdown')
+    async def safe_shutdown():
+        from . import power
+        return await power.safe_shutdown(controller)
+
 
     @app.exception_handler(ResourceWait)
     async def resource_wait(_: Request, exc: ResourceWait):

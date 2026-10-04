@@ -48,8 +48,8 @@ def facts(run_id: str) -> dict:
         return {'status': 'unknown'}
     auth = db.query_one('SELECT * FROM authorizations WHERE id=?', (run['authorization_id'],))
     now = datetime.now(timezone.utc)
-    elapsed = ((now - datetime.fromisoformat(run['started_at'])).total_seconds()
-               if run['started_at'] else 0)
+    from . import run_clock
+    elapsed = run_clock.elapsed(run)
     jobs = db.query("SELECT status FROM compute_jobs WHERE run_id=? AND status!='not_started'", (run_id,))
     sandbox_rows = db.query('SELECT created_at,expires_at,deleted_at,status FROM compute_sandboxes'
                            ' WHERE run_id=?', (run_id,))

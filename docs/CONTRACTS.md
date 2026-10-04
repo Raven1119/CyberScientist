@@ -189,3 +189,7 @@ CS-UP-06 候选对账允许评分器额外声明 `comparison_contract`：`higher
 - `POST /api/v1/rounds/<id>/runs` 为同一题目追加 Run；`PUT /api/v1/rounds/<id>/items/<item>` 更新 priority/paused。队列与历史评测共用原持久表。
 - 新工作区默认 Run 上限 6、各提供方会话上限 10；两角色分别占会话。`resources` 配置全局 Job/沙箱并发，上限在创建预约的同一 SQLite 写事务检查。状态不明仍留账本，W3 实施十分钟释放并发。
 - 总览展示分诊、Run、正式本地最好分、暂定/确认平台分、轨迹诊断、原生用量与费用来源、阻塞和下一步。未知金额不填 0。
+
+## 安全关机（CS-UP-08 W2）
+
+`POST /api/v1/system/safe-shutdown` 返回 can_shutdown、backup、unsettled_runs、errors、remote_jobs、remote_sandboxes、remote_costs_continue；只有 can_shutdown=true 才可关机。CLI：`cyberscientist shutdown`。Run clock_version=1 仅累计本地活动时间；远程寿命仍按墙钟，IPython 内存不恢复。

@@ -660,6 +660,10 @@ class RunController:
         return self.run_snapshot(run_id)
 
     async def start_async(self, run_id: str) -> dict[str, Any]:
+        from . import power
+        if power.shutdown_requested():
+            from .resource_coordinator import ResourceWait
+            raise ResourceWait('安全关机期间停止新增 Run；重启后自动恢复队列')
         run = self._require_run(run_id)
         if run["phase"] != "created":
             raise ControllerError("INVALID_STATE", f"当前阶段 {run['phase']} 不能启动")
@@ -693,6 +697,8 @@ class RunController:
         # 原子抢占：并发 start（双击）只有一个能完成 created→running 转换
         from . import resource_coordinator
         with db.transaction() as conn:
+            if power.shutdown_requested():
+                raise resource_coordinator.ResourceWait('安全关机期间停止新增 Run')
             if run['mode'] == 'connected':
                 resource_coordinator.reserve_sessions_tx(conn, run_id,
                     {role: settings[role] for role in ('brain', 'executor')})
@@ -702,6 +708,8 @@ class RunController:
             if cur.rowcount != 1:
                 raise ControllerError("INVALID_STATE",
                                       f"当前阶段不能启动（并发或状态已变化）")
+        from . import run_clock
+        run_clock.start(run_id)
         db.append_event(run_id, "controller", "run.started", {
             "brain": b_health.version or brain.kind,
             "prime": p_health.version or prime.kind,
@@ -756,7 +764,7 @@ class RunController:
             # 暂停与已发出/排队指导交错：排队中的 shadow 指导立即失效，
             # 已 sent 的不谎报撤回
             with db.transaction() as conn:
-                conn.execute("UPDATE runs SET phase='pausing' WHERE id=?", (run_id,))
+                conn.execute("UPDATE runs SET phase='pausing',resume_on_startup=0 WHERE id=?", (run_id,))
                 self._invalidate_shadow_guidance_tx(conn, run_id,
                                                     reason="用户暂停")
                 db.append_event_tx(conn, run_id, "controller", "run.pausing", {
@@ -830,6 +838,8 @@ class RunController:
                 db.execute("UPDATE runs SET phase='running', block_reason=NULL"
                            " WHERE id=?", (run_id,))
                 db.execute("DELETE FROM model_rate_limits WHERE run_id=?", (run_id,))
+                from . import run_clock
+                run_clock.start(run_id)
                 db.append_event(run_id, "controller", "run.resumed",
                                 {"via": "recovery"})
                 nq: asyncio.Queue = asyncio.Queue()
@@ -850,6 +860,8 @@ class RunController:
                 return {"status": existing["status"], "deduplicated": True}
             db.execute("UPDATE runs SET phase='running',block_reason=NULL WHERE id=?", (run_id,))
             db.execute("DELETE FROM model_rate_limits WHERE run_id=?", (run_id,))
+            from . import run_clock
+            run_clock.start(run_id)
             db.append_event(run_id, "controller", "run.resumed", {})
             await q.put({"type": "resume"})
             self._wake(run_id)
@@ -912,8 +924,11 @@ class RunController:
         """后端重启对账：无事件循环的非终态 Run 是僵尸——标记 recovering 等用户裁决。
 
         进程内的会话/队列/任务都随旧进程消失，phase 停在 running/pausing/paused
-        的 Run 不能假装还在跑：如实标记、切断悬空审阅，由用户选择恢复或终止。
+        的 Run 不能假装还在跑：如实标记并切断悬空审阅。远程对账后仅自动恢复
+        有活动时钟且保留恢复意图的 Run；旧 Run 和用户手动暂停保持待恢复。
         """
+        from . import run_clock
+        run_clock.heartbeat()
         db.execute('DELETE FROM model_session_leases')
         zombies = db.query(
             "SELECT id, phase FROM runs"
@@ -921,6 +936,8 @@ class RunController:
         recovered = []
         for z in zombies:
             try:
+                from . import run_clock
+                run_clock.freeze(z["id"])
                 inflight = [r["id"] for r in db.query(
                     "SELECT id FROM review_requests WHERE run_id=?"
                     " AND status IN ('pending','running')", (z["id"],))]
@@ -1321,6 +1338,10 @@ class RunController:
         if changed and busy and run_id in self._signals:
             self._signals[run_id].put_nowait({"type": "pause"})
         if changed:
+            from . import run_clock
+            if not busy:
+                run_clock.freeze(run_id)
+            db.execute("UPDATE runs SET resume_on_startup=0 WHERE id=?", (run_id,))
             self._wake(run_id)
 
     def check_liveness(self, run_id: str, now: float | None = None) -> str | None:
@@ -1551,7 +1572,11 @@ class RunController:
             brain_dir = config.WORKSPACE_DIR / "runs" / run_id / "brain_view"
             brain_dir.mkdir(parents=True,exist_ok=True)
             run = self._require_run(run_id)
-            b_session = await brain.open(self._brain_spec(run_id, settings, brain_dir))
+            brain_spec = self._brain_spec(run_id, settings, brain_dir)
+            if trigger == "recovery" and isinstance(brain, CodexBrain) and run['brain_thread_id']:
+                brain_spec['resume_thread_id'] = run['brain_thread_id']
+            b_session = await brain.open(brain_spec)
+            db.execute('UPDATE runs SET brain_thread_id=? WHERE id=?', (b_session.session_id, run_id))
             if self._sparse_brain(run):
                 db.append_event(run_id, "controller", "brain.research_session_opened",
                                 {"trace": "optional", "skills_injected": False})
@@ -1562,7 +1587,16 @@ class RunController:
                 })
             self._brain_sessions[run_id] = b_session
             self._brain_instances[run_id] = brain
-            prime_sid = await prime.start(self._prime_spec(run_id,settings))
+            prime_spec = self._prime_spec(run_id, settings)
+            if trigger == "recovery" and isinstance(prime, CodexExecutor) and run['executor_thread_id']:
+                prime_spec['resume_thread_id'] = run['executor_thread_id']
+            prime_sid = await prime.start(prime_spec)
+            db.execute('UPDATE runs SET executor_thread_id=? WHERE id=?', (prime_sid, run_id))
+            if trigger == 'recovery':
+                db.append_event(run_id, 'controller', 'run.sessions_recovered', {
+                    'brain_thread_id': b_session.session_id, 'executor_thread_id': prime_sid,
+                    'native_resume': isinstance(brain, CodexBrain) and isinstance(prime, CodexExecutor),
+                    'ipython_memory': 'not_restored'})
             self._prime_sessions[run_id] = prime_sid
             async def prime_event_pump(sid: str) -> None:
                 """每个原生会话常驻且唯一的事件消费者；回合结束不退出。"""
@@ -1631,6 +1665,8 @@ class RunController:
                     if receipt.status == "confirmed":
                         db.execute("UPDATE runs SET phase='paused' WHERE id=?",
                                    (run_id,))
+                        from . import run_clock
+                        run_clock.freeze(run_id)
                         db.append_event(run_id, "prime", "run.paused",
                                         {"detail": receipt.detail})
                     else:
@@ -1676,6 +1712,8 @@ class RunController:
                 db.append_event(run_id,'controller','sandbox.cleanup_unknown',
                                 {'reason':type(cleanup_exc).__name__})
         finally:
+            from . import run_clock
+            run_clock.freeze(run_id)
             tasks = [t for t in (self._review_tasks.get(run_id),self._pumps.get(run_id))
                      if t and t is not asyncio.current_task()]
             for task in tasks:
@@ -1790,6 +1828,8 @@ class RunController:
                 if run["phase"] == "pausing" and etype in ("run.aborted","executor.turn_completed","trial.completed","session.ended"):
                     self._executor_busy[run_id] = False
                     db.execute("UPDATE runs SET phase='paused' WHERE id=? AND phase='pausing'",(run_id,))
+                    from . import run_clock
+                    run_clock.freeze(run_id)
                     db.append_event(run_id,"controller","run.paused",{"evidence":etype,"notice":"本地代理已停止；远程 Job 独立对账"})
                 if etype in ("trial.completed", "run.aborted",
                              "executor.turn_completed"):
@@ -2476,6 +2516,9 @@ class RunController:
             db.append_event_tx(conn, run_id, "controller", "run.paused", {
                 "review_id": review_id, "reason": reason,
                 "notice": "阻塞审阅无有效答复；已暂停等待用户处理，未自动放行"})
+        from . import run_clock
+        run_clock.freeze(run_id)
+        db.execute("UPDATE runs SET resume_on_startup=0 WHERE id=?", (run_id,))
 
     async def _run_one_review(self, run_id: str, req: Any,
                               brain: BrainRuntime, b_session: Any) -> None:
@@ -2560,6 +2603,9 @@ class RunController:
                         " WHERE id=?",
                         (f"达到大脑判断上限 {defaults['max_brain_reviews']} 次",
                          run_id))
+                    from . import run_clock
+                    run_clock.freeze(run_id)
+                    db.execute("UPDATE runs SET resume_on_startup=0 WHERE id=?", (run_id,))
                     db.append_event(run_id, "controller", "run.review_limit",
                                     {"limit": defaults["max_brain_reviews"]})
                 self._obsolete_request(req["id"], "大脑判断额度用尽")
@@ -2753,6 +2799,10 @@ class RunController:
                         "review_id": req["id"], "trigger": req["trigger"],
                         "reason": reason,
                         "notice": "尚无活动实验且执行器空闲；已暂停，未自动重试或降级模型"})
+            if paused:
+                from . import run_clock
+                run_clock.freeze(run_id)
+                db.execute("UPDATE runs SET resume_on_startup=0 WHERE id=?", (run_id,))
 
     def _apply_review_result(self, run_id: str, req: Any, mode: str,
                              frame: dict[str, Any],
@@ -4120,8 +4170,8 @@ class RunController:
         started = _parse_ts(run["started_at"])
         if started is None:
             return float("inf")
-        import time as _time
-        return minutes * 60 - (_time.time() - started)
+        from . import run_clock
+        return run_clock.remaining(run, auth)
 
     def _budget_status(self, run: Any) -> dict[str, Any]:
         settings = config.load_settings()

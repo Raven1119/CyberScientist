@@ -24,3 +24,13 @@ it('shows confirmed versus unknown facts and requires a bounded template before 
   await userEvent.setup().click(await screen.findByRole('button', { name: '按当前模板追加 Run' }))
   expect(post.mock.calls[1][1].challenge_id).toBe('same_challenge')
 })
+
+it('only shows shutdown readiness from the backend receipt', async () => {
+  get.mockResolvedValue({ items: [] })
+  post.mockResolvedValue({ can_shutdown: false, message: '暂停尚未确认，暂不能关机', remote_jobs: [{ status: 'unknown' }], remote_sandboxes: [] })
+  render(<CompetitionPage />)
+  await userEvent.setup().click(screen.getByRole('button', { name: '安全关机' }))
+  expect(await screen.findByText('暂停尚未确认，暂不能关机')).toBeTruthy()
+  expect(screen.getByText('远程任务继续运行和计费。')).toBeTruthy()
+  expect(post.mock.calls[0][0]).toBe('/api/v1/system/safe-shutdown')
+})

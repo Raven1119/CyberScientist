@@ -598,6 +598,13 @@ def init_db() -> None:
         _ensure_columns(conn, 'compute_sandbox_operations', SANDBOX_OPERATION_V3_COLUMNS)
         _ensure_columns(conn, "checkpoints", CHECKPOINT_V2_COLUMNS)
         _ensure_columns(conn, "runs", RUN_V2_COLUMNS)
+        _ensure_columns(conn, 'runs', {
+            'clock_version': 'INTEGER NOT NULL DEFAULT 0',
+            'active_elapsed_seconds': 'REAL NOT NULL DEFAULT 0',
+            'clock_active_since': 'REAL', 'clock_heartbeat_at': 'REAL',
+            'resume_on_startup': 'INTEGER NOT NULL DEFAULT 0',
+            'brain_thread_id': 'TEXT', 'executor_thread_id': 'TEXT'})
+        conn.execute('CREATE TABLE IF NOT EXISTS system_state (key TEXT PRIMARY KEY,value TEXT NOT NULL)')
         _ensure_columns(conn, "submissions", SUBMISSION_V2_COLUMNS)
         _ensure_columns(conn, "local_scores", LOCAL_SCORE_V2_COLUMNS)
         _ensure_columns(conn, "score_calibration", SCORE_CALIBRATION_V2_COLUMNS)
