@@ -95,7 +95,7 @@
 
 ## 已实际验证
 
-- CS-UP-09 W0：远程 main/fallback-1 均为 ec5e24b，fallback-0 为 5940418；基线跟踪文件干净，原未跟踪资料保留。SQLite backup 成功，哈希清单仅在本机忽略目录。
+- CS-UP-09 W0：远程 main/fallback-1 均为 ec5e24b，fallback-0 为 5940418；基线跟踪文件干净，原未跟踪资料保留。SQLite backup、哈希核对、SQLite integrity_check通过，47条编号唯一、原41条决策不变；首个校验脚本编号错误导致先提交的偏差已记录并补做验证。哈希清单仅在本机忽略目录。
 
 - CS-UP-08 W4：`.venv/bin/pytest -q` 最终实测 894 passed（452.84 秒），修复核心专项64 passed、队列／报告44 passed、目标／额度事实5 passed；前端45 passed 与 `npm run build` 通过，compileall、diff check、暂存秘密与私有文件扫描通过。三题真实分诊完成，全部 finished；正式本地科学分 FigQA100/100、ABC20（system），提交0、原生租约0，五只本卡沙箱均确认 deleted。ABC两Job为Finished/Failed，后者暴露输入目录缺陷；修复只以应用夹具验过，未追加真实Job。真实回执自动生成环境事实已生效。同一真实 Run 暂停 45 秒，剩余时长差 0，恢复确认且原生会话 ID 保持。
 
