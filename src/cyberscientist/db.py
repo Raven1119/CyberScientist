@@ -598,6 +598,11 @@ def init_db() -> None:
         _ensure_columns(conn, 'compute_sandbox_operations', SANDBOX_OPERATION_V3_COLUMNS)
         _ensure_columns(conn, "checkpoints", CHECKPOINT_V2_COLUMNS)
         _ensure_columns(conn, "runs", RUN_V2_COLUMNS)
+        conn.execute('CREATE TABLE IF NOT EXISTS environment_saves (operation_id TEXT PRIMARY KEY,run_id TEXT NOT NULL,status TEXT NOT NULL,resource_id TEXT,recipe_json TEXT NOT NULL,smoke_command TEXT NOT NULL,recipe_sha256 TEXT NOT NULL,cost_status TEXT NOT NULL,receipt_json TEXT NOT NULL,created_at TEXT NOT NULL,updated_at TEXT NOT NULL)')
+        _ensure_columns(conn, 'authorizations', {'max_environment_saves': 'INTEGER NOT NULL DEFAULT 0'})
+        conn.execute('CREATE TABLE IF NOT EXISTS job_score_receipts (operation_id TEXT PRIMARY KEY,run_id TEXT NOT NULL,job_operation_id TEXT NOT NULL,receipt_json TEXT NOT NULL,receipt_sha256 TEXT NOT NULL,created_at TEXT NOT NULL)')
+        _ensure_columns(conn, 'compute_jobs', {'unknown_since': 'TEXT', 'input_bytes': 'INTEGER', 'concurrency_released': 'INTEGER NOT NULL DEFAULT 0'})
+        _ensure_columns(conn, 'runs', {'pending_trial_json': 'TEXT'})
         _ensure_columns(conn, 'runs', {
             'clock_version': 'INTEGER NOT NULL DEFAULT 0',
             'active_elapsed_seconds': 'REAL NOT NULL DEFAULT 0',
@@ -605,6 +610,7 @@ def init_db() -> None:
             'resume_on_startup': 'INTEGER NOT NULL DEFAULT 0',
             'brain_thread_id': 'TEXT', 'executor_thread_id': 'TEXT'})
         conn.execute('CREATE TABLE IF NOT EXISTS system_state (key TEXT PRIMARY KEY,value TEXT NOT NULL)')
+        conn.execute('CREATE TABLE IF NOT EXISTS native_turn_trials (run_id TEXT NOT NULL,turn_id TEXT NOT NULL,trial_id TEXT,PRIMARY KEY(run_id,turn_id))')
         _ensure_columns(conn, "submissions", SUBMISSION_V2_COLUMNS)
         _ensure_columns(conn, "local_scores", LOCAL_SCORE_V2_COLUMNS)
         _ensure_columns(conn, "score_calibration", SCORE_CALIBRATION_V2_COLUMNS)

@@ -5,7 +5,7 @@ import { useApp } from '../app-context'
 type Choice = { runtime: string; model_id: string; reasoning_effort: string }
 type Template = { model_config: { brain: Choice; executor: Choice }; authorization: {
   allow_model_calls: boolean; max_run_minutes: number; max_jobs: number; max_submissions: number;
-  max_sandboxes: number; max_sandbox_minutes: number; allow_data_download: boolean }; solver_note: string }
+  max_sandboxes: number; max_environment_saves: number; max_sandbox_minutes: number; allow_data_download: boolean }; solver_note: string }
 type Item = { id: string; challenge_id: string; title: string; phase: string; priority: number;
   paused: number; run_id: string | null; local_best: number | null; platform_best: { score: number; score_confidence: string } | null;
   triage: { difficulty: string; estimated_minutes: number | null; estimated_cost_cny: number | null; recommended_model: string; reason: string } | null;
@@ -26,7 +26,7 @@ export default function CompetitionPage() {
   const [overrides, setOverrides] = useState<Record<string, Template>>({})
   const [template, setTemplate] = useState<Template>({ model_config: { brain: choice('gpt-6.1-sol'), executor: choice('gpt-6.1-sol') },
     authorization: { allow_model_calls: true, max_run_minutes: 60, max_jobs: 2, max_submissions: 0,
-      max_sandboxes: 2, max_sandbox_minutes: 60, allow_data_download: true }, solver_note: '' })
+      max_sandboxes: 2, max_environment_saves: 0, max_sandbox_minutes: 60, allow_data_download: true }, solver_note: '' })
   useEffect(() => {
     let active = true
     const refresh = async () => {
@@ -76,7 +76,7 @@ export default function CompetitionPage() {
         <input value={template.model_config[role].model_id} onChange={e => setTemplate(t => ({ ...t, model_config: { ...t.model_config,
           [role]: { ...t.model_config[role], model_id: e.target.value } } }))} /></label>)}
       {([['max_run_minutes', '每 Run 分钟'], ['max_jobs', '每 Run Job 数'], ['max_submissions', '每 Run 实验提交数'],
-        ['max_sandboxes', '每 Run 沙箱并发'], ['max_sandbox_minutes', '每 Run 沙箱累计分钟']] as const).map(([key, title]) =>
+        ['max_sandboxes', '每 Run 沙箱并发'], ['max_environment_saves', '每 Run 环境保存数'], ['max_sandbox_minutes', '每 Run 沙箱累计分钟']] as const).map(([key, title]) =>
         <label key={key}>{title}<input type="number" min="0" value={template.authorization[key]} onChange={e => setTemplate(t => ({ ...t,
           authorization: { ...t.authorization, [key]: Number(e.target.value) } }))} /></label>)}
       <label>给 PI 的求解者备注<input value={template.solver_note} onChange={e => setTemplate(t => ({ ...t, solver_note: e.target.value }))} /></label>
@@ -96,7 +96,7 @@ export default function CompetitionPage() {
                   executor: { ...current.model_config.executor, model_id: e.target.value } } } } })} /></label>}
             {round.status === 'draft' && <details><summary>此题授权</summary>
               {([['max_run_minutes', '分钟'], ['max_jobs', 'Job 数'], ['max_submissions', '实验提交数'],
-                ['max_sandboxes', '沙箱并发'], ['max_sandbox_minutes', '沙箱累计分钟']] as const).map(([key, title]) =>
+                ['max_sandboxes', '沙箱并发'], ['max_environment_saves', '环境保存数'], ['max_sandbox_minutes', '沙箱累计分钟']] as const).map(([key, title]) =>
                 <label key={key}>{title}<input type="number" min="0" value={(overrides[item.challenge_id] ?? template).authorization[key]}
                   onChange={e => setOverrides(v => { const current = v[item.challenge_id] ?? template; return { ...v,
                     [item.challenge_id]: { ...current, authorization: { ...current.authorization, [key]: Number(e.target.value) } } } })} /></label>)}

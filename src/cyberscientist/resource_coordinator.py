@@ -63,8 +63,8 @@ def require_compute_slot_tx(conn, kind: str) -> None:
     if type(limit) is not int or limit < 1:
         raise ValueError('全局算力并发上限必须是正整数或 null')
     if kind == 'job':
-        used = conn.execute("SELECT COUNT(*) FROM compute_jobs WHERE status NOT IN"
-                            " ('Finished','Failed','Stopped','not_started')").fetchone()[0]
+        from .compute import occupies_slot
+        used = sum(occupies_slot(row) for row in conn.execute('SELECT * FROM compute_jobs').fetchall())
     else:
         used = conn.execute("SELECT COUNT(*) FROM compute_sandboxes WHERE status NOT IN"
                             " ('deleted','failed')").fetchone()[0]

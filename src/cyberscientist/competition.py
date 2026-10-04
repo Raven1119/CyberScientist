@@ -137,11 +137,11 @@ def _template(template: dict, mode: str) -> dict:
     models = {role: challenge_models.choose(role, choices.get(role), settings) for role in ('brain', 'executor')}
     auth = template.get('authorization') or {}
     allowed = {'max_run_minutes', 'max_jobs', 'max_submissions', 'max_model_turns', 'max_sandboxes',
-               'max_sandbox_minutes', 'allow_sandbox_gpu', 'allow_data_download', 'job_limits',
+               'max_sandbox_minutes', 'allow_sandbox_gpu', 'allow_data_download', 'job_limits', 'max_environment_saves',
                'max_compute_cost_cny', 'allow_model_calls'}
     if not isinstance(auth, dict) or set(auth) - allowed:
         raise CompetitionError('授权模板字段不符')
-    for key in ('max_run_minutes', 'max_jobs', 'max_submissions', 'max_model_turns', 'max_sandboxes', 'max_sandbox_minutes'):
+    for key in ('max_run_minutes', 'max_jobs', 'max_submissions', 'max_model_turns', 'max_sandboxes', 'max_sandbox_minutes', 'max_environment_saves'):
         value = auth.get(key, 0)
         if type(value) is not int or value < 0:
             raise CompetitionError('额度必须是非负整数')

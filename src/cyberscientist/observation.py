@@ -62,9 +62,11 @@ def authority_facts(run_id: str) -> dict[str, Any]:
                         ' ON r.authorization_id=a.id AND a.run_id=r.id WHERE r.id=?', (run_id,))
     values = ({name: auth[name] for name in (
         'note', 'max_jobs', 'max_sandboxes', 'max_sandbox_minutes',
-        'max_submissions', 'max_run_minutes', 'max_compute_cost_cny')} if auth else None)
+        'max_submissions', 'max_run_minutes', 'max_compute_cost_cny', 'max_environment_saves')} if auth else None)
     if values is not None:
         values['note'] = strip_secrets(values['note']) if values['note'] else values['note']
+        from .compute import validate_limits
+        values['job_limits'] = validate_limits(json.loads(auth['job_limits_json']))
         values.update(allow_sandbox_gpu=bool(auth['allow_sandbox_gpu']),
                       allow_data_download=bool(auth['allow_data_download']))
     from . import runtime_environments, runtime_facts
@@ -184,6 +186,10 @@ def job_states(run_id: str, through_seq: int) -> list[dict]:
     for e in events_through(run_id, 1, through_seq):
         p = e['payload']
         if not e['type'].startswith('job.') or not p.get('operation_id'):
+            continue
+        if e['type'] not in ('job.reserved', 'job.accepted', 'job.unknown', 'job.not_started',
+                             'job.observed', 'job.stop_requested', 'job.stop_receipt',
+                             'job.retrieval_failed', 'job.retrieved', 'job.concurrency_released'):
             continue
         op = p['operation_id']
         state = states.setdefault(op, {'operation_id': op})

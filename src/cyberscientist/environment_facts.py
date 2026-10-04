@@ -39,7 +39,8 @@ def record(fact_key: str, title: str, data: object, event: dict) -> dict:
                         {'operation': 'environment_fact', 'fact_key': fact_key[:100]})
         return {'status': 'rejected', 'reason': 'evaluation_mode'}
     if not event or event.get('source')!='controller' or event.get('type') not in (
-            'image_facts.observed','sandbox.environment_observed','environment.host_observed'):
+            'image_facts.observed','sandbox.environment_observed','environment.host_observed',
+            'environment.save_observed'):
         raise experiences.ExperienceError('INVALID_EVIDENCE','环境事实需要控制器回执事件')
     if not isinstance(fact_key,str) or not fact_key or len(fact_key)>500:
         raise experiences.ExperienceError('INVALID_EXPERIENCE','环境事实键无效')

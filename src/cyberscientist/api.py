@@ -187,6 +187,7 @@ class AuthorizeBody(BaseModel):
     max_run_minutes: int = 30
     max_submissions: int = 0
     max_jobs: int = 0
+    max_environment_saves: int = 0
     max_sandboxes: int = 0
     max_sandbox_minutes: int = 0
     allow_sandbox_gpu: bool = False
@@ -320,6 +321,7 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
             while not stop.is_set():
                 try:
                     await asyncio.to_thread(sandboxes.expire_due)
+                    compute.release_unknown_slots()
                 except Exception:
                     logger.exception('Sandbox expiry cleanup failed')
                 from . import run_clock
@@ -991,6 +993,7 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
                                     max_sandbox_minutes=body.max_sandbox_minutes,
                                     allow_sandbox_gpu=body.allow_sandbox_gpu,
                                     max_compute_cost_cny=body.max_compute_cost_cny,
+                                    max_environment_saves=body.max_environment_saves,
                                     objective=body.objective)
 
     @app.put("/api/v1/runs/{run_id}/budget")
@@ -1095,7 +1098,8 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
         return JSONResponse(status_code=409, content={"detail": {"code": exc.code, "message": str(exc),
                                                          "details": exc.details},
             'failure_feedback': tool_feedback.failure(request.url.path, exc.details or str(exc),
-                code=exc.code, remote_effect='unknown')})
+                code=exc.code, remote_effect=exc.details.get('possible_remote_effect', 'none'),
+                operation_id=getattr(request.state, 'operation_id', None))})
 
     @app.exception_handler(datasets.DataError)
     async def data_error(_: Request, exc: datasets.DataError):
@@ -1134,6 +1138,10 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
     async def tool_bohr(request: Request) -> dict:
         identity = _tool_auth(request)
         body = await request.json()
+        args = body.get('args') or []
+        if isinstance(args, list) and '--cs-operation-id' in args:
+            index = args.index('--cs-operation-id')
+            request.state.operation_id = args[index + 1] if index + 1 < len(args) else None
         result = await asyncio.to_thread(compute.cli, identity["run_id"], body.get("args"), body.get("cwd", ""))
         controller.notify_run_change(identity["run_id"])
         from . import tool_feedback
@@ -1157,12 +1165,30 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
         controller.notify_run_change(run_id)
         return result
 
+    @app.post('/api/v1/tools/environment')
+    async def save_environment(request: Request):
+        from . import environment_saves
+        identity = _tool_auth(request)
+        body = await request.json()
+        request.state.operation_id = body.get('operation_id')
+        if body.get('action') == 'save':
+            return await asyncio.to_thread(environment_saves.save, identity['run_id'], body.get('operation_id'), body.get('dockerfile'), body.get('recipe'), body.get('smoke_command'))
+        if body.get('action') == 'reconcile':
+            owned = db.query_one('SELECT run_id FROM environment_saves WHERE operation_id=?', (body.get('operation_id'),))
+            if not owned or owned['run_id'] != identity['run_id']:
+                raise compute.ComputeError('NOT_OWNED', '环境未登记在本 Run')
+            return await asyncio.to_thread(environment_saves.reconcile, body['operation_id'])
+        if body.get('action') == 'list':
+            return {'items': environment_saves.saves()}
+        raise compute.ComputeError('INVALID_ACTION', '支持 save/reconcile/list')
+
     @app.post("/api/v1/tools/job")
     async def tool_job(request: Request) -> dict:
         identity = _tool_auth(request)
         body = await request.json()
         rid = identity["run_id"]
         action = body.get("action")
+        request.state.operation_id = body.get('operation_id')
         if action == "submit":
             result = await asyncio.to_thread(compute.submit, rid, body.get("operation_id"),
                                              body.get("spec"), body.get("input_directory", ""),
@@ -1209,6 +1235,10 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
         identity = _tool_auth(request)
         body = await request.json()
         action = body.get('action', 'evaluate')
+        if action == 'prepare_job':
+            return await asyncio.to_thread(executor_scoring.prepare, identity['run_id'], body.get('trial_id'), body.get('operation_id'), 'job', body.get('package_path'), body.get('environment_paths'), channel='job')
+        if action == 'register_job':
+            return await asyncio.to_thread(executor_scoring.register_job, identity['run_id'], body.get('trial_id'), body.get('operation_id'), body.get('execution_operation_id'))
         if action == 'prepare':
             return await asyncio.to_thread(executor_scoring.prepare,
                 identity['run_id'], body.get('trial_id'), body.get('operation_id'),

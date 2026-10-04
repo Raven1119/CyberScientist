@@ -120,9 +120,39 @@ def facts(run_id: str) -> dict:
                 'host': payload.get('host'), 'result': payload.get('result', 'unknown'),
                 'event_ref': f"{row['run_id']}#{row['seq']}"})
     from . import compute, compute_budget
+    limits = compute.validate_limits(json.loads(auth['job_limits_json'])) if auth else compute.DEFAULT_LIMITS
+    import re
+    allowed_machines = {}
+    for name, price in quotes['job']['rates'].items():
+        match = re.fullmatch(r'c(\d+)_m(\d+)_cpu', name)
+        if match and int(match[1]) <= limits['max_cpu'] and int(match[2]) <= limits['max_memory_gb']:
+            allowed_machines[name] = price
+    channels = {}
+    for row in db.query('SELECT status,input_bytes FROM compute_jobs'):
+        size = row['input_bytes']
+        bucket = 'unknown' if size is None else '<=1MiB' if size <= 1024**2 else '<=256MiB' if size <= 256*1024**2 else '>256MiB'
+        stats = channels.setdefault(bucket, {'attempts': 0, 'finished': 0, 'unknown': 0})
+        stats['attempts'] += 1
+        stats['finished'] += row['status'] == 'Finished'
+        stats['unknown'] += row['status'] == 'unknown'
+    transfer_channels = {}
+    for row in db.query("SELECT payload FROM events WHERE source='controller' AND type='sandbox.files_write'"):
+        payload = json.loads(row['payload'])
+        size = sum(item.get('bytes', 0) for item in payload.get('files', []))
+        bucket = '<=1MiB' if size <= 1024**2 else '<=256MiB' if size <= 256*1024**2 else '>256MiB'
+        stats = transfer_channels.setdefault(bucket, {'attempts': 0, 'completed': 0, 'unknown': 0})
+        stats['attempts'] += 1
+        stats['completed'] += payload.get('status') == 'completed'
+        stats['unknown'] += payload.get('status') == 'unknown'
+    from . import environment_saves
+    saved_environments = environment_saves.saves()
     cost = compute.costs(run_id)
     return {'status': 'observed', 'observed_at': now.isoformat(), 'remaining': remaining,
             'scoring': scoring, 'environment': environment, 'cpu_prices': quotes,
+            'effective_job_limits': limits, 'allowed_priced_machines': allowed_machines,
+            'channels_by_input_size': {'job': channels, 'sandbox_transfer': transfer_channels}, 'registered_environments': runtime_environments.facts() + saved_environments,
+            'environment_save_authorization': {'limit': auth['max_environment_saves'] if auth else 0,
+                'used': sum(item['run_id'] == run_id for item in saved_environments), 'cost_status': 'unknown' if saved_environments else 'no_saves'},
             'spent_estimates': {'job': cost['job_estimate'], 'sandbox': cost['sandbox_estimate']},
             'compute_budget': compute_budget.summary(run_id),
             'budget_note': '未知费用不计零；价格附观察时间，不是供应商最终账单。',

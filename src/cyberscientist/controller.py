@@ -549,7 +549,7 @@ class RunController:
                   max_sandboxes: int = 0, max_sandbox_minutes: int = 0,
                   allow_sandbox_gpu: bool = False,
                   max_compute_cost_cny: float | str | None = None,
-                  objective: str | None = None) -> dict[str, Any]:
+                  objective: str | None = None, max_environment_saves: int = 0) -> dict[str, Any]:
         run = self._require_run(run_id)
         if run["phase"] not in ("created", "blocked"):
             raise ControllerError("INVALID_STATE", f"当前阶段 {run['phase']} 不能授权")
@@ -558,7 +558,7 @@ class RunController:
         from . import compute_budget
         cost_cap = compute_budget.validate_cap(max_compute_cost_cny)
         if any(type(v) is not int or v < 0 for v in (max_jobs, max_run_minutes,
-                max_submissions, max_model_turns, max_sandboxes, max_sandbox_minutes)):
+                max_submissions, max_model_turns, max_sandboxes, max_sandbox_minutes, max_environment_saves)):
             raise ControllerError('INVALID_ARGUMENT', '预算必须为非负整数')
         if (max_sandboxes == 0) != (max_sandbox_minutes == 0):
             raise ControllerError('INVALID_ARGUMENT', '沙箱数量与累计分钟数须同时授权')
@@ -573,6 +573,7 @@ class RunController:
              max_run_minutes, max_submissions, max_jobs, db.utcnow(), note, json.dumps(limits),
              int(allow_data_download), config.load_settings()["run_defaults"]["max_trials"],
              max_sandboxes,max_sandbox_minutes,int(allow_sandbox_gpu),cost_cap))
+        db.execute("UPDATE authorizations SET max_environment_saves=? WHERE id=?", (max_environment_saves, auth_id))
         db.execute("UPDATE runs SET authorization_id=?, block_reason=NULL,objective_md=? WHERE id=?",
                    (auth_id, (objective if objective is not None else note), run_id))
         if run["phase"] == "blocked":
@@ -1605,6 +1606,8 @@ class RunController:
                     async for ev in runtime.events(sid):
                         if ev.get("type") not in ("trial.stalled", "execution.heartbeat"):
                             self._native_arrival_at[run_id] = time.time()
+                        ev = dict(ev)
+                        ev['arrival_trial_id'] = self._prime_prompts.get(run_id, (self._require_run(run_id)['current_trial_id'], ''))[0]
                         await q.put({"type": "prime_event", "event": ev})
                         if ev.get("type") == "session.ended":
                             break
@@ -1775,8 +1778,17 @@ class RunController:
         if stype == "prime_event":
             ev = signal["event"]
             run = self._require_run(run_id)
-            trial_id = run["current_trial_id"]
+            trial_id = ev.get("trial_id") or ev.get("arrival_trial_id") or self._prime_prompts.get(run_id, (run["current_trial_id"], ""))[0]
             etype = ev.get("type", "prime.event")
+            turn_id = ev.get('turn_id')
+            if turn_id:
+                db.execute('INSERT OR IGNORE INTO native_turn_trials VALUES(?,?,?)', (run_id, turn_id, trial_id))
+                trial_id = db.query_one('SELECT trial_id FROM native_turn_trials WHERE run_id=? AND turn_id=?', (run_id, turn_id))[0]
+            elif ev.get('trial_attribution') == 'unknown':
+                trial_id = None
+            if turn_id and trial_id != run['current_trial_id']:
+                db.append_event(run_id, 'prime', 'prime.' + etype, _runtime_event_payload(ev), trial_id=trial_id)
+                return  # Late notifications cannot complete or abort a newer Trial.
             if (etype in ("reasoning", "token", "thinking")
                     or etype == "native.activity"
                     or (etype == "execution.progress" and str(ev.get("detail", "")).lstrip().startswith(("思考:", "思考：")))):
@@ -2055,6 +2067,13 @@ class RunController:
         # 空闲边界投递：queued 指导经 prompt 下发（与检查点工具返回互斥，
         # 状态机保证一次指导只走一个渠道）
         if self._require_run(run_id)["gate"] == "open":
+            current = self._require_run(run_id)
+            if current['pending_trial_json'] and current['phase'] == 'running':
+                pending = json.loads(current['pending_trial_json'])
+                db.execute('UPDATE runs SET pending_trial_json=NULL WHERE id=?', (run_id,))
+                dec = dict(pending['decision'], observed_state_version=current['state_version'])
+                await self._apply_decision(run_id, dec, pending['packet'], self._brain_instances.get(run_id), self._brain_sessions.get(run_id))
+                return
             await self._deliver_queued_guidance(run_id)
 
     async def _deliver_queued_guidance(self, run_id: str) -> None:
@@ -3317,6 +3336,11 @@ class RunController:
                     continue
                 direction_used = True
             if op == "start_trial":
+                if self._executor_busy.get(run_id):
+                    queued = {'decision': {**dec, 'actions': [action], 'experience_proposals': [], 'experience_uses': []}, 'packet': packet}
+                    db.execute('UPDATE runs SET pending_trial_json=? WHERE id=?', (json.dumps(queued, ensure_ascii=False), run_id))
+                    db.append_event(run_id, 'controller', 'trial.delivery_queued', {'goal': action['goal'], 'reason': '原生上一回合尚未确认空闲'}, trial_id=run['current_trial_id'])
+                    continue
                 if run["gate"] != "open":
                     db.append_event(run_id, "brain", "brain.action_rejected", {
                         "op": op,

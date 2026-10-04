@@ -104,9 +104,9 @@ _TOOLS.append(_NARRATIVE_TOOL)
 
 _TOOLS.append({
     "name": "research_local_score",
-    "description": "本地评分：evaluate 系统执行；prepare 返回固定哈希输入与可信评分命令，执行器自行准备环境、传输并用 research_sandbox exec 执行；register 按 execution_operation_id 核对通道回执登记正式分。不得修改评分器；不提交。",
+    "description": "本地评分：evaluate 系统执行；prepare 返回固定哈希输入与可信评分命令，执行器自行准备环境、传输并用 research_sandbox exec 执行；register 按 execution_operation_id 核对通道回执登记正式分。prepare_job 在 Job 中执行同样固定评分命令，register_job 由后端下载核验；不得修改评分器；不提交。",
     "inputSchema": {"type": "object", "additionalProperties": False,
-        "properties": {"action": {"enum": ["evaluate", "prepare", "register"]},
+        "properties": {"action": {"enum": ["evaluate", "prepare", "register", "prepare_job", "register_job"]},
                        "trial_id": {"type": "string"},
                        "sandbox_id": {"type": "string"},
                        "operation_id": {"type": "string"},
@@ -130,6 +130,10 @@ _FACTS_TOOL = {
     'description': '只读查询原授权剩余时间、Job/沙箱额度、CPU价格、费用估算、环境和评分耗时事实；不创建资源。',
     'inputSchema': {'type': 'object', 'additionalProperties': False, 'properties': {}}}
 _TOOLS.append(_FACTS_TOOL)
+_TOOLS.append({'name': 'research_environment', 'description': '在环境保存数量授权内构建私有公开软件镜像；固定配方和冒烟命令入账；unknown 不重发。list/reconcile 只读。',
+    'inputSchema': {'type': 'object', 'additionalProperties': False, 'properties': {
+        'action': {'enum': ['save', 'list', 'reconcile']}, 'operation_id': {'type': 'string'},
+        'dockerfile': {'type': 'string'}, 'recipe': {'type': 'string'}, 'smoke_command': {'type': 'string'}}, 'required': ['action']}})
 
 _TRACE_TOOL = {
     "name": "research_trace",
@@ -238,6 +242,8 @@ def _handle(msg: dict) -> dict | None:
             out = _post("/api/v1/tools/package_check", args)
         elif name == "research_trace_narrative_check":
             out = _post("/api/v1/tools/trace_narrative_check", args)
+        elif name == 'research_environment':
+            out = _post('/api/v1/tools/environment', args, timeout=90, retry_transient=False)
         elif name == 'research_operating_facts':
             out = _post('/api/v1/tools/operating_facts', {}, retry_transient=False)
         elif name == "research_local_score":

@@ -15,7 +15,7 @@ COLLAB_TOOLS = (
     "research_checkpoint", "ack_guidance", "research_job",
     "research_sandbox", "research_package_check",
     "research_trace_narrative_check", "research_local_score", "research_data",
-    "research_operating_facts",
+    "research_operating_facts", "research_environment",
 )
 BRAIN_TOOLS = ("research_trace", "platform_scores", "research_operating_facts")
 

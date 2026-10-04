@@ -21,6 +21,7 @@ it('shows confirmed versus unknown facts and requires a bounded template before 
   await userEvent.setup().click(screen.getByRole('button', { name: '确认模板与授权，开始排队' }))
   expect(post.mock.calls[0][0]).toBe('/api/v1/rounds/round_one/confirm')
   expect(post.mock.calls[0][1].template.authorization.max_submissions).toBe(0)
+  expect(post.mock.calls[0][1].template.authorization.max_environment_saves).toBe(0)
   await userEvent.setup().click(await screen.findByRole('button', { name: '按当前模板追加 Run' }))
   expect(post.mock.calls[1][1].challenge_id).toBe('same_challenge')
 })

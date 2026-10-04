@@ -193,3 +193,9 @@ CS-UP-06 候选对账允许评分器额外声明 `comparison_contract`：`higher
 ## 安全关机（CS-UP-08 W2）
 
 `POST /api/v1/system/safe-shutdown` 返回 can_shutdown、backup、unsettled_runs、errors、remote_jobs、remote_sandboxes、remote_costs_continue；只有 can_shutdown=true 才可关机。CLI：`cyberscientist shutdown`。Run clock_version=1 仅累计本地活动时间；远程寿命仍按墙钟，IPython 内存不恢复。
+
+## 执行底座（CS-UP-08 W3）
+
+`research_local_score` 增加 prepare_job/register_job。prepare_job 返回冻结目录和精确命令；register_job 以 execution_operation_id 指向本 Trial 完成 Job，由后端下载、校验单 JSON 与 exit_code 后登记。调用者不能提交 score 或 receipt。unknown Job 十分钟后释放并发但继续占总数和金额。
+
+`research_environment` 的 save/list/reconcile 对应 `/api/v1/tools/environment`。save 需要 max_environment_saves 显式数量授权、公开软件 Dockerfile、recipe、smoke_command；金额上限存在且价格未知时拒绝，unknown 不重发。可用构建回执生成 D-05 环境事实。新列／表全部是加法迁移。

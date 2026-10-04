@@ -186,13 +186,15 @@ def _submit_timeout(total_bytes: int) -> int:
 def list_jobs(run_id: str) -> dict:
     _run(run_id)
     items = []
-    for row in db.query('SELECT * FROM compute_jobs WHERE run_id=? ORDER BY created_at', (run_id,)):
+    rows = db.query('SELECT * FROM compute_jobs WHERE run_id=? ORDER BY created_at', (run_id,))
+    for row in rows:
         item = dict(row)
         item['spec'] = json.loads(item.pop('spec_json'))
         item['receipt'] = json.loads(item.pop('receipt_json'))
         items.append(item)
     return {'items': items, 'reserved_jobs': sum(j['status'] != 'not_started' for j in items),
-            'active_or_unknown': sum(j['status'] not in TERMINAL | {'not_started'} for j in items)}
+            'active_or_unknown': sum(j['status'] not in TERMINAL | {'not_started'} for j in items),
+            'concurrent_slots_used': sum(occupies_slot(row) for row in rows)}
 
 
 def _authorized(conn, run_id):
@@ -211,12 +213,35 @@ def _authorized(conn, run_id):
     if remaining < 60:
         raise ComputeError('AUTH_EXPIRED', '本轮算力授权已到期')
     limits = DEFAULT_LIMITS | json.loads(auth['job_limits_json'])
-    rows = conn.execute('SELECT status FROM compute_jobs WHERE run_id=?', (run_id,)).fetchall()
+    rows = conn.execute('SELECT * FROM compute_jobs WHERE run_id=?', (run_id,)).fetchall()
     if sum(r['status'] != 'not_started' for r in rows) >= auth['max_jobs']:
         raise ComputeError('JOB_LIMIT', '已达到 Job 总数上限（包括失败与 unknown）')
-    if sum(r['status'] not in TERMINAL | {'not_started'} for r in rows) >= limits['max_concurrent_jobs']:
+    if sum(occupies_slot(r) for r in rows) >= limits['max_concurrent_jobs']:
         raise ComputeError('CONCURRENCY_LIMIT', '运行中及未知任务已占满并发额度')
     return run, limits, remaining
+
+
+def occupies_slot(row, now=None) -> bool:
+    if row['status'] in TERMINAL | {'not_started'}:
+        return False
+    if row['status'] == 'unknown':
+        now = datetime.now(timezone.utc) if now is None else now
+        first = row['unknown_since'] or row['created_at']
+        return (now - datetime.fromisoformat(first)).total_seconds() < 600
+    return True
+
+
+def release_unknown_slots() -> list[str]:
+    released = []
+    with db.transaction() as conn:
+        for row in conn.execute("SELECT * FROM compute_jobs WHERE status='unknown' AND concurrency_released=0").fetchall():
+            if not occupies_slot(row):
+                conn.execute('UPDATE compute_jobs SET concurrency_released=1 WHERE operation_id=?', (row['operation_id'],))
+                db.append_event_tx(conn, row['run_id'], 'controller', 'job.concurrency_released', {
+                    'operation_id': row['operation_id'], 'status': 'unknown',
+                    'fee_reservation_retained': True, 'reconciliation_continues': True}, trial_id=row['trial_id'])
+                released.append(row['operation_id'])
+    return released
 
 
 def submit(run_id: str, operation_id: str, spec: dict, input_directory: str,
@@ -243,6 +268,7 @@ def submit(run_id: str, operation_id: str, spec: dict, input_directory: str,
     if key and key in _json(spec):
         raise ComputeError('SECRET_INPUT', 'Job 配置不能包含账号密钥')
     manifest = []
+    frozen_modes = {}
     total = 0
     for path in sorted(source.rglob('*')):
         if path.is_symlink():
@@ -253,7 +279,9 @@ def submit(run_id: str, operation_id: str, spec: dict, input_directory: str,
             total += path.stat().st_size
             with path.open('rb') as stream:
                 sha = hashlib.file_digest(stream, 'sha256').hexdigest()
-            manifest.append((str(path.relative_to(source)), sha))
+            relative = str(path.relative_to(source))
+            manifest.append((relative, sha))
+            frozen_modes[relative] = path.stat().st_mode & 0o777
     if total > 256 * 1024**2:
         from . import runtime_environments
         details = {'input_bytes': total, 'threshold_bytes': 256 * 1024**2,
@@ -285,7 +313,7 @@ def submit(run_id: str, operation_id: str, spec: dict, input_directory: str,
                         {'operation_id': operation_id, 'status': 'advisory',
                          'code': exc.code, 'details': exc.details, 'message': str(exc)},
                         trial_id=run['current_trial_id'])
-    digest = hashlib.sha256(_json([spec, manifest, str(source)]).encode()).hexdigest()
+    digest = hashlib.sha256(_json([spec, manifest, str(source), frozen_modes]).encode()).hexdigest()
     from . import compute_budget
     price = compute_budget.rate(run_id, 'job', str(spec.get('machine_type', '')))
     # Persist a reservation before materializing/dispatching, under the SQLite writer lock.
@@ -350,8 +378,18 @@ def submit(run_id: str, operation_id: str, spec: dict, input_directory: str,
                     output.write(data)
             if file_digest.hexdigest() != sha:
                 raise ValueError('冻结输入时文件改变')
+            dest.chmod(frozen_modes[rel])
+        # Uploads can strip executable bits as well. Restore the frozen modes
+        # inside the Job before invoking its exact requested command.
+        executable_files = [rel for rel, _ in manifest if frozen_modes[rel] & 0o111]
+        if executable_files:
+            import shlex
+            restores = ' && '.join('(if [ -f ' + shlex.quote('input/' + rel) + ' ]; then chmod ' + format(frozen_modes[rel], '04o') + ' -- ' + shlex.quote('input/' + rel) + '; else chmod ' + format(frozen_modes[rel], '04o') + ' -- ' + shlex.quote(rel) + '; fi)' for rel in executable_files)
+            effective['command'] = restores + ' && (' + effective['command'] + ')'
+            db.execute('UPDATE compute_jobs SET spec_json=? WHERE operation_id=?', (_json(effective), operation_id))
+        db.execute('UPDATE compute_jobs SET input_bytes=? WHERE operation_id=?', (total, operation_id))
         (staging / 'job.json').write_text(_json(effective))
-        (staging / 'manifest.json').write_text(_json({'request_hash': digest, 'files': manifest}))
+        (staging / 'manifest.json').write_text(_json({'request_hash': digest, 'files': manifest, 'file_modes': frozen_modes}))
         # Pause may have arrived while copying; never dispatch from a stopped Run.
         current_run = _run(run_id)
         if current_run['phase'] != 'running' or current_run['gate'] != 'open' or current_run['current_trial_id'] != run['current_trial_id']:
@@ -380,6 +418,8 @@ def submit(run_id: str, operation_id: str, spec: dict, input_directory: str,
                      (job_id, status, _json(receipt), db.utcnow(), operation_id))
         db.append_event_tx(conn, run_id, 'controller', 'job.' + status,
                            {'operation_id': operation_id, 'platform_job_id': job_id, 'status': status, 'receipt': receipt}, trial_id=run['current_trial_id'])
+    if status == 'unknown':
+        db.execute('UPDATE compute_jobs SET unknown_since=COALESCE(unknown_since,?) WHERE operation_id=?', (db.utcnow(), operation_id))
     return {'operation_id': operation_id, 'platform_job_id': job_id, 'status': status, 'receipt': receipt}
 
 

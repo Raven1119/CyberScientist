@@ -1,8 +1,10 @@
 # 当前状态（2026-10-04）
 
-进度：2026-10-04 21:50 北京时间 · CS-UP-08 · W1 完成并推送 · commit d632cbdc8d27b7753210e0ec79bbe847696cf669
+进度：2026-10-04 22:06 北京时间 · CS-UP-08 · W2 完成并推送 · commit f4396caa4c3dbdd8ddc1b2484561e257799f7854
 
 ## 已实现
+
+- CS-UP-08 W3：unknown Job 十分钟后不占并发，保留总数和金额预约并继续对账；Job 固定评分命令／系统下载 ZIP 或单 JSON／哈希与身份／退出码核验后登记 executor_verified。新增环境保存数量授权、只含公开软件的私有镜像构建／回执对账／自动环境事实；未知价格不冒充零，金额硬上限存在时拒绝无法估价的构建。六个 v3 缺陷分别修复：Python3.10 哈希、冻结模式和远端恢复、预检隔离、有效资源信息、Trial 延后与原生 turn 归属、本机拒绝的远端效应与 operation_id。
 
 - CS-UP-08 W2：持久活动时钟、15 秒心跳与离线断档排除；原生 Codex 会话 ID 保存与 thread/resume；安全关机 HTTP/CLI/前端入口、暂停确认屏障、SQLite backup、一览远程任务；启动先远程对账，再恢复有意自动恢复的新 Run，手动暂停保持暂停。
 
@@ -88,6 +90,8 @@
 - CS-SB-01 稀疏输入与唤醒修复：可选短研究摘要独立存储；新 Run 普通检查点不唤醒 shadow，Job/Trial 研究级重复状态按 ID 去重。详见 `docs/SPARSE_BRAIN_INPUT_WAKE_FIX_2026-09-24.md`。
 
 ## 已实际验证
+
+- CS-UP-08 W3：相关后端 171 passed；有界复核 79 passed、原生／队列 86 passed、环境／工具 15 passed，最终环境／Job 类型检查 10 passed。前端 44 passed／构建通过，compileall 与 diff --check 通过；六个 v3 缺陷均有对应 fake 复现。Bohrium version/help、Dockerfile check 和私有镜像只读分页真实返回成功；HTTP 与业务状态分开，尚无真实构建／科学 Job 出分证明。
 
 - CS-UP-08 W2：.venv/bin/pytest -q → 856 passed in 472.32s (0:07:52)；新增关机远程状态矩阵另有 7 passed，前端 44 passed／构建通过；compileall、diff --check 通过。活动时钟断档／暂停／SQLite 备份／恢复意图与原会话 ID／关机前停止排队均由 fake 回归覆盖，真实原生恢复仍待额度内验证。
 
@@ -224,6 +228,8 @@
 - 本轮测试进程定时唤醒包装下，协作及 Kimi/Codex 相关回归 95 passed；排除 CLI 关闭测试的 Python 回归 285 passed。默认协作测试曾以 120 秒超时退出，未记为通过。
 
 ## 尚未验证
+
+- CS-UP-08 W3：真实私有镜像创建、构建和冒烟还未调用；将与指定三个 Run 共用最多两个资源的额度。真实 Job 评分尚未在本卡科学任务中执行；fake 输出不作为真实成绩。
 
 - CS-UP-08 W2：真实模型会话跨后端重启尚未在本卡额度内执行；当前 thread/resume 依据安装 CLI 的生成 schema 与 fake 协议测试，Kimi/Prime 原生会话恢复仍 unknown。
 

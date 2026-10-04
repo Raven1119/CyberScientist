@@ -79,3 +79,7 @@
 - ❌ `openapi.bohrium.com` DNS 不解析；Bohrium 计算 API host 未确定
   （bohr CLI 未安装，官方推荐 `npm i -g @dptech-corp/bohr-cli`，默认 host
   `https://open.bohrium.com`，勿设裸 `OPENAPI_HOST`——见 AGENT_API.md CLI 节）。
+
+## 2026-10-04 CS-UP-08 W3 最小探针
+
+Linux bohr 1.1.0：version、dataset create --help、image --help（零模型／计算）。image CLI 不提供构建；官方技能的 v2 image/dockerfile/check 与 GET image/private?device=container&type=private 分页查询实测 HTTP200、code0。私有分页 data 为 items/page/pageSize/total；未获得可用构建回执，不推测数字 status。探针仅保留结构、哈希与状态，账号数据／真实回执不进 Git。项目环境工具采用原始凭据内存注入，不修改全局 CLI 配置。

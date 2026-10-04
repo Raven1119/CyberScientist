@@ -12,7 +12,10 @@ import zipfile
 
 def digest(path):
     with open(path, 'rb') as stream:
-        return hashlib.file_digest(stream, 'sha256').hexdigest()
+        result = hashlib.sha256()
+        for chunk in iter(lambda: stream.read(1024 * 1024), b''):
+            result.update(chunk)
+        return result.hexdigest()
 
 
 def unpack(path, target):

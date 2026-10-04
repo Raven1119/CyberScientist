@@ -102,7 +102,7 @@ class CodexExecutor:
             if sess.busy:
                 sess.turn_id = result["turn"]["id"]
             await sess.queue.put({"type": "execution.progress",
-                                  "detail": f"turn 已开始: {result['turn']['id']}"})
+                                  "detail": f"turn 已开始: {result['turn']['id']}", "turn_id": result["turn"]["id"]})
         except Exception as exc:
             sess.busy = False
             sess.turn_id = None
@@ -178,6 +178,13 @@ class CodexExecutor:
         await sess.rpc.stop()
 
     async def _pump(self, sess: _Session) -> None:
+        params = {}
+        async def emit(event):
+            turn_id = params.get('turnId') or params.get('turn', {}).get('id') or sess.turn_id
+            event['turn_id'] = turn_id
+            if not turn_id:
+                event['trial_attribution'] = 'unknown'
+            await sess.queue.put(event)
         try:
             async for msg in sess.rpc.notifications():
                 method, params = msg.get("method"), msg.get("params", {})
@@ -185,16 +192,17 @@ class CodexExecutor:
                     continue
                 if method == "turn/started":
                     sess.turn_id = params["turn"]["id"]
+                    await emit({"type": "execution.progress", "detail": "原生 turn 已开始"})
                 elif method in ("item/started", "item/completed"):
                     item = params.get("item", {})
                     itype = item.get("type")
                     completed = method == "item/completed"
                     if itype in ("agentMessage", "agent_message") and completed:
-                        await sess.queue.put({"type": "execution.progress",
+                        await emit({"type": "execution.progress",
                                               "detail": item.get("text", ""),
                                               "item_id": item.get("id")})
                     elif itype == "reasoning" and completed:
-                        await sess.queue.put({"type": "reasoning",
+                        await emit({"type": "reasoning",
                                               "detail": "\n".join(item.get("summary") or [])})
                     elif itype in ("commandExecution", "fileChange", "mcpToolCall", "webSearch"):
                         label = (item.get("command") or item.get("query") or
@@ -203,20 +211,20 @@ class CodexExecutor:
                         if itype == "mcpToolCall":
                             output = json.dumps(item.get("result") or item.get("error") or {},
                                                 ensure_ascii=False)
-                        await sess.queue.put({
+                        await emit({
                             "type": "execution.progress", "item_id": item.get("id"),
                             "detail": f"{itype} {'完成' if completed else '开始'}: {label[:2000]}",
                             "status": item.get("status"), "exit_code": item.get("exitCode"),
                             "output": output[-12000:],
                         })
                 elif method == "thread/tokenUsage/updated":
-                    await sess.queue.put({"type": "usage.updated", "usage": params.get("tokenUsage")})
+                    await emit({"type": "usage.updated", "usage": params.get("tokenUsage")})
                 elif (method == "item/updated" or
                       (method.startswith(("item/reasoning/", "item/agentMessage/"))
                        and "delta" in method.lower())):
                     # Keep native turn liveness without storing private thought
                     # or high-frequency message fragments in the public trace.
-                    await sess.queue.put({"type": "native.activity"})
+                    await emit({"type": "native.activity"})
                 elif method == "turn/completed":
                     turn = params.get("turn", {})
                     if sess.turn_id and turn.get("id") != sess.turn_id:
@@ -224,12 +232,12 @@ class CodexExecutor:
                     sess.busy = False
                     sess.turn_id = None
                     if turn.get("status") == "completed":
-                        await sess.queue.put({"type": "executor.turn_completed",
+                        await emit({"type": "executor.turn_completed",
                                               "stop_reason": "completed",
                                               "detail": "原生 turn 完成；实验交付仍以检查点为准"})
                     else:
                         limited = model_limits.classify(turn.get("error"))
-                        await sess.queue.put(
+                        await emit(
                             {"type": "model.rate_limited",
                              "retry_after_seconds": limited.retry_after_seconds,
                              "reason": limited.reason} if limited else
@@ -242,7 +250,7 @@ class CodexExecutor:
             sess.busy = False
             sess.turn_id = None
             limited = model_limits.classify(exc)
-            await sess.queue.put(
+            await emit(
                 {"type": "model.rate_limited",
                  "retry_after_seconds": limited.retry_after_seconds,
                  "reason": limited.reason} if limited else
