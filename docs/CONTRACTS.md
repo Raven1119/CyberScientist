@@ -203,3 +203,6 @@ CS-UP-06 候选对账允许评分器额外声明 `comparison_contract`：`higher
 ### CS-UP-08 经验只读工具
 
 `POST /api/v1/tools/experience` 接受 action=list/read 与 experience_id；两种原生角色可读全局及当前题内有效版本，候选不注入。read 返回此次交付上下文和不可变修订身份。帧与 Trial 提供全索引、相关正文和哈希；默认总预算 24,000 字符。
+
+
+CS-UP-09 W1/W2 更新：Decision 不设任意三动作上限；最终目标评估未知、预测缺项、诊断弱信号为记录事实而非研究停止门禁。新增可选 research_brief 对象（详见实际 schema），保存到 Run 目录并附入实际求解者工作指令。run_start 帧新增 research_startup，包含题面／资源／公开聚合分布／完整同题策略卡及指导力度。PI pause 和 ReviewResult stop 有未试授权通道时给出换路指导，用户手动暂停保持可用。research_environment 增加 record_smoke：operation_id 指向本 Run 后端持有的成功执行回执，recipe 为未验证提议；环境事实记录实际命令、输出与哈希，不能据此声明已构建持久镜像。

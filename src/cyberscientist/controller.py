@@ -1938,7 +1938,7 @@ class RunController:
                 pending = db.query_one(
                     "SELECT id FROM review_requests WHERE run_id=? AND source='lifecycle'"
                     " AND status IN ('pending','running')", (run_id,))
-                if (latest and latest["status"] == "error"
+                if (latest and latest["status"] in ("error", "obsolete")
                         and latest["trigger"] in ("run_start", "recovery") and not pending):
                     db.execute("UPDATE runs SET block_reason=NULL WHERE id=?", (run_id,))
                     self._enqueue_lifecycle(run_id, trigger=latest["trigger"])
@@ -2648,6 +2648,10 @@ class RunController:
                     run, req["trigger"] or "lifecycle",
                     user_guidance=extra.get("user_guidance"),
                     sparse=self._sparse_brain(run))
+                if req["trigger"] == "run_start":
+                    from . import planning
+                    packet['research_startup'] = await asyncio.to_thread(
+                        planning.startup, run_id, self._challenge_for_run(run))
             else:
                 packet = observation.build_frame(
                     run_id, mode=mode, frame_id=frame_id,
@@ -2662,6 +2666,13 @@ class RunController:
         except Exception as exc:  # noqa: BLE001
             self._finish_request(req["id"], "error",
                                  error=f"frame 构建失败: {exc}"[:300])
+            return
+
+        # Public startup reads may await a worker thread. A manual pause can
+        # close the Run while they run; do not start/charge a native review.
+        current_run = self._require_run(run_id)
+        if current_run['phase'] != 'running' or self._run_minutes_exceeded(current_run):
+            self._obsolete_request(req['id'], 'Run 已关闭受控动作')
             return
 
         now = db.utcnow()
@@ -2872,6 +2883,16 @@ class RunController:
         if run["phase"] != "running" or self._run_minutes_exceeded(run):
             self._obsolete_request(req["id"],"Run 已关闭受控动作")
             return
+        if (result.get('guidance') or {}).get('kind') == 'stop':
+            from . import planning
+            channels = planning.untried_channels(run_id)
+            if channels:
+                db.append_event(run_id, 'controller', 'run.pause_advice', {
+                    'via': 'review_result_stop', 'untried_authorized_channels': channels,
+                    'notice': 'PI 停止当前路线改为换路指导；仍有授权通道，用户手动暂停可用'})
+                result = {**result, 'guidance': {**result['guidance'], 'kind': 'steer',
+                    'intent': 'continue', 'text_md': result['guidance']['text_md'] +
+                    '\n请尝试尚未使用的授权通道：' + ', '.join(channels)}}
         with db.transaction() as conn:
             sup = conn.execute("SELECT * FROM supervision WHERE run_id=?",
                                (run_id,)).fetchone()
@@ -3320,6 +3341,10 @@ class RunController:
         for proposal in dec.get("experience_proposals", []):
             self._apply_experience_proposal(run_id, dec["decision_id"], proposal)
 
+        if dec.get('research_brief'):
+            from . import planning
+            planning.record_brief(run_id, dec['research_brief'], dec['decision_id'])
+
         prime_sid = self._prime_sessions.get(run_id)
         prime = self._prime_instances.get(run_id) or self._make_prime(settings)
         direction_used = False
@@ -3414,6 +3439,8 @@ class RunController:
                              "使用 PATH 中的 bohr；它会脱敏原生 CLI 错误输出，不得绕过代理执行原始 CLI。\n"
                              f"Bohrium 项目 ID：{(settings.get('bohrium') or {}).get('project_id') or '未配置'}。"
                              "认证通过进程环境提供，不得打印、记录或写入提交包。\n")
+                from . import planning
+                task_text += planning.brief_for_run(run_id)
                 if enabled_skills:
                     db.append_event(run_id, "controller",
                                     "trial.skills_enabled",
@@ -3438,6 +3465,7 @@ class RunController:
                     if starter:
                         starter()
             elif op == "steer":
+                from . import planning
                 # A5：不再依赖回合内 steer；进入可靠指导 outbox
                 with db.transaction() as conn:
                     # 大脑裁决 stalled Trial 继续：恢复原位（会话与现场未丢）
@@ -3447,7 +3475,7 @@ class RunController:
                     gid = collab.create_guidance(
                         conn, run_id, source="requested",
                         g={"kind": "steer", "intent": "continue",
-                           "text_md": action["message"],
+                           "text_md": action["message"] + planning.brief_for_run(run_id),
                            "reason_md": "大脑生命周期判断",
                            "evidence_refs": [],
                            "expected_change_md": "按指导调整当前研究动作",
@@ -3475,6 +3503,15 @@ class RunController:
                                 {"reason": action["reason"],
                                  "duration_seconds": requested or defaults["stall_seconds"]})
             elif op == "pause":
+                from . import planning
+                channels = planning.untried_channels(run_id)
+                if channels:
+                    db.append_event(run_id, 'controller', 'run.pause_advice', {
+                        'reason': action['reason'], 'untried_authorized_channels': channels,
+                        'notice': '还有未尝试的授权通道；请换路或自修，用户手动暂停仍可用'})
+                    self._enqueue_lifecycle(run_id, trigger='alternative_available',
+                                            user_guidance='暂停未执行；可尝试：' + ', '.join(channels))
+                    continue
                 db.execute("UPDATE runs SET phase='pausing' WHERE id=?", (run_id,))
                 db.append_event(run_id, "controller", "run.pausing",
                                 {"reason": action["reason"],

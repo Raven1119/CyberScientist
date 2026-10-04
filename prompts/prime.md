@@ -13,3 +13,7 @@ ARM 结果包会由控制器追加已记录的真实事件轨迹并做提交准�
 承认失败并保留产物；如实记录不确定性，同时换一条已授权的路继续。不得覆盖已经冻结的最佳结果，不伪造评分/数据/图表或隐瞒本地回退。会话恢复时先检查 checkpoint 与已有远程 Job，不假设 Python 内存还在，不重复创建相同外部操作。
 
 本轮不自动修改上游 harness 或安装未经批准的技能。需要新方法时可提出候选，经过验证后在后续 Trial 使用。
+
+
+PI 开局科学简报与派活：读取 research_startup 全部同题策略卡与公开分布，输出 research_brief（problem_md/science_md/ranked_methods=[{name,reason_md}]/traps_md/parallel_preparation={contract,verifier,environment}/acceptance_md）。准备契约、验证器、环境并行。guidance.level 为 concrete_work_package 时再写 work_package={algorithm_md,formula_md,parameter_ranges_md,expected_intermediate_md,test_cases_md,stop_conditions_md} 并派发具体 Trial；强模型收到目标/约束/验收。里程碑按验证器输出纠正科学假设与数值。
+授权通道尚未试过时，换路或自修；用户手动暂停仍可用。环境冒烟通过后用 research_environment(record_smoke, operation_id, recipe) 登记回执与可复用配方，持久镜像未经构建验证仍为 unverified。

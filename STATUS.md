@@ -1,8 +1,10 @@
 # 当前状态（2026-10-05）
 
-进度：2026-10-04 23:42 北京时间 · CS-UP-09 · W0 完成并推送 · commit cecb4d92883b9b9c5734a9333bb9642c5b205967
+进度：2026-10-05 00:52 北京时间 · CS-UP-09 · W1 完成并推送 · commit 4bfcc50f9bb4a3b6cd0dd98b258e10226cf4ab2f
 
 ## 已实现
+
+- CS-UP-09 W2：PI 首帧读取公开分布、完整同题策略卡和资源，保存科学简报并把弱求解者具体工作包送入实际 Trial／指导。PI 暂停和普通 stop 在尚有可用未试授权通道时改为换路提示；手动暂停保留。冒烟只按后端原生回执／命令／哈希登记，配方提议和持久镜像明确未验证。
 
 - CS-UP-09 W1：普通比赛／目录批次使用同一运行能力；评测标签仅供报告，历史结束评分不再租资源。评分未知、缺证 achieved、分项退步、轨迹/依赖诊断改为可见事实；预测和经验观察条数不设任意三条门禁。限流/停滞提醒不停止重试，提交采用活动时钟。Prime 全局配置渲染删除；规则审计逐位置/逐句覆盖1702条。
 
@@ -96,6 +98,8 @@
 - CS-SB-01 稀疏输入与唤醒修复：可选短研究摘要独立存储；新 Run 普通检查点不唤醒 shadow，Job/Trial 研究级重复状态按 ID 去重。详见 `docs/SPARSE_BRAIN_INPUT_WAKE_FIX_2026-09-24.md`。
 
 ## 已实际验证
+
+- CS-UP-09 W2：`.venv/bin/pytest -q tests/test_pi_planning.py tests/test_controller.py tests/test_collaboration.py tests/test_competition.py tests/test_codex_runtime.py tests/test_kimi_executor.py tests/test_mcp_bridge.py tests/test_sandboxes.py tests/test_environment_saves.py tests/test_decision.py`：155 passed，54.94s；覆盖首帧材料、六项工作包实际派发、两种 PI 停止入口、手动暂停、冻结资源、时长／金额、并发回执去重和密钥备注拒绝。均为应用夹具，没有模型或远端调用。compileall／diff 检查通过。首轮 Demo 恢复失败已保留并修复，后续同场景通过。
 
 - CS-UP-09 W1：`.venv/bin/pytest -q` 全量899通过（413.66秒，日志留忽略目录）；规则/技能最终15通过，原生/评分最后46通过。前端 `npm test` 45通过，`npm run build` 成功；`compileall`、`git diff --check` 与46个暂存文件的密钥/体积/私有路径检查通过。Standards/Spec 两路有界审查的可操作项已修正。
 

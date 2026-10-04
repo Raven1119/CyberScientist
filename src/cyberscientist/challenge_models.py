@@ -39,8 +39,17 @@ def choose(role: str, supplied: dict[str, Any] | None,
                         if p.get("id") == profile_id), None)
         if not profile or profile.get("model_id") != model.strip():
             raise ValueError("Prime 模型 ID 必须与当前 Prime Profile 的模型一致")
-    return {"runtime": runtime, "model_id": model.strip(),
-            "reasoning_effort": effort}
+    result = {"runtime": runtime, "model_id": model.strip(),
+              "reasoning_effort": effort}
+    if 'note' in source:
+        if not isinstance(source['note'], str) or len(source['note']) > 2000:
+            raise ValueError('求解者备注必须是最多 2000 字的文本')
+        from . import config
+        from .bohr_proxy import redact
+        if redact(source['note'], config.load_secrets().values()) != source['note']:
+            raise ValueError('求解者备注不能包含密钥')
+        result['note'] = source['note']
+    return result
 
 
 def from_challenge(row: Any, settings: dict[str, Any]) -> dict[str, dict[str, str]]:

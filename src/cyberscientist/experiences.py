@@ -393,7 +393,7 @@ def save_experience(exp_id: str, frontmatter: dict[str, Any], body_md: str,
         source = db.query_one('SELECT type,source FROM events WHERE run_id=? AND seq=?',
                               (match.group(1),int(match.group(2)))) if match else None
         if not source or source['source']!='controller' or source['type'] not in (
-                'image_facts.observed','sandbox.environment_observed','environment.host_observed','environment.save_observed'):
+                'image_facts.observed','sandbox.environment_observed','environment.host_observed','environment.save_observed','environment.smoke_observed'):
             raise ExperienceError('INVALID_EVIDENCE','环境事实必须引用真实回执事件')
         if fm['source'] not in fm.get('evidence_refs',[]):
             raise ExperienceError('INVALID_EVIDENCE','环境事实证据引用必须包含来源事件')

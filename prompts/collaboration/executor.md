@@ -23,3 +23,7 @@ Bohrium 环境：以本 Run 的配置和实际探针为准，不能把密钥存�
 扩展计算前建议先在授权 Job 或沙箱验证实际规模的最小工作单元，记录耗时、峰值内存、临时磁盘和收敛情况；以这些证据决定可行规模或方法调整。每个 Job 提交前设有限步骤、max_run_time（分钟）和退出条件。主计算结束时一并退出监控子进程，Job 不等待模型决策。低 CPU 与日志静默只触发诊断，不能单独证明空转。
 
 research_job submit 需要稳定的 operation_id、spec 和绝对 input_directory；输入冻结后同 ID 不得更换内容。spec 必填 command、image_address、machine_type（cN_mM_cpu）与 max_run_time，CPU/内存/磁盘/并发上限见授权。返回 accepted 仅表示获得 Job ID；unknown/submitting 按原 operation_id 继续只读 reconcile，不盲目重发原创建。未知状态满十分钟可释放并发槽，但不释放费用或数量预留；需要继续时可使用新 ID 选择另一条已授权路线。停止回执未知也保留计费风险。依赖失败就保存检查点，独立分支可继续；记录替代方法的适用性证据。
+
+
+PI 开局科学简报与派活：读取 research_startup 全部同题策略卡与公开分布，输出 research_brief（problem_md/science_md/ranked_methods=[{name,reason_md}]/traps_md/parallel_preparation={contract,verifier,environment}/acceptance_md）。准备契约、验证器、环境并行。guidance.level 为 concrete_work_package 时再写 work_package={algorithm_md,formula_md,parameter_ranges_md,expected_intermediate_md,test_cases_md,stop_conditions_md} 并派发具体 Trial；强模型收到目标/约束/验收。里程碑按验证器输出纠正科学假设与数值。
+授权通道尚未试过时，换路或自修；用户手动暂停仍可用。环境冒烟通过后用 research_environment(record_smoke, operation_id, recipe) 登记回执与可复用配方，持久镜像未经构建验证仍为 unverified。

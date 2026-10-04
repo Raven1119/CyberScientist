@@ -190,7 +190,8 @@ def _template(template: dict, mode: str) -> dict:
             raise CompetitionError('授权开关必须是布尔值')
     return {'model_config': models, 'authorization': auth,
             'shadow_enabled': bool(template.get('shadow_enabled', False)),
-            'solver_note': str(template.get('solver_note', ''))[:2000]}
+            'solver_note': challenge_models.choose('executor', models['executor'] | {
+                'note': template.get('solver_note', '')}, settings)['note']}
 
 
 def confirm(round_id: str, template: dict, overrides: dict | None = None) -> dict:

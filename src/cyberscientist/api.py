@@ -1108,6 +1108,10 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
         identity = _tool_auth(request)
         body = await request.json()
         request.state.operation_id = body.get('operation_id')
+        if body.get('action') == 'record_smoke':
+            from . import planning
+            return await asyncio.to_thread(planning.register_smoke, identity['run_id'],
+                                           body.get('operation_id'), body.get('recipe'))
         if body.get('action') == 'save':
             return await asyncio.to_thread(environment_saves.save, identity['run_id'], body.get('operation_id'), body.get('dockerfile'), body.get('recipe'), body.get('smoke_command'))
         if body.get('action') == 'reconcile':
@@ -1117,7 +1121,7 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
             return await asyncio.to_thread(environment_saves.reconcile, body['operation_id'])
         if body.get('action') == 'list':
             return {'items': environment_saves.saves()}
-        raise compute.ComputeError('INVALID_ACTION', '支持 save/reconcile/list')
+        raise compute.ComputeError('INVALID_ACTION', '支持 save/reconcile/list/record_smoke')
 
     @app.post("/api/v1/tools/job")
     async def tool_job(request: Request) -> dict:

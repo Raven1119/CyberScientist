@@ -136,7 +136,7 @@ _EXPERIENCE_TOOL = {'name': 'research_experience', 'description': '只读当前�
 _TOOLS.append(_EXPERIENCE_TOOL)
 _TOOLS.append({'name': 'research_environment', 'description': '在环境保存数量授权内构建私有公开软件镜像；固定配方和冒烟命令入账；unknown 不重发。list/reconcile 只读。',
     'inputSchema': {'type': 'object', 'additionalProperties': False, 'properties': {
-        'action': {'enum': ['save', 'list', 'reconcile']}, 'operation_id': {'type': 'string'},
+        'action': {'enum': ['save', 'list', 'reconcile', 'record_smoke']}, 'operation_id': {'type': 'string'},
         'dockerfile': {'type': 'string'}, 'recipe': {'type': 'string'}, 'smoke_command': {'type': 'string'}}, 'required': ['action']}})
 
 _TRACE_TOOL = {
