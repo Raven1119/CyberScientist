@@ -4,6 +4,8 @@
 
 ## 已实现
 
+- CS-UP-09 W0：两个回退标签已推送并核对，追加 D-42–D-47；数据库再次一致性备份，回退操作步骤已记录。CS-UP-10 不开工。
+
 - CS-UP-08 W4：每个角色提供全部有效经验索引，按题面／Run目标／Trial目标进行中文片段与技术词排序，默认及工作区新 Run 注入预算 24,000 字符；原生只读经验工具可读最新修订并冻结采用上下文。五份环境／传输／路径／评分配方保持全局候选，证据与失败边界保留。
 
 - CS-UP-08 W3：unknown Job 十分钟后不占并发，保留总数和金额预约并继续对账；Job 固定评分命令／系统下载 ZIP 或单 JSON／哈希与身份／退出码核验后登记 executor_verified。新增环境保存数量授权、只含公开软件的私有镜像构建／回执对账／自动环境事实；未知价格不冒充零，金额硬上限存在时拒绝无法估价的构建。六个 v3 缺陷分别修复：Python3.10 哈希、冻结模式和远端恢复、预检隔离、有效资源信息、Trial 延后与原生 turn 归属、本机拒绝的远端效应与 operation_id。
@@ -92,6 +94,8 @@
 - CS-SB-01 稀疏输入与唤醒修复：可选短研究摘要独立存储；新 Run 普通检查点不唤醒 shadow，Job/Trial 研究级重复状态按 ID 去重。详见 `docs/SPARSE_BRAIN_INPUT_WAKE_FIX_2026-09-24.md`。
 
 ## 已实际验证
+
+- CS-UP-09 W0：远程 main/fallback-1 均为 ec5e24b，fallback-0 为 5940418；基线跟踪文件干净，原未跟踪资料保留。SQLite backup 成功，哈希清单仅在本机忽略目录。
 
 - CS-UP-08 W4：`.venv/bin/pytest -q` 最终实测 894 passed（452.84 秒），修复核心专项64 passed、队列／报告44 passed、目标／额度事实5 passed；前端45 passed 与 `npm run build` 通过，compileall、diff check、暂存秘密与私有文件扫描通过。三题真实分诊完成，全部 finished；正式本地科学分 FigQA100/100、ABC20（system），提交0、原生租约0，五只本卡沙箱均确认 deleted。ABC两Job为Finished/Failed，后者暴露输入目录缺陷；修复只以应用夹具验过，未追加真实Job。真实回执自动生成环境事实已生效。同一真实 Run 暂停 45 秒，剩余时长差 0，恢复确认且原生会话 ID 保持。
 
