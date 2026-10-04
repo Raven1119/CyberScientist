@@ -1,8 +1,10 @@
 # 当前状态（2026-10-05）
 
-进度：2026-10-05 00:52 北京时间 · CS-UP-09 · W1 完成并推送 · commit 4bfcc50f9bb4a3b6cd0dd98b258e10226cf4ab2f
+进度：2026-10-05 02:15 北京时间 · CS-UP-09 · W2 完成并推送 · commit 7b7684aa45361b0ec72dea5792e88a318ab1578e
 
 ## 已实现
+
+- CS-UP-09 W3：同题追加 Run 复用题目 ID；每个 Run 拥有独立版本化 strategy 经验，PI 开局／普通审阅／生命周期里程碑可更新。正式评分提交后立即补最佳分；开局完整策略投递冻结上下文，实时读取最新修订，跨 Run 覆盖被拒，损坏卡片不阻断研究。
 
 - CS-UP-09 W2：PI 首帧读取公开分布、完整同题策略卡和资源，保存科学简报并把弱求解者具体工作包送入实际 Trial／指导。PI 暂停和普通 stop 在尚有可用未试授权通道时改为换路提示；手动暂停保留。冒烟只按后端原生回执／命令／哈希登记，配方提议和持久镜像明确未验证。
 
@@ -98,6 +100,8 @@
 - CS-SB-01 稀疏输入与唤醒修复：可选短研究摘要独立存储；新 Run 普通检查点不唤醒 shadow，Job/Trial 研究级重复状态按 ID 去重。详见 `docs/SPARSE_BRAIN_INPUT_WAKE_FIX_2026-09-24.md`。
 
 ## 已实际验证
+
+- CS-UP-09 W3：完整 `.venv/bin/pytest -q`：914 passed，413.66s；前端 `npm --prefix apps/web test`：45 passed，构建／compileall／diff 检查通过。双普通 Run fake 实际首帧选择不同路线、普通 PI 里程碑更新后第二 Run 工具读到新修订、正式分登记立即刷新、版本采用、归属拒绝及嵌套脱敏均覆盖；没有真实模型、Job 或 Attempt。前两次针对性测试暴露自动卡影响旧等待条件和新 ZIP 夹具缺参，修正后原场景与全量均通过。
 
 - CS-UP-09 W2：`.venv/bin/pytest -q tests/test_pi_planning.py tests/test_controller.py tests/test_collaboration.py tests/test_competition.py tests/test_codex_runtime.py tests/test_kimi_executor.py tests/test_mcp_bridge.py tests/test_sandboxes.py tests/test_environment_saves.py tests/test_decision.py`：155 passed，54.94s；覆盖首帧材料、六项工作包实际派发、两种 PI 停止入口、手动暂停、冻结资源、时长／金额、并发回执去重和密钥备注拒绝。均为应用夹具，没有模型或远端调用。compileall／diff 检查通过。首轮 Demo 恢复失败已保留并修复，后续同场景通过。
 

@@ -401,7 +401,7 @@ class KimiBrain:
                 "需要补证时使用已开放的只读工具；网络失败记录 unknown，"
                 "根据已有证据启动不依赖该缺项的有界 Trial。首个 Trial 写清待检验假设、"
                 "资源试算、产物及停止条件；不以确认满分可达为启动条件。"
-                "每项判断标明已读来源，外部指导单独归因。\n"
+                "每项判断标明已读来源，外部指导单独归因。通读全部同题策略卡后选择有区别的路线；research_brief 写 route_md/difference_md/advice_md/failed_routes=[{route_md,evidence_refs}]，开局和里程碑都更新，后端自动补正式分。用 research_experience 随时读取最新修订。\n"
                 if packet.get("trigger") == "run_start" else
                 "必要时可使用 research_trace 或 platform_scores；公开分布可辅助路线排序；保留来源、口径和 unknown。\n"
             ) +

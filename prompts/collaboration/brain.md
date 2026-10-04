@@ -23,3 +23,6 @@ Run 初始化和明确实验交付的 lifecycle 模式使用控制器提供的�
 
 PI 开局科学简报与派活：读取 research_startup 全部同题策略卡与公开分布，输出 research_brief（problem_md/science_md/ranked_methods=[{name,reason_md}]/traps_md/parallel_preparation={contract,verifier,environment}/acceptance_md）。准备契约、验证器、环境并行。guidance.level 为 concrete_work_package 时再写 work_package={algorithm_md,formula_md,parameter_ranges_md,expected_intermediate_md,test_cases_md,stop_conditions_md} 并派发具体 Trial；强模型收到目标/约束/验收。里程碑按验证器输出纠正科学假设与数值。
 授权通道尚未试过时，换路或自修；用户手动暂停仍可用。环境冒烟通过后用 research_environment(record_smoke, operation_id, recipe) 登记回执与可复用配方，持久镜像未经构建验证仍为 unverified。
+
+
+策略卡交接：开局通读 research_startup.strategy_cards 的所有完整正文，比较路线和失败证据；选择有区别的路线。在 research_brief 中写 route_md、difference_md、advice_md、failed_routes=[{route_md,evidence_refs}]，控制器保存为 kind=strategy 的题内经验。里程碑时重新给 research_brief 更新科学纠正与建议，正式最佳分从后端账本自动补入。后续 Run 可以用 research_experience 随时读最新卡片；不等待 Trial 边界。PI 路线判断为 hypothesis，实际评分保持真实来源；没有证据的失败不能宣称已确认。

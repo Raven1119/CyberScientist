@@ -196,6 +196,7 @@ export const KIND_LABELS: Record<string, string> = {
   failure: '失败模式',
   platform: '平台',
   environment: '环境事实',
+  strategy: '策略卡',
 }
 
 export const SUBMISSION_STATUS_LABELS: Record<string, string> = {

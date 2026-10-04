@@ -18,18 +18,48 @@
   ],
   "$defs": {
     "ResearchAnswer": {
-      "type": "object", "additionalProperties": false,
+      "type": "object",
+      "additionalProperties": false,
       "properties": {
-        "schema_version": {"const": 1},
-        "message_type": {"const": "research_answer"},
-        "request_id": {"type": "string", "minLength": 1},
-        "answer_md": {"type": "string", "minLength": 1, "maxLength": 12000},
-        "evidence_refs": {"type": "array", "maxItems": 32,
-          "items": {"type": "string", "minLength": 1, "maxLength": 256}},
-        "native_answers": {"type": ["object", "null"]}
+        "schema_version": {
+          "const": 1
+        },
+        "message_type": {
+          "const": "research_answer"
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "answer_md": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 12000
+        },
+        "evidence_refs": {
+          "type": "array",
+          "maxItems": 32,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        "native_answers": {
+          "type": [
+            "object",
+            "null"
+          ]
+        }
       },
-      "required": ["schema_version", "message_type", "request_id",
-                    "answer_md", "evidence_refs", "native_answers"]
+      "required": [
+        "schema_version",
+        "message_type",
+        "request_id",
+        "answer_md",
+        "evidence_refs",
+        "native_answers"
+      ]
     },
     "Checkpoint": {
       "type": "object",
@@ -75,10 +105,22 @@
           "type": "object",
           "additionalProperties": false,
           "properties": {
-            "message": {"type": "string", "minLength": 1, "maxLength": 4000},
-            "questions": {"type": "array", "maxItems": 8, "items": {"type": "object"}}
+            "message": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4000
+            },
+            "questions": {
+              "type": "array",
+              "maxItems": 8,
+              "items": {
+                "type": "object"
+              }
+            }
           },
-          "required": ["message"]
+          "required": [
+            "message"
+          ]
         },
         "evidence_refs": {
           "type": "array",
@@ -198,8 +240,118 @@
           }
         },
         "prediction_verdicts": {
-          "type": "array", "maxItems": 20,
-          "items": {"$ref": "#/$defs/PredictionVerdict"}
+          "type": "array",
+          "maxItems": 20,
+          "items": {
+            "$ref": "#/$defs/PredictionVerdict"
+          }
+        },
+        "research_brief": {
+          "type": "object",
+          "properties": {
+            "problem_md": {
+              "type": "string"
+            },
+            "science_md": {
+              "type": "string"
+            },
+            "traps_md": {
+              "type": "string"
+            },
+            "acceptance_md": {
+              "type": "string"
+            },
+            "route_md": {
+              "type": "string"
+            },
+            "difference_md": {
+              "type": "string"
+            },
+            "ranked_methods": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "reason_md": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "name",
+                  "reason_md"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "parallel_preparation": {
+              "type": "object",
+              "properties": {
+                "contract": {
+                  "type": "string"
+                },
+                "verifier": {
+                  "type": "string"
+                },
+                "environment": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false
+            },
+            "work_package": {
+              "type": "object",
+              "properties": {
+                "algorithm_md": {
+                  "type": "string"
+                },
+                "formula_md": {
+                  "type": "string"
+                },
+                "parameter_ranges_md": {
+                  "type": "string"
+                },
+                "expected_intermediate_md": {
+                  "type": "string"
+                },
+                "test_cases_md": {
+                  "type": "string"
+                },
+                "stop_conditions_md": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false
+            },
+            "advice_md": {
+              "type": "string"
+            },
+            "failed_routes": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "route_md": {
+                    "type": "string"
+                  },
+                  "evidence_refs": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "required": [
+                  "route_md",
+                  "evidence_refs"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "additionalProperties": false
         }
       },
       "required": [
@@ -368,7 +520,9 @@
           "maxLength": 1200
         },
         "prediction_md": {
-          "type": "string", "minLength": 1, "maxLength": 4000
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4000
         }
       },
       "required": [
@@ -382,13 +536,31 @@
       ]
     },
     "PredictionVerdict": {
-      "type": "object", "additionalProperties": false,
+      "type": "object",
+      "additionalProperties": false,
       "properties": {
-        "submission_id": {"type": "string", "minLength": 1},
-        "verdict": {"enum": ["confirmed", "refuted", "unclear"]},
-        "note_md": {"type": "string", "minLength": 1, "maxLength": 2000}
+        "submission_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "verdict": {
+          "enum": [
+            "confirmed",
+            "refuted",
+            "unclear"
+          ]
+        },
+        "note_md": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        }
       },
-      "required": ["submission_id", "verdict", "note_md"]
+      "required": [
+        "submission_id",
+        "verdict",
+        "note_md"
+      ]
     }
   }
 }

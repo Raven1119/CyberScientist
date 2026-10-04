@@ -12,7 +12,7 @@ SQLite 保存不可覆盖的修订历史和检索索引，当前有效文本以�
 | scope / challenge_id | global 或 challenge；后者必须与目录对应 |
 | status | candidate / active / retired；代表是否参与默认检索 |
 | evidence_status | hypothesis / observed / validated / contradicted；与是否启用独立 |
-| kind | heuristic / procedure / failure / platform / environment |
+| kind | heuristic / procedure / failure / platform / environment / strategy |
 | audience | brain / executor / both；旧条目缺省为 both |
 | tags / applicability | 检索标签和适用条件 |
 | evidence_refs | 具体 Trial、Job、文件 hash、官方文档或反馈引用 |
@@ -92,3 +92,10 @@ Trial 开始时生成不可变 `memory_manifest`：经验 ID、revision hash、s
 `research_experience` 的 list/read 只读工具给 PI 与求解者读取最新已登记有效版本；read 单独冻结此次交付，返回 context_id 与 revision_id，可用于真实采用声明。旧 Trial 的上下文仍保留，不静默覆盖。
 
 五份可执行全局配方位于 experience/global/csup08_*.md，均为 candidate/hypothesis，等待用户在前端审批。历史失败与替代步骤的未验证状态写在条目中，不能把配方候选当成成功环境。已核验环境回执由代码生成 environment，不走候选审批。
+
+
+## CS-UP-09：同题策略交接
+
+每个 Run 的 PI 策略卡是 kind=strategy 的题内经验，稳定 ID 为 strategy_<run_id>。卡片保存路线与理由、与此前路线的区别、失败判断与证据、直接可用的建议；计划保持 hypothesis，正式最佳验证分只由后端可信评分账本补入。PI 首帧完整读取全部同题卡片，并为这次投递冻结独立 experience_context，返回其 ID；采用声明绑定实际交付修订。
+
+开局和普通／生命周期里程碑审阅的可选 research_brief 更新自己的策略卡，实际 Trial 未给简报时按 PI 目标补建最小交接卡。原生 PI 不能通过普通经验提议覆盖另一个 Run 的卡。正式评分提交账本后立即刷新，实时 research_experience 查询返回最新有效修订，不等待下一 Trial。卡片文件冲突或损坏写 strategy.update_unknown，继续既有授权研究，不冒充保存成功。

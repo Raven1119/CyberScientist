@@ -244,6 +244,7 @@ async def test_t2_silent_review_has_zero_executor_effect():
     rid = c.create_run("COLLAB_CH", shadow_enabled=True)["id"]
     await _start(c, brain, rid)
     prompts0, steers0, aborts0 = len(ex.prompts), len(ex.steers), len(ex.aborts)
+    experience_versions0 = [(e["id"], e["revision_id"]) for e in experiences.list_experiences()["items"]]
 
     # 研究级变化触发被动观察；普通检查点仅持久化。
     collab.submit_checkpoint(rid, {
@@ -268,7 +269,7 @@ async def test_t2_silent_review_has_zero_executor_effect():
     assert (len(ex.prompts), len(ex.steers), len(ex.aborts)) == \
         (prompts0, steers0, aborts0)
     assert db.query("SELECT id FROM guidance WHERE run_id=?", (rid,)) == []
-    assert experiences.list_experiences()["items"] == []
+    assert [(e["id"], e["revision_id"]) for e in experiences.list_experiences()["items"]] == experience_versions0
     await c.control(rid, "terminate", None, "op-term-t2")
 
 
@@ -1769,8 +1770,10 @@ async def test_experience_challenge_proposal_lands_active():
     assert ok
     listing = experiences.list_experiences(scope="challenge",
                                            challenge_id="COLLAB_CH")
-    assert len(listing["items"]) == 1
-    item = listing["items"][0]
+    proposed = [e for e in listing["items"] if e["kind"] != "strategy"]
+    assert len(proposed) == 1
+    assert len([e for e in listing["items"] if e["kind"] == "strategy"]) == 1
+    item = proposed[0]
     assert item["status"] == "active" and item["kind"] == "failure"
     assert item["evidence_status"] == "hypothesis"
     assert any("冻结经验" in text and item["revision_id"] in text for _, text in ex.prompts)
@@ -1811,11 +1814,11 @@ async def test_experience_target_id_updates_in_place():
     dec = _decision([{"op": "wait", "reason": "x"}], sv=999)
     dec["experience_proposals"] = [_proposal("challenge", "条目甲")]
     await _steer_decision(c, brain, rid, dec, len(brain.calls))
-    ok = await _wait(lambda: bool(experiences.list_experiences(
+    ok = await _wait(lambda: any(e["title"] == "条目甲" for e in experiences.list_experiences(
         scope="challenge", challenge_id="COLLAB_CH")["items"]))
     assert ok
-    exp_id = experiences.list_experiences(
-        scope="challenge", challenge_id="COLLAB_CH")["items"][0]["id"]
+    exp_id = next(e["id"] for e in experiences.list_experiences(
+        scope="challenge", challenge_id="COLLAB_CH")["items"] if e["title"] == "条目甲")
 
     dec2 = _decision([{"op": "wait", "reason": "y"}], sv=999)
     dec2["experience_proposals"] = [
@@ -1832,7 +1835,7 @@ async def test_experience_target_id_updates_in_place():
     assert len(exp["revisions"]) == 2  # 冲突=追加新修订，不拒绝
     listing = experiences.list_experiences(scope="challenge",
                                            challenge_id="COLLAB_CH")
-    assert len(listing["items"]) == 1  # 没有重复造条目
+    assert len([e for e in listing["items"] if e["kind"] != "strategy"]) == 1  # 没有重复造条目
     assert db.query_one(
         "SELECT event_id FROM events WHERE run_id=?"
         " AND type='brain.action_rejected'"
@@ -2047,7 +2050,7 @@ async def test_challenge_proposal_challenge_id_bound_to_run():
     bad["challenge_id"] = "OTHER_CH"  # 模型自报了错误的题目
     dec["experience_proposals"] = [bad]
     await _steer_decision(c, brain, rid, dec, len(brain.calls))
-    ok = await _wait(lambda: bool(experiences.list_experiences(
+    ok = await _wait(lambda: any(e["title"] == "自报错题的经验" for e in experiences.list_experiences(
         scope="challenge", challenge_id="COLLAB_CH")["items"]))
     assert ok
     assert not experiences.list_experiences(

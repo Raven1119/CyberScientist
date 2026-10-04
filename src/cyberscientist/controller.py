@@ -1295,6 +1295,8 @@ class RunController:
 
     def notify_run_change(self, run_id: str) -> None:
         """collab 服务的内存唤醒提示（DB 已先行提交，丢失可由扫描恢复）。"""
+        from . import strategies
+        strategies.maintain(run_id)
         self._maybe_shadow(run_id)
         self._wake(run_id)
 
@@ -1862,6 +1864,7 @@ class RunController:
                 db.append_event(run_id, "controller", "trial.done",
                                 {"trial_id": trial_id})
                 self._enqueue_lifecycle(run_id, trigger="trial_done")
+                self.notify_run_change(run_id)
             elif etype == "trial.stalled":
                 if self._executor_busy.get(run_id):
                     # The native stream watchdog fires before the configurable
@@ -2874,6 +2877,9 @@ class RunController:
             result={**result,'prediction_verdicts':[
                 {**item,'note_md':observation.strip_secrets(item['note_md'])}
                 for item in result['prediction_verdicts']]}
+        if result.get('research_brief'):
+            result = {**result, 'research_brief': json.loads(observation.strip_secrets(
+                json.dumps(result['research_brief'], ensure_ascii=False)))}
         if result["frame_id"] != frame.get("frame_id"):
             self._review_failed(run_id, req, mode,
                                 "frame_id 不匹配；按审阅失败处理")
@@ -2988,6 +2994,9 @@ class RunController:
                  req["id"]))
 
         # 事务外：stop 的原生取消 + submit 自动提交 + 空闲边界投递
+        if result.get('research_brief'):
+            from . import planning
+            planning.record_brief(run_id, result['research_brief'], 'review:' + req['id'])
         if result["disposition"] == "intervene":
             g = result["guidance"]
             if g["kind"] == "stop":
@@ -3416,6 +3425,10 @@ class RunController:
                                         "goal": action["goal"]},
                                        trial_id=trial_id)
                 self._snapshot_memory(run_id, trial_id, settings)
+                from . import strategies
+                created = db.query_one("SELECT * FROM events WHERE run_id=? AND type='trial.created'"
+                                        ' AND trial_id=?', (run_id, trial_id))
+                strategies.ensure_trial_plan(run_id, action['goal'], action['success_check'], dict(created))
                 enabled_skills = self._enabled_skills(
                     run_id, settings, run["challenge_id"], 'executor')
                 task_text = (f"目标：{action['goal']}\n"
@@ -3543,6 +3556,8 @@ class RunController:
                 if has_scorer:
                     try:
                         candidate = await asyncio.to_thread(local_scoring.score_candidate, run_id)
+                        from . import strategies
+                        strategies.maintain(run_id)
                         current = db.query_one('SELECT phase,gate,current_trial_id FROM runs WHERE id=?', (run_id,))
                         if (not current or current['phase'] != 'running' or current['gate'] != 'open'
                                 or current['current_trial_id'] != run['current_trial_id']):
@@ -3649,6 +3664,16 @@ class RunController:
                 kind = proposal.get("kind") or "heuristic"
                 evidence_refs = proposal.get("evidence_refs", [])
                 base_hash = None
+            if kind == 'strategy' or (prior and prior['frontmatter'].get('kind') == 'strategy'):
+                from . import strategies
+                if (not run_id or scope != 'challenge' or
+                        (target_id and target_id != strategies.card_id(run_id))):
+                    raise experiences.ExperienceError('INVALID_EXPERIENCE', 'PI 只能修改自己 Run 的题内策略卡')
+                event = db.append_event(run_id, 'brain', 'strategy.proposed', {
+                    'decision_id': decision_id, 'evidence_refs': evidence_refs})
+                saved = strategies.maintain(run_id, brief={'route_md': proposal['body_md'],
+                    'advice_md': proposal['applicability']}, event=event)
+                return saved['id'] if saved else None
             is_global = scope == "global"
             fm = dict(prior["frontmatter"]) if prior else {}
             fm.update({"title": proposal["title"], "scope": scope,
@@ -3717,6 +3742,8 @@ class RunController:
 
     # ---------- 经验闭环：收尾整理 / 效果回联 / 全局整理 ----------
     def _finalize_run(self, run_id: str, reason: str) -> None:
+        from . import strategies
+        strategies.maintain(run_id)
         self._record_experience_snapshot(run_id, "at_end")
         with db.transaction() as conn:
             conn.execute("UPDATE runs SET phase='finished', ended_at=?,end_reason=?"

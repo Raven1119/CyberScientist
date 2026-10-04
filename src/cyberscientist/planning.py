@@ -41,10 +41,12 @@ def startup(run_id: str, challenge: dict) -> dict:
     scores = (platform_scores.get(run_id) if run['mode'] != 'demo' and
               (platform.get('fetched_at') or origin.startswith(('https://', 'pinned-public-snapshot://'))) else
               {'status': 'unknown', 'reason': 'No live platform provenance for this topic'})
+    cards = strategy_cards(run['challenge_id'])
+    delivered = experience_context.freeze(run_id, None, 'startup:strategies', items=cards, role='brain')
     context = {'title': challenge['title'], 'problem_md': challenge['content'],
                'resources': json.loads(challenge.get('resources_json') or '[]'),
                'public_score_distribution': scores,
-               'strategy_cards': strategy_cards(run['challenge_id']),
+               'strategy_cards': delivered['items'], 'strategy_context_id': delivered['id'],
                'guidance': guidance_level(run_id),
                'brief_fields': ['problem_md', 'science_md', 'ranked_methods', 'traps_md',
                                 'parallel_preparation', 'acceptance_md'],
@@ -67,10 +69,13 @@ def record_brief(run_id: str, brief: dict, decision_id: str) -> dict:
     root.mkdir(parents=True, exist_ok=True)
     target = root / 'research_brief.md'
     target.write_text(body, encoding='utf-8')
-    return db.append_event(run_id, 'brain', 'research.brief_written', {
+    event = db.append_event(run_id, 'brain', 'research.brief_written', {
         'decision_id': decision_id, 'brief': safe,
         'path': str(target.relative_to(config.WORKSPACE_DIR)),
         'sha256': hashlib.sha256(body.encode()).hexdigest()})
+    from . import strategies
+    strategies.maintain(run_id, brief=safe, event=event)
+    return event
 
 
 def brief_for_run(run_id: str) -> str:

@@ -489,6 +489,8 @@ def _record_score(challenge_id: str, run_id: str, trial_id: str, operation_id: s
                      'comparison_contract': comparison,
                      'artifact_hashes': science_hashes,
                      'source_local_score_id': source_local_score_id, 'score_source': score_source}, trial_id=trial_id)
+    from . import strategies
+    strategies.maintain(run_id)
     return dict(db.query_one('SELECT * FROM local_scores WHERE id=?', (score_id,)))
 
 

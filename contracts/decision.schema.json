@@ -310,7 +310,8 @@
               "heuristic",
               "procedure",
               "failure",
-              "platform"
+              "platform",
+              "strategy"
             ]
           },
           "audience": {
@@ -532,6 +533,31 @@
             }
           },
           "additionalProperties": false
+        },
+        "advice_md": {
+          "type": "string"
+        },
+        "failed_routes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "route_md": {
+                "type": "string"
+              },
+              "evidence_refs": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "route_md",
+              "evidence_refs"
+            ],
+            "additionalProperties": false
+          }
         }
       },
       "additionalProperties": false

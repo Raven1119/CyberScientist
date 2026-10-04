@@ -20,7 +20,7 @@ from . import config, db
 
 VALID_STATUS = {"candidate", "active", "retired"}
 VALID_EVIDENCE = {"hypothesis", "observed", "validated", "contradicted"}
-VALID_KIND = {"heuristic", "procedure", "failure", "platform", "environment"}
+VALID_KIND = {"heuristic", "procedure", "failure", "platform", "environment", "strategy"}
 VALID_AUDIENCE = {'brain','executor','both'}
 REQUIRED_FRONTMATTER = ["id", "title", "scope", "status", "evidence_status", "kind"]
 
@@ -144,6 +144,8 @@ def parse_experience(content: str, file_path: Path) -> dict[str, Any]:
             try: datetime.fromisoformat(fm[key].replace('Z','+00:00'))
             except ValueError as exc:
                 raise ExperienceError('INVALID_EXPERIENCE',f'{key} 必须是 ISO 时间') from exc
+    if fm['kind'] == 'strategy' and fm['scope'] != 'challenge':
+        raise ExperienceError('INVALID_EXPERIENCE', '策略卡只属于一道题目')
     if not isinstance(fm.get("evidence_refs", []), list):
         raise ExperienceError("INVALID_EXPERIENCE", "evidence_refs 必须是列表")
     try:

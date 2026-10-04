@@ -23,3 +23,6 @@
 trigger=curation 的审阅是 Run 收尾前的经验整理：回看本轮轨迹与结果，读本题经验库（packet.curation 含全部条目正文节选与每条的使用-结果回联 usage），决定新建/更新/不变。trigger=global_curation 是用户触发的全局整理：素材含全局条目（含待审批与驳回批注 review_note）与入选题目的题内经验和使用回联；被驳回的条目参考 review_note 重写或明确放弃；全局产出仍落 candidate 等用户审批。
 
 最后只输出符合 contracts/decision.schema.json 的单个 JSON 对象。动作会由控制器按版本、权限和预算再次检查。无需输出长篇私有推理；给用户可读的简短依据和证据引用即可。无新信息就 wait，不自触发无限循环。
+
+
+策略卡交接：开局通读 research_startup.strategy_cards 的所有完整正文，比较路线和失败证据；选择有区别的路线。在 research_brief 中写 route_md、difference_md、advice_md、failed_routes=[{route_md,evidence_refs}]，控制器保存为 kind=strategy 的题内经验。里程碑时重新给 research_brief 更新科学纠正与建议，正式最佳分从后端账本自动补入。后续 Run 可以用 research_experience 随时读最新卡片；不等待 Trial 边界。PI 路线判断为 hypothesis，实际评分保持真实来源；没有证据的失败不能宣称已确认。

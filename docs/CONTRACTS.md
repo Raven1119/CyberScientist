@@ -114,7 +114,7 @@ ReviewPacket 包含 `run_id / state_version / trigger / current_intention / tria
 
 当前可用的提交建议入口是 requested/shadow 审阅的 `ReviewResult`（`guidance.kind=submit`）：控制器调用既有实验邮箱提交路径，仍检查 Run 授权、预算与去重。这不扩大正式参赛授权，也不把旧 `request_submission` 自动转换为提交；`policy.allow_formal_submission=false` 对旧动作的拒绝继续保留。
 
-同一 Decision 最多三个动作，只能包含一个改变运行方向的主动作；合法组合由后端做语义校验。Schema 合法不意味着动作被授权。格式错误最多进行一次修复请求，仍失败就 blocked；不执行半解析出的片段。
+同一 Decision 不设任意三动作上限，只能包含一个改变运行方向的主动作；合法组合由后端做语义校验。Schema 合法不意味着动作被授权。格式错误最多进行一次修复请求，仍失败就 blocked；不执行半解析出的片段。
 
 最终包预检/评分和实验邮箱提交的流程阻塞，通过现有指导队列以 `source=controller` 交回当前执行器：返回失败阶段、错误和事件引用，允许同一已交付 Trial 接回修复；失败次数不自动暂停研究。空闲原生会话与检查点返回使用原投递/ACK契约，未知投递不重发。只在原 Run 仍运行、门禁开放、模型及时间授权有效时唤醒；不自动重试 Job、评分或比赛提交，不扩大授权。评分前保存不可覆盖的完整输入快照，失败不产生科学分；大脑仍可显式暂停，或按最终子项对账契约明确确认较低结果后结束。
 
@@ -206,3 +206,6 @@ CS-UP-06 候选对账允许评分器额外声明 `comparison_contract`：`higher
 
 
 CS-UP-09 W1/W2 更新：Decision 不设任意三动作上限；最终目标评估未知、预测缺项、诊断弱信号为记录事实而非研究停止门禁。新增可选 research_brief 对象（详见实际 schema），保存到 Run 目录并附入实际求解者工作指令。run_start 帧新增 research_startup，包含题面／资源／公开聚合分布／完整同题策略卡及指导力度。PI pause 和 ReviewResult stop 有未试授权通道时给出换路指导，用户手动暂停保持可用。research_environment 增加 record_smoke：operation_id 指向本 Run 后端持有的成功执行回执，recipe 为未验证提议；环境事实记录实际命令、输出与哈希，不能据此声明已构建持久镜像。
+
+
+CS-UP-09 W3：Decision 与 ReviewResult 均支持可选 research_brief，内含 route_md、difference_md、advice_md、failed_routes；实际 JSON schema 为权威。kind=strategy 只允许题内作用域；原生 PI 写入绑定自己 Run 的稳定卡片身份。research_startup.strategy_cards 对齐 strategy_context_id 的冻结修订；实时读取另行冻结最新正文。正式分由可信账本自动补记，卡片故障不改变 Run 授权或阻止任务派发。

@@ -636,6 +636,7 @@ export default function ExperiencePage() {
                   <option value="procedure">流程</option>
                   <option value="failure">失败模式</option>
                   <option value="platform">平台</option>
+                  <option value="strategy">策略卡（题内）</option>
                   {fm.kind === 'environment' && <option value="environment">环境事实</option>}
                 </select>
               </div>
