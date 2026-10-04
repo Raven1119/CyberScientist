@@ -569,11 +569,12 @@ async def test_historical_metadata_finish_uses_ordinary_curation(monkeypatch):
                                              'remaining_md': ''}}]}
     await controller._apply_decision(rid, decision, {}, None, None)
     run = db.query_one('SELECT phase,gate FROM runs WHERE id=?', (rid,))
-    assert run['phase'] == 'running'
+    assert run['phase'] == 'finished'
     request = db.query_one("SELECT * FROM review_requests WHERE run_id=? AND trigger='curation'", (rid,))
-    assert request and json.loads(request['frame_json'])['finish_after']
+    assert request is None
+    assert db.query_one('SELECT 1 FROM run_post_reviews WHERE run_id=?', (rid,))
     assert not db.query_one("SELECT 1 FROM events WHERE run_id=? AND type='evaluation.scoring_started'", (rid,))
-    controller._finalize_run(rid, 'fixture curation complete')
+    assert db.query_one("SELECT COUNT(*) AS n FROM events WHERE run_id=? AND type='run.finished'", (rid,))['n'] == 1
     assert db.query_one('SELECT phase FROM runs WHERE id=?', (rid,))['phase'] == 'finished'
 
 

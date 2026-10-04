@@ -610,6 +610,13 @@ def init_db() -> None:
             'resume_on_startup': 'INTEGER NOT NULL DEFAULT 0',
             'brain_thread_id': 'TEXT', 'executor_thread_id': 'TEXT'})
         conn.execute('CREATE TABLE IF NOT EXISTS system_state (key TEXT PRIMARY KEY,value TEXT NOT NULL)')
+        _ensure_columns(conn, 'runs', {'pending_end_reason': 'TEXT'})
+        conn.execute('CREATE TABLE IF NOT EXISTS maintenance_calls ('
+                     'operation_id TEXT PRIMARY KEY,run_id TEXT NOT NULL REFERENCES runs(id),'
+                     'kind TEXT NOT NULL,status TEXT NOT NULL,started_at TEXT NOT NULL,updated_at TEXT NOT NULL)')
+        conn.execute('CREATE TABLE IF NOT EXISTS run_post_reviews ('
+                     'run_id TEXT PRIMARY KEY REFERENCES runs(id),status TEXT NOT NULL,reason TEXT NOT NULL,'
+                     'packet_json TEXT,result_json TEXT,report_path TEXT,error TEXT,created_at TEXT NOT NULL,updated_at TEXT NOT NULL)')
         conn.execute('CREATE TABLE IF NOT EXISTS native_turn_trials (run_id TEXT NOT NULL,turn_id TEXT NOT NULL,trial_id TEXT,PRIMARY KEY(run_id,turn_id))')
         _ensure_columns(conn, "submissions", SUBMISSION_V2_COLUMNS)
         _ensure_columns(conn, "local_scores", LOCAL_SCORE_V2_COLUMNS)

@@ -887,6 +887,8 @@ class RunController:
                 collab.revoke_run_tokens(conn, run_id)
                 db.append_event_tx(conn, run_id, "controller", "run.terminated", {
                     "notice": "证据与历史 Attempt 保留；远程 Job 取消属阶段 2 范围"})
+                from . import maintenance
+                maintenance.persist_end_tx(conn, run_id, 'user_terminate')
             try:
                 from . import sandboxes
                 await asyncio.to_thread(sandboxes.cleanup_run, run_id)
@@ -915,6 +917,8 @@ class RunController:
             pending = [t for t in (task, rtask) if t]
             if pending:
                 await asyncio.gather(*pending, return_exceptions=True)
+            from . import maintenance
+            maintenance.queue_end(self, run_id, 'user_terminate')
             return {"status": "confirmed"}
         raise ControllerError("INVALID_ACTION", f"未知控制动作: {action}")
 
@@ -926,6 +930,8 @@ class RunController:
         有活动时钟且保留恢复意图的 Run；旧 Run 和用户手动暂停保持待恢复。
         """
         from . import run_clock
+        from . import maintenance
+        maintenance.reconcile_interrupted()
         run_clock.heartbeat()
         db.execute('DELETE FROM model_session_leases')
         zombies = db.query(
@@ -1297,6 +1303,8 @@ class RunController:
         """collab 服务的内存唤醒提示（DB 已先行提交，丢失可由扫描恢复）。"""
         from . import strategies
         strategies.maintain(run_id)
+        from . import trial_notes
+        trial_notes.record_closed(run_id)
         self._maybe_shadow(run_id)
         self._wake(run_id)
 
@@ -1657,7 +1665,7 @@ class RunController:
                 # 不设守卫会每轮重复置 paused + continue 空转，永不 await，
                 # 同步 DB 写把事件循环彻底堵死——2026-09-19 实测 seq 爆炸到 9 万+）
                 if phase == "running" and self._run_minutes_exceeded(run):
-                    db.execute("UPDATE runs SET phase='pausing', block_reason=? WHERE id=?",
+                    db.execute("UPDATE runs SET phase='pausing', pending_end_reason='authorization_expired', block_reason=? WHERE id=?",
                                ("达到本轮授权运行时长上限", run_id))
                     db.append_event(run_id, "controller", "run.time_limit",
                                     {"notice": "达到授权时长上限；已暂停新增受控操作"})
@@ -1665,13 +1673,29 @@ class RunController:
                 if phase == "pausing":
                     receipt = await self._prime_instances[run_id].abort(
                         self._prime_sessions[run_id])
-                    if receipt.status == "confirmed":
+                    confirmed = receipt.status == 'confirmed'
+                    if not confirmed and self._require_run(run_id)['pending_end_reason']:
+                        try:
+                            await asyncio.wait_for(self._prime_instances[run_id].close(self._prime_sessions[run_id]), 15)
+                            confirmed = True
+                            self._prime_instances[run_id] = None
+                            db.append_event(run_id, 'controller', 'run.native_session_closed', {
+                                'abort_status': receipt.status, 'notice': '本地会话关闭已确认；远程任务仍独立对账'})
+                        except Exception as exc:
+                            from . import resource_coordinator, maintenance
+                            resource_coordinator.close_failed(run_id, exc)
+                            maintenance.queue_end(self, run_id, self._require_run(run_id)['pending_end_reason'])
+                    if confirmed:
                         db.execute("UPDATE runs SET phase='paused' WHERE id=?",
                                    (run_id,))
                         from . import run_clock
                         run_clock.freeze(run_id)
                         db.append_event(run_id, "prime", "run.paused",
                                         {"detail": receipt.detail})
+                        ending = self._require_run(run_id)['pending_end_reason']
+                        if ending:
+                            self._finalize_run(run_id, ending)
+                            continue
                     else:
                         db.append_event(run_id, "prime", "run.pause_unknown", {
                             "detail": f"abort 收据={receipt.status}；保持 pausing，"
@@ -1704,10 +1728,13 @@ class RunController:
             raise
         except Exception as exc:
             with db.transaction() as conn:
-                conn.execute("UPDATE runs SET phase='failed',block_reason=? WHERE id=?"
-                             " AND phase NOT IN ('finished','failed','cancelled')",(str(exc)[:300],run_id))
+                conn.execute("UPDATE runs SET phase='failed',ended_at=?,end_reason='runtime_error',block_reason=? WHERE id=?"
+                             " AND phase NOT IN ('finished','failed','cancelled')",(db.utcnow(),_redact(str(exc),300),run_id))
+                conn.execute("UPDATE trials SET status='interrupted' WHERE run_id=? AND status IN ('active','stalled')", (run_id,))
                 db.append_event_tx(conn,run_id,"controller","run.runtime_error",
-                                   {"error":f"{type(exc).__name__}: {str(exc)[:300]}"})
+                                   {"error":f"{type(exc).__name__}: {_redact(str(exc),300)}"})
+                from . import maintenance
+                maintenance.persist_end_tx(conn, run_id, 'runtime_error')
             try:
                 from . import sandboxes
                 await asyncio.to_thread(sandboxes.cleanup_run,run_id)
@@ -1743,6 +1770,10 @@ class RunController:
                             self._prime_guidance_ids,self._pumps,
                             self._native_arrival_at,self._last_native_marker_at):
                 mapping.pop(run_id,None)
+            ended = self._require_run(run_id)
+            if ended['phase'] in ('finished', 'failed', 'cancelled'):
+                from . import maintenance
+                maintenance.queue_end(self, run_id, ended['end_reason'] or 'runtime_error')
 
     def _recover_review_requests(self, run_id: str) -> None:
         """重启对账：running→error（中断）；sending 指导→unknown（无法确认在途）。"""
@@ -1845,6 +1876,9 @@ class RunController:
                     from . import run_clock
                     run_clock.freeze(run_id)
                     db.append_event(run_id,"controller","run.paused",{"evidence":etype,"notice":"本地代理已停止；远程 Job 独立对账"})
+                    ending = self._require_run(run_id)['pending_end_reason']
+                    if ending:
+                        self._finalize_run(run_id, ending)
                 if etype in ("trial.completed", "run.aborted",
                              "executor.turn_completed"):
                     db.append_event(run_id, "controller", "prime.late_event_ignored", {
@@ -2593,6 +2627,9 @@ class RunController:
         run = self._require_run(run_id)
         if run["phase"] != "running":
             return
+        if req['trigger'] == 'curation':
+            self._obsolete_request(req['id'], '历史整理审阅已迁移到独立维护额度；不重发模型调用')
+            return
         user_review = (req["trigger"] == "user_steer" or req["source"] == "user"
                        or (req["source"] == "requested" and bool(req["blocking"])))
         if run["gate"] == "awaiting_budget" and req["trigger"] != "budget_granted" and not user_review:
@@ -2600,7 +2637,7 @@ class RunController:
             return
         if self._run_minutes_exceeded(run):
             self._obsolete_request(req["id"], "授权时长已用尽")
-            db.execute("UPDATE runs SET phase='pausing' WHERE id=? AND phase='running'",(run_id,))
+            db.execute("UPDATE runs SET phase='pausing',pending_end_reason='authorization_expired' WHERE id=? AND phase='running'",(run_id,))
             queue = self._signals.get(run_id)
             if queue is not None:
                 queue.put_nowait({"type":"pause"})
@@ -2621,7 +2658,7 @@ class RunController:
             if run["brain_reviews_used"] >= defaults["max_brain_reviews"]:
                 if mode == "lifecycle":
                     db.execute(
-                        "UPDATE runs SET phase='paused', block_reason=?"
+                        "UPDATE runs SET phase='pausing', pending_end_reason='brain_review_limit', block_reason=?"
                         " WHERE id=?",
                         (f"达到大脑判断上限 {defaults['max_brain_reviews']} 次",
                          run_id))
@@ -2630,6 +2667,9 @@ class RunController:
                     db.execute("UPDATE runs SET resume_on_startup=0 WHERE id=?", (run_id,))
                     db.append_event(run_id, "controller", "run.review_limit",
                                     {"limit": defaults["max_brain_reviews"]})
+                    queue = self._signals.get(run_id)
+                    if queue is not None:
+                        queue.put_nowait({'type': 'pause'})
                 self._obsolete_request(req["id"], "大脑判断额度用尽")
                 if req["blocking"]:
                     self._blocking_dead_end(
@@ -3610,7 +3650,7 @@ class RunController:
                     "op": op, "detail": "此动作尚未接入；使用已导入题面和实际开放的只读工具"})
 
     def _apply_experience_proposal(self, run_id: str | None, decision_id: str,
-                                   proposal: dict[str, Any]) -> str | None:
+                                   proposal: dict[str, Any], *, candidate: bool = False) -> str | None:
         """经验落库（自进化闭环的唯一写入点，Run 内与全局整理共用）。
 
         题内提议直接落 active（无审查门槛）；全局落 candidate 待用户审批。
@@ -3664,7 +3704,7 @@ class RunController:
                 kind = proposal.get("kind") or "heuristic"
                 evidence_refs = proposal.get("evidence_refs", [])
                 base_hash = None
-            if kind == 'strategy' or (prior and prior['frontmatter'].get('kind') == 'strategy'):
+            if not candidate and (kind == 'strategy' or (prior and prior['frontmatter'].get('kind') == 'strategy')):
                 from . import strategies
                 if (not run_id or scope != 'challenge' or
                         (target_id and target_id != strategies.card_id(run_id))):
@@ -3678,7 +3718,7 @@ class RunController:
             fm = dict(prior["frontmatter"]) if prior else {}
             fm.update({"title": proposal["title"], "scope": scope,
                   "challenge_id": None if is_global else challenge_id,
-                  "status": "candidate" if is_global else "active",
+                  "status": "candidate" if is_global or candidate else "active",
                   "evidence_status": proposal.get("evidence_status", "hypothesis"),
                   "kind": kind,
                   "audience": proposal.get('audience') or (prior['frontmatter'].get('audience','both') if prior else 'both'),
@@ -3701,7 +3741,7 @@ class RunController:
                     {"experience_id": exp_id, "title": proposal["title"],
                      "scope": scope, "status": fm["status"],
                      "notice": ("全局经验待用户在经验页审批后生效"
-                                if is_global else "题内经验即时生效")})
+                                if is_global else ("复盘教训候选，待 PI 采用" if candidate else "题内经验即时生效"))})
             return exp_id
         except experiences.ExperienceError as exc:
             if run_id:
@@ -3748,9 +3788,15 @@ class RunController:
         with db.transaction() as conn:
             conn.execute("UPDATE runs SET phase='finished', ended_at=?,end_reason=?"
                          " WHERE id=?", (db.utcnow(), reason, run_id))
+            conn.execute("UPDATE trials SET status='interrupted' WHERE run_id=? AND status IN ('active','stalled')", (run_id,))
             collab.revoke_run_tokens(conn, run_id)
             db.append_event_tx(conn, run_id, "controller",
                                "run.finished", {"reason": reason})
+            from . import maintenance
+            maintenance.persist_end_tx(conn, run_id, reason)
+        from . import run_clock, maintenance
+        run_clock.freeze(run_id)
+        maintenance.queue_end(self, run_id, reason)
         from . import sandboxes
         try:
             loop = asyncio.get_running_loop()
@@ -3762,31 +3808,8 @@ class RunController:
             q.put_nowait({"type": "terminate"})
 
     def _defer_finish_for_curation(self, run_id: str, reason: str) -> bool:
-        """Run 终态前先整理本题经验：需要且能整理则排 curation 审阅并推迟
-        finish（返回 True）；审阅完结后由 _finish_request 钩子收尾。"""
-        done = db.query_one(
-            "SELECT id FROM review_requests WHERE run_id=?"
-            " AND trigger='curation' AND status IN ('done','error','obsolete')",
-            (run_id,))
-        if done:
-            return False
-        pending = db.query_one(
-            "SELECT id FROM review_requests WHERE run_id=?"
-            " AND trigger='curation' AND status IN ('pending','running')",
-            (run_id,))
-        if pending:
-            return True
-        run = self._require_run(run_id)
-        defaults = config.load_settings()["run_defaults"]
-        if run["brain_reviews_used"] >= defaults["max_brain_reviews"]:
-            db.append_event(run_id, "controller", "run.curation_skipped",
-                            {"reason": "大脑判断额度用尽，直接收尾"})
-            return False
-        review_id = self._enqueue_lifecycle(run_id, trigger="curation")
-        db.execute("UPDATE review_requests SET frame_json=? WHERE id=?",
-                   (json.dumps({"finish_after": True, "finish_reason": reason},
-                               ensure_ascii=False), review_id))
-        return True
+        """Research ends immediately; independent maintenance never gates finish."""
+        return False
 
     def _record_experience_snapshot(self, run_id: str, key: str) -> None:
         """效果回联原料：Run 起止时各记一份 active 经验版本清单。"""
@@ -4050,7 +4073,8 @@ class RunController:
                          " VALUES(?,?,?,'running',?,?,?)", (request_id, operation_id, run_id,
                          json.dumps(packet, ensure_ascii=False), db.utcnow(), db.utcnow()))
             db.append_event_tx(conn, run_id, 'user', 'experience.curation_requested', {'curation_id': request_id})
-        asyncio.create_task(self._run_curation(request_id))
+        from . import maintenance
+        maintenance.schedule(self._run_curation(request_id))
         return self.run_curation_status(run_id, request_id)
 
     def run_curation_status(self, run_id: str, request_id: str | None = None) -> dict:
@@ -4067,26 +4091,34 @@ class RunController:
 
     async def _run_curation(self, request_id: str) -> None:
         from .curation import schema
+        from . import maintenance, resource_coordinator
         row = db.query_one('SELECT * FROM curation_requests WHERE id=?', (request_id,))
         packet = json.loads(row['packet_json'])
-        brain, session = None, None
+        brain = session = None
+        owner = 'curation-' + request_id
+        started = False
         try:
-            from . import resource_coordinator
-            resource_coordinator.reserve_auxiliary('curation-' + request_id, config.load_settings())
-            brain = self._make_brain(config.load_settings())
+            self._require_model_authorization(row['run_id'])
+            settings = self._runtime_settings(row['run_id'])
+            resource_coordinator.reserve_auxiliary(owner, settings)
+            brain = self._make_brain(settings)
             work = config.WORKSPACE_DIR / 'curation' / request_id
             work.mkdir(parents=True, exist_ok=True)
             session = await brain.open({'working_directory': str(work)})
+            maintenance.claim_call(row['run_id'], request_id, 'curation')
+            started = True
             result = None
             async for event in brain.review(session, packet):
                 if event.type == 'curation_result':
-                    result = event.payload['result']
+                    result = json.loads(observation.strip_secrets(json.dumps(event.payload['result'], ensure_ascii=False)))
                 elif event.type == 'error':
                     raise ControllerError('BRAIN_ERROR', _redact(event.payload.get('message', '整理失败')))
+                elif event.type == 'usage':
+                    usage = json.loads(observation.strip_secrets(json.dumps(event.payload, ensure_ascii=False)))
+                    db.append_event(row['run_id'], 'brain', 'maintenance.usage', {'kind': 'curation', 'usage': usage})
             jsonschema.validate(result, schema())
             allowed_refs = set(packet['run_evidence']['evidence_refs'])
             ids = []
-            # Validate all references before applying any proposal.
             for proposal in result['experience_proposals']:
                 refs = proposal['evidence_refs']
                 if not refs or not set(refs) <= allowed_refs:
@@ -4094,37 +4126,49 @@ class RunController:
                 if proposal['scope'] == 'challenge' and proposal['challenge_id'] != packet['run_evidence']['challenge_id']:
                     raise ControllerError('INVALID_EVIDENCE', '题内经验不能指向其他题目')
             for proposal in result['experience_proposals']:
-                eid = self._apply_experience_proposal(row['run_id'], request_id,
-                                                     {**proposal, 'evidence_status': 'hypothesis'})
+                eid = self._apply_experience_proposal(row['run_id'], request_id, {**proposal, 'evidence_status': 'hypothesis'})
                 if eid:
                     ids.append(eid)
             result = {**result, 'experience_ids': ids, 'proposals_applied': len(ids)}
-            db.execute("UPDATE curation_requests SET status='done',result_json=?,updated_at=? WHERE id=?",
-                       (json.dumps(result, ensure_ascii=False), db.utcnow(), request_id))
+            with db.transaction() as conn:
+                conn.execute("UPDATE curation_requests SET status='done',result_json=?,updated_at=? WHERE id=?",
+                             (json.dumps(result, ensure_ascii=False), db.utcnow(), request_id))
+                conn.execute("UPDATE maintenance_calls SET status='done',updated_at=? WHERE operation_id=?", (db.utcnow(), request_id))
             db.append_event(row['run_id'], 'controller', 'experience.curation_done',
                             {'curation_id': request_id, 'proposals_applied': len(ids)})
+        except resource_coordinator.ResourceWait:
+            if started:
+                with db.transaction() as conn:
+                    conn.execute("UPDATE maintenance_calls SET status='unknown',updated_at=? WHERE operation_id=?", (db.utcnow(), request_id))
+                    conn.execute("UPDATE curation_requests SET status='failed',error='已开始调用后资源状态未知；不重发',updated_at=? WHERE id=?", (db.utcnow(), request_id))
+            else:
+                db.execute("UPDATE curation_requests SET status='pending',updated_at=? WHERE id=?", (db.utcnow(), request_id))
         except asyncio.CancelledError:
             error = '安全关机中断整理；不会自动重复调用模型'
-            db.execute("UPDATE curation_requests SET status='failed',error=?,updated_at=? WHERE id=?",
-                       (error, db.utcnow(), request_id))
-            db.append_event(row['run_id'], 'controller', 'experience.curation_failed',
-                            {'curation_id': request_id, 'error': error})
+            with db.transaction() as conn:
+                if started:
+                    conn.execute("UPDATE maintenance_calls SET status='unknown',updated_at=? WHERE operation_id=?", (db.utcnow(), request_id))
+                conn.execute("UPDATE curation_requests SET status='failed',error=?,updated_at=? WHERE id=?", (error, db.utcnow(), request_id))
+            db.append_event(row['run_id'], 'controller', 'experience.curation_failed', {'curation_id': request_id, 'error': error})
             raise
         except Exception as exc:
             error = _redact(str(exc))[:500]
-            db.execute("UPDATE curation_requests SET status='failed',error=?,updated_at=? WHERE id=?",
-                       (error, db.utcnow(), request_id))
-            db.append_event(row['run_id'], 'controller', 'experience.curation_failed',
-                            {'curation_id': request_id, 'error': error})
+            with db.transaction() as conn:
+                if started:
+                    conn.execute("UPDATE maintenance_calls SET status='failed',updated_at=? WHERE operation_id=?", (db.utcnow(), request_id))
+                conn.execute("UPDATE curation_requests SET status='failed',error=?,updated_at=? WHERE id=?", (error, db.utcnow(), request_id))
+            db.append_event(row['run_id'], 'controller', 'experience.curation_failed', {'curation_id': request_id, 'error': error})
         finally:
             if brain is not None and session is not None:
                 try:
                     await brain.close(session)
                 except Exception as exc:
-                    resource_coordinator.close_failed('curation-' + request_id, exc)
+                    resource_coordinator.close_failed(owner, exc)
                     log.exception('Curation session close failed')
-            from . import resource_coordinator
-            resource_coordinator.release_sessions('curation-' + request_id)
+            resource_coordinator.release_sessions(owner)
+            state = db.query_one('SELECT status FROM curation_requests WHERE id=?', (request_id,))
+            if state and state['status'] not in ('pending', 'running'):
+                maintenance.schedule(maintenance.advance(self, row['run_id']))
 
     def _require_run(self, run_id: str) -> Any:
         run = db.query_one("SELECT * FROM runs WHERE id=?", (run_id,))

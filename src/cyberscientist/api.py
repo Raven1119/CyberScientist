@@ -209,7 +209,8 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
             except Exception:
                 import logging
                 logging.getLogger('cyberscientist.api').exception('Sandbox startup reconciliation failed')
-        db.execute("UPDATE curation_requests SET status='failed',error='后端重启，整理中断；不会自动重复调用模型',updated_at=? WHERE status='running'", (db.utcnow(),))
+        from . import maintenance
+        maintenance.reconcile_interrupted()
         for run_id in compute.reconciliation_runs(startup=True):
             try:
                 await asyncio.to_thread(compute.reconcile, run_id)
@@ -269,6 +270,11 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
                     run_clock.heartbeat()
                 except Exception:
                     logger.exception('Active-time heartbeat failed')
+                from . import maintenance
+                try:
+                    await maintenance.advance(controller)
+                except Exception:
+                    logger.exception('End-of-Run maintenance scheduling failed')
                 for row in db.query("SELECT id FROM runs WHERE phase='running'"):
                     try:
                         controller.check_liveness(row['id'])
@@ -1250,6 +1256,19 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
     @app.get("/api/v1/runs/{run_id}/curation")
     async def run_curation(run_id: str) -> dict:
         return controller.run_curation_status(run_id)
+
+    @app.get('/api/v1/runs/{run_id}/post-review')
+    async def run_post_review(run_id: str) -> dict:
+        controller._require_run(run_id)
+        row = db.query_one('SELECT status,reason,report_path,error,updated_at FROM run_post_reviews WHERE run_id=?', (run_id,))
+        if not row:
+            return {'status': 'idle'}
+        result = dict(row)
+        if row['report_path']:
+            path = config.WORKSPACE_DIR / row['report_path']
+            if path.is_file():
+                result['report_md'] = path.read_text(encoding='utf-8')
+        return result
 
     @app.post("/api/v1/tools/checkpoint")
     async def tool_checkpoint(request: Request) -> dict[str, Any]:

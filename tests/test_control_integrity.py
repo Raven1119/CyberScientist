@@ -113,6 +113,12 @@ async def test_deadline_without_events_requests_abort_and_waits_for_terminal():
         executor.aborts.append(sid)
         return ActionReceipt(status="accepted",detail="await native terminal")
     executor.abort = accepted
+    close_calls = []
+    async def initially_unknown_close(sid):
+        close_calls.append(sid)
+        if len(close_calls) == 1:
+            raise RuntimeError('injected close confirmation missing')
+    executor.close = initially_unknown_close
     rid = c.create_run("COLLAB_CH")["id"]
     c.authorize(rid,"demo",True,10,1,0,None)
     await c.start_async(rid)
@@ -121,9 +127,11 @@ async def test_deadline_without_events_requests_abort_and_waits_for_terminal():
         assert await _wait(lambda: bool(executor.aborts), timeout=2)
         assert c.run_snapshot(rid)["phase"] == "pausing"
         await executor.emit({"type":"run.aborted","detail":"native cancelled"})
-        assert await _wait(lambda:c.run_snapshot(rid)["phase"] == "paused",timeout=2)
+        assert await _wait(lambda:c.run_snapshot(rid)["phase"] == "finished",timeout=2)
+        assert c.run_snapshot(rid)['end_reason'] == 'authorization_expired'
     finally:
-        await c.control(rid,"terminate",None,"end-deadline-test")
+        if c.run_snapshot(rid)['phase'] not in ('finished', 'failed', 'cancelled'):
+            await c.control(rid,"terminate",None,"end-deadline-test")
 
 
 @pytest.mark.parametrize("trigger", ["run_start", "recovery"])

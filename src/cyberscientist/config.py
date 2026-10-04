@@ -58,6 +58,8 @@ DEFAULT_SETTINGS: dict[str, Any] = {
                  "executable": "",
                  "model_id": "gpt-6-sol",
                  "reasoning_effort": "high"},
+    "post_review": {"runtime": "codex", "executable": "",
+                    "model_id": "gpt-6.1-sol", "reasoning_effort": "high"},
     "prime": {"executable": "", "llm_profile_id": "",
               "automatic_refine": False, "subagents_enabled": False},
     "llm_profiles": [],

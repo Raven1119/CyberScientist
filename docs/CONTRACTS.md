@@ -209,3 +209,7 @@ CS-UP-09 W1/W2 更新：Decision 不设任意三动作上限；最终目标评�
 
 
 CS-UP-09 W3：Decision 与 ReviewResult 均支持可选 research_brief，内含 route_md、difference_md、advice_md、failed_routes；实际 JSON schema 为权威。kind=strategy 只允许题内作用域；原生 PI 写入绑定自己 Run 的稳定卡片身份。research_startup.strategy_cards 对齐 strategy_context_id 的冻结修订；实时读取另行冻结最新正文。正式分由可信账本自动补记，卡片故障不改变 Run 授权或阻止任务派发。
+
+### CS-UP-09 W4 维护记录
+
+新增 runs.pending_end_reason、maintenance_calls、run_post_reviews；只加列/表、重复迁移幂等。维护调用先登记再发原生 turn，完成调用与结果状态同事务保存。GET /api/v1/runs/{run_id}/post-review 返回实际状态和三部分报告；pending 为尚未调用，unknown 不自动重发。

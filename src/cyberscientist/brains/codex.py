@@ -263,7 +263,7 @@ class CodexBrain:
                 '{"schema_version":1,"message_type":"review_result",'
                 '"frame_id":"见 ObservationFrame","disposition":"silent|intervene",'
                 '"private_note_md":"...","watchlist":[],"guidance":null}\n'
-                "watchlist 最多 3 项，每项必须是对象："
+                "watchlist 按研究需要列出，每项必须是对象："
                 '{"id":"短标识","hypothesis_md":"假设","evidence_needed_md":"需要什么证据",'
                 '"intervene_when_md":"何时介入","evidence_refs":[]}\n'
                 "没有观察项就输出空数组 []；禁止输出字符串数组。\n"
@@ -328,7 +328,7 @@ class CodexBrain:
             "experience_proposals 每项：scope/challenge_id/title/body_md/applicability/"
             "evidence_refs 必填；可选 target_id（更新已有条目，先读库再决定新建/"
             "更新/不变，同主题勿重复新建）与 kind（仅限 "
-            "heuristic/procedure/failure/platform 四值，勿自创）。"
+            "heuristic/procedure/failure/platform/strategy 五值，勿自创）。"
             "题内提议直接生效为 active；全局提议落 candidate 待用户审批。\n\n"
             f"ReviewPacket:\n```json\n{json.dumps(packet, ensure_ascii=False)}\n```"
         )

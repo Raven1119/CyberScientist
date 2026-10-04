@@ -798,7 +798,8 @@ async def test_v2_finish_rejects_other_run_evidence(monkeypatch):
                               'evidence_refs':[f'event:other_run:{seq}'],
                               'remaining_md':''}}]}
     await controller._apply_decision(rid,decision,{},None,None)
-    assert controller.run_snapshot(rid)['phase']=='running'
+    assert controller.run_snapshot(rid)['phase']=='finished'
+    assert controller.run_snapshot(rid)['objective_status']=='unknown'
 
 
 async def test_sparse_brain_receives_invalid_finish_refs_without_stall_wait(monkeypatch):
@@ -815,10 +816,11 @@ async def test_sparse_brain_receives_invalid_finish_refs_without_stall_wait(monk
                                                       'evidence_refs': [f'event:{rid}:{seq}', invalid],
                                                       'remaining_md': ''}}]}
     await controller._apply_decision(rid, decision, {}, None, None)
-    assert controller.run_snapshot(rid)['phase'] == 'running'
+    assert controller.run_snapshot(rid)['phase'] == 'finished'
     request = db.query_one("SELECT trigger FROM review_requests WHERE run_id=?"
                            " AND trigger='curation' ORDER BY rowid DESC LIMIT 1", (rid,))
-    assert request is not None
+    assert request is None
+    assert db.query_one('SELECT 1 FROM run_post_reviews WHERE run_id=?', (rid,))
     rejection = db.query_one("SELECT payload FROM events WHERE run_id=?"
                              " AND type='run.objective_assessment_unknown' ORDER BY seq DESC LIMIT 1", (rid,))
     assert json.loads(rejection['payload'])['invalid_refs'] == [invalid]
@@ -830,10 +832,10 @@ async def test_sparse_brain_receives_invalid_finish_refs_without_stall_wait(monk
     for index in (2, 3):
         await controller._apply_decision(rid, decision | {'decision_id': f'bad-finish-{index}'},
                                          {}, None, None)
-    assert controller.run_snapshot(rid)['phase'] == 'running'
+    assert controller.run_snapshot(rid)['phase'] == 'finished'
     assert controller.run_snapshot(rid)['objective_status'] == 'unknown'
     assert db.query_one("SELECT COUNT(*) AS n FROM review_requests WHERE run_id=?"
-                        " AND trigger='curation'", (rid,))['n'] == 1
+                        " AND trigger='curation'", (rid,))['n'] == 0
 
 
 async def test_review_metrics_and_read_only_csv(monkeypatch, tmp_path):
@@ -987,9 +989,11 @@ async def test_pending_drop_review_limit_pauses_instead_of_hanging(monkeypatch):
     controller.drop_pending_intent(rid, 'quota')
     req = db.query_one("SELECT * FROM review_requests WHERE run_id=? AND trigger='pending_intent_dropped'", (rid,))
     await controller._run_one_review_impl(rid, req, object(), None)
-    assert controller.run_snapshot(rid)['phase'] == 'paused'
+    assert controller.run_snapshot(rid)['phase'] == 'pausing'
     assert db.query_one("SELECT COUNT(*) AS n FROM events WHERE run_id=? AND type='run.review_limit'", (rid,))['n'] == 1
     assert db.query_one('SELECT status FROM review_requests WHERE id=?', (req['id'],))['status'] == 'obsolete'
+
+    assert controller.run_snapshot(rid)['pending_end_reason'] == 'brain_review_limit'
 
 
 async def test_awaiting_budget_user_steer_is_reviewed_and_auto_is_obsolete(monkeypatch):

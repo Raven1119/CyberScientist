@@ -119,6 +119,7 @@ class ScriptableBrain:
         self.results: asyncio.Queue = asyncio.Queue()
         self.barrier: asyncio.Event | None = None
         self.open_spec: dict | None = None
+        self.maintenance_results: asyncio.Queue = asyncio.Queue()
 
     async def inspect(self) -> RuntimeHealth:
         return RuntimeHealth(installed=True, version="fake-brain")
@@ -130,6 +131,15 @@ class ScriptableBrain:
     def review(self, session, packet):
         async def gen():
             self.calls.append(packet)
+            if packet.get('protocol') == 'experience_curation' and packet.get('trigger') != 'global_curation':
+                result = (await self.maintenance_results.get() if not self.maintenance_results.empty() else
+                          {'schema_version': 1, 'message_type': 'curation_result', 'summary': 'Fixture only', 'experience_proposals': []})
+                yield BrainEvent('curation_result', {'result': result})
+                return
+            if packet.get('task') == 'run_post_review':
+                yield BrainEvent('task_result', {'result': {'system_defects_md': 'Fixture only',
+                    'strategy_lessons': [], 'environment_notes_md': 'No receipt'}})
+                return
             if self.barrier is not None:
                 await self.barrier.wait()
             r = await self.results.get()
@@ -1245,21 +1255,12 @@ async def test_decision_second_direction_op_rejected_only():
         {"op": "finish", "reason": "重复结束"}], sv=v, rid=rid), {}, None, None)
     events = db.events_after(rid, seq0)
     types = [e["type"] for e in events]
-    # finish 被收尾整理推迟（见 test_finish_defers_to_curation_then_finalizes）
-    assert types.count("run.finished") == 0
-    assert "run.finish_deferred" in types
-    assert db.query_one("SELECT id FROM review_requests WHERE run_id=?"
-                        " AND trigger='curation'", (rid,))
-    rejected = [e["payload"] for e in events
-                if e["type"] == "brain.action_rejected"]
+    assert types.count("run.finished") == 1
+    assert "run.finish_deferred" not in types
+    rejected = [e["payload"] for e in events if e["type"] == "brain.action_rejected"]
     assert any("最多一个" in (p.get("reason") or "") for p in rejected)
-    # 整理审阅完结后自动收尾
-    ok = await _wait(lambda: len(brain.calls) >= 2)
-    assert ok
-    await brain.results.put({"decision": _decision(
-        [{"op": "wait", "reason": "整理完毕"}], sv=v, rid=rid)})
-    ok = await _wait(lambda: c.run_snapshot(rid)["phase"] == "finished")
-    assert ok
+    assert c.run_snapshot(rid)["phase"] == "finished"
+    assert await _wait(lambda: c.run_curation_status(rid)['state'] == 'done')
 
 
 # ---------- 终止/重启可靠性 ----------
@@ -1844,38 +1845,32 @@ async def test_experience_target_id_updates_in_place():
 
 
 async def test_finish_defers_to_curation_then_finalizes():
-    """finish 先自动整理（curation 审阅带素材），审阅完结后自动收尾。"""
+    """Finish is terminal first; curation is a separate fresh, bounded call."""
     _seed_challenge()
     c, brain, ex = _rig(shadow=False)
     rid = c.create_run("COLLAB_CH", shadow_enabled=False)["id"]
     await _start(c, brain, rid)
+    proposal = _proposal("challenge", "收尾总结")
+    # The fake must cite real snapshot evidence, just like a native curation.
+    refs = [f"event:{rid}:{r['seq']}" for r in db.query("SELECT seq FROM events WHERE run_id=? AND type='trial.created'", (rid,))]
+    proposal['evidence_refs'] = refs
+    await brain.maintenance_results.put({'schema_version': 1, 'message_type': 'curation_result',
+        'summary': '真实账本引用', 'experience_proposals': [proposal]})
     dec = _decision([{"op": "finish", "reason": "收工"}], sv=999)
     await _steer_decision(c, brain, rid, dec, len(brain.calls))
-    ok = await _wait(lambda: bool(db.query_one(
-        "SELECT id FROM review_requests WHERE run_id=?"
-        " AND trigger='curation'", (rid,))))
-    assert ok, "finish 未推迟为 curation 审阅"
-    assert c.run_snapshot(rid)["phase"] == "running"
-    ok = await _wait(lambda: len(brain.calls) >= 3)
-    assert ok
-    packet = brain.calls[-1]
-    assert packet["trigger"] == "curation"
+    assert await _wait(lambda: c.run_snapshot(rid)["phase"] == "finished")
+    assert await _wait(lambda: c.run_curation_status(rid)['state'] == 'done')
+    packet = next(p for p in brain.calls if p.get('protocol') == 'experience_curation')
+    assert packet['run_evidence']['phase'] == 'finished'
     assert packet["curation"]["scope"] == "challenge"
     assert "usage" in packet["curation"]
-    # 大脑整理答复（带一条题内提议）→ 自动收尾
-    dec2 = _decision([{"op": "wait", "reason": "整理完毕"}], sv=999)
-    dec2["experience_proposals"] = [_proposal("challenge", "收尾总结")]
-    await brain.results.put({"decision": dec2})
-    ok = await _wait(lambda: c.run_snapshot(rid)["phase"] == "finished")
-    assert ok, "curation 完结后未自动收尾"
-    # 效果回联原料：起止快照齐全
-    row = db.query_one("SELECT experience_snapshot FROM runs WHERE id=?",
-                       (rid,))
-    snap = json.loads(row["experience_snapshot"])
+    assert await _wait(lambda: db.query_one("SELECT status FROM run_post_reviews WHERE run_id=?", (rid,))['status'] == 'done')
+    snap = json.loads(db.query_one("SELECT experience_snapshot FROM runs WHERE id=?", (rid,))["experience_snapshot"])
     assert "at_start" in snap and "at_end" in snap
-    exp_id = experiences.list_experiences(
-        scope="challenge", challenge_id="COLLAB_CH")["items"][0]["id"]
-    assert exp_id in {it["id"] for it in snap["at_end"]["items"]}
+    items = experiences.list_experiences(scope="challenge", challenge_id="COLLAB_CH")["items"]
+    assert any(i['title'] == '收尾总结' for i in items)
+    # Availability at end is captured before maintenance adds new revisions.
+    assert all(it['id'] != c.run_curation_status(rid)['experience_ids'][0] for it in snap['at_end']['items'])
 
 
 async def test_curate_global_experience_runless_session():
@@ -1954,39 +1949,32 @@ async def test_global_curation_failure_terminal_and_persisted():
 
 
 async def test_finish_deferred_curation_completes_while_paused():
-    """finish 已推迟到 curation，用户在整理在途时暂停：curation 完结仍执行
-    被推迟的 finish，Run 不停在 paused 软锁。"""
+    """Manual curation on a paused Run cannot change the research phase."""
     _seed_challenge()
     c, brain, ex = _rig(shadow=False)
     rid = c.create_run("COLLAB_CH", shadow_enabled=False)["id"]
     await _start(c, brain, rid)
-    dec = _decision([{"op": "finish", "reason": "收工"}], sv=999)
-    await _steer_decision(c, brain, rid, dec, len(brain.calls))
-    ok = await _wait(lambda: len(brain.calls) >= 3)
-    assert ok and brain.calls[-1]["trigger"] == "curation"
-    # 整理在途时用户暂停
     r = await c.control(rid, "pause", None, "op-pause-curation")
     assert r["status"] == "accepted"
-    ok = await _wait(lambda: c.run_snapshot(rid)["phase"] == "paused")
-    assert ok
-    # 大脑整理答复在暂停期间到达 → 仍执行被推迟的 finish
-    await brain.results.put({"decision": _decision(
-        [{"op": "wait", "reason": "整理完毕"}], sv=999, rid=rid)})
-    ok = await _wait(lambda: c.run_snapshot(rid)["phase"] == "finished")
-    assert ok, "暂停期间 curation 完结后 Run 未收尾（软锁）"
+    assert await _wait(lambda: c.run_snapshot(rid)["phase"] == "paused")
+    await c.curate_run_experience(rid, 'paused-curation')
+    assert await _wait(lambda: c.run_curation_status(rid)['state'] == 'done')
+    assert c.run_snapshot(rid)['phase'] == 'paused'
+    c._finalize_run(rid, '收工')
+    assert c.run_snapshot(rid)['phase'] == 'finished'
 
 
 async def test_finish_finalizes_when_curation_obsoleted():
-    """curation 审阅被作废（obsolete）也执行被推迟的 finish。"""
+    """An obsolete historical curation still releases its recorded finish."""
     _seed_challenge()
     c, brain, ex = _rig(shadow=False)
     rid = c.create_run("COLLAB_CH", shadow_enabled=False)["id"]
     await _start(c, brain, rid)
-    assert c._defer_finish_for_curation(rid, "收工") is True
-    req = db.query_one("SELECT id FROM review_requests WHERE run_id=?"
-                       " AND trigger='curation'", (rid,))
-    assert req, "finish 未推迟为 curation 审阅"
-    c._obsolete_request(req["id"], "测试：整理被作废")
+    assert c._defer_finish_for_curation(rid, "收工") is False
+    req_id = c._enqueue_lifecycle(rid, trigger='curation')
+    db.execute('UPDATE review_requests SET frame_json=? WHERE id=?',
+        (json.dumps({'finish_after': True, 'finish_reason': '收工'}), req_id))
+    c._obsolete_request(req_id, "测试：历史整理被作废")
     assert c.run_snapshot(rid)["phase"] == "finished"
 
 
@@ -2207,14 +2195,16 @@ async def test_time_limit_pauses_once_without_hot_loop():
     db.execute("UPDATE runs SET active_elapsed_seconds=61 WHERE id=?", (rid,))
     # 用不改变 phase 的信号唤醒主循环，使其在 running 状态下走到时长检查
     await ex.turn_done()
-    ok = await _wait(lambda: c.run_snapshot(rid)["phase"] == "paused")
-    assert ok, "时长超限应置 paused"
+    ok = await _wait(lambda: c.run_snapshot(rid)["phase"] == "finished")
+    assert ok, "时长超限确认停止后应收尾"
+    assert c.run_snapshot(rid)["end_reason"] == "authorization_expired"
     assert c.run_snapshot(rid)["block_reason"]
     await asyncio.sleep(0.6)  # 若空转，0.6s 足以产生数千条垃圾事件
     n = db.query_one("SELECT COUNT(*) AS n FROM events WHERE run_id=?"
                      " AND type='run.time_limit'", (rid,))["n"]
     assert n == 1, f"time_limit 事件应恰好一条，实际 {n}"
-    await c.control(rid, "terminate", None, "op-term-tl")
+    with pytest.raises(ControllerError, match="终态"):
+        await c.control(rid, "terminate", None, "op-term-tl")
 
 
 async def test_blocking_review_answered_by_decision_opens_gate():
