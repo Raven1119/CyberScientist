@@ -32,11 +32,11 @@ async def safe_shutdown(controller, timeout: float = 60) -> dict:
         for task in tasks:
             task.cancel()
         if tasks:
-            try:
-                outcomes = await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), timeout=15)
-                errors.extend({'error': type(item).__name__} for item in outcomes
-                              if isinstance(item, BaseException) and not isinstance(item, asyncio.CancelledError))
-            except asyncio.TimeoutError:
+            completed, still_running = await asyncio.wait(tasks, timeout=15)
+            for task in completed:
+                if not task.cancelled() and task.exception() is not None:
+                    errors.append({'error': type(task.exception()).__name__})
+            if still_running:
                 errors.append({'error': 'native_process_close_timeout'})
     errors.extend(resource_coordinator.close_unknowns())
     db.execute("UPDATE curation_requests SET status='failed',error='安全关机中断整理；不会自动重复调用模型',updated_at=? WHERE status='running'", (db.utcnow(),))

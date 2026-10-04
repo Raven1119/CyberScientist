@@ -213,6 +213,7 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
         maintenance.reconcile_interrupted()
         from . import package_reviews
         package_reviews.reconcile_interrupted()
+        from . import auto_harvest
         for run_id in compute.reconciliation_runs(startup=True):
             try:
                 await asyncio.to_thread(compute.reconcile, run_id)
@@ -229,6 +230,7 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
             for run in db.query("SELECT id FROM runs WHERE phase='recovering'"):
                 db.append_event(run['id'], 'controller', 'run.submission_reconciliation_unknown',
                                 {'error': type(exc).__name__})
+        auto_harvest.reconcile_interrupted()
         from . import power
         await power.recover(controller)
         # 后台评分轮询：提交后进入评分等待，由这里异步拿回分数。
@@ -283,6 +285,12 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
                         await controller.retry_limited_executor(row['id'])
                     except Exception:
                         logger.exception('Liveness check failed for Run %s', row['id'])
+                from . import auto_harvest, alerts
+                try:
+                    await auto_harvest.advance()
+                    await asyncio.to_thread(alerts.synchronize)
+                except Exception:
+                    logger.exception('Harvest and alert scheduling failed')
                 try:
                     await asyncio.wait_for(stop.wait(), 15)
                 except asyncio.TimeoutError:
@@ -308,10 +316,12 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
             yield
         finally:
             stop.set()
+            db.execute("INSERT OR REPLACE INTO system_state VALUES('shutdown_requested','1')")
             task.cancel()
             watch_task.cancel()
             evaluation_task.cancel()
             await asyncio.gather(task, watch_task, evaluation_task, return_exceptions=True)
+            await auto_harvest.drain()
 
     app = FastAPI(title="CyberScientist", docs_url=None, openapi_url=None,
                   lifespan=lifespan)
@@ -321,6 +331,19 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
     async def safe_shutdown():
         from . import power
         return await power.safe_shutdown(controller)
+
+    @app.get('/api/v1/alerts')
+    async def pending_alerts():
+        from . import alerts
+        return {'items': await asyncio.to_thread(alerts.pending)}
+
+    @app.post('/api/v1/alerts/{alert_id}/acknowledge')
+    async def acknowledge_alert(alert_id: str):
+        from . import alerts
+        try:
+            return alerts.acknowledge(alert_id)
+        except ValueError as exc:
+            raise HTTPException(404, detail={'message': str(exc)}) from exc
 
 
     @app.exception_handler(ResourceWait)
@@ -417,6 +440,11 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
                     challenge_models.choose(role, None, merged)
                 merged['solver_roster'] = challenge_models.roster(merged)
                 model_usage.validate(merged.get('model_pricing', {}))
+                from . import auto_harvest
+                merged['harvest'] = auto_harvest.validate(merged.get('harvest', {}))
+                policy = merged.get('policy', {})
+                if type(policy.get('require_ended_submission', False)) is not bool or not isinstance(policy.get('allowed_submission_targets', []), list) or any(not isinstance(target, str) or not target for target in policy.get('allowed_submission_targets', [])):
+                    raise ValueError('提交目标授权策略无效')
                 encoded = json.dumps(incoming, ensure_ascii=False)
                 if any(value in encoded for value in config.sensitive_values() if len(value) > 7):
                     raise ValueError('设置不能包含密钥值')
@@ -1437,6 +1465,8 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
     # ---------------- 评分轮询任务（按题目中断/启用） ----------------
 
     def _notify_scores(result):
+        from . import auto_harvest
+        auto_harvest.reconcile_interrupted(include_running=False)
         for rid in result.get("changed_run_ids",[]):
             run = db.query_one("SELECT phase FROM runs WHERE id=?",(rid,))
             if run and run["phase"] == "running":

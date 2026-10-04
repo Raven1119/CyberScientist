@@ -212,6 +212,15 @@ export default function SettingsPage() {
         </button>
       </div>}
       <fieldset className="settings-stack settings-fields" disabled={saving}>
+        <article className="card card-body"><h2>自动收割</h2>
+          <p>只重交已确认成绩的同一包，消耗本 Run 总 Attempt 额度；失败或状态不明会提醒，不自动重发。</p>
+          <label>自动收割触发分数<input type="number" min="0" value={settings.harvest?.score_threshold ?? 100}
+            onChange={e => update(s => ({ ...s, harvest: { ...{ score_threshold: 100, experiments_done_at_leader: true, deadline_check_hours: 2 }, ...s.harvest, score_threshold: Number(e.target.value) } }))} /></label>
+          <label><input type="checkbox" checked={settings.harvest?.experiments_done_at_leader ?? true}
+            onChange={e => update(s => ({ ...s, harvest: { ...{ score_threshold: 100, experiments_done_at_leader: true, deadline_check_hours: 2 }, ...s.harvest, experiments_done_at_leader: e.target.checked } }))} />实验做完且不低于榜单最高分时收割</label>
+          <label>赛末收割检查提前小时<input type="number" min="0" step="0.5" value={settings.harvest?.deadline_check_hours ?? 2}
+            onChange={e => update(s => ({ ...s, harvest: { ...{ score_threshold: 100, experiments_done_at_leader: true, deadline_check_hours: 2 }, ...s.harvest, deadline_check_hours: Number(e.target.value) } }))} /></label>
+        </article>
         <article className="card card-body"><h2>四角色提供方</h2>
           <p>DeepSeek 密钥只读取后端环境变量或根目录 .env。工具探针会消耗一次模型调用。</p>
           {(['brain', 'executor', 'reviewer', 'post_review'] as const).map(role => {

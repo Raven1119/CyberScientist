@@ -69,6 +69,10 @@ def auxiliary_tasks() -> list[asyncio.Task]:
     return [task for task in set(_auxiliary_tasks.values()) if not task.done()]
 
 
+def register_auxiliary(owner: str, task: asyncio.Task) -> None:
+    _auxiliary_tasks[owner] = task
+
+
 def throttle(name: str, retry_at: str) -> None:
     db.execute('INSERT INTO model_provider_backoff(provider,retry_at,first_at) VALUES(?,?,?)'
                ' ON CONFLICT(provider) DO UPDATE SET retry_at=MAX(retry_at,excluded.retry_at)',

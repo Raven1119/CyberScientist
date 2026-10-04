@@ -221,3 +221,7 @@ CS-UP-09 W3：Decision 与 ReviewResult 均支持可选 research_brief，内含 
 ### CS-UP-09 W6 新上下文审查
 
 PI MCP `research_review_package(trial_id,operation_id,package_path?)` 对应 POST tools/package_review，仅brain角色。返回持久status/result/source_sha256/sealed_sha256/advisory_only。读取 GET runs/{id}/package-reviews。result为verdict pass|issues、issues数组、summary_md；它不扩大提交授权也不拦截已授权实验提交。问题可由PI修复，或在已有submit guidance.text_md记录理由；事件记录实际提交的哈希是否仍匹配审查版本。运行中审查重启unknown不自动重发，pending可在有资源时再尝试。
+
+CS-UP-09 W7：新 Run 冻结真实平台目标与不可逆提交授权（允许目标、可选仅已结束题）。所有真实提交在 POST 前只读确认题目仍存在，404 明确记录“题目已下架或不存在”，并释放未发送预约。实验和收割共同消耗 max_submissions。历史 Run 不追溯触发自动提交。收割参数可编辑：确认分数阈值、同题实验结束且不低于最新公开榜首、赛末检查提前小时。自动路径再次检查同包哈希、确认／异常状态、本方已收割成绩及冻结触发依据；已存在未确认收割先对账。阈值触发独立；第二条件等待所有同题实验和排队项结束，系统额度终止不能声称实验做完。赛末检查不放宽这些条件。
+
+自动收割意图持久化，started/unknown 不自动重发；重启和周期查询仅用已有提交回执恢复确认状态。HTTP 工作者保持辅助登记直到真实线程结束，重复取消不会提前解除，安全关机未确认时返回不可关闭。持久 alerts 由公开事件及限流／额度事实投影，确认独立落库；页面刷新、后端重启保留未确认项，可跳转指定 Run。

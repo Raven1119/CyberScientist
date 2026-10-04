@@ -102,7 +102,7 @@ export default function CompetitionPage() {
       {(['brain', 'executor'] as const).map(role => <ModelFields key={role} role={role} label={role === 'brain' ? 'PI ' : '求解者 '}
         value={template.model_config[role]} onChange={value => setTemplate(t => ({ ...t, solver_id: role === 'executor' ? undefined : t.solver_id, model_config: { ...t.model_config, [role]: value } }))} />)}
       <p>Prime 模型须与连接设置中的 Profile 一致；各提供方的原生认证在连接设置中配置。</p>
-      {([['max_run_minutes', '每 Run 分钟'], ['max_jobs', '每 Run Job 数'], ['max_submissions', '每 Run 实验提交数'],
+      {([['max_run_minutes', '每 Run 分钟'], ['max_jobs', '每 Run Job 数'], ['max_submissions', '每 Run 总 Attempt 数（含收割）'],
         ['max_sandboxes', '每 Run 沙箱并发'], ['max_environment_saves', '每 Run 环境保存数'], ['max_sandbox_minutes', '每 Run 沙箱累计分钟']] as const).map(([key, title]) =>
         <label key={key}>{title}<input type="number" min="0" value={template.authorization[key]} onChange={e => setTemplate(t => ({ ...t,
           authorization: { ...t.authorization, [key]: Number(e.target.value) } }))} /></label>)}
@@ -128,7 +128,7 @@ export default function CompetitionPage() {
               }))} /></label>
             </details>}
             {round.status === 'draft' && <details><summary>此题授权</summary>
-              {([['max_run_minutes', '分钟'], ['max_jobs', 'Job 数'], ['max_submissions', '实验提交数'],
+              {([['max_run_minutes', '分钟'], ['max_jobs', 'Job 数'], ['max_submissions', '总 Attempt 数（含收割）'],
                 ['max_sandboxes', '沙箱并发'], ['max_environment_saves', '环境保存数'], ['max_sandbox_minutes', '沙箱累计分钟']] as const).map(([key, title]) =>
                 <label key={key}>{title}<input type="number" min="0" value={(overrides[item.challenge_id] ?? template).authorization[key]}
                   onChange={e => setOverrides(v => { const current = v[item.challenge_id] ?? template; return { ...v,

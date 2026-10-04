@@ -93,5 +93,6 @@ def test_evaluation_freezes_topic_model_choices_without_global_changes(monkeypat
     snapshot = json.loads(db.query_one('SELECT config_json FROM eval_runs WHERE id=?',
                                       (created['id'],))['config_json'])
     template = json.loads(db.query_one('SELECT template_json FROM eval_results WHERE id=?', (created['results'][0]['id'],))[0])
-    assert snapshot['ordinary_round'] and template['model_config'] == choices
+    assert snapshot['ordinary_round']
+    assert template['model_config'] == {role: choice | {'provider': 'codex'} for role, choice in choices.items()}
     assert config.load_settings() == before

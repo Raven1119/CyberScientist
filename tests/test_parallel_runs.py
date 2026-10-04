@@ -37,7 +37,7 @@ async def test_import_and_edit_models_only_affects_new_runs():
             'model_config':_models('')})
         assert invalid.status_code == 422
         assert db.query_one('SELECT executor_config_json FROM challenges WHERE id=?',
-                            (cid,))['executor_config_json'] == json.dumps(_models('model-later')['executor'])
+                            (cid,))['executor_config_json'] == json.dumps(_models('model-later')['executor'] | {'provider': 'codex'})
 
 
 async def test_model_selection_check_opens_native_session_without_turn(monkeypatch):

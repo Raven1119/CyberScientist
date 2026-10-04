@@ -356,18 +356,18 @@ def _run_challenge_id(run_id: str) -> str:
     """真实平台提交目标是 challenges.platform_challenge_id（平台侧 slug），
     不是本地 challenge id。"""
     row = db.query_one(
-        "SELECT c.platform_challenge_id AS pid FROM runs r"
+        "SELECT c.platform_challenge_id AS pid,r.config_snapshot FROM runs r"
         " JOIN challenges c ON c.id=r.challenge_id WHERE r.id=?", (run_id,))
     if not row:
         raise MailboxError("NOT_FOUND", f"Run 不存在: {run_id}")
-    return row["pid"] or ""
+    return json.loads(row['config_snapshot']).get('challenge_platform_id', row['pid']) or ''
 
 
-def _check_budget(conn, run_id: str) -> None:
+def _check_budget(conn, run_id: str, *, terminal_harvest: bool = False) -> None:
     run = conn.execute("SELECT * FROM runs WHERE id=?", (run_id,)).fetchone()
     if not run:
         raise MailboxError("NOT_FOUND", f"Run 不存在: {run_id}")
-    if run["phase"] in ("pausing", "paused", "cancelled", "failed", "finished", "recovering"):
+    if run["phase"] in ("pausing", "paused", "cancelled", "failed", "recovering") or (run['phase'] == 'finished' and not terminal_harvest):
         raise MailboxError("INVALID_STATE", "当前 Run 不允许新增提交")
     auth = conn.execute("SELECT * FROM authorizations WHERE id=? AND run_id=?",
                         (run["authorization_id"], run_id)).fetchone()
@@ -377,7 +377,7 @@ def _check_budget(conn, run_id: str) -> None:
             raise MailboxError("NEEDS_AUTHORIZATION","本轮授权时长已用尽")
     limit = auth["max_submissions"] if auth else 0
     used = conn.execute("SELECT COUNT(*) AS n FROM submissions WHERE run_id=?"
-                        " AND is_harvest=0 AND reservation_released=0",
+                        " AND reservation_released=0",
                         (run_id,)).fetchone()["n"]
     if used >= limit:
         raise MailboxError("NEEDS_AUTHORIZATION", f"提交授权已用尽（{used}/{limit}）")
@@ -596,6 +596,61 @@ def inspect_trace_narrative(run_id: str, trial_id: str | None,
             "admission": arm_admission.check(sealed, _protocol_snapshot())}
 
 
+def _guard_submission_target(run_id: str, platform: MailboxPlatform, challenge_id: str) -> None:
+    """Frozen user authorization checked before any irreversible request."""
+    run = db.query_one('SELECT config_snapshot FROM runs WHERE id=?', (run_id,))
+    policy = json.loads(run['config_snapshot']).get('settings', {}).get('policy', {})
+    allowed = policy.get('allowed_submission_targets', [])
+    if allowed and challenge_id not in allowed:
+        raise PlatformError('提交目标不在本轮授权范围；未发送', no_side_effect=True)
+    if not platform.is_demo:
+        if not challenge_id or challenge_id.startswith(('demo://', 'local:')):
+            raise PlatformError('题目未关联真实平台；未发送', no_side_effect=True)
+        import urllib.parse
+        try:
+            body = platform._http('GET', '/challenges/' + urllib.parse.quote(challenge_id, safe=''),
+                                  token=platform.operator_token)
+        except PlatformError as exc:
+            if getattr(exc.__cause__, 'code', None) == 404 or re.search(r'\bHTTP 404\b', str(exc)):
+                raise PlatformError('题目已下架或不存在；未发送', no_side_effect=True) from exc
+            raise PlatformError('无法确认题目当前仍存在；未发送：' + type(exc).__name__, no_side_effect=True) from exc
+        except Exception as exc:
+            raise PlatformError('无法确认题目当前仍存在；未发送：' + type(exc).__name__, no_side_effect=True) from exc
+        if policy.get('require_ended_submission'):
+            end = _round_end(json.dumps(body))
+            if end is None or end > datetime.now(timezone.utc):
+                raise PlatformError('未确认授权旧题已结束；未发送', no_side_effect=True)
+
+
+def _automatic_harvest_guard(conn, src, trigger: dict | None = None, *, own_reservation: str | None = None) -> None:
+    if (src['score_confidence'] != 'confirmed' or src['score_anomaly']
+            or src['scorecard_consistent'] == 0 or src['score'] is None
+            or not math.isfinite(src['score'])):
+        raise MailboxError('UNCONFIRMED_SCORE', '自动收割要求已确认且无异常的有限分数')
+    if src['status'] != 'submitted' or src['score_status'] != 'scored':
+        raise MailboxError('UNCONFIRMED_SCORE', '实验提交尚未完成并确认评分')
+    if trigger is not None:
+        if src['score'] != trigger['score']:
+            raise MailboxError('SCORE_CHANGED', '触发评分已更正；重新判断后再收割')
+        params = trigger['params']
+        if trigger['reason'] == 'score_threshold' and src['score'] < params['score_threshold']:
+            raise MailboxError('TRIGGER_CHANGED', '分数未达到触发阈值')
+        if trigger['reason'] == 'experiments_done_at_leader':
+            from . import auto_harvest
+            run = conn.execute('SELECT * FROM runs WHERE id=?', (src['run_id'],)).fetchone()
+            if not params['experiments_done_at_leader'] or not auto_harvest.experiments_done(conn, run) or src['score'] < trigger['leader']:
+                raise MailboxError('TRIGGER_CHANGED', '同题实验尚未完成或低于当前榜首')
+    own = conn.execute("SELECT s.score,s.score_status,s.score_confidence,s.status FROM submissions s"
+                       " JOIN runs r ON r.id=s.run_id WHERE s.is_harvest=1 AND s.reservation_released=0"
+                       " AND r.challenge_id=(SELECT challenge_id FROM runs WHERE id=?) AND s.id<>?",
+                       (src['run_id'], own_reservation or '')).fetchall()
+    if any(row['status'] != 'submitted' or row['score_status'] != 'scored'
+           or row['score_confidence'] != 'confirmed' or row['score'] is None for row in own):
+        raise MailboxError('HARVEST_PENDING', '已有收割成绩尚未确认，先对账，不自动重交')
+    if any(src['score'] < row['score'] for row in own):
+        raise MailboxError('LOWER_SCORE', '不自动收割低于本方已收割成绩的结果')
+
+
 def _perform_submission(sid: str, platform: MailboxPlatform, challenge_id: str) -> dict:
     row = db.query_one("SELECT s.*, m.email, m.secret_ref, m.platform FROM submissions s"
                        " JOIN mailboxes m ON m.id=s.mailbox_id WHERE s.id=?", (sid,))
@@ -615,9 +670,30 @@ def _perform_submission(sid: str, platform: MailboxPlatform, challenge_id: str) 
             _record_feedback(conn, current, kind, safe)
     stage("prepared")
     try:
+        from . import power
+        if power.shutdown_requested():
+            raise PlatformError('安全关机已停止新增提交；未发送', no_side_effect=True)
         frozen_bytes = (config.WORKSPACE_DIR / row["package_path"]).read_bytes()
         if hashlib.sha256(frozen_bytes).hexdigest() != row["package_sha256"]:
             raise PlatformError("冻结提交包哈希不匹配，未发送",no_side_effect=True)
+        _guard_submission_target(row['run_id'], platform, challenge_id)
+        if row['is_harvest'] and str(row['operation_id']).startswith('auto-harvest-'):
+            intent = db.query_one('SELECT result_json FROM automatic_harvests WHERE operation_id=?', (row['operation_id'],))
+            trigger = json.loads(intent['result_json'])
+            if trigger['reason'] == 'experiments_done_at_leader':
+                from . import platform_scores
+                latest = platform_scores.get(row['run_id'], fresh=True)
+                if latest.get('status') != 'ok' or not latest.get('top_10_scores'):
+                    raise PlatformError('当前榜首未知，未发送收割', no_side_effect=True)
+                trigger['leader'] = max(latest['top_10_scores'])
+            try:
+                with db.transaction() as conn:
+                    src = conn.execute('SELECT * FROM submissions WHERE id=?', (row['source_submission_id'],)).fetchone()
+                    _automatic_harvest_guard(conn, src, trigger, own_reservation=sid)
+            except MailboxError as exc:
+                raise PlatformError(str(exc), no_side_effect=True) from exc
+        if power.shutdown_requested():
+            raise PlatformError('安全关机已停止新增提交；未发送', no_side_effect=True)
         receipt = platform.submit_package(
             row["email"], config.resolve_secret(row["secret_ref"] or ""),
             str(config.WORKSPACE_DIR / row["package_path"]), challenge_id=challenge_id,
@@ -634,7 +710,8 @@ def _perform_submission(sid: str, platform: MailboxPlatform, challenge_id: str) 
     except Exception as exc:
         status = "failed" if isinstance(exc, PlatformError) and exc.no_side_effect else "unknown"
         # External response bodies can contain credentials; record only classified errors.
-        error = str(exc) if isinstance(exc, PlatformError) else type(exc).__name__
+        from .observation import strip_secrets
+        error = strip_secrets(str(exc)) if isinstance(exc, PlatformError) else type(exc).__name__
     with db.transaction() as conn:
         current = conn.execute("SELECT * FROM submissions WHERE id=?",(sid,)).fetchone()
         conn.execute("UPDATE submissions SET status=?,score_status=?,error=?,submitted_at=? WHERE id=?",
@@ -1251,7 +1328,7 @@ def _harvest_warnings(candidate, highest) -> list[str]:
 
 
 def harvest_submit(submission_id: str, operation_id: str,
-                   confirm: bool, acknowledge_warnings: bool = False) -> dict[str, Any]:
+                   confirm: bool, acknowledge_warnings: bool = False, *, automatic: bool = False) -> dict[str, Any]:
     """收割任意已出分的实验包；警示必须经显式知悉。"""
     if type(confirm) is not bool or type(acknowledge_warnings) is not bool:
         raise MailboxError('INVALID_MESSAGE', '确认标志必须是显式布尔值')
@@ -1309,6 +1386,12 @@ def harvest_submit(submission_id: str, operation_id: str,
         if (not current_src or current_src['status'] != 'submitted'
                 or current_src['score_status'] != 'scored'):
             raise MailboxError('INVALID_STATE', '来源提交的已出分状态已变化')
+        _check_budget(conn, src['run_id'], terminal_harvest=True)
+        if automatic:
+            intent = conn.execute('SELECT result_json FROM automatic_harvests WHERE operation_id=?', (operation_id,)).fetchone()
+            if not intent or not intent['result_json']:
+                raise MailboxError('INVALID_STATE', '自动收割缺少冻结触发依据')
+            _automatic_harvest_guard(conn, current_src, json.loads(intent['result_json']))
         best = conn.execute(
             "SELECT MAX(s.score) AS score FROM submissions s JOIN runs r ON r.id=s.run_id"
             " WHERE r.challenge_id=(SELECT challenge_id FROM runs WHERE id=?)"

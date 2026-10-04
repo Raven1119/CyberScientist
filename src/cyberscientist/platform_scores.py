@@ -125,8 +125,8 @@ def _aggregate(attempts: list[dict], total: int) -> dict:
             'top_10_scores':sorted(scores,reverse=True)[:10]}
 
 
-def get(run_id: str) -> dict:
-    run=db.query_one('SELECT challenge_id FROM runs WHERE id=?',(run_id,))
+def get(run_id: str, *, fresh: bool = False) -> dict:
+    run=db.query_one('SELECT challenge_id,config_snapshot FROM runs WHERE id=?',(run_id,))
     if not run: return {'status':'unknown','reason':'Run 不存在'}
     own=db.query_one("SELECT MAX(s.score) AS best FROM submissions s JOIN runs r ON r.id=s.run_id"
                      " WHERE r.challenge_id=? AND s.score_status='scored'"
@@ -134,13 +134,14 @@ def get(run_id: str) -> dict:
     best=own['best'] if own else None
     challenge=db.query_one('SELECT platform_challenge_id FROM challenges WHERE id=?',
                            (run['challenge_id'],))
-    slug=challenge['platform_challenge_id'] if challenge else None
+    import json
+    slug=json.loads(run['config_snapshot']).get('challenge_platform_id', challenge['platform_challenge_id'] if challenge else None)
     if not slug or str(slug).startswith(('demo://','local:')):
         return {'status':'unknown','reason':'题目没有真实平台 slug','our_best_score':best}
     with _lock:
         cached=_cache.get(str(slug))
         now=time.monotonic()
-        if cached and now-cached[0]<_TTL_SECONDS:
+        if not fresh and cached and now-cached[0]<_TTL_SECONDS:
             result=dict(cached[1])
         else:
             try:

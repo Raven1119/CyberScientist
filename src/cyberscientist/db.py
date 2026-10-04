@@ -622,6 +622,14 @@ def init_db() -> None:
                      'source_sha256 TEXT NOT NULL,sealed_sha256 TEXT NOT NULL,status TEXT NOT NULL,'
                      'packet_json TEXT NOT NULL,result_json TEXT,error TEXT,created_at TEXT NOT NULL,updated_at TEXT NOT NULL)')
         conn.execute('CREATE TABLE IF NOT EXISTS native_turn_trials (run_id TEXT NOT NULL,turn_id TEXT NOT NULL,trial_id TEXT,PRIMARY KEY(run_id,turn_id))')
+        conn.execute('CREATE TABLE IF NOT EXISTS automatic_harvests ('
+                     'source_submission_id TEXT PRIMARY KEY,operation_id TEXT NOT NULL UNIQUE,'
+                     'run_id TEXT NOT NULL,status TEXT NOT NULL,reason TEXT NOT NULL,'
+                     'result_json TEXT,error TEXT,created_at TEXT NOT NULL,updated_at TEXT NOT NULL)')
+        conn.execute('CREATE TABLE IF NOT EXISTS alerts ('
+                     'id TEXT PRIMARY KEY,dedupe_key TEXT NOT NULL UNIQUE,run_id TEXT,challenge_id TEXT,'
+                     'kind TEXT NOT NULL,title TEXT NOT NULL,payload TEXT NOT NULL,'
+                     'created_at TEXT NOT NULL,acknowledged_at TEXT)')
         _ensure_columns(conn, "submissions", SUBMISSION_V2_COLUMNS)
         _ensure_columns(conn, "local_scores", LOCAL_SCORE_V2_COLUMNS)
         _ensure_columns(conn, "score_calibration", SCORE_CALIBRATION_V2_COLUMNS)

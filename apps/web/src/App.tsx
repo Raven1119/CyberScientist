@@ -7,6 +7,7 @@ import MailboxPage from './pages/MailboxPage'
 import SettingsPage from './pages/SettingsPage'
 import EvaluationPage from './pages/EvaluationPage'
 import CompetitionPage from './pages/CompetitionPage'
+import PersistentAlerts from './PersistentAlerts'
 import { PresentationProvider, usePresentation } from './design/presentation'
 import { TargetCursor } from './design/TargetCursor'
 import { enter } from './design/motion'
@@ -123,6 +124,7 @@ function Shell() {
         </div>
       </main>
       <TargetCursor />
+      <PersistentAlerts />
     </div>
   )
 }

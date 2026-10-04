@@ -13,6 +13,8 @@ interface AppState {
   healthTime: { serverTime: string; receivedAt: number } | null
   currentChallengeId: string | null
   setCurrentChallengeId: (id: string | null) => void
+  focusedRunId: string | null
+  setFocusedRunId: (id: string | null) => void
   toast: (message: string) => void
 }
 
@@ -31,6 +33,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [demoMode, setDemoMode] = useState(false)
   const [healthTime, setHealthTime] = useState<{ serverTime: string; receivedAt: number } | null>(null)
   const [currentChallengeId, setCurrentChallengeId] = useState<string | null>(null)
+  const [focusedRunId, setFocusedRunId] = useState<string | null>(null)
   const [toasts, setToasts] = useState<{ id: number; text: string }[]>([])
 
   const toast = useCallback((message: string) => {
@@ -75,6 +78,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     healthTime,
     currentChallengeId,
     setCurrentChallengeId,
+    focusedRunId,
+    setFocusedRunId,
     toast,
   }
 

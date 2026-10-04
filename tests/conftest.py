@@ -99,8 +99,9 @@ async def drain_run_maintenance(isolated_workspace):
     """Independent model workers must not outlive their test database."""
     yield
     import asyncio
-    from cyberscientist import maintenance
+    from cyberscientist import maintenance, auto_harvest
     db.execute("INSERT OR REPLACE INTO system_state(key,value) VALUES('shutdown_requested','1')")
+    await auto_harvest.drain()
     while pending := [task for task in maintenance.ACTIVE_TASKS if not task.done()]:
         for task in pending:
             task.cancel()

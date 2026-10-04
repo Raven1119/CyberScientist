@@ -502,6 +502,8 @@ class RunController:
         snapshot = {"settings": self._redacted_settings(settings),
                     "shadow": shadow_cfg,
                     "challenge_id": challenge_id, "mode": mode,
+                    "challenge_platform_id": challenge['platform_challenge_id'],
+                    "automatic_harvest_version": 1,
                     "compute_policy_version": 1, "sparse_brain_version": 1,
                     "lifecycle_version": 2, "submission_prediction_version": 1}
         if eval_mode is not None:

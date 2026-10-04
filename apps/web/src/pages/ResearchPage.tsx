@@ -56,7 +56,7 @@ const SOURCE_AVATAR: Record<string, string> = {
 }
 
 export default function ResearchPage() {
-  const { toast, currentChallengeId, setCurrentChallengeId, demoMode, setPage } = useApp()
+  const { toast, currentChallengeId, setCurrentChallengeId, focusedRunId, demoMode, setPage } = useApp()
 
   const [challenges, setChallenges] = useState<ChallengeSummary[]>([])
   const [challengeId, setChallengeId] = useState<string | null>(currentChallengeId)
@@ -67,6 +67,12 @@ export default function ResearchPage() {
   const [runs, setRuns] = useState<RunSummary[]>([])
   const [overview, setOverview] = useState<RunOverview[]>([])
   const [preferredRunId, setPreferredRunId] = useState<string | null>(null)
+  useEffect(() => {
+    if (focusedRunId) {
+      setChallengeId(currentChallengeId)
+      setPreferredRunId(focusedRunId)
+    }
+  }, [focusedRunId, currentChallengeId])
   const [editModelsOpen, setEditModelsOpen] = useState(false)
 
   const [events, setEvents] = useState<RunEvent[]>([])
