@@ -1,31 +1,33 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api'
 import { useApp } from '../app-context'
+import type { SolverEntry } from '../types'
 
-type Choice = { runtime: string; model_id: string; reasoning_effort: string }
-type Template = { model_config: { brain: Choice; executor: Choice }; authorization: {
+type Choice = { provider?: string; note?: string; runtime: string; model_id: string; reasoning_effort: string }
+type Template = { solver_id?: string; model_config: { brain: Choice; executor: Choice }; authorization: {
   allow_model_calls: boolean; max_run_minutes: number; max_jobs: number; max_submissions: number;
   max_sandboxes: number; max_environment_saves: number; max_sandbox_minutes: number; allow_data_download: boolean }; solver_note: string }
 type Item = { id: string; challenge_id: string; title: string; phase: string; priority: number;
   paused: number; run_id: string | null; local_best: number | null; platform_best: { score: number; score_confidence: string } | null;
   triage: { difficulty: string; estimated_minutes: number | null; estimated_cost_cny: number | null; recommended_model: string; reason: string } | null;
-  trace_diagnostic: unknown; usage: unknown[]; cost: unknown; next_action: string | null }
+  model_cost?: unknown; trace_diagnostic: unknown; usage: unknown[]; cost: unknown; next_action: string | null }
 type Round = { id: string; label: string; status: string; items: Item[]; resources: { sessions: { provider: string; used: number }[]; rate_limits: unknown[] } }
 const choice = (model: string): Choice => ({ runtime: 'codex', model_id: model, reasoning_effort: 'xhigh' })
 function ModelFields({ label, role, value, onChange }: { label: string; role: 'brain' | 'executor'; value: Choice; onChange: (value: Choice) => void }) {
   return <div className="form-grid">
-    <label>{label}提供方<select value={value.runtime} onChange={e => onChange({ ...value, runtime: e.target.value })}>
-      <option value="codex">Codex</option><option value="kimi">Kimi Code</option>{role === 'executor' && <option value="prime">Prime Agent</option>}
+    <label>{label}提供方<select value={value.provider ?? value.runtime} onChange={e => onChange({ ...value, provider: e.target.value, runtime: e.target.value === 'deepseek' ? 'codex' : e.target.value, model_id: e.target.value === 'deepseek' ? 'deepseek-flash' : value.model_id, reasoning_effort: 'high' })}>
+      <option value="codex">Codex</option><option value="deepseek">DeepSeek</option><option value="kimi">Kimi Code</option>{role === 'executor' && <option value="prime">Prime Agent</option>}
     </select></label>
     <label>{label}模型<input value={value.model_id} onChange={e => onChange({ ...value, model_id: e.target.value })} /></label>
     <label>{label}思考强度<select value={value.reasoning_effort} onChange={e => onChange({ ...value, reasoning_effort: e.target.value })}>
-      {['low', 'medium', 'high', 'xhigh', 'max'].map(e => <option key={e}>{e}</option>)}
+      {(value.provider === 'deepseek' ? ['low', 'high', 'max'] : ['low', 'medium', 'high', 'xhigh', 'max']).map(e => <option key={e}>{e}</option>)}
     </select></label>
   </div>
 }
 
 export default function CompetitionPage() {
   const { toast, demoMode } = useApp()
+  const [roster, setRoster] = useState<SolverEntry[]>([])
   const [rounds, setRounds] = useState<{ id: string; label: string; status: string }[]>([])
   const [id, setId] = useState('')
   const [round, setRound] = useState<Round | null>(null)
@@ -40,7 +42,8 @@ export default function CompetitionPage() {
       max_sandboxes: 2, max_environment_saves: 0, max_sandbox_minutes: 60, allow_data_download: true }, solver_note: '' })
   useEffect(() => {
     let active = true
-    void api.get<{ brain: Choice; executor: Choice }>('/api/v1/settings').then(settings => {
+    void api.get<{ brain: Choice; executor: Choice; solver_roster?: SolverEntry[] }>('/api/v1/settings').then(settings => {
+      if (active) setRoster(settings.solver_roster ?? [])
       if (active && settings.brain && settings.executor) setTemplate(t => ({ ...t, model_config: { brain: settings.brain, executor: settings.executor } }))
     }).catch(() => {})
     return () => { active = false }
@@ -69,6 +72,11 @@ export default function CompetitionPage() {
     catch (e) { toast(e instanceof Error ? e.message : '操作失败') }
     finally { setBusy(false) }
   }
+  const solverSelect = (label: string, current: Template, change: (value: Template) => void) => <label>{label}求解者条目<select value={current.solver_id ?? ''} onChange={e => {
+    const entry = roster.find(v => v.id === e.target.value)
+    change({ ...current, solver_id: e.target.value || undefined, solver_note: entry?.note ?? current.solver_note,
+      model_config: { ...current.model_config, executor: entry ?? current.model_config.executor } })
+  }}><option value="">手动模型配置</option>{roster.map(v => <option key={v.id} value={v.id}>{v.name} · {v.model_id}</option>)}</select></label>
   const url = `/api/v1/rounds/${encodeURIComponent(id)}`
   return <section><div className="page-head"><h1>比赛轮次</h1></div>
     <button className="btn" disabled={busy} onClick={async () => {
@@ -90,8 +98,9 @@ export default function CompetitionPage() {
     <label>选择轮次<select value={id} onChange={e => setId(e.target.value)}><option value="">暂无轮次</option>
       {rounds.map(r => <option key={r.id} value={r.id}>{r.label || r.id} · {r.status}</option>)}</select></label>
     <fieldset><legend>整轮模板与授权</legend>
+      {solverSelect("整轮", template, setTemplate)}
       {(['brain', 'executor'] as const).map(role => <ModelFields key={role} role={role} label={role === 'brain' ? 'PI ' : '求解者 '}
-        value={template.model_config[role]} onChange={value => setTemplate(t => ({ ...t, model_config: { ...t.model_config, [role]: value } }))} />)}
+        value={template.model_config[role]} onChange={value => setTemplate(t => ({ ...t, solver_id: role === 'executor' ? undefined : t.solver_id, model_config: { ...t.model_config, [role]: value } }))} />)}
       <p>Prime 模型须与连接设置中的 Profile 一致；各提供方的原生认证在连接设置中配置。</p>
       {([['max_run_minutes', '每 Run 分钟'], ['max_jobs', '每 Run Job 数'], ['max_submissions', '每 Run 实验提交数'],
         ['max_sandboxes', '每 Run 沙箱并发'], ['max_environment_saves', '每 Run 环境保存数'], ['max_sandbox_minutes', '每 Run 沙箱累计分钟']] as const).map(([key, title]) =>
@@ -108,10 +117,11 @@ export default function CompetitionPage() {
         <tbody>{round.items.map(item => <tr key={item.id}>
           <td>{item.title}{item.triage && <p>{item.triage.difficulty} · {item.triage.recommended_model}<br />预计 {item.triage.estimated_minutes ?? 'unknown'} 分钟 / {item.triage.estimated_cost_cny ?? 'unknown'} 元<br />{item.triage.reason}</p>}
             {round.status === 'draft' && <details><summary>此题模型与备注</summary>
+              {solverSelect(item.title, overrides[item.challenge_id] ?? template, value => setOverrides(v => ({ ...v, [item.challenge_id]: value })))}
               {(['brain', 'executor'] as const).map(role => <ModelFields key={role} role={role} label={`${item.title}${role === 'brain' ? ' PI ' : '求解者 '}`}
                 value={(overrides[item.challenge_id] ?? template).model_config[role]} onChange={value => setOverrides(v => {
                   const current = v[item.challenge_id] ?? template
-                  return { ...v, [item.challenge_id]: { ...current, model_config: { ...current.model_config, [role]: value } } }
+                  return { ...v, [item.challenge_id]: { ...current, solver_id: role === 'executor' ? undefined : current.solver_id, model_config: { ...current.model_config, [role]: value } } }
                 })} />)}
               <label>{item.title}给 PI 的备注<input value={(overrides[item.challenge_id] ?? template).solver_note} onChange={e => setOverrides(v => ({
                 ...v, [item.challenge_id]: { ...(v[item.challenge_id] ?? template), solver_note: e.target.value }
@@ -127,7 +137,7 @@ export default function CompetitionPage() {
           <td>{item.run_id || '排队中'}</td><td>{item.local_best ?? 'unknown'}</td>
           <td>{item.platform_best ? `${item.platform_best.score} (${item.platform_best.score_confidence})` : 'unknown'}</td>
           <td>{item.trace_diagnostic ? <details><summary>查看诊断</summary><pre>{JSON.stringify(item.trace_diagnostic, null, 2)}</pre></details> : 'unknown'}</td>
-          <td><details><summary>用量与费用</summary><pre>{JSON.stringify({ tokens: item.usage, cost: item.cost }, null, 2)}</pre></details></td>
+          <td><details><summary>用量与费用</summary><pre>{JSON.stringify({ tokens: item.usage, model_cost: item.model_cost, cost: item.cost }, null, 2)}</pre></details></td>
           <td>{item.phase}<p>{item.next_action}</p></td>
           <td><label>优先级<input aria-label={`${item.title}优先级`} type="number" value={item.priority}
             onChange={e => void action(`${url}/items/${item.id}`, { priority: Number(e.target.value) }, 'put')} /></label>

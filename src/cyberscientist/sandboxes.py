@@ -25,7 +25,7 @@ def _json(value: Any) -> str:
 
 
 def _clean(value: Any) -> Any:
-    secrets = list(config.load_secrets().values())
+    secrets = list(config.sensitive_values())
     return redact_value(value, secrets)
 
 

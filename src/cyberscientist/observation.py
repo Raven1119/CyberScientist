@@ -52,7 +52,7 @@ def strip_secrets(text: str) -> str:
     text = _SECRET_BLOCK_RE.sub("[已遮蔽：密钥块]", text)
     from .bohr_proxy import redact
     from . import config
-    secrets = [value for value in config.load_secrets().values() if isinstance(value, str)]
+    secrets = config.sensitive_values()
     return redact(_SECRET_TOKEN_RE.sub(r"\1***", text), secrets)
 
 

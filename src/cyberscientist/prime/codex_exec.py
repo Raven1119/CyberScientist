@@ -35,15 +35,17 @@ class CodexExecutor:
     kind = "codex"
 
     def __init__(self, executable: str | None = None, model: str | None = None,
-                 effort: str | None = None, stall_timeout: float = 240.0):
+                 effort: str | None = None, stall_timeout: float = 240.0,
+                 provider: str | None = None):
         self.executable = executable or default_executable() or ""
         self.model = model
         self.effort = effort
+        self.provider = provider
         self.stall_timeout = stall_timeout
         self._sessions: dict[str, _Session] = {}
 
     async def inspect(self) -> PrimeHealth:
-        health = await CodexBrain(self.executable, self.model, self.effort).inspect()
+        health = await CodexBrain(self.executable, self.model, self.effort, self.provider).inspect()
         return PrimeHealth(installed=health.installed, version=health.version,
                            detail=health.detail,
                            capabilities={"tool_execution": True,
@@ -51,18 +53,21 @@ class CodexExecutor:
                                          "verified": False})
 
     async def start(self, spec: dict[str, Any]) -> str:
+        from .. import model_providers
         rpc = JsonRpcStdio([self.executable, "app-server"],
                            cwd=spec.get("working_directory"),
-                           env=process_environment(spec), name="codex-exec")
+                           env=model_providers.prepare(self.provider, process_environment(spec)), name="codex-exec")
         try:
             await rpc.start()
             await initialize(rpc)
             params = thread_params(spec, self.model, self.effort, writable=True)
+            model_providers.thread_provider(params, self.provider)
             method = "thread/start"
             if spec.get("resume_thread_id"):
                 method = "thread/resume"
                 params["threadId"] = spec["resume_thread_id"]
             result = await rpc.request(method, params, timeout=60)
+            model_providers.verify_provider(result, self.provider)
             verify_thread_config(result, self.model, self.effort)
             tid = result["thread"]["id"]
         except BaseException:
@@ -218,7 +223,8 @@ class CodexExecutor:
                             "output": output[-12000:],
                         })
                 elif method == "thread/tokenUsage/updated":
-                    await emit({"type": "usage.updated", "usage": params.get("tokenUsage")})
+                    await emit({"type": "usage.updated", "usage": params.get("tokenUsage"),
+                                "session_id": sess.thread_id})
                 elif (method == "item/updated" or
                       (method.startswith(("item/reasoning/", "item/agentMessage/"))
                        and "delta" in method.lower())):

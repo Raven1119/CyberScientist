@@ -15,7 +15,7 @@ def _id(fact_key: str) -> str:
 
 def _body(data: object) -> str:
     safe=redact(json.dumps(data,ensure_ascii=False,sort_keys=True,default=str),
-                config.load_secrets().values())[:6000]
+                config.sensitive_values())[:6000]
     return f"来自真实回执的环境观察；仅代表观察时状态。\n\n```json\n{safe}\n```"
 
 

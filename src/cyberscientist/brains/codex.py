@@ -13,6 +13,7 @@ import os
 import re
 from typing import Any, AsyncIterator
 
+from .. import model_providers
 from ..decision_extraction import (extract_decision, extract_question_answer,
                                    extract_review_result)
 from ..jsonrpc_stdio import JsonRpcStdio, ProtocolError
@@ -47,10 +48,11 @@ class CodexBrain:
     kind = "codex"
 
     def __init__(self, executable: str | None = None, model: str | None = None,
-                 effort: str | None = None):
+                 effort: str | None = None, provider: str | None = None):
         self.executable = executable or default_executable() or ""
         self.model = model
         self.effort = effort
+        self.provider = provider
         self.rpc: JsonRpcStdio | None = None
         self.server_version: str | None = None
         self._turn_id: str | None = None
@@ -69,9 +71,11 @@ class CodexBrain:
                                  detail=f"codex 可执行文件不可用: {self.executable or '未配置'}")
         health = RuntimeHealth(installed=True, capabilities=dict(self.capabilities))
         # 真实握手探针：initialize，零模型调用
-        rpc = JsonRpcStdio([self.executable, "app-server"],
-                           env=native_brain_environment(), name="codex-app-server")
+        rpc = None
         try:
+            rpc = JsonRpcStdio([self.executable, "app-server"],
+                               env=model_providers.prepare(self.provider, native_brain_environment()),
+                               name="codex-app-server")
             await asyncio.wait_for(rpc.start(), 15)
             result = await initialize(rpc)
             info = result if isinstance(result, dict) else {}
@@ -92,7 +96,8 @@ class CodexBrain:
             health.detail = f"握手失败: {exc.__class__.__name__}: {str(exc)[:200]}"
         finally:
             try:
-                await rpc.stop()
+                if rpc is not None:
+                    await rpc.stop()
             except Exception:  # noqa: BLE001
                 pass
         return health
@@ -104,6 +109,8 @@ class CodexBrain:
         if spec.get("mcp_servers"):
             env.update({k: v for k, v in (spec.get("env") or {}).items()
                         if k in ("CS_TOOL_TOKEN", "CS_TOOL_ROLE", "CS_API_URL")})
+        from .. import model_providers
+        env = model_providers.prepare(self.provider, env)
         self.rpc = JsonRpcStdio([self.executable, "app-server"],
                                 env=env,
                                 cwd=spec.get("working_directory"),
@@ -112,11 +119,13 @@ class CodexBrain:
             await self.rpc.start()
             await initialize(self.rpc)
             params = thread_params(spec, self.model, self.effort, writable=False)
+            model_providers.thread_provider(params, self.provider)
             method = "thread/start"
             if spec.get("resume_thread_id"):
                 method = "thread/resume"
                 params["threadId"] = spec["resume_thread_id"]
             result = await self.rpc.request(method, params, timeout=60)
+            model_providers.verify_provider(result, self.provider)
             verify_thread_config(result, self.model, self.effort)
         except BaseException:
             await self.rpc.stop()
@@ -126,7 +135,7 @@ class CodexBrain:
             self.rpc, self._approval_events.put))
         thread = result.get("thread", result)
         return SessionRef(runtime="codex", session_id=thread["id"],
-                          raw={"thread": thread, "model": result.get("model"),
+                          raw={"thread": thread, "model": result.get("model"), "provider": result.get("modelProvider"),
                                "reasoning_effort": result.get("reasoningEffort")})
 
     async def review(self, session: SessionRef,
@@ -182,7 +191,8 @@ class CodexBrain:
                         error_msg = item.get("message", "未知错误")
                     # Private reasoning is not a public progress channel.
                 elif method == "thread/tokenUsage/updated":
-                    yield BrainEvent("usage", {"usage": params.get("tokenUsage")})
+                    yield BrainEvent("usage", {"usage": params.get("tokenUsage"),
+                                              "session_id": session.session_id})
                 elif method == "turn/completed":
                     t = params.get("turn", {})
                     if t.get("id") == turn_id or not turn_id:

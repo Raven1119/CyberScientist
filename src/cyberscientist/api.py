@@ -409,6 +409,17 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
             incoming = {k: v for k, v in body.settings.items()
                         if k != "_status"}  # _status 是 GET 响应的瞬态字段，不落盘
             merged.update(incoming)
+            from . import challenge_models, model_usage
+            try:
+                for role in ('brain', 'executor', 'reviewer', 'post_review'):
+                    challenge_models.choose(role, None, merged)
+                merged['solver_roster'] = challenge_models.roster(merged)
+                model_usage.validate(merged.get('model_pricing', {}))
+                encoded = json.dumps(incoming, ensure_ascii=False)
+                if any(value in encoded for value in config.sensitive_values() if len(value) > 7):
+                    raise ValueError('设置不能包含密钥值')
+            except (ValueError, TypeError, KeyError) as exc:
+                raise HTTPException(422, detail={'message': str(exc)}) from exc
             resources = merged.get('resources', {})
             providers = resources.get('provider_sessions', {}) if isinstance(resources, dict) else None
             if not isinstance(providers, dict) or any(type(v) is not int or v < 1 for v in providers.values()):
@@ -457,10 +468,20 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
               )
     async def test_connection(conn_id: str, body: ConnectionTest) -> dict[str, Any]:
         settings = config.load_settings()
+        if body.kind == "tool_call_probe":
+            if conn_id not in ('brain', 'executor', 'reviewer', 'post_review'):
+                raise HTTPException(422, detail={'message': '未知模型角色'})
+            if not body.confirm_spend:
+                raise HTTPException(403, detail={'message': '真实工具探针需显式一次模型调用授权'})
+            from . import model_probe
+            try:
+                return await model_probe.run(controller, conn_id, body.model_choice)
+            except Exception as exc:
+                return {'status': 'unavailable', 'detail': observation.strip_secrets(str(exc))}
         if body.kind == "model_selection":
-            if conn_id not in ("brain", "executor"):
+            if conn_id not in ("brain", "executor", "reviewer", "post_review"):
                 raise HTTPException(422, detail={"code": "INVALID_CONNECTION",
-                                                 "message": "只支持大脑和执行器模型检查"})
+                                                 "message": "只支持四个模型角色检查"})
             from tempfile import TemporaryDirectory
             from . import challenge_models
             try:
@@ -473,7 +494,9 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
             if probe_settings[conn_id].get("runtime") != selected["runtime"]:
                 probe_settings[conn_id]["executable"] = ""
             probe_settings[conn_id].update(selected)
-            runtime = (controller._make_brain(probe_settings) if conn_id == "brain"
+            if conn_id in ('reviewer', 'post_review'):
+                probe_settings['brain'] = probe_settings[conn_id]
+            runtime = (controller._make_brain(probe_settings) if conn_id != "executor"
                        else controller._make_prime(probe_settings))
             health = await runtime.inspect()
             if not health.installed:
@@ -481,7 +504,7 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
                         "model": selected["model_id"]}
             try:
                 with TemporaryDirectory(prefix="model-check-", dir=config.DATA_DIR) as cwd:
-                    if conn_id == "brain":
+                    if conn_id != "executor":
                         session = await runtime.open({"working_directory": cwd})
                         await runtime.close(session)
                     else:

@@ -136,7 +136,7 @@ def refresh(run_id: str) -> dict:
             # Keep the complete redacted source locally for billing audits;
             # only the owned projection above enters Run events and the UI.
             from .bohr_proxy import redact_value
-            safe = redact_value(receipt, list(config.load_secrets().values()))
+            safe = redact_value(receipt, list(config.sensitive_values()))
             raw = json.dumps(safe, ensure_ascii=False, sort_keys=True).encode()
             folder = config.DATA_DIR / 'audit' / 'billing'
             folder.mkdir(parents=True, exist_ok=True)

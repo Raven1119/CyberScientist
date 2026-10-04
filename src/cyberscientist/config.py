@@ -58,8 +58,16 @@ DEFAULT_SETTINGS: dict[str, Any] = {
                  "executable": "",
                  "model_id": "gpt-6-sol",
                  "reasoning_effort": "high"},
-    "post_review": {"runtime": "codex", "executable": "",
-                    "model_id": "gpt-6.1-sol", "reasoning_effort": "high"},
+    "reviewer": {"runtime": "codex", "provider": "codex", "executable": "",
+                 "model_id": "gpt-6.1-sol", "reasoning_effort": "high"},
+    "post_review": {"runtime": "codex", "provider": "deepseek", "executable": "",
+                    "model_id": "deepseek-flash", "reasoning_effort": "high"},
+    "solver_roster": [],
+    "model_pricing": {"deepseek/deepseek-flash": {
+        "currency": "USD", "source": "https://api-docs.deepseek.com/quick_start/pricing/",
+        "observed_on": "2026-10-05", "billing_tier": "unknown",
+        "off_peak": {"input": 0.15, "cached_input": 0.003, "output": 0.6},
+        "peak": {"input": 0.3, "cached_input": 0.006, "output": 1.2}}},
     "prime": {"executable": "", "llm_profile_id": "",
               "automatic_refine": False, "subagents_enabled": False},
     "llm_profiles": [],
@@ -185,3 +193,22 @@ def resolve_secret(secret_ref: str) -> str | None:
 
 def secret_configured(secret_ref: str) -> bool:
     return resolve_secret(secret_ref) is not None
+
+
+def deepseek_key() -> str | None:
+    """Read only the authorized env/root dotenv source; never persist the value."""
+    value = os.environ.get("DEEPSEEK_API_KEY")
+    if value:
+        return value
+    path = WORKSPACE_ROOT / ".env"
+    if path.exists():
+        for line in path.read_text(encoding="utf-8").splitlines():
+            name, sep, raw = line.strip().partition("=")
+            if sep and name.removeprefix("export ").strip() == "DEEPSEEK_API_KEY":
+                return raw.strip().strip('"').strip("'") or None
+    return None
+
+
+def sensitive_values() -> list[str]:
+    return [v for v in [*load_secrets().values(), deepseek_key()]
+            if isinstance(v, str) and v]

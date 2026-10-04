@@ -68,6 +68,8 @@ def isolated_workspace(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "LOCK_PATH", data / "controller.lock")
     monkeypatch.setattr(config, "WORKSPACE_DIR", ws)
     monkeypatch.setattr(config, "EXPERIENCE_DIR", exp)
+    # Backend-only dotenv is outside test data; tests cannot use its real key.
+    monkeypatch.setattr(config, 'deepseek_key', lambda: None)
     # A connected ledger fixture is not permission to call the developer's
     # installed native model. Protocol tests use explicit temp fake binaries.
     from pathlib import Path

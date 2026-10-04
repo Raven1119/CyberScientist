@@ -357,7 +357,7 @@ def materialize(challenge_id: str, key: str, operation_id: str,
     finally:
         if staging.exists() and state != "unknown":
             shutil.rmtree(staging)
-    safe = redact(_json(receipt), list(config.load_secrets().values()))
+    safe = redact(_json(receipt), list(config.sensitive_values()))
     with db.transaction() as conn:
         conn.execute("UPDATE data_materializations SET status=?,store_path=?,files_json=?,total_bytes=?,"
                      "error_code=?,receipt_json=?,updated_at=?,hash_semantics=? WHERE id=?",

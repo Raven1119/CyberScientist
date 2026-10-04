@@ -53,3 +53,20 @@ it('confirms native provider, effort and PI note overrides for a specific topic'
   expect(body.overrides.same_challenge.model_config.executor).toMatchObject({ runtime: 'kimi', reasoning_effort: 'medium' })
   expect(body.overrides.same_challenge.solver_note).toBe('需要明确推导步骤')
 })
+
+it('uses a concrete roster entry and clears its selection after a manual executor edit', async () => {
+  const entry = { id: 'cheap', name: '便宜条目', runtime: 'codex', provider: 'deepseek', model_id: 'deepseek-flash', reasoning_effort: 'high', note: '具体派活' }
+  get.mockImplementation(async (path: string) => path === '/api/v1/settings' ? { solver_roster: [entry] } : path === '/api/v1/rounds' ? { items: [{ id: 'round_one', status: 'draft' }] } : detail)
+  post.mockResolvedValue({ ...detail, status: 'running' })
+  render(<CompetitionPage />)
+  await screen.findByText(/easy · deepseek-flash/)
+  const user = userEvent.setup()
+  await user.selectOptions(screen.getByLabelText('整轮求解者条目'), 'cheap')
+  expect((screen.getByLabelText('求解者 模型') as HTMLInputElement).value).toBe('deepseek-flash')
+  await user.selectOptions(screen.getByLabelText('求解者 提供方'), 'codex')
+  await user.clear(screen.getByLabelText('求解者 模型'))
+  await user.type(screen.getByLabelText('求解者 模型'), 'gpt-6.1-sol')
+  await user.click(screen.getByRole('button', { name: '确认模板与授权，开始排队' }))
+  expect(post.mock.calls[0][1].template.solver_id).toBeUndefined()
+  expect(post.mock.calls[0][1].template.model_config.executor).toMatchObject({ provider: 'codex', model_id: 'gpt-6.1-sol' })
+})

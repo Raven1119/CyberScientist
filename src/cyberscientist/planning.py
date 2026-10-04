@@ -19,7 +19,7 @@ def guidance_level(run_id: str) -> dict:
     snapshot = json.loads(run['config_snapshot'])
     solver = dict(snapshot.get('settings', {}).get('executor', {}))
     solver['note'] = '\n'.join(filter(None, (solver.get('note'), snapshot.get('competition', {}).get('solver_note'))))
-    solver['note'] = redact(solver['note'], config.load_secrets().values())
+    solver['note'] = redact(solver['note'], config.sensitive_values())
     description = ' '.join(str(solver.get(k, '')) for k in ('model_id', 'note')).lower()
     concrete = any(word in description for word in
                    ('deepseek', 'flash', 'mini', '便宜', '写死', '弱', '具体'))
@@ -60,7 +60,7 @@ def startup(run_id: str, challenge: dict) -> dict:
 
 
 def record_brief(run_id: str, brief: dict, decision_id: str) -> dict:
-    safe = json.loads(redact(json.dumps(brief, ensure_ascii=False), config.load_secrets().values()))
+    safe = json.loads(redact(json.dumps(brief, ensure_ascii=False), config.sensitive_values()))
     body = '# PI 研究简报\n\n' + '\n\n'.join(
         f"## {key}\n\n" + (value if isinstance(value, str) else
                               json.dumps(value, ensure_ascii=False, indent=2))
@@ -144,7 +144,7 @@ def register_smoke(run_id: str, operation_id: str, recipe: str) -> dict:
                'command_sha256': operation['command_sha256'],
                'receipt_sha256': operation['receipt_sha256'],
                'runtime_status': 'smoke_verified', 'persistent_image_status': 'unverified'}
-    payload = json.loads(redact(json.dumps(payload, ensure_ascii=False), config.load_secrets().values()))
+    payload = json.loads(redact(json.dumps(payload, ensure_ascii=False), config.sensitive_values()))
     previous = db.query_one("SELECT * FROM events WHERE run_id=? AND type='environment.smoke_observed'"
                             " AND json_extract(payload,'$.operation_id')=?", (run_id, operation_id))
     if previous and json.loads(previous['payload']) != payload:

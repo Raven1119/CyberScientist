@@ -45,6 +45,8 @@ class JsonRpcStdio:
             if not line:
                 break
             text = line.decode("utf-8", errors="replace").rstrip()
+            from .observation import strip_secrets
+            text = strip_secrets(text)
             self._stderr_tail.append(text[:300])
             del self._stderr_tail[:-20]  # 只保留尾窗，有界
             log.debug("%s stderr: %.200s", self.name, text)
@@ -83,7 +85,8 @@ class JsonRpcStdio:
             fut = self._pending.pop(msg["id"], None)
             if fut and not fut.done():
                 if msg.get("error") is not None:
-                    fut.set_exception(ProtocolError(json.dumps(msg["error"])[:500]))
+                    from .observation import strip_secrets
+                    fut.set_exception(ProtocolError(strip_secrets(json.dumps(msg["error"]))[:500]))
                 else:
                     fut.set_result(msg.get("result"))
         elif "id" in msg and "method" in msg:

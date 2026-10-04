@@ -12,7 +12,7 @@ from .mailbox_platform import public_feedback
 
 def _safe(value: Any) -> str:
     raw = str(value or "")[:4000]
-    secrets = list(config.load_secrets().values())
+    secrets = list(config.sensitive_values())
     return redact(public_feedback(raw, *secrets), secrets)
 
 

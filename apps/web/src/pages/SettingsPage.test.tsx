@@ -3,10 +3,10 @@ import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import SettingsPage from './SettingsPage'
 
-const { get, put, listSkills, putAlwaysOnSkills, toast } = vi.hoisted(() => ({
-  get: vi.fn(), put: vi.fn(), listSkills: vi.fn(), putAlwaysOnSkills: vi.fn(), toast: vi.fn(),
+const { get, put, post, listSkills, putAlwaysOnSkills, toast } = vi.hoisted(() => ({
+  get: vi.fn(), put: vi.fn(), post: vi.fn(), listSkills: vi.fn(), putAlwaysOnSkills: vi.fn(), toast: vi.fn(),
 }))
-vi.mock('../api', () => ({ api: { get, put }, listSkills, putAlwaysOnSkills }))
+vi.mock('../api', () => ({ api: { get, put, post }, listSkills, putAlwaysOnSkills }))
 vi.mock('../app-context', () => ({ useApp: () => ({ toast }) }))
 
 const defaults = {
@@ -121,4 +121,35 @@ describe('settings and skills persist together', () => {
     await user.click(screen.getByRole('button', { name: '重新加载设置' }))
     await screen.findByRole('heading', { name: '技能管理' })
   })
+})
+
+it('persists separate DeepSeek reviewer choice and a named solver with its PI note', async () => {
+  const user = userEvent.setup()
+  render(<SettingsPage />)
+  await user.selectOptions(await screen.findByLabelText('审查者提供方'), 'deepseek')
+  await user.click(screen.getByRole('button', { name: '添加求解者' }))
+  await user.clear(screen.getByLabelText('条目名称'))
+  await user.type(screen.getByLabelText('条目名称'), '便宜求解者')
+  await user.selectOptions(screen.getByLabelText('条目提供方'), 'deepseek')
+  await user.type(screen.getByLabelText('给 PI 的备注'), '写死算法和测试')
+  await user.click(screen.getAllByRole('button', { name: '保存设置' })[0])
+  await waitFor(() => expect(put).toHaveBeenCalled())
+  const value = put.mock.calls[0][1].settings
+  expect(value.reviewer).toMatchObject({ provider: 'deepseek', runtime: 'codex', model_id: 'deepseek-flash' })
+  expect(value.solver_roster[0]).toMatchObject({ name: '便宜求解者', provider: 'deepseek', note: '写死算法和测试' })
+})
+
+it('requires one explicit tool-probe authorization and sends the selected role provider', async () => {
+  post.mockResolvedValue({ status: 'ok', tool_receipt: { exit_code: 0 } })
+  const user = userEvent.setup()
+  render(<SettingsPage />)
+  await user.selectOptions(await screen.findByLabelText('复盘提供方'), 'deepseek')
+  const button = screen.getByRole('button', { name: '验证复盘工具调用' })
+  expect(button.matches(':disabled')).toBe(true)
+  await user.click(screen.getByLabelText('授权复盘一次真实工具探针'))
+  await user.click(button)
+  expect(post.mock.calls[0]).toEqual(['/api/v1/connections/post_review/test', expect.objectContaining({
+    kind: 'tool_call_probe', confirm_spend: true, model_choice: expect.objectContaining({ provider: 'deepseek' }),
+  })])
+  expect(button.matches(':disabled')).toBe(true)
 })

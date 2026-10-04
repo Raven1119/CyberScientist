@@ -175,7 +175,7 @@ def _runtime_event_payload(payload: dict[str, Any]) -> dict[str, Any]:
     """Public runtime evidence only, bounded and scrubbed before persistence."""
     from .bohr_proxy import redact
 
-    secrets = [value for value in config.load_secrets().values() if isinstance(value, str)]
+    secrets = [value for value in config.sensitive_values() if isinstance(value, str)]
 
     def safe_text(value: str) -> str:
         value = observation.strip_secrets(redact(value, secrets))
@@ -325,7 +325,8 @@ class RunController:
         if runtime == "codex":
             return CodexBrain(executable=brain_cfg.get("executable") or None,
                               model=brain_cfg.get("model_id"),
-                              effort=brain_cfg.get("reasoning_effort"))
+                              effort=brain_cfg.get("reasoning_effort"),
+                              provider=brain_cfg.get("provider"))
         return KimiBrain(executable=brain_cfg.get("executable") or None,
                          model=brain_cfg.get("model_id"),
                          effort=brain_cfg.get("reasoning_effort"))
@@ -345,7 +346,7 @@ class RunController:
             return CodexExecutor(
                 executable=exec_cfg.get("executable") or None,
                 model=exec_cfg.get("model_id"),
-                effort=exec_cfg.get("reasoning_effort"))
+                effort=exec_cfg.get("reasoning_effort"), provider=exec_cfg.get("provider"))
         return KimiExecutor(executable=exec_cfg.get("executable") or None,
                             model=exec_cfg.get("model_id"),
                             effort=exec_cfg.get("reasoning_effort"))
@@ -484,7 +485,7 @@ class RunController:
             selected = challenge_models.from_challenge(challenge, settings)
             if supplied_models is not None:
                 selected = {role: challenge_models.choose(role, supplied_models.get(role), settings)
-                            for role in ('brain', 'executor')}
+                            for role in ('brain', 'executor', 'reviewer', 'post_review')}
         except (ValueError, TypeError, KeyError) as exc:
             raise ControllerError("INVALID_ARGUMENT", f"题目模型配置无效：{exc}") from exc
         for role, choice in selected.items():
@@ -4152,6 +4153,9 @@ class RunController:
             db.append_event(row['run_id'], 'controller', 'experience.curation_failed', {'curation_id': request_id, 'error': error})
             raise
         except Exception as exc:
+            from .model_providers import record_throttle
+            if 'settings' in locals():
+                record_throttle(settings['brain'], exc)
             error = _redact(str(exc))[:500]
             with db.transaction() as conn:
                 if started:

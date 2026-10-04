@@ -9,6 +9,8 @@ import type {
   ReasoningEffort,
   Settings,
   SkillInfo,
+  ModelChoice,
+  SolverEntry,
 } from '../types'
 
 type ConnId = 'brain' | 'executor' | 'prime' | 'playground' | 'bohrium'
@@ -72,6 +74,9 @@ export default function SettingsPage() {
     playground: false,
     bohrium: false,
   })
+  const [roleProbe, setRoleProbe] = useState<Record<string, boolean>>({})
+  const [probeResults, setProbeResults] = useState<Record<string, unknown>>({})
+  const [pricesDraft, setPricesDraft] = useState('')
   const [saving, setSaving] = useState(false)
   const [loadError, setLoadError] = useState('')
   const [saveError, setSaveError] = useState('')
@@ -81,6 +86,7 @@ export default function SettingsPage() {
     try {
       const fresh = await api.get<Settings>('/api/v1/settings')
       setSettings(fresh)
+      setPricesDraft(JSON.stringify(fresh.model_pricing ?? {}, null, 2))
       setBaseRevision(fresh.revision)
       setSaveError('')
     } catch (err) {
@@ -101,7 +107,8 @@ export default function SettingsPage() {
     setSaving(true)
     setSaveError('')
     try {
-      const saved = await api.put<Settings>('/api/v1/settings', { settings, base_revision: baseRevision })
+      const model_pricing = JSON.parse(pricesDraft || '{}')
+      const saved = await api.put<Settings>('/api/v1/settings', { settings: { ...settings, model_pricing }, base_revision: baseRevision })
       setSettings({ ...saved, _status: settings._status })
       setBaseRevision(saved.revision)
       toast('设置已保存。')
@@ -205,6 +212,55 @@ export default function SettingsPage() {
         </button>
       </div>}
       <fieldset className="settings-stack settings-fields" disabled={saving}>
+        <article className="card card-body"><h2>四角色提供方</h2>
+          <p>DeepSeek 密钥只读取后端环境变量或根目录 .env。工具探针会消耗一次模型调用。</p>
+          {(['brain', 'executor', 'reviewer', 'post_review'] as const).map(role => {
+            const label = { brain: 'PI', executor: '求解者', reviewer: '审查者', post_review: '复盘' }[role]
+            const current = settings[role] ?? { runtime: 'codex', provider: 'codex', model_id: 'gpt-6.1-sol', reasoning_effort: 'high' }
+            const setRole = (value: ModelChoice) => update(s => ({ ...s, [role]: { ...s[role], ...value } }))
+            return <fieldset key={role}><legend>{label}</legend>
+              <label>{label}提供方<select value={current.provider ?? current.runtime} onChange={e => setRole({ ...current,
+                provider: e.target.value, runtime: e.target.value === 'deepseek' ? 'codex' : e.target.value,
+                model_id: e.target.value === 'deepseek' ? 'deepseek-flash' : current.model_id, reasoning_effort: 'high' })}>
+                <option value="codex">Codex</option><option value="deepseek">DeepSeek</option><option value="kimi">Kimi Code</option>
+                {role === 'executor' && <option value="prime">Prime Agent</option>}
+              </select></label>
+              <label>{label}模型 ID<input value={current.model_id} onChange={e => setRole({ ...current, model_id: e.target.value })} /></label>
+              <label>{label}可执行文件<input value={current.executable ?? ''} onChange={e => update(s => ({ ...s, [role]: { ...s[role], ...current, executable: e.target.value } }))} /></label>
+              <label>{label}推理强度<select value={current.reasoning_effort} onChange={e => setRole({ ...current, reasoning_effort: e.target.value as ReasoningEffort })}>
+                {(current.provider === 'deepseek' ? ['low', 'high', 'max'] : ['low', 'medium', 'high', 'xhigh', 'max']).map(e => <option key={e}>{e}</option>)}
+              </select></label>
+              <label><input type="checkbox" checked={roleProbe[role] ?? false} onChange={e => setRoleProbe(v => ({ ...v, [role]: e.target.checked }))} />授权{label}一次真实工具探针</label>
+              <button type="button" disabled={!roleProbe[role]} onClick={async () => {
+                setRoleProbe(v => ({ ...v, [role]: false }))
+                try { setProbeResults(v => ({ ...v, [role]: '运行中' })); const result = await api.post(`/api/v1/connections/${role}/test`, { kind: 'tool_call_probe', confirm_spend: true, model_choice: current }); setProbeResults(v => ({ ...v, [role]: result })) }
+                catch (e) { setProbeResults(v => ({ ...v, [role]: e instanceof Error ? e.message : String(e) })) }
+              }}>验证{label}工具调用</button>
+              {probeResults[role] !== undefined && <pre>{JSON.stringify(probeResults[role], null, 2)}</pre>}
+            </fieldset>
+          })}
+        </article>
+        <article className="card card-body"><h2>求解者条目</h2>
+          {(settings.solver_roster ?? []).map((item, index) => {
+            const change = (value: SolverEntry) => update(s => ({ ...s, solver_roster: (s.solver_roster ?? []).map((old, i) => i === index ? value : old) }))
+            return <fieldset key={item.id}><legend>求解者 {index + 1}</legend>
+              <label>条目名称<input value={item.name} onChange={e => change({ ...item, name: e.target.value })} /></label>
+              <label>条目提供方<select value={item.provider ?? item.runtime} onChange={e => change({ ...item, provider: e.target.value,
+                runtime: e.target.value === 'deepseek' ? 'codex' : e.target.value, model_id: e.target.value === 'deepseek' ? 'deepseek-flash' : item.model_id, reasoning_effort: 'high' })}>
+                {['codex', 'deepseek', 'kimi', 'prime'].map(p => <option key={p}>{p}</option>)}
+              </select></label>
+              <label>条目模型<input value={item.model_id} onChange={e => change({ ...item, model_id: e.target.value })} /></label>
+              <label>条目思考强度<select value={item.reasoning_effort} onChange={e => change({ ...item, reasoning_effort: e.target.value as ReasoningEffort })}>
+                {(item.provider === 'deepseek' ? ['low', 'high', 'max'] : ['low', 'medium', 'high', 'xhigh', 'max']).map(e => <option key={e}>{e}</option>)}
+              </select></label>
+              <label>给 PI 的备注<textarea maxLength={2000} value={item.note ?? ''} onChange={e => change({ ...item, note: e.target.value })} /></label>
+              <button type="button" onClick={() => update(s => ({ ...s, solver_roster: s.solver_roster?.filter(v => v.id !== item.id) }))}>删除此条目</button>
+            </fieldset>
+          })}
+          <button type="button" onClick={() => update(s => ({ ...s, solver_roster: [...s.solver_roster ?? [], { id: crypto.randomUUID(), name: '新求解者', runtime: 'codex', provider: 'codex', model_id: 'gpt-6.1-sol', reasoning_effort: 'high', note: '' }] }))}>添加求解者</button>
+          <label>模型价格表（每百万 token，保留来源和日期）<textarea value={pricesDraft} onChange={e => setPricesDraft(e.target.value)} /></label>
+        </article>
+
         <article className="card">
           <div className="card-head"><h2>并行运行</h2></div>
           <div className="card-body">
@@ -282,6 +338,7 @@ export default function SettingsPage() {
                       brain: {
                         ...s.brain,
                         runtime: e.target.value,
+                        provider: e.target.value,
                         model_id: '',
                         reasoning_effort: normalizeEffort(e.target.value, s.brain.reasoning_effort),
                       },
@@ -374,6 +431,7 @@ export default function SettingsPage() {
                       executor: {
                         ...s.executor,
                         runtime: e.target.value,
+                        provider: e.target.value,
                         model_id: '',
                         reasoning_effort: normalizeEffort(e.target.value, s.executor.reasoning_effort),
                       },

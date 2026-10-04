@@ -8,7 +8,7 @@ from .observation import strip_secrets
 
 def failure(tool: str, cause, *, code: str = 'TOOL_FAILED',
             remote_effect: str = 'unknown', operation_id=None) -> dict:
-    safe_cause = redact_value(cause, list(config.load_secrets().values()))
+    safe_cause = redact_value(cause, list(config.sensitive_values()))
     def strip(value):
         if isinstance(value, str):
             return strip_secrets(value)[:12000]
@@ -26,7 +26,7 @@ def failure(tool: str, cause, *, code: str = 'TOOL_FAILED',
                     '检查并自行修复输入或环境；在原授权内明确选择下一操作',
                     '使用其他已授权通道，或报告具体阻塞与检查点'],
         'authority': '沿用原 Run、Trial 和授权；此反馈不新增权限或额度'},
-        list(config.load_secrets().values()))
+        list(config.sensitive_values()))
 
 
 def attach(run_id: str, tool: str, result: dict) -> dict:

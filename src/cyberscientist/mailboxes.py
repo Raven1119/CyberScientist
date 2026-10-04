@@ -609,7 +609,7 @@ def _perform_submission(sid: str, platform: MailboxPlatform, challenge_id: str) 
     def feedback(kind, response):
         if not isinstance(response, dict):
             return
-        safe = public_feedback(response, *config.load_secrets().values())
+        safe = public_feedback(response, *config.sensitive_values())
         with db.transaction() as conn:
             current = conn.execute("SELECT * FROM submissions WHERE id=?", (sid,)).fetchone()
             _record_feedback(conn, current, kind, safe)
@@ -1011,7 +1011,7 @@ def poll_scores(run_id: str | None = None,
             if callable(attempt_query):
                 try:
                     observed = attempt_query(r["email"], secret, ref)
-                    observed = public_feedback(observed, secret, *config.load_secrets().values())
+                    observed = public_feedback(observed, secret, *config.sensitive_values())
                     if isinstance(observed, dict):
                         attempt = {key: observed[key] for key in
                                    ("scorecard", "scoringState", "bundleStatus", "updatedAt")
@@ -1029,7 +1029,7 @@ def poll_scores(run_id: str | None = None,
             details = None
             if callable(detail_query):
                 details = detail_query(r["email"], secret, ref)
-                details = public_feedback(details, secret, *config.load_secrets().values())
+                details = public_feedback(details, secret, *config.sensitive_values())
                 score = final_score(details)
             else:
                 score = row_platform.fetch_score(r["email"], secret, ref)

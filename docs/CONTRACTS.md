@@ -213,3 +213,7 @@ CS-UP-09 W3：Decision 与 ReviewResult 均支持可选 research_brief，内含 
 ### CS-UP-09 W4 维护记录
 
 新增 runs.pending_end_reason、maintenance_calls、run_post_reviews；只加列/表、重复迁移幂等。维护调用先登记再发原生 turn，完成调用与结果状态同事务保存。GET /api/v1/runs/{run_id}/post-review 返回实际状态和三部分报告；pending 为尚未调用，unknown 不自动重发。
+
+### CS-UP-09 W5 模型选择
+
+四角色支持provider/runtime/model_id/reasoning_effort；DeepSeek provider对应Codex原生运行时。GET/PUT settings提供solver_roster和model_pricing公开配置，拒绝密钥值。轮次模板solver_id在确认时解析并冻结规范条目；客户端solver_entry不接受。连接tool_call_probe需confirm_spend=true，ok须完成工具回执；usage和估价缺项unknown。

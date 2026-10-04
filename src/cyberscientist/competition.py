@@ -138,10 +138,10 @@ async def triage(round_id: str, controller, allow_model_calls: bool = False) -> 
                       'instructions': '只读题面、资源和公开分布，评估难度和预计耗时/花费，给出模型建议及理由。'
                                       '简单题建议 deepseek-flash；难题建议 gpt-6.1-sol。建议不是授权。',
                       'challenge': next(e.get('challenge_snapshot') for e in snapshot['entries'] if e['challenge_id'] == item['challenge_id']),
-                      'public_scores': scores,
+                      'public_scores': scores, 'solver_roster': challenge_models.roster(settings),
                       'output_contract': {'difficulty': 'easy|medium|hard|unknown',
                                           'estimated_minutes': 'number|null', 'estimated_cost_cny': 'number|null',
-                                          'recommended_model': 'string', 'reason': 'string'}}
+                                          'recommended_model': 'string', 'recommended_solver_id': 'existing roster ID|null', 'reason': 'string'}}
             result = None
             async with asyncio.timeout(180):
                 async for event in brain.review(session, packet):
@@ -149,8 +149,14 @@ async def triage(round_id: str, controller, allow_model_calls: bool = False) -> 
                     if event.type == 'error': raise CompetitionError(event.payload.get('message', '分诊失败'))
             if not result or result.get('difficulty') not in ('easy', 'medium', 'hard', 'unknown'):
                 raise CompetitionError('分诊缺少有效难度，未编造建议')
+            if result.get('recommended_solver_id') and result['recommended_solver_id'] not in {s['id'] for s in challenge_models.roster(settings)}:
+                raise CompetitionError('分诊推荐的求解者条目不存在')
             db.execute('UPDATE eval_results SET triage_json=?,updated_at=? WHERE id=?',
                        (_dump(result), db.utcnow(), item['id']))
+    except Exception as exc:
+        from .model_providers import record_throttle
+        record_throttle(settings['brain'], exc)
+        raise
     finally:
         try:
             if session:
@@ -162,11 +168,18 @@ async def triage(round_id: str, controller, allow_model_calls: bool = False) -> 
     return get_round(round_id)
 
 
-def _template(template: dict, mode: str) -> dict:
-    if not isinstance(template, dict) or set(template) - {'model_config', 'authorization', 'shadow_enabled', 'solver_note'}:
+def _template(template: dict, mode: str, *, frozen: bool = False) -> dict:
+    if not isinstance(template, dict) or set(template) - {'model_config', 'authorization', 'shadow_enabled', 'solver_note', 'solver_id'} - ({'solver_entry'} if frozen else set()):
         raise CompetitionError('模板只接受模型、授权、监督和求解者备注')
     settings = config.load_settings()
-    choices = template.get('model_config') or {}
+    choices = dict(template.get('model_config') or {})
+    solver_entry = None
+    if template.get('solver_id'):
+        solver_entry = template.get('solver_entry') if frozen else challenge_models.solver(template['solver_id'], settings)
+        if solver_entry.get('id') != template['solver_id']:
+            raise CompetitionError('冻结求解者 ID 不匹配')
+        solver_entry = challenge_models.roster({**settings, 'solver_roster': [solver_entry]})[0]
+        choices['executor'] = solver_entry
     models = {role: challenge_models.choose(role, choices.get(role), settings) for role in ('brain', 'executor')}
     auth = template.get('authorization') or {}
     allowed = {'max_run_minutes', 'max_jobs', 'max_submissions', 'max_model_turns', 'max_sandboxes',
@@ -188,10 +201,11 @@ def _template(template: dict, mode: str) -> dict:
     for key in ('allow_model_calls', 'allow_sandbox_gpu', 'allow_data_download'):
         if key in auth and type(auth[key]) is not bool:
             raise CompetitionError('授权开关必须是布尔值')
-    return {'model_config': models, 'authorization': auth,
+    return {'model_config': models, 'authorization': auth, 'solver_id': template.get('solver_id'),
+            'solver_entry': solver_entry,
             'shadow_enabled': bool(template.get('shadow_enabled', False)),
             'solver_note': challenge_models.choose('executor', models['executor'] | {
-                'note': template.get('solver_note', '')}, settings)['note']}
+                'note': template.get('solver_note', '') or (solver_entry or {}).get('note', '')}, settings)['note']}
 
 
 def confirm(round_id: str, template: dict, overrides: dict | None = None) -> dict:
@@ -200,7 +214,7 @@ def confirm(round_id: str, template: dict, overrides: dict | None = None) -> dic
     if row['status'] != 'draft':
         raise CompetitionError('只有待确认轮次可确认')
     base = _template(template, snapshot['mode'])
-    choices = {item['id']: _template((overrides or {}).get(item['challenge_id'], base), snapshot['mode'])
+    choices = {item['id']: (_template(overrides[item['challenge_id']], snapshot['mode']) if item['challenge_id'] in (overrides or {}) else base)
                for item in db.query('SELECT * FROM eval_results WHERE eval_id=?', (round_id,))}
     snapshot['template'] = base
     manifests = {e['challenge_id']: experience_context.select(e['challenge_id'], role='both') for e in snapshot['entries']}
@@ -219,7 +233,7 @@ def append_run(round_id: str, challenge_id: str, template: dict | None = None) -
     snapshot = json.loads(row['config_json'])
     if challenge_id not in {e['challenge_id'] for e in snapshot['entries']}:
         raise CompetitionError('追加 Run 须复用本轮题目 ID')
-    chosen = _template(template or snapshot.get('template', {}), snapshot['mode'])
+    chosen = _template(template or snapshot.get('template', {}), snapshot['mode'], frozen=not bool(template))
     with db.transaction() as conn:
         index = conn.execute('SELECT COALESCE(MAX(repeat_index),0)+1 FROM eval_results'
                              ' WHERE eval_id=? AND challenge_id=?', (round_id, challenge_id)).fetchone()[0]
@@ -268,6 +282,8 @@ def get_round(round_id: str) -> dict:
         if r['run_id']:
             from . import compute
             item['cost'] = compute.costs(r['run_id'])
+            from . import model_usage
+            item['model_cost'] = model_usage.summarize(r['run_id'])
         item['next_action'] = ('继续授权内研究' if item['phase'] == 'running' else
                                '等待资源名额' if item['phase'] == 'queued' else item['blocked_reason'])
         items.append(item)
@@ -303,6 +319,7 @@ async def advance_round(controller, evaluation) -> None:
                 # Freeze note and round link without creating capability restrictions.
                 state = json.loads(db.query_one('SELECT config_snapshot FROM runs WHERE id=?', (run['id'],))['config_snapshot'])
                 state['competition'] = {'round_id': rid, 'item_id': item['id'], 'solver_note': template['solver_note'],
+                                        'solver_entry': template.get('solver_entry'),
                                         'challenge_snapshot': next(e.get('challenge_snapshot') for e in snapshot['entries'] if e['challenge_id'] == item['challenge_id'])}
                 db.execute('UPDATE runs SET config_snapshot=? WHERE id=?', (_dump(state), run['id']))
             phase = run['phase']

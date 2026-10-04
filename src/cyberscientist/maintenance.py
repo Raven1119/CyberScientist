@@ -210,6 +210,9 @@ async def run_post_review(controller, run_id: str) -> None:
         error = '关机或进程中断；已开始的模型调用不自动重发'
         raise
     except Exception as exc:
+        from .model_providers import record_throttle
+        if 'settings' in locals():
+            record_throttle(settings['brain'], exc)
         error = strip_secrets(str(exc))[:500]
     finally:
         if brain is not None and session is not None:

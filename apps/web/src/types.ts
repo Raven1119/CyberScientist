@@ -11,11 +11,14 @@ export interface SettingsStatus {
   prime_authentication: string
 }
 
+export interface SolverEntry extends ModelChoice { id: string; name: string; note?: string }
+
 export interface Settings {
   schema_version: number
   revision: number
   app: { host: string; port: number; mode: string; data_dir: string }
   brain: {
+    provider?: string
     runtime: string
     executable: string
     model_id: string
@@ -23,11 +26,16 @@ export interface Settings {
     auth_mode: string
   }
   executor: {
+    provider?: string
     runtime: string
     executable: string
     model_id: string
     reasoning_effort: ReasoningEffort
   }
+  reviewer?: ModelChoice & { executable?: string }
+  post_review?: ModelChoice & { executable?: string }
+  solver_roster?: SolverEntry[]
+  model_pricing?: Record<string, unknown>
   prime: {
     executable: string
     llm_profile_id: string
@@ -128,6 +136,8 @@ export interface ChallengeDetail extends ChallengeSummary {
 }
 
 export interface ModelChoice {
+  provider?: string
+  note?: string
   runtime: string
   model_id: string
   reasoning_effort: ReasoningEffort
