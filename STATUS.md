@@ -2,6 +2,8 @@
 
 ## 已实现
 
+- CS-UP-08 W0：Lightchaser 第一目标与 D-28–D-41 已写入设计文档，D-07/D-23 保留原文并标注替代关系。
+
 - CS-UP-07 W1 A–D：取消未验证环境的Run创建前置门；首帧与只读工具提供授权剩余时间、评分耗时声明/可匹配实测、环境身份/公开镜像观察、网络未知或已观察状态、CPU报价与费用估算。执行器prepare/受控exec/register路径按后端计划、ZIP哈希、原生命令/回执哈希、退出码、单JSON及同次环境身份登记executor_verified；缓存、F1对账和封存绑定保留来源。普通工具失败即时返回事实，最终评分及提交阻塞通过原持久反馈队列交回同一执行器，不按失败次数结束Run。
 
 - CS-UP-07通用额度与审计：困难层新评测采用180分钟/20Job/4沙箱并发/600沙箱分钟/CPU≤16核/50元估算上限，共享原子金额预约；unknown占用原额度、不自动重发，但不封锁有余量的其他明确新操作。科学依赖预检、大输入提示仅为事实，环境安装由执行器决定。冻结后端commit及代码哈希入评测与每个Run，前端显示正式分来源与冻结版本，旧评测保留旧授权。迁移仅加列/表，事前SQLite备份在忽略目录。
@@ -80,6 +82,8 @@
 - CS-SB-01 稀疏输入与唤醒修复：可选短研究摘要独立存储；新 Run 普通检查点不唤醒 shadow，Job/Trial 研究级重复状态按 ID 去重。详见 `docs/SPARSE_BRAIN_INPUT_WAKE_FIX_2026-09-24.md`。
 
 ## 已实际验证
+
+- CS-UP-08 W0：HEAD/main 与工作区已核对；fallback-0 指向 5940418 并已推送；SQLite backup API 一致性备份已留在 .package-checks/cs-up-08。设计验收脚本、compileall、git diff --check 通过；前端 42 passed，构建通过。完整后端基线回归正在执行，不先写最终数字。
 
 - CS-UP-07 W2最终收尾（2026-10-03 19:13 UTC／北京时间10月4日03:13）：用户要求现在收尾，原生控制接口结束已由大脑暂停的run_cc0251a839，HTTP200/status confirmed，#1552终止、#1553会话abort确认；原截止未到，未记为预算耗尽。原fast组complete、hard组complete_with_failures，10项全部终态、6项正式科学分（abc两次20/system、FigQA四次100/system），两次Lean与两次Matchgate均unknown。最后Run墙钟10249.972秒、1个Finished Job、2个unknown预约、沙箱0；全部原始证据保留，未追加Run/评分或重发未知操作。
 
