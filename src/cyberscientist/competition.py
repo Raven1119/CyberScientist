@@ -49,6 +49,34 @@ def _import(slug: str) -> str:
     return cid
 
 
+def _challenge_snapshot(cid: str) -> dict:
+    """Bind freshly observed public details to this round while retaining CID."""
+    from . import mailbox_platform
+    challenge = db.query_one('SELECT * FROM challenges WHERE id=?', (cid,))
+    value = {'id': cid, 'title': challenge['title'], 'content': challenge['content'],
+             'content_sha256': challenge['content_hash'],
+             'resources': json.loads(challenge['resources_json'] or '[]'),
+             'platform': json.loads(challenge['platform_snapshot_json'] or '{}'),
+             'observed_at': db.utcnow(), 'source': 'existing_local'}
+    if challenge['platform_challenge_id'] and not challenge['is_demo']:
+        settings = config.load_settings()['playground']
+        try:
+            data = mailbox_platform.fetch_platform_challenge(settings['base_url'], challenge['platform_challenge_id'],
+                       config.resolve_secret(settings.get('token_secret_ref') or ''))
+            content = (data.get('content') or '').strip()
+            if not content:
+                raise CompetitionError('当前公开题面为空')
+            value.update(title=data.get('title_zh') or data.get('title') or challenge['title'], content=content,
+                         content_sha256=hashlib.sha256(content.encode()).hexdigest(),
+                         resources=data.get('resources') or [], source='current_public_get',
+                         platform={key:data.get(key) for key in ('status','roundStartAt','roundEndAt','scoring')})
+        except Exception as exc:
+            value.update(source='existing_snapshot_current_refresh_unknown', refresh_error=type(exc).__name__)
+    from . import datasets
+    datasets.register_resources(cid, value['resources'])
+    return value
+
+
 def import_round(challenge_ids: list[str] | None = None, *, season: str = '',
                  round_seq: int | None = None, label: str = '', mode: str = 'connected') -> dict:
     if mode not in ('connected', 'demo'):
@@ -58,7 +86,10 @@ def import_round(challenge_ids: list[str] | None = None, *, season: str = '',
     if not isinstance(slugs, list) or not slugs or len(slugs) > 100 or any(
             not isinstance(s, str) or not s.strip() or len(s) > 250 for s in slugs):
         raise CompetitionError('提供赛季和轮次，或 1–100 个题目 ID')
-    entries = [{'challenge_id': _import(s)} for s in dict.fromkeys(slugs)]
+    entries = []
+    for slug in dict.fromkeys(slugs):
+        cid = _import(slug)
+        entries.append({'challenge_id': cid, 'challenge_snapshot': _challenge_snapshot(cid)})
     rid = 'round_' + uuid.uuid4().hex[:12]
     now = db.utcnow()
     snapshot = {'schema': 'cyberscientist-competition/v1', 'mode': mode, 'entries': entries,
@@ -88,13 +119,12 @@ async def triage(round_id: str, controller, allow_model_calls: bool = False) -> 
         raise CompetitionError('分诊调用模型需显式授权')
     settings = config.load_settings()
     settings['app']['mode'] = snapshot['mode']
-    owner = 'triage-' + round_id
+    owner = 'triage-' + round_id + '-' + uuid.uuid4().hex
     brain = controller._make_brain(settings)
     session = None
-    with db.transaction() as conn:
-        resource_coordinator.reserve_sessions_tx(conn, owner, {'brain': settings['brain']})
+    resource_coordinator.reserve_auxiliary(owner, settings)
     try:
-        scratch = config.WORKSPACE_DIR / 'rounds' / round_id / 'triage'
+        scratch = config.WORKSPACE_DIR / 'rounds' / round_id / owner
         scratch.mkdir(parents=True, exist_ok=True)
         session = await brain.open({'working_directory': str(scratch)})
         for item in db.query('SELECT * FROM eval_results WHERE eval_id=?', (round_id,)):
@@ -107,8 +137,7 @@ async def triage(round_id: str, controller, allow_model_calls: bool = False) -> 
             packet = {'protocol': 'role_task', 'task': 'competition_triage',
                       'instructions': '只读题面、资源和公开分布，评估难度和预计耗时/花费，给出模型建议及理由。'
                                       '简单题建议 deepseek-flash；难题建议 gpt-6.1-sol。建议不是授权。',
-                      'challenge': {'title': challenge['title'], 'content': challenge['content'],
-                                    'resources': json.loads(challenge['resources_json'] or '[]')},
+                      'challenge': next(e.get('challenge_snapshot') for e in snapshot['entries'] if e['challenge_id'] == item['challenge_id']),
                       'public_scores': scores,
                       'output_contract': {'difficulty': 'easy|medium|hard|unknown',
                                           'estimated_minutes': 'number|null', 'estimated_cost_cny': 'number|null',
@@ -124,7 +153,11 @@ async def triage(round_id: str, controller, allow_model_calls: bool = False) -> 
                        (_dump(result), db.utcnow(), item['id']))
     finally:
         try:
-            if session: await brain.close(session)
+            if session:
+                try: await brain.close(session)
+                except Exception as exc:
+                    resource_coordinator.close_failed(owner, exc)
+                    raise
         finally: resource_coordinator.release_sessions(owner)
     return get_round(round_id)
 
@@ -268,7 +301,8 @@ async def advance_round(controller, evaluation) -> None:
                 db.execute("UPDATE eval_results SET run_id=?,status='created' WHERE id=?", (run['id'], item['id']))
                 # Freeze note and round link without creating capability restrictions.
                 state = json.loads(db.query_one('SELECT config_snapshot FROM runs WHERE id=?', (run['id'],))['config_snapshot'])
-                state['competition'] = {'round_id': rid, 'item_id': item['id'], 'solver_note': template['solver_note']}
+                state['competition'] = {'round_id': rid, 'item_id': item['id'], 'solver_note': template['solver_note'],
+                                        'challenge_snapshot': next(e.get('challenge_snapshot') for e in snapshot['entries'] if e['challenge_id'] == item['challenge_id'])}
                 db.execute('UPDATE runs SET config_snapshot=? WHERE id=?', (_dump(state), run['id']))
             phase = run['phase']
             if phase == 'created':
@@ -276,12 +310,16 @@ async def advance_round(controller, evaluation) -> None:
                     auth = {'max_model_turns': 0, 'max_jobs': 0, 'max_submissions': 0,
                             'max_sandboxes': 0, 'max_sandbox_minutes': 0, 'max_run_minutes': 0,
                             'allow_model_calls': snapshot['mode'] == 'demo'} | template['authorization']
-                    content = db.query_one('SELECT content FROM challenges WHERE id=?', (item['challenge_id'],))['content']
+                    details = next(e.get('challenge_snapshot') for e in snapshot['entries'] if e['challenge_id'] == item['challenge_id'])
+                    content = details['content'] if details else db.query_one('SELECT content FROM challenges WHERE id=?', (item['challenge_id'],))['content']
                     controller.authorize(run['id'], snapshot['mode'], note='用户确认的比赛轮次模板', objective=content, **auth)
                 await controller.start_async(run['id'])
                 db.execute('UPDATE eval_results SET error=NULL,retry_at=NULL WHERE id=?', (item['id'],))
             elif phase == 'recovering':
-                await controller.control(run['id'], 'resume', None, f"round-resume-{run['id']}-{run['state_version']}")
+                recovery = db.query_one("SELECT seq FROM events WHERE run_id=? AND type IN"
+                                        " ('run.needs_recovery','run.reopened') ORDER BY seq DESC LIMIT 1", (run['id'],))
+                episode = recovery['seq'] if recovery else run['state_version']
+                await controller.control(run['id'], 'resume', None, f"round-resume-{run['id']}-{episode}")
             elif phase == 'paused' and item['queue_paused']:
                 await controller.control(run['id'], 'resume', None, f"round-unpause-{run['id']}-{run['state_version']}")
                 db.execute('UPDATE eval_results SET queue_paused=0 WHERE id=?', (item['id'],))

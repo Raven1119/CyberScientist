@@ -199,3 +199,7 @@ CS-UP-06 候选对账允许评分器额外声明 `comparison_contract`：`higher
 `research_local_score` 增加 prepare_job/register_job。prepare_job 返回冻结目录和精确命令；register_job 以 execution_operation_id 指向本 Trial 完成 Job，由后端下载、校验单 JSON 与 exit_code 后登记。调用者不能提交 score 或 receipt。unknown Job 十分钟后释放并发但继续占总数和金额。
 
 `research_environment` 的 save/list/reconcile 对应 `/api/v1/tools/environment`。save 需要 max_environment_saves 显式数量授权、公开软件 Dockerfile、recipe、smoke_command；金额上限存在且价格未知时拒绝，unknown 不重发。可用构建回执生成 D-05 环境事实。新列／表全部是加法迁移。
+
+### CS-UP-08 经验只读工具
+
+`POST /api/v1/tools/experience` 接受 action=list/read 与 experience_id；两种原生角色可读全局及当前题内有效版本，候选不注入。read 返回此次交付上下文和不可变修订身份。帧与 Trial 提供全索引、相关正文和哈希；默认总预算 24,000 字符。

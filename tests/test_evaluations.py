@@ -76,7 +76,7 @@ class FakeController:
                    (db.utcnow(), reason, run_id))
 
 
-def test_evaluation_records_frozen_backend_and_declines_different_runtime(monkeypatch, tmp_path):
+def test_evaluation_records_backend_without_restricting_ordinary_runtime(monkeypatch, tmp_path):
     from cyberscientist import backend_identity
     _catalog(monkeypatch, tmp_path)
     evaluation = evaluations.create_evaluation('fast', 2, 'frozen-fake')
@@ -85,10 +85,10 @@ def test_evaluation_records_frozen_backend_and_declines_different_runtime(monkey
     assert expected['commit'] and len(expected['runtime_sha256']) == 64
     monkeypatch.setattr(backend_identity, 'matches', lambda identity: False)
     controller = FakeController()
-    with pytest.raises(evaluations.EvaluationError, match='冻结版本不一致'):
-        asyncio.run(evaluations.advance(controller))
-    assert not controller.starts
-    assert not db.query('SELECT * FROM runs')
+    asyncio.run(evaluations.advance(controller))
+    assert controller.starts
+    assert all(db.eval_mode(rid) is None for rid in controller.starts)
+    assert json.loads(db.query_one('SELECT config_json FROM eval_runs')[0])['backend'] == expected
 
 
 def _fake_score(run_id: str, result_id: str):
@@ -193,13 +193,9 @@ def test_two_by_two_evaluation_and_resume(monkeypatch, tmp_path):
     assert packet['authorization']['max_sandboxes'] == 2
     assert packet['authorization']['max_sandbox_minutes'] == 60
     assert packet['authorization']['allow_sandbox_gpu'] is False
-    assert packet['evaluation_handoff'] == {
-        'platform_submission_allowed': False, 'experience_write_allowed': False,
-        'local_scoring_after_finish': True,
-        'agent_scoring_sandbox_required_for_finish': False,
-        'executor_verified_score_accepted': True,
-        'scoring_failure_returns_to_executor': True,
-        'environment_preparation': 'executor'}
+    assert 'evaluation_handoff' not in packet
+    assert db.eval_mode(first_run['id']) is None
+    assert packet['authorization']['max_submissions'] == 0
     second = FakeController()       # process restart: persisted queue, new controller
     for _ in range(4):
         asyncio.run(evaluations.advance(second))
@@ -696,3 +692,18 @@ def test_one_command_eval_launches_existing_backend(monkeypatch, capsys):
     assert len(seen) == 2
     assert json.loads(seen[1].data)['suite'] == 'fast'
     assert 'eval_fake' in capsys.readouterr().out
+
+
+def test_ordinary_round_report_reads_verified_executor_score_without_legacy_operation_name(monkeypatch,tmp_path):
+    _catalog(monkeypatch,tmp_path)
+    created=evaluations.create_evaluation('fast',1,'ordinary-scoring')
+    ctl=FakeController();asyncio.run(evaluations.advance(ctl))
+    result=evaluations.get_evaluation(created['id'])['results'][0];rid=result['run_id']
+    _fake_score(rid,result['id'])
+    db.execute("UPDATE local_scores SET sandbox_operation_id='executor-ordinary-score',score_source='executor_verified' WHERE run_id=?",(rid,))
+    db.execute("UPDATE runs SET phase='finished',ended_at=? WHERE id=?",(db.utcnow(),rid))
+    evaluations._finish_result(result['id'],rid)
+    report=evaluations.get_evaluation(created['id'])['results'][0]['result']
+    assert report['science_score']==100 and report['science_source']=='executor_verified'
+    assert report['backend']['commit'] and report['challenge_content_sha256']=='eval_a'
+    assert report['science_selection']=='latest_verified'

@@ -161,3 +161,62 @@ def test_curation_sessions_share_provider_capacity_and_release_it():
     resource_coordinator.release_sessions('curation-one')
     resource_coordinator.reserve_auxiliary('curation-two', settings)
     assert resource_coordinator.status()['sessions'] == [{'provider': 'codex', 'used': 1}]
+
+
+@pytest.mark.asyncio
+async def test_overlapping_triage_sessions_have_distinct_leases_and_respect_provider_cap(monkeypatch):
+    from cyberscientist.brains.base import BrainEvent
+    challenges(1)
+    rnd=competition.import_round(['c0'],mode='connected')
+    settings=config.load_settings();settings['brain']['runtime']='codex'
+    settings['resources']['provider_sessions']['codex']=1;config.save_settings(settings)
+    entered=asyncio.Event();release=asyncio.Event()
+    class Brain:
+        async def open(self,spec):entered.set();return 'native'
+        async def review(self,session,packet):
+            await release.wait()
+            yield BrainEvent('task_result',{'result':{'difficulty':'easy','reason':'fixture'}})
+        async def close(self,session):pass
+    ctl=RunController();monkeypatch.setattr(ctl,'_make_brain',lambda settings:Brain())
+    first=asyncio.create_task(competition.triage(rnd['id'],ctl,True));await entered.wait()
+    with pytest.raises(resource_coordinator.ResourceWait):await competition.triage(rnd['id'],ctl,True)
+    assert db.query_one('SELECT COUNT(*) FROM model_session_leases')[0]==1
+    release.set();await first
+    assert not db.query('SELECT * FROM model_session_leases')
+
+
+def test_reimport_binds_new_public_details_to_round_without_changing_topic_identity(monkeypatch):
+    from cyberscientist import mailbox_platform
+    challenges(1)
+    db.execute("UPDATE challenges SET platform_challenge_id='public-fixture',is_demo=0 WHERE id='c0'")
+    monkeypatch.setattr(mailbox_platform,'fetch_platform_challenge',lambda *args:{'content':'第一版本','title':'公共题','resources':[]})
+    first=competition.import_round(['public-fixture'])
+    monkeypatch.setattr(mailbox_platform,'fetch_platform_challenge',lambda *args:{'content':'已修正的第二版本','title':'公共题','resources':[]})
+    second=competition.import_round(['public-fixture'])
+    def snapshot(rid):return json.loads(db.query_one('SELECT config_json FROM eval_runs WHERE id=?',(rid,))[0])['entries'][0]
+    a,b=snapshot(first['id']),snapshot(second['id'])
+    assert a['challenge_id']==b['challenge_id']=='c0'
+    assert a['challenge_snapshot']['content']=='第一版本'
+    assert b['challenge_snapshot']['content']=='已修正的第二版本'
+    assert a['challenge_snapshot']['content_sha256']!=b['challenge_snapshot']['content_sha256']
+
+
+def test_frozen_solver_note_and_public_resources_reach_pi_executor_and_data_tools(monkeypatch):
+    from cyberscientist import datasets,mailbox_platform
+    challenges(1)
+    db.execute("UPDATE challenges SET platform_challenge_id='public-fixture',is_demo=0 WHERE id='c0'")
+    resource={'type':'url','url':'https://example.org/new-data.zip','role':'task-public-data'}
+    monkeypatch.setattr(mailbox_platform,'fetch_platform_challenge',lambda *args:{'content':'修正题面','title':'新标题','resources':[resource]})
+    rnd=competition.import_round(['public-fixture'],mode='demo')
+    competition.confirm(rnd['id'],template() | {'solver_note':'便宜求解者，需要明确公式'})
+    ctl=FakeController();ctl.throttled=True
+    asyncio.run(evaluations.advance(ctl))
+    run=db.query_one('SELECT * FROM runs')
+    packet=ctl._lifecycle_packet(run,'run_start',sparse=True)
+    assert packet['solver_note']=='便宜求解者，需要明确公式'
+    assert packet['feedback']['solver_note']==packet['solver_note']
+    assert packet['challenge']['content']=='修正题面'
+    assert json.loads(ctl._challenge_for_run(run)['resources_json'])==[resource]
+    key=datasets.resource_key(resource)
+    assert key and datasets._resource('c0',key,run['id'])==resource
+    assert datasets.status('c0')['items']

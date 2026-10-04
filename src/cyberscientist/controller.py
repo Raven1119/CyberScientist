@@ -820,6 +820,9 @@ class RunController:
                     "notice": "保留原授权、运行时钟与 Job 账本；未自动重提或改写远端任务"})
             return {"status": "confirmed", "detail": "已进入 recovering；请恢复原 Run"}
         if action == "resume":
+            from . import power
+            if power.shutdown_requested():
+                raise ControllerError('SHUTDOWN', '安全关机已关闭新会话；后端完成启动对账后才能恢复')
             self._require_model_authorization(run_id)
             if run["phase"] == "recovering":
                 from . import resource_coordinator
@@ -1731,7 +1734,9 @@ class RunController:
                     try:
                         await runtime.close(session)
                     except Exception as exc:
-                        db.append_event(run_id,"controller","run.cleanup_error",{"error":str(exc)[:200]})
+                        from . import resource_coordinator
+                        resource_coordinator.close_failed(run_id, exc)
+                        db.append_event(run_id,"controller","run.cleanup_error",{"error":_redact(str(exc))[:200]})
             with db.transaction() as conn:
                 collab.revoke_run_tokens(conn,run_id)
                 conn.execute('DELETE FROM model_session_leases WHERE owner=?', (run_id,))
@@ -2732,7 +2737,8 @@ class RunController:
                 try:
                     await maintenance_brain.close(maintenance_session)
                 except Exception as exc:  # noqa: BLE001
-                    error_msg = error_msg or f"维护会话关闭失败: {str(exc)[:200]}"
+                    resource_coordinator.close_failed('maintenance-' + req['id'], exc)
+                    error_msg = error_msg or f"维护会话关闭失败: {_redact(str(exc))[:200]}"
             from . import resource_coordinator
             resource_coordinator.release_sessions('maintenance-' + req['id'])
         if raw_parts:
@@ -3135,6 +3141,7 @@ class RunController:
             },
             **observation.authority_facts(run_id),
             "experience_manifest": self._memory_manifest(run, settings),
+            "experience_index": experience_context.index(run["challenge_id"]),
         }
         from . import local_scoring
         packet.update(local_scoring.latest_final_check(run_id))
@@ -3144,6 +3151,9 @@ class RunController:
             packet["run_objective"] = run["objective_md"]
             packet["current_trial_goal"] = trial["goal"] if trial else None
             packet["pending_intent"] = json.loads(run["pending_action_json"]) if run["pending_action_json"] else None
+        round_details = json.loads(run['config_snapshot']).get('competition', {}).get('challenge_snapshot')
+        if round_details:
+            packet['round_challenge_snapshot'] = round_details
         packet["data_status"] = datasets.status(run["challenge_id"])["items"]
         # 题目信息进帧：大脑开局必须亲自核实任务要素（数据/工具链/评分契约），
         # 不再只能依赖执行器转述（2026-09-19：大脑因帧内无题面，
@@ -3182,6 +3192,9 @@ class RunController:
             from_seq=sup["covered_seq"]+1,through_seq=self._last_seq(run_id),
             shadow_cfg=self._shadow_cfg(run),run_defaults=defaults,
             sparse=sparse)
+        frozen_challenge = json.loads(run['config_snapshot']).get('competition', {}).get('challenge_snapshot')
+        if frozen_challenge:
+            packet['challenge'].update(title=frozen_challenge['title'], content=frozen_challenge['content'], resources=frozen_challenge['resources'])
         packet["feedback"] = feedback
         packet["experience_manifest"] = feedback["experiences"]
         packet["experience_context_id"] = feedback["experience_context_id"]
@@ -3192,11 +3205,20 @@ class RunController:
                            (run_id,))
         return row["s"]
 
+    @staticmethod
+    def _challenge_for_run(run):
+        current = dict(db.query_one('SELECT title,content,resources_json,platform_snapshot_json FROM challenges WHERE id=?', (run['challenge_id'],)))
+        frozen = json.loads(run['config_snapshot']).get('competition', {}).get('challenge_snapshot')
+        if frozen:
+            current.update(title=frozen['title'], content=frozen['content'], resources_json=json.dumps(frozen['resources'], ensure_ascii=False),
+                           platform_snapshot_json=json.dumps(frozen['platform'], ensure_ascii=False))
+        return current
+
     def _memory_manifest(self, run: Any, settings: dict[str, Any]) -> list[dict[str, Any]]:
         marker = db.eval_mode(run["id"])
         if marker:
             return marker.get("experience_manifests", {}).get("brain", [])
-        return experience_context.select(run["challenge_id"],role='brain')
+        return experience_context.select(run["challenge_id"], goal=experience_context.run_goal(run['id']), role='brain')
 
     @staticmethod
     def _active_trial_id(run: Any) -> str | None:
@@ -3397,7 +3419,7 @@ class RunController:
                              "提交包命名 result_package.zip（真实 ARM 包，包含研究轨迹与诚实结果）；"
                              "该目录允许写入。用检查点报告交付，交由控制器提交。\n"
                              f"本轮授权与用户目标：{json.dumps(packet.get('authorization'), ensure_ascii=False)}\n"
-                             f"题目与平台契约：{json.dumps(dict(db.query_one('SELECT title,content,resources_json,platform_snapshot_json FROM challenges WHERE id=?', (run['challenge_id'],))), ensure_ascii=False)}\n"
+                             f"题目与平台契约：{json.dumps(self._challenge_for_run(run), ensure_ascii=False)}\n"
                              f"产物路径事实（题面提取与评分器验证范围）：{json.dumps(self._artifact_facts(run['challenge_id']), ensure_ascii=False)}\n"
                              f"预置环境事实：{json.dumps(observation.authority_facts(run_id).get('runtime_environments', []), ensure_ascii=False)}\n"
                              f"运行事实（时间、环境、网络、价格及剩余额度）：{json.dumps(observation.authority_facts(run_id).get('operating_facts'), ensure_ascii=False)}\n"
@@ -3978,6 +4000,9 @@ class RunController:
                 "challenge_ids": challenge_ids,
                 "summary": decision.get("summary", "")[:500],
                 "proposals_applied": applied}
+        except asyncio.CancelledError:
+            self._global_curation = {'state': 'failed', 'finished_at': db.utcnow(), 'error': '安全关机中断整理；不会自动重复调用模型'}
+            raise
         except Exception as exc:  # noqa: BLE001
             log.exception("全局经验整理失败")
             self._global_curation = {"state": "failed",
@@ -3991,8 +4016,8 @@ class RunController:
             if session is not None and brain is not None:
                 try:
                     await brain.close(session)
-                except Exception:  # noqa: BLE001
-                    pass
+                except Exception as exc:
+                    resource_coordinator.close_failed(lease_owner, exc)
             from . import resource_coordinator
             resource_coordinator.release_sessions(lease_owner)
 
@@ -4088,6 +4113,13 @@ class RunController:
                        (json.dumps(result, ensure_ascii=False), db.utcnow(), request_id))
             db.append_event(row['run_id'], 'controller', 'experience.curation_done',
                             {'curation_id': request_id, 'proposals_applied': len(ids)})
+        except asyncio.CancelledError:
+            error = '安全关机中断整理；不会自动重复调用模型'
+            db.execute("UPDATE curation_requests SET status='failed',error=?,updated_at=? WHERE id=?",
+                       (error, db.utcnow(), request_id))
+            db.append_event(row['run_id'], 'controller', 'experience.curation_failed',
+                            {'curation_id': request_id, 'error': error})
+            raise
         except Exception as exc:
             error = _redact(str(exc))[:500]
             db.execute("UPDATE curation_requests SET status='failed',error=?,updated_at=? WHERE id=?",
@@ -4098,7 +4130,8 @@ class RunController:
             if brain is not None and session is not None:
                 try:
                     await brain.close(session)
-                except Exception:
+                except Exception as exc:
+                    resource_coordinator.close_failed('curation-' + request_id, exc)
                     log.exception('Curation session close failed')
             from . import resource_coordinator
             resource_coordinator.release_sessions('curation-' + request_id)

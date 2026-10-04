@@ -1,8 +1,10 @@
 # 当前状态（2026-10-04）
 
-进度：2026-10-04 22:06 北京时间 · CS-UP-08 · W2 完成并推送 · commit f4396caa4c3dbdd8ddc1b2484561e257799f7854
+进度：2026-10-04 22:22 北京时间 · CS-UP-08 · W3 完成并推送 · commit 61e48198b411d7c9637c6e94a88d5819112eaa91
 
 ## 已实现
+
+- CS-UP-08 W4：每个角色提供全部有效经验索引，按题面／Run目标／Trial目标进行中文片段与技术词排序，默认及工作区新 Run 注入预算 24,000 字符；原生只读经验工具可读最新修订并冻结采用上下文。五份环境／传输／路径／评分配方保持全局候选，证据与失败边界保留。
 
 - CS-UP-08 W3：unknown Job 十分钟后不占并发，保留总数和金额预约并继续对账；Job 固定评分命令／系统下载 ZIP 或单 JSON／哈希与身份／退出码核验后登记 executor_verified。新增环境保存数量授权、只含公开软件的私有镜像构建／回执对账／自动环境事实；未知价格不冒充零，金额硬上限存在时拒绝无法估价的构建。六个 v3 缺陷分别修复：Python3.10 哈希、冻结模式和远端恢复、预检隔离、有效资源信息、Trial 延后与原生 turn 归属、本机拒绝的远端效应与 operation_id。
 
@@ -90,6 +92,8 @@
 - CS-SB-01 稀疏输入与唤醒修复：可选短研究摘要独立存储；新 Run 普通检查点不唤醒 shadow，Job/Trial 研究级重复状态按 ID 去重。详见 `docs/SPARSE_BRAIN_INPUT_WAKE_FIX_2026-09-24.md`。
 
 ## 已实际验证
+
+- CS-UP-08 W4：`.venv/bin/pytest -q` 最终实测 894 passed（452.84 秒），修复核心专项64 passed、队列／报告44 passed、目标／额度事实5 passed；前端45 passed 与 `npm run build` 通过，compileall、diff check、暂存秘密与私有文件扫描通过。三题真实分诊完成，全部 finished；正式本地科学分 FigQA100/100、ABC20（system），提交0、原生租约0，五只本卡沙箱均确认 deleted。ABC两Job为Finished/Failed，后者暴露输入目录缺陷；修复只以应用夹具验过，未追加真实Job。真实回执自动生成环境事实已生效。同一真实 Run 暂停 45 秒，剩余时长差 0，恢复确认且原生会话 ID 保持。
 
 - CS-UP-08 W3：相关后端 171 passed；有界复核 79 passed、原生／队列 86 passed、环境／工具 15 passed，最终环境／Job 类型检查 10 passed。前端 44 passed／构建通过，compileall 与 diff --check 通过；六个 v3 缺陷均有对应 fake 复现。Bohrium version/help、Dockerfile check 和私有镜像只读分页真实返回成功；HTTP 与业务状态分开，尚无真实构建／科学 Job 出分证明。
 
@@ -321,3 +325,8 @@
 - CS-UP-03 H3 原 `sub_5f0ec08d05` 仍是 `unknown/create_sent`，无 Attempt ID、无 confirmed 分且预留未释放。带失败邮箱凭据的 `GET /attempts?author=<own-id>` 与匿名结果一致，均未包含私有 draft；公开列表不能充当权威对账。需平台按原账号、题目和创建时间确认是否产生私有 draft，才可对原意图释放预留或重试。H5/H6 的明确无存储回执仅适用于各自请求；H7 成功也不能为 H3 对账。额外 CPU Job 对此无诊断价值。
 - CS-UP-03 W3–W5：H7 已得到一次真实平台展示分，但当前 abc 回执只有五项 scorecard，没有任务卡假设的独立 harbor/trace 分项，且本 Run 因原 unknown 预留已用满两次提交额度并结束。W3 的原包重交及 W4–W5 的受控评分实验尚不能在这个 Run 内继续；备选 MCM 需要另行明确数据物化与 Run 授权边界，不能由本次 abc 回执推断其评分契约。
 - 此前 PR-3 登录与单次数据下载授权已用完，后续数据服务访问仍须单独授权。本轮只读历史 Job 诊断已完成；未计划额外请求。
+
+## 待用户处理
+
+- 五份 CS-UP-08 全局配方候选需在前端审批，施工没有代为批准。
+- Bohrium 私有镜像构建两次均 HTTP200／业务148888（rpc error），没有确认资源 ID；需核查平台构建能力。额度已用尽，未扩额或重复原操作。

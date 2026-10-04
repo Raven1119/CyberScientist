@@ -77,7 +77,7 @@ def register_resources(challenge_id: str, resources: list[dict[str, Any]]) -> No
                           expected, status, now, now))
 
 
-def _resource(challenge_id: str, key: str) -> dict[str, Any]:
+def _resource(challenge_id: str, key: str, run_id: str | None = None) -> dict[str, Any]:
     challenge = db.query_one("SELECT resources_json FROM challenges WHERE id=?", (challenge_id,))
     if not challenge:
         raise DataError("NOT_FOUND", "题目不存在")
@@ -85,6 +85,11 @@ def _resource(challenge_id: str, key: str) -> dict[str, Any]:
         resources = json.loads(challenge["resources_json"] or "[]")
     except ValueError:
         resources = []
+    if run_id:
+        run = db.query_one('SELECT config_snapshot FROM runs WHERE id=?', (run_id,))
+        frozen = json.loads(run['config_snapshot']).get('competition', {}).get('challenge_snapshot') if run else None
+        if frozen:
+            resources = frozen['resources']
     for item in resources:
         if isinstance(item, dict) and resource_key(item) == key:
             return item
@@ -223,7 +228,7 @@ def materialize(challenge_id: str, key: str, operation_id: str,
                 run_id: str | None = None) -> dict[str, Any]:
     if not re.fullmatch(r"[A-Za-z0-9_-]{1,100}", operation_id or ""):
         raise DataError("INVALID_OPERATION", "需要稳定安全的 operation_id")
-    resource = _resource(challenge_id, key)
+    resource = _resource(challenge_id, key, run_id)
     kind = key.split(":", 1)[0]
     with db.transaction() as conn:
         # A Run-scoped request must never inherit a prior request or another Run's grant.

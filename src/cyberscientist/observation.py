@@ -73,6 +73,10 @@ def authority_facts(run_id: str) -> dict[str, Any]:
     result: dict[str, Any] = {'authorization': values,
                               'runtime_environments': runtime_environments.facts(),
                               'operating_facts': runtime_facts.facts(run_id)}
+    run = db.query_one('SELECT config_snapshot FROM runs WHERE id=?', (run_id,))
+    template = json.loads(run['config_snapshot']).get('competition', {}) if run else {}
+    result['solver_note'] = template.get('solver_note', '')
+    result['round_challenge_snapshot'] = template.get('challenge_snapshot')
     if db.eval_mode(run_id):
         result['evaluation_handoff'] = {
             'platform_submission_allowed': False,
@@ -380,6 +384,7 @@ def build_frame(run_id: str, *, mode: str, frame_id: str,
         "brain_private_note_md": note,
         "watchlist": sup["watchlist"][:3],
         "experiences": exps,
+        "experience_index": context.get("index", []),
         "budget": {
             "remaining_shadow_reviews": max(
                 0, shadow_cfg.get("max_reviews", 8) - sup["reviews_used"]),

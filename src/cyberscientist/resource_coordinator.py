@@ -1,7 +1,11 @@
 """Atomic global admission over the existing local resource ledgers."""
 from __future__ import annotations
 
+import asyncio
+import json
 from collections import Counter
+
+_auxiliary_tasks: dict[str, asyncio.Task] = {}
 from . import config, db
 
 
@@ -14,6 +18,9 @@ def provider(choice: dict) -> str:
 
 
 def reserve_sessions_tx(conn, owner: str, choices: dict) -> None:
+    barrier = conn.execute("SELECT value FROM system_state WHERE key='shutdown_requested'").fetchone()
+    if barrier and barrier['value'] == '1':
+        raise ResourceWait('安全关机已关闭新会话，等待启动对账')
     limits = config.load_settings().get('resources', {}).get('provider_sessions', {})
     wanted = {role: provider(choice) for role, choice in choices.items()}
     for name in set(wanted.values()):
@@ -39,14 +46,27 @@ def reserve_sessions_tx(conn, owner: str, choices: dict) -> None:
 
 
 def release_sessions(owner: str) -> None:
+    _auxiliary_tasks.pop(owner, None)
     db.execute('DELETE FROM model_session_leases WHERE owner=?', (owner,))
 
 
 def reserve_auxiliary(owner: str, settings: dict, role: str = 'brain') -> None:
-    if settings['app']['mode'] != 'connected':
-        return
-    with db.transaction() as conn:
-        reserve_sessions_tx(conn, owner, {role: settings[role]})
+    from . import power
+    if power.shutdown_requested():
+        raise ResourceWait('安全关机已关闭新会话，等待启动对账')
+    if settings['app']['mode'] == 'connected':
+        with db.transaction() as conn:
+            reserve_sessions_tx(conn, owner, {role: settings[role]})
+    try:
+        task = asyncio.current_task()
+    except RuntimeError:
+        task = None
+    if task is not None:
+        _auxiliary_tasks[owner] = task
+
+
+def auxiliary_tasks() -> list[asyncio.Task]:
+    return [task for task in set(_auxiliary_tasks.values()) if not task.done()]
 
 
 def throttle(name: str, retry_at: str) -> None:
@@ -78,3 +98,12 @@ def status() -> dict:
             'sessions': [dict(r) for r in db.query('SELECT provider,COUNT(*) AS used'
                                                 ' FROM model_session_leases GROUP BY provider')],
             'rate_limits': [dict(r) for r in db.query('SELECT * FROM model_rate_limits')]}
+
+
+def close_failed(owner: str, exc: BaseException) -> None:
+    db.execute('INSERT OR REPLACE INTO system_state(key,value) VALUES(?,?)',
+               ('native_close_unknown:' + owner, json.dumps({'owner': owner, 'error': type(exc).__name__})))
+
+
+def close_unknowns() -> list[dict]:
+    return [json.loads(row['value']) for row in db.query("SELECT value FROM system_state WHERE key LIKE 'native_close_unknown:%'")]

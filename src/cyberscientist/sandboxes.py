@@ -239,7 +239,7 @@ def create(run_id: str, operation_id: str, request: dict, *, _session_id: str | 
         resource_coordinator.require_compute_slot_tx(conn, 'sandbox')
         eval_scoring = (run and run['phase'] == 'eval_scoring' and db.eval_mode(run_id))
         eval_retry = False
-        if (run and run['phase'] == 'finished' and db.eval_mode(run_id)
+        if (run and run['phase'] == 'finished'
                 and operation_id.startswith('eval-scorer-') and operation_id.endswith('-retry')):
             from . import evaluations
             eval_retry = evaluations.retry_authorized(

@@ -84,7 +84,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
                                        "prime": 10},
                   "max_concurrent_jobs": None, "max_concurrent_sandboxes": None},
     "memory": {"root": str(EXPERIENCE_DIR), "max_global_entries": 20,
-               "max_challenge_entries": 10, "max_injected_characters": 6000},
+               "max_challenge_entries": 10, "max_injected_characters": 24000},
 }
 
 

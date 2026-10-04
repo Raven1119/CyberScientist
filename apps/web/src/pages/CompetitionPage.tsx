@@ -12,6 +12,17 @@ type Item = { id: string; challenge_id: string; title: string; phase: string; pr
   trace_diagnostic: unknown; usage: unknown[]; cost: unknown; next_action: string | null }
 type Round = { id: string; label: string; status: string; items: Item[]; resources: { sessions: { provider: string; used: number }[]; rate_limits: unknown[] } }
 const choice = (model: string): Choice => ({ runtime: 'codex', model_id: model, reasoning_effort: 'xhigh' })
+function ModelFields({ label, role, value, onChange }: { label: string; role: 'brain' | 'executor'; value: Choice; onChange: (value: Choice) => void }) {
+  return <div className="form-grid">
+    <label>{label}提供方<select value={value.runtime} onChange={e => onChange({ ...value, runtime: e.target.value })}>
+      <option value="codex">Codex</option><option value="kimi">Kimi Code</option>{role === 'executor' && <option value="prime">Prime Agent</option>}
+    </select></label>
+    <label>{label}模型<input value={value.model_id} onChange={e => onChange({ ...value, model_id: e.target.value })} /></label>
+    <label>{label}思考强度<select value={value.reasoning_effort} onChange={e => onChange({ ...value, reasoning_effort: e.target.value })}>
+      {['low', 'medium', 'high', 'xhigh', 'max'].map(e => <option key={e}>{e}</option>)}
+    </select></label>
+  </div>
+}
 
 export default function CompetitionPage() {
   const { toast, demoMode } = useApp()
@@ -27,6 +38,13 @@ export default function CompetitionPage() {
   const [template, setTemplate] = useState<Template>({ model_config: { brain: choice('gpt-6.1-sol'), executor: choice('gpt-6.1-sol') },
     authorization: { allow_model_calls: true, max_run_minutes: 60, max_jobs: 2, max_submissions: 0,
       max_sandboxes: 2, max_environment_saves: 0, max_sandbox_minutes: 60, allow_data_download: true }, solver_note: '' })
+  useEffect(() => {
+    let active = true
+    void api.get<{ brain: Choice; executor: Choice }>('/api/v1/settings').then(settings => {
+      if (active && settings.brain && settings.executor) setTemplate(t => ({ ...t, model_config: { brain: settings.brain, executor: settings.executor } }))
+    }).catch(() => {})
+    return () => { active = false }
+  }, [])
   useEffect(() => {
     let active = true
     const refresh = async () => {
@@ -72,9 +90,9 @@ export default function CompetitionPage() {
     <label>选择轮次<select value={id} onChange={e => setId(e.target.value)}><option value="">暂无轮次</option>
       {rounds.map(r => <option key={r.id} value={r.id}>{r.label || r.id} · {r.status}</option>)}</select></label>
     <fieldset><legend>整轮模板与授权</legend>
-      {(['brain', 'executor'] as const).map(role => <label key={role}>{role === 'brain' ? 'PI 模型' : '求解者模型'}
-        <input value={template.model_config[role].model_id} onChange={e => setTemplate(t => ({ ...t, model_config: { ...t.model_config,
-          [role]: { ...t.model_config[role], model_id: e.target.value } } }))} /></label>)}
+      {(['brain', 'executor'] as const).map(role => <ModelFields key={role} role={role} label={role === 'brain' ? 'PI ' : '求解者 '}
+        value={template.model_config[role]} onChange={value => setTemplate(t => ({ ...t, model_config: { ...t.model_config, [role]: value } }))} />)}
+      <p>Prime 模型须与连接设置中的 Profile 一致；各提供方的原生认证在连接设置中配置。</p>
       {([['max_run_minutes', '每 Run 分钟'], ['max_jobs', '每 Run Job 数'], ['max_submissions', '每 Run 实验提交数'],
         ['max_sandboxes', '每 Run 沙箱并发'], ['max_environment_saves', '每 Run 环境保存数'], ['max_sandbox_minutes', '每 Run 沙箱累计分钟']] as const).map(([key, title]) =>
         <label key={key}>{title}<input type="number" min="0" value={template.authorization[key]} onChange={e => setTemplate(t => ({ ...t,
@@ -89,11 +107,16 @@ export default function CompetitionPage() {
       <div className="evaluation-table-wrap"><table><thead><tr><th>题目与分诊</th><th>Run</th><th>本地最好分</th><th>平台最好分</th><th>轨迹诊断</th><th>token / 金额</th><th>状态与下一步</th><th>操作</th></tr></thead>
         <tbody>{round.items.map(item => <tr key={item.id}>
           <td>{item.title}{item.triage && <p>{item.triage.difficulty} · {item.triage.recommended_model}<br />预计 {item.triage.estimated_minutes ?? 'unknown'} 分钟 / {item.triage.estimated_cost_cny ?? 'unknown'} 元<br />{item.triage.reason}</p>}
-            {round.status === 'draft' && <label>此题求解者模型<input aria-label={`${item.title}求解者模型`}
-              value={overrides[item.challenge_id]?.model_config.executor.model_id ?? template.model_config.executor.model_id}
-              onChange={e => setOverrides(v => { const current = v[item.challenge_id] ?? template; return { ...v,
-                [item.challenge_id]: { ...current, model_config: { ...current.model_config,
-                  executor: { ...current.model_config.executor, model_id: e.target.value } } } } })} /></label>}
+            {round.status === 'draft' && <details><summary>此题模型与备注</summary>
+              {(['brain', 'executor'] as const).map(role => <ModelFields key={role} role={role} label={`${item.title}${role === 'brain' ? ' PI ' : '求解者 '}`}
+                value={(overrides[item.challenge_id] ?? template).model_config[role]} onChange={value => setOverrides(v => {
+                  const current = v[item.challenge_id] ?? template
+                  return { ...v, [item.challenge_id]: { ...current, model_config: { ...current.model_config, [role]: value } } }
+                })} />)}
+              <label>{item.title}给 PI 的备注<input value={(overrides[item.challenge_id] ?? template).solver_note} onChange={e => setOverrides(v => ({
+                ...v, [item.challenge_id]: { ...(v[item.challenge_id] ?? template), solver_note: e.target.value }
+              }))} /></label>
+            </details>}
             {round.status === 'draft' && <details><summary>此题授权</summary>
               {([['max_run_minutes', '分钟'], ['max_jobs', 'Job 数'], ['max_submissions', '实验提交数'],
                 ['max_sandboxes', '沙箱并发'], ['max_environment_saves', '环境保存数'], ['max_sandbox_minutes', '沙箱累计分钟']] as const).map(([key, title]) =>
@@ -109,7 +132,7 @@ export default function CompetitionPage() {
           <td><label>优先级<input aria-label={`${item.title}优先级`} type="number" value={item.priority}
             onChange={e => void action(`${url}/items/${item.id}`, { priority: Number(e.target.value) }, 'put')} /></label>
             <button className="btn small" disabled={busy} onClick={() => void action(`${url}/items/${item.id}`, { paused: !item.paused }, 'put')}>{item.paused ? '继续排队' : '暂停此项'}</button>
-            <button className="btn small" disabled={busy || round.status === 'draft'} onClick={() => void action(`${url}/runs`, { challenge_id: item.challenge_id, template })}>按当前模板追加 Run</button></td>
+            <button className="btn small" disabled={busy || round.status === 'draft'} onClick={() => void action(`${url}/runs`, { challenge_id: item.challenge_id, template: overrides[item.challenge_id] ?? template })}>按当前模板追加 Run</button></td>
         </tr>)}</tbody></table></div>
     </>}
   </section>

@@ -130,6 +130,10 @@ _FACTS_TOOL = {
     'description': '只读查询原授权剩余时间、Job/沙箱额度、CPU价格、费用估算、环境和评分耗时事实；不创建资源。',
     'inputSchema': {'type': 'object', 'additionalProperties': False, 'properties': {}}}
 _TOOLS.append(_FACTS_TOOL)
+_EXPERIENCE_TOOL = {'name': 'research_experience', 'description': '只读当前题目和全局全部有效经验索引，按 ID 读取最新正文；返回真实修订和交付上下文，不写经验。',
+    'inputSchema': {'type': 'object', 'additionalProperties': False, 'properties': {
+        'action': {'enum': ['list', 'read']}, 'experience_id': {'type': 'string'}}, 'required': ['action']}}
+_TOOLS.append(_EXPERIENCE_TOOL)
 _TOOLS.append({'name': 'research_environment', 'description': '在环境保存数量授权内构建私有公开软件镜像；固定配方和冒烟命令入账；unknown 不重发。list/reconcile 只读。',
     'inputSchema': {'type': 'object', 'additionalProperties': False, 'properties': {
         'action': {'enum': ['save', 'list', 'reconcile']}, 'operation_id': {'type': 'string'},
@@ -216,7 +220,7 @@ def _handle(msg: dict) -> dict | None:
     if method == "tools/list":
         role = os.environ.get("CS_TOOL_ROLE", "executor")
         return {"jsonrpc": "2.0", "id": mid, "result": {
-            "tools": [_TRACE_TOOL, _DATA_TOOL, _SCORES_TOOL, _NARRATIVE_TOOL, _FACTS_TOOL] if role == "brain" else _TOOLS}}
+            "tools": [_TRACE_TOOL, _DATA_TOOL, _SCORES_TOOL, _NARRATIVE_TOOL, _FACTS_TOOL, _EXPERIENCE_TOOL] if role == "brain" else _TOOLS}}
     if method == "tools/call":
         params = msg.get("params", {})
         name = params.get("name")
@@ -242,6 +246,8 @@ def _handle(msg: dict) -> dict | None:
             out = _post("/api/v1/tools/package_check", args)
         elif name == "research_trace_narrative_check":
             out = _post("/api/v1/tools/trace_narrative_check", args)
+        elif name == 'research_experience':
+            out = _post('/api/v1/tools/experience', args, retry_transient=False)
         elif name == 'research_environment':
             out = _post('/api/v1/tools/environment', args, timeout=90, retry_transient=False)
         elif name == 'research_operating_facts':

@@ -286,6 +286,14 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
                 import logging
                 logging.getLogger('cyberscientist.api').exception(
                     'Job reconciliation failed for Run %s', run_id)
+        # Attempts are reconciled before native sessions can recover. An
+        # unavailable receipt remains visible to the recovery PI as unknown.
+        try:
+            _notify_scores(await asyncio.to_thread(mailboxes.poll_pending_by_challenge))
+        except Exception as exc:
+            for run in db.query("SELECT id FROM runs WHERE phase='recovering'"):
+                db.append_event(run['id'], 'controller', 'run.submission_reconciliation_unknown',
+                                {'error': type(exc).__name__})
         from . import power
         await power.recover(controller)
         # 后台评分轮询：提交后进入评分等待，由这里异步拿回分数。
@@ -1222,6 +1230,24 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
         body = await request.json()
         return await asyncio.to_thread(mailboxes.inspect_trace_narrative,
             identity["run_id"], body.get("trial_id"), body.get("package_path"))
+
+    @app.post('/api/v1/tools/experience')
+    async def tool_experience(request: Request):
+        from . import experience_context
+        import uuid
+        identity = _tool_auth(request, role=None)
+        body = await request.json()
+        run = db.query_one('SELECT challenge_id,current_trial_id FROM runs WHERE id=?', (identity['run_id'],))
+        entries = experience_context.effective(run['challenge_id'])
+        if body.get('action') == 'list':
+            return {'index': experience_context.index(run['challenge_id'], entries=entries)}
+        if body.get('action') != 'read':
+            raise HTTPException(409, detail={'code': 'INVALID_ACTION'})
+        entry = next((entry for entry in entries if entry['id'] == body.get('experience_id')), None)
+        if not entry:
+            raise HTTPException(404, detail={'code': 'EXPERIENCE_UNAVAILABLE'})
+        context = experience_context.freeze(identity['run_id'], run['current_trial_id'], 'read:' + uuid.uuid4().hex, items=[entry])
+        return {'entry': entry, 'context_id': context['id'], 'revision_id': entry['revision_id'], 'semantics': 'latest_registered_active'}
 
     @app.post('/api/v1/tools/operating_facts')
     async def tool_operating_facts(request: Request) -> dict:

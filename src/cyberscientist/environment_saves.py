@@ -46,7 +46,7 @@ def save(run_id, operation_id, dockerfile, recipe, smoke_command):
     if any(strip_secrets(value) != value for value in (dockerfile, recipe, smoke_command)):
         raise compute.ComputeError('SECRET_INPUT', '环境配方含密钥，未保存或投递')
     # Builds contain public software only: no workspace copies or credentials.
-    if re.search(r'(?im)^\s*(COPY|ADD|SECRET|ENV)\b|result_package\.zip|auth\.json|secrets\.json|\.env\b', dockerfile):
+    if re.search(r'(?im)^\s*(COPY|ADD|SECRET)\b|(?im:ENV\s+\S*(?:KEY|TOKEN|PASSWORD|SECRET)\b)|result_package\.zip|auth\.json|secrets\.json|\.env\b', dockerfile):
         raise compute.ComputeError('INVALID_ENVIRONMENT', '私有环境仅保存公开软件；不复制科研产物或凭据')
     effective = dockerfile.rstrip() + '\nRUN ' + smoke_command + '\n'
     project = compute._project_id(config.load_settings()['bohrium']['project_id'])

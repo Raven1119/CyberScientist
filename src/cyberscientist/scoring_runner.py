@@ -32,6 +32,12 @@ def unpack(path, target):
 def main():
     plan = json.loads(base64.b64decode(sys.argv[1]))
     root = Path(plan['remote'])
+    # Native Job staging flattens uploaded files in the working directory.
+    # Accept only this explicitly declared alternate layout, with every frozen
+    # input present. Hash verification below still precedes all execution.
+    if plan.get('input_layout') == 'job' and not all((root / name).is_file() for name in plan['inputs']):
+        root = Path.cwd()
+    root = root.resolve()
     hashes = {name: digest(root / name) for name in plan['inputs']}
     if hashes != plan['inputs']:
         raise ValueError('Grading input hash mismatch')

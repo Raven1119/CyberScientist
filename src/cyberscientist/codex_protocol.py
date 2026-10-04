@@ -15,9 +15,9 @@ COLLAB_TOOLS = (
     "research_checkpoint", "ack_guidance", "research_job",
     "research_sandbox", "research_package_check",
     "research_trace_narrative_check", "research_local_score", "research_data",
-    "research_operating_facts", "research_environment",
+    "research_operating_facts", "research_environment", "research_experience",
 )
-BRAIN_TOOLS = ("research_trace", "platform_scores", "research_operating_facts")
+BRAIN_TOOLS = ("research_trace", "platform_scores", "research_operating_facts", "research_experience")
 
 
 # Native authentication stays in Codex's own HOME/CODEX_HOME. This allowlist

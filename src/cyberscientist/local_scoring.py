@@ -507,7 +507,7 @@ def evaluate(run_id: str, trial_id: str, sandbox_id: str,
         return dict(existing) | {'deduplicated': True}
     run = db.query_one('SELECT challenge_id,current_trial_id,phase,gate FROM runs WHERE id=?', (run_id,))
     eval_retry = False
-    if (run and run['phase'] == 'finished' and db.eval_mode(run_id)
+    if (run and run['phase'] == 'finished'
             and operation_id.startswith('eval-score-') and operation_id.endswith('-retry')):
         from . import evaluations
         eval_retry = evaluations.retry_authorized(

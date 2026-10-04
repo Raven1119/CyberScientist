@@ -35,3 +35,21 @@ it('only shows shutdown readiness from the backend receipt', async () => {
   expect(screen.getByText('远程任务继续运行和计费。')).toBeTruthy()
   expect(post.mock.calls[0][0]).toBe('/api/v1/system/safe-shutdown')
 })
+
+it('confirms native provider, effort and PI note overrides for a specific topic', async () => {
+  get.mockImplementation(async (path: string) => path === '/api/v1/rounds' ? { items: [{ id: 'round_one', status: 'draft' }] } : detail)
+  post.mockResolvedValue({ ...detail, status: 'running' })
+  render(<CompetitionPage />)
+  await screen.findByText(/easy · deepseek-flash/)
+  const user = userEvent.setup()
+  await user.selectOptions(screen.getByLabelText('PI 提供方'), 'kimi')
+  await user.selectOptions(screen.getByLabelText('PI 思考强度'), 'high')
+  await user.selectOptions(screen.getByLabelText('测试题求解者 提供方'), 'kimi')
+  await user.selectOptions(screen.getByLabelText('测试题求解者 思考强度'), 'medium')
+  await user.type(screen.getByLabelText('测试题给 PI 的备注'), '需要明确推导步骤')
+  await user.click(screen.getByRole('button', { name: '确认模板与授权，开始排队' }))
+  const body = post.mock.calls[0][1]
+  expect(body.template.model_config.brain).toMatchObject({ runtime: 'kimi', reasoning_effort: 'high' })
+  expect(body.overrides.same_challenge.model_config.executor).toMatchObject({ runtime: 'kimi', reasoning_effort: 'medium' })
+  expect(body.overrides.same_challenge.solver_note).toBe('需要明确推导步骤')
+})

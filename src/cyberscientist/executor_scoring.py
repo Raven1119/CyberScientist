@@ -111,7 +111,7 @@ def prepare(run_id: str, trial_id: str, operation_id: str, sandbox_id: str,
             _error('OPERATION_CONFLICT', '已冻结的公开资源被修改')
         target.write_bytes(source.read_bytes())
         inputs['public_resource.zip'] = public['sha256']
-    plan = {'remote': 'input' if channel == 'job' else '/tmp/cs-executor-score-' + operation_id, 'inputs': inputs,
+    plan = {'input_layout': channel, 'remote': 'input' if channel == 'job' else '/tmp/cs-executor-score-' + operation_id, 'inputs': inputs,
             'identity': identity, 'identity_checks': checks, 'environment_paths': paths,
             'project_files': runtime.get('project', {}).get('files', {}),
             'scorer_files': manifest['file_hashes'], 'scorer_version': manifest['scorer_version'],

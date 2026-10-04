@@ -29,7 +29,9 @@ def test_evaluation_scientific_objective_is_separate_from_authorization(monkeypa
     packet = controller._lifecycle_packet(run, 'run_start', sparse=True)
     assert packet['run_objective'] != auth['note']
     assert 'fixture task' in packet['run_objective']
-    assert packet['evaluation_handoff']['platform_submission_allowed'] is False
+    assert 'evaluation_handoff' not in packet
+    assert packet['authorization']['max_submissions'] == 0
+    assert db.eval_mode(rid) is None
 
 
 @pytest.mark.parametrize('source', ['shadow', 'executor'])
@@ -55,7 +57,8 @@ def test_every_review_surface_has_same_resource_and_evaluation_facts(monkeypatch
     for key in ('max_sandboxes', 'max_sandbox_minutes', 'allow_sandbox_gpu',
                 'allow_data_download', 'max_jobs', 'max_submissions', 'max_run_minutes'):
         assert captured[0]['authorization'][key] == lifecycle['authorization'][key]
-    assert captured[0]['evaluation_handoff'] == lifecycle['evaluation_handoff']
+    assert 'evaluation_handoff' not in captured[0] and 'evaluation_handoff' not in lifecycle
+    assert captured[0]['authorization']['max_submissions'] == 0
     stored = json.loads(db.query_one('SELECT frame_json FROM review_requests WHERE id=?',
                                     (request_id,))['frame_json'])
     assert stored['authorization'] == captured[0]['authorization']
@@ -89,7 +92,6 @@ def test_evaluation_freezes_topic_model_choices_without_global_changes(monkeypat
     created = evaluations.create_evaluation('fast', 1, 'selected')
     snapshot = json.loads(db.query_one('SELECT config_json FROM eval_runs WHERE id=?',
                                       (created['id'],))['config_json'])
-    item = snapshot['entries'][0]
-    marker = evaluations._marker(snapshot, item, created['results'][0]['id'])
-    assert marker['models'] == choices
+    template = json.loads(db.query_one('SELECT template_json FROM eval_results WHERE id=?', (created['results'][0]['id'],))[0])
+    assert snapshot['ordinary_round'] and template['model_config'] == choices
     assert config.load_settings() == before

@@ -77,3 +77,43 @@ async def test_unconfirmed_pause_never_says_can_shutdown(monkeypatch):
 def test_clock_additive_migration_is_idempotent():
     db.init_db();db.init_db()
     assert 'clock_version' in {r['name'] for r in db.query('PRAGMA table_info(runs)')}
+
+
+@pytest.mark.asyncio
+async def test_shutdown_refuses_recovery_and_new_auxiliary_sessions():
+    from cyberscientist import config,resource_coordinator
+    from cyberscientist.controller import ControllerError
+    ctl,rid=run()
+    db.execute("UPDATE runs SET phase='recovering' WHERE id=?",(rid,))
+    db.execute("INSERT OR REPLACE INTO system_state VALUES('shutdown_requested','1')")
+    with pytest.raises(ControllerError,match='启动对账'):
+        await ctl.control(rid,'resume',None,'forbidden-after-shutdown')
+    with pytest.raises(resource_coordinator.ResourceWait):
+        resource_coordinator.reserve_auxiliary('forbidden-auxiliary',config.load_settings())
+    assert not ctl._tasks and not db.query('SELECT * FROM model_session_leases')
+
+
+@pytest.mark.asyncio
+async def test_shutdown_drains_independent_native_auxiliary_with_finally_close():
+    from cyberscientist import config,resource_coordinator
+    ctl=RunController();opened=asyncio.Event();closed=asyncio.Event()
+    async def auxiliary():
+        resource_coordinator.reserve_auxiliary('standalone-curation',config.load_settings())
+        opened.set()
+        try:await asyncio.Event().wait()
+        finally:
+            closed.set();resource_coordinator.release_sessions('standalone-curation')
+    task=asyncio.create_task(auxiliary());await opened.wait()
+    result=await power.safe_shutdown(ctl,timeout=.1)
+    assert result['can_shutdown'] and task.done() and closed.is_set()
+    assert not resource_coordinator.auxiliary_tasks()
+
+
+@pytest.mark.asyncio
+async def test_native_close_failure_prevents_shutdown_readiness():
+    from cyberscientist import resource_coordinator
+    ctl=RunController()
+    resource_coordinator.close_failed('native-fixture',RuntimeError('close failed'))
+    result=await power.safe_shutdown(ctl,timeout=.01)
+    assert not result['can_shutdown']
+    assert any(error.get('owner')=='native-fixture' for error in result['errors'])

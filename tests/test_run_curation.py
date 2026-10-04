@@ -70,3 +70,28 @@ async def test_native_run_curation_api_is_separate_from_global(monkeypatch):
         assert state['state'] == 'done' and state['proposals_applied'] == 0
     assert calls[0]['run_evidence']['run_id'] == rid
     assert not (config.DATA_DIR / 'global_curation.json').exists()
+
+
+@pytest.mark.parametrize('global_scope',[False,True])
+@pytest.mark.parametrize('close_fails',[False,True])
+async def test_safe_shutdown_persists_curation_interruption_and_unknown_close(monkeypatch,global_scope,close_fails):
+    from cyberscientist import power
+    _seed_challenge();ctl=RunController();rid=ctl.create_run('COLLAB_CH')['id']
+    db.execute("UPDATE runs SET phase='paused' WHERE id=?",(rid,))
+    entered=asyncio.Event()
+    class Brain:
+        async def open(self,spec):return SessionRef('fixture','auxiliary')
+        async def review(self,session,packet):
+            entered.set();await asyncio.Event().wait()
+            yield BrainEvent('message',{'text':'never'})
+        async def close(self,session):
+            if close_fails:raise RuntimeError('native close not confirmed')
+    monkeypatch.setattr(ctl,'_make_brain',lambda _:Brain())
+    if global_scope:await ctl.curate_global_experience(['COLLAB_CH'])
+    else:await ctl.curate_run_experience(rid,'shutdown-curation')
+    await entered.wait()
+    result=await power.safe_shutdown(ctl,timeout=.1)
+    assert result['can_shutdown'] is (not close_fails)
+    state=ctl.global_curation_status() if global_scope else ctl.run_curation_status(rid)
+    assert state['state']=='failed' and '中断' in state['error']
+    assert not db.query('SELECT * FROM model_session_leases')

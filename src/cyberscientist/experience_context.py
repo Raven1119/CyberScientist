@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import uuid
 from datetime import datetime, timezone
 
@@ -13,29 +14,55 @@ def encode(value) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True)
 
 
-def select(challenge_id: str | None, budget: int | None = None, goal: str = "",
-           role: str = 'both') -> list[dict]:
-    if budget is None:
-        budget = config.load_settings()["memory"]["max_injected_characters"]
-    entries = experiences.active_experiences(challenge_id)
-    if role in ('brain','executor'):
-        entries = [entry for entry in entries if entry.get('audience','both') in (role,'both')]
-    # Ownership is decidable; free-text applicability is retained for model judgment.
-    words = set(goal.casefold().split())
-    entries.sort(key=lambda x: (x['scope'] != 'challenge',
-        -len(words & set((x['title'] + ' ' + ' '.join(x.get('tags',[]))).casefold().split())), x['id']))
-    selected = []
-    for entry in entries:
-        expires = entry.get('expires_at')
-        if expires:
+def terms(text: str) -> set[str]:
+    lowered = text.casefold()
+    result = set(re.findall(r'[a-z0-9][a-z0-9_.+-]*', lowered))
+    for phrase in re.findall(r'[\u4e00-\u9fff]+', lowered):
+        result.add(phrase)
+        result.update(phrase[index:index + 2] for index in range(len(phrase) - 1))
+    return result
+
+
+def effective(challenge_id: str | None) -> list[dict]:
+    result = []
+    for entry in experiences.active_experiences(challenge_id):
+        if entry.get('expires_at'):
             try:
-                if datetime.fromisoformat(expires.replace('Z', '+00:00')).replace(tzinfo=timezone.utc) < datetime.now(timezone.utc):
+                expires = datetime.fromisoformat(entry['expires_at'].replace('Z', '+00:00'))
+                if expires.tzinfo is None:
+                    expires = expires.replace(tzinfo=timezone.utc)
+                if expires < datetime.now(timezone.utc):
                     continue
             except ValueError:
-                pass  # Unknown expiry formats remain labelled, not silently interpreted.
+                pass
+        result.append(entry)
+    return result
+
+
+def index(challenge_id: str | None, *, entries=None) -> list[dict]:
+    values = effective(challenge_id) if entries is None else entries
+    return [{key: entry.get(key, '') for key in ('id', 'title', 'applicability', 'kind', 'audience', 'scope', 'revision_id', 'revision_hash')}
+            for entry in values]
+
+
+def select(challenge_id: str | None, budget: int | None = None, goal: str = "",
+           role: str = 'both', *, _entries=None) -> list[dict]:
+    if budget is None:
+        budget = config.load_settings()["memory"]["max_injected_characters"]
+    entries = list(effective(challenge_id) if _entries is None else _entries)
+    budget = max(0, budget - len(encode(index(challenge_id, entries=entries))))
+    if role in ('brain','executor'):
+        entries = [entry for entry in entries if entry.get('audience','both') in (role,'both')]
+    words = terms(goal)
+    def relevance(entry):
+        matches = words & terms(entry['title'] + ' ' + entry.get('applicability', '') + ' ' + ' '.join(entry.get('tags', [])) + ' ' + entry['body_md'][:600])
+        return sum(4 if re.match(r'[a-z0-9]', token) else 1 for token in matches)
+    entries.sort(key=lambda entry: (-relevance(entry), entry['scope'] != 'challenge', entry['id']))
+    selected = []
+    for entry in entries:
         item = {k: v for k, v in entry.items() if k not in ('full_content', 'current_hash')}
-        item['body_md'] = entry['body_md'][:2500]
-        item['body_truncated'] = len(entry['body_md']) > 2500
+        item['body_md'] = entry['body_md']
+        item['body_truncated'] = False
         if len(encode(selected + [item])) > budget:
             room = budget - len(encode(selected + [dict(item, body_md='')])) - 32
             if room < 100:
@@ -47,6 +74,15 @@ def select(challenge_id: str | None, budget: int | None = None, goal: str = "",
     return selected
 
 
+def run_goal(run_id: str, trial_id: str | None = None) -> str:
+    run = db.query_one('SELECT challenge_id,objective_md,intention,current_trial_id FROM runs WHERE id=?', (run_id,))
+    challenge = db.query_one('SELECT content FROM challenges WHERE id=?', (run['challenge_id'],))
+    trial = db.query_one('SELECT goal FROM trials WHERE id=?', (trial_id or run['current_trial_id'],))
+    return '\n'.join(text for text in (run['objective_md'], run['intention'],
+                                       challenge['content'] if challenge else None,
+                                       trial['goal'] if trial else None) if text)
+
+
 def freeze(run_id: str, trial_id: str | None, boundary: str, items=None,
            role: str = 'both') -> dict:
     row = db.query_one('SELECT content_json FROM experience_contexts WHERE run_id=? AND boundary=?',
@@ -54,21 +90,23 @@ def freeze(run_id: str, trial_id: str | None, boundary: str, items=None,
     if row:
         return json.loads(row['content_json'])
     run = db.query_one('SELECT challenge_id,intention FROM runs WHERE id=?', (run_id,))
+    all_entries = effective(run['challenge_id'])
     if items is None:
         marker = db.eval_mode(run_id)
         items = (marker.get('experience_manifests', {}).get(role, []) if marker else
-                 select(run['challenge_id'],goal=run['intention'] or '',role=role))
+                 select(run['challenge_id'],goal=run_goal(run_id, trial_id),role=role,_entries=all_entries))
     with db.transaction() as conn:
-        return freeze_tx(conn, run_id, trial_id, boundary, items)
+        return freeze_tx(conn, run_id, trial_id, boundary, items, index(run['challenge_id'], entries=all_entries))
 
 
-def freeze_tx(conn, run_id, trial_id, boundary, items):
+def freeze_tx(conn, run_id, trial_id, boundary, items, index_items=None):
     existing = conn.execute('SELECT content_json FROM experience_contexts WHERE run_id=? AND boundary=?',
                             (run_id, boundary)).fetchone()
     if existing:
         return json.loads(existing['content_json'])
     context = {'id': 'ctx_' + uuid.uuid4().hex, 'run_id': run_id, 'trial_id': trial_id,
-               'boundary': boundary, 'items': items,
+               'boundary': boundary, 'items': items, 'index': index_items if index_items is not None else index(None, entries=items),
+               'index_sha256': hashlib.sha256(encode(index_items if index_items is not None else index(None, entries=items)).encode()).hexdigest(),
                'sha256': hashlib.sha256(encode(items).encode()).hexdigest()}
     conn.execute('INSERT INTO experience_contexts(id,run_id,trial_id,boundary,content_json,created_at)'
                  ' VALUES(?,?,?,?,?,?)',

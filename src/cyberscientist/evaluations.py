@@ -156,7 +156,7 @@ def create_evaluation(suite: str, repeats: int = 2, label: str = '') -> dict[str
                        for role in ('brain', 'executor')},
         }
     config_snapshot = {
-        'schema': 'cyberscientist-evaluation/v3', 'catalog_sha256': hashlib.sha256(CATALOG.read_bytes()).hexdigest(),
+        'schema': 'cyberscientist-evaluation/v4', 'ordinary_round': True, 'mode': 'connected', 'catalog_sha256': hashlib.sha256(CATALOG.read_bytes()).hexdigest(),
         'limits': _limits(suite),
         'suite': suite, 'repeats': repeats, 'label': label,
         'entries': entries, 'frozen': frozen,
@@ -181,10 +181,19 @@ def create_evaluation(suite: str, repeats: int = 2, label: str = '') -> dict[str
                      (eid, suite, repeats, label, 'running', _canonical(config_snapshot), now, now))
         for item in entries:
             for repeat in range(1, repeats + 1):
+                limit = config_snapshot['limits']
+                template = {'model_config': frozen[item['challenge_id']]['models'],
+                            'authorization': {'allow_model_calls': True, 'max_run_minutes': limit['minutes'],
+                                'max_model_turns': 0, 'max_jobs': limit['jobs'], 'max_submissions': 0,
+                                'max_sandboxes': limit['sandboxes'], 'max_sandbox_minutes': limit['sandbox_minutes'],
+                                'max_environment_saves': 0, 'allow_sandbox_gpu': False, 'allow_data_download': True,
+                                'job_limits': {'max_cpu': limit['max_cpu']},
+                                'max_compute_cost_cny': limit['max_compute_cost_cny']},
+                            'shadow_enabled': config_snapshot['shadow_enabled'], 'solver_note': ''}
                 conn.execute('INSERT INTO eval_results(id,eval_id,challenge_id,repeat_index,status,'
-                             'created_at,updated_at) VALUES(?,?,?,?,?,?,?)',
+                             'template_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)',
                              ('er_' + uuid.uuid4().hex[:12], eid, item['challenge_id'], repeat,
-                              'pending', now, now))
+                              'pending', _canonical(template), now, now))
     return get_evaluation(eid)
 
 
@@ -282,6 +291,9 @@ async def advance(controller: Any) -> None:
             continue
         eid = evaluation['id']
         snapshot = json.loads(evaluation['config_json'])
+        if snapshot.get('ordinary_round'):
+            await _advance_ordinary(controller, evaluation)
+            continue
         from . import backend_identity
         if snapshot.get('backend') and not backend_identity.matches(snapshot['backend']):
             raise EvaluationError('评测后端与冻结版本不一致；未继续调度或扩大额度')
@@ -396,6 +408,51 @@ async def advance(controller: Any) -> None:
                        ('complete_with_failures' if failed else 'complete',
                         db.utcnow(), db.utcnow(), eid))
             write_report(eid)
+
+
+async def _advance_ordinary(controller, evaluation):
+    """Old-topic batches share competition admission and ordinary capabilities.
+
+    Reporting observes completed Runs. Only a persisted legacy eval_scoring
+    phase uses the historical scorer finalizer during migration.
+    """
+    from . import competition, job_costs, sandbox_costs, run_clock
+    eid = evaluation['id']
+    previous = []
+    for item in db.query("SELECT * FROM eval_results WHERE eval_id=? AND status NOT IN ('complete','failed')", (eid,)):
+        run = db.query_one('SELECT * FROM runs WHERE id=?', (item['run_id'],)) if item['run_id'] else None
+        if not run:
+            continue
+        if run['phase'] not in TERMINAL and run['started_at'] and run['authorization_id']:
+            auth = db.query_one('SELECT * FROM authorizations WHERE id=?', (run['authorization_id'],))
+            if auth['max_run_minutes'] > 0 and run_clock.elapsed(run) >= auth['max_run_minutes'] * 60:
+                reason = '本 Run 原授权时长已耗尽；未扩大额度或追加评分'
+                if not db.query_one("SELECT 1 FROM events WHERE run_id=? AND type='evaluation.budget_exhausted'", (run['id'],)):
+                    db.append_event(run['id'], 'controller', 'evaluation.budget_exhausted',
+                                    {'reason': reason, 'previous_phase': run['phase']})
+                await controller.control(run['id'], 'terminate', None, f"eval-expire-{run['id']}")
+                await asyncio.to_thread(sandbox_costs.refresh, run['id'])
+                await asyncio.to_thread(job_costs.refresh, run['id'])
+                _finish_result(item['id'], run['id'], scoring_status='budget_exhausted', scoring_reason=reason)
+                continue
+        previous.append((item, run))
+    await competition.advance_round(controller, evaluation)
+    for item, run in previous:
+        phase = run['phase']
+        if phase not in TERMINAL and phase != 'eval_scoring':
+            continue
+        score_status, score_reason = (None, None)
+        if phase == 'eval_scoring':
+            score_status, score_reason = await asyncio.to_thread(_score_run, run['id'], item['id'])
+            controller._finalize_run(run['id'], run['end_reason'] or 'evaluation completed')
+        await asyncio.to_thread(sandbox_costs.refresh, run['id'])
+        await asyncio.to_thread(job_costs.refresh, run['id'])
+        _finish_result(item['id'], run['id'], scoring_status=score_status, scoring_reason=score_reason)
+    if not db.query_one("SELECT 1 FROM eval_results WHERE eval_id=? AND status NOT IN ('complete','failed')", (eid,)):
+        failed = db.query_one("SELECT 1 FROM eval_results WHERE eval_id=? AND status='failed'", (eid,))
+        db.execute('UPDATE eval_runs SET status=?,ended_at=?,updated_at=? WHERE id=?',
+                   ('complete_with_failures' if failed else 'complete', db.utcnow(), db.utcnow(), eid))
+        write_report(eid)
 
 
 def _check_scorer_input_path(challenge_id: str, sealed: bytes) -> None:
@@ -553,7 +610,7 @@ def retry_unavailable_score(result_id: str) -> dict[str, Any]:
         raise EvaluationError('需要已完成且封存的评测结果')
     rid = result['run_id']
     run = db.query_one('SELECT phase,authorization_id,started_at FROM runs WHERE id=?', (rid,))
-    if not run or run['phase'] != 'finished' or not db.eval_mode(rid):
+    if not run or run['phase'] != 'finished':
         raise EvaluationError('仅已完成的评测 Run 可重试本地评分')
     prior = json.loads(result['result_json'] or '{}')
     if prior.get('science_score') is not None:
@@ -603,8 +660,7 @@ def recover_matchgate_score_receipt(result_id: str) -> dict[str, Any]:
         raise EvaluationError('需要已结束的评测结果')
     rid = result['run_id']
     run = db.query_one('SELECT challenge_id,current_trial_id,phase FROM runs WHERE id=?', (rid,))
-    if (not run or run['challenge_id'] != MATCHGATE_ID or run['phase'] != 'finished'
-            or not db.eval_mode(rid)):
+    if (not run or run['challenge_id'] != MATCHGATE_ID or run['phase'] != 'finished'):
         raise EvaluationError('只允许恢复已结束的 Matchgate 评测回执')
     prior = json.loads(result['result_json'] or '{}')
     if prior.get('science_score') is not None:
@@ -707,13 +763,22 @@ def _finish_result(result_id: str, run_id: str, *, scoring_status: str | None = 
                    scoring_reason: str | None = None) -> None:
     compute.mark_terminal_pending_unknown(run_id)
     row = db.query_one('SELECT * FROM runs WHERE id=?', (run_id,))
-    local = db.query_one('SELECT * FROM local_scores WHERE run_id=?'
-                         ' AND sandbox_operation_id IN (?,?) ORDER BY created_at DESC LIMIT 1',
-                         (run_id, 'eval-score-' + result_id,
-                          'eval-score-' + result_id + '-retry'))
+    metadata = db.query_one('SELECT e.config_json FROM eval_runs e JOIN eval_results r ON r.eval_id=e.id WHERE r.id=?', (result_id,))
+    snapshot = json.loads(metadata['config_json']) if metadata else {}
+    ordinary = bool(snapshot.get('ordinary_round'))
+    accepted = local_scoring.latest_final_check(run_id).get('final_package_check', {})
+    if ordinary:
+        local = db.query_one('SELECT * FROM local_scores WHERE run_id=? AND id=?', (run_id, accepted.get('local_score_id')))
+        if not local:
+            local = db.query_one("SELECT * FROM local_scores WHERE run_id=? AND score_source IN ('system','executor_verified') ORDER BY created_at DESC,rowid DESC LIMIT 1", (run_id,))
+    else:
+        local = db.query_one('SELECT * FROM local_scores WHERE run_id=?'
+                             ' AND sandbox_operation_id IN (?,?) ORDER BY created_at DESC LIMIT 1',
+                             (run_id, 'eval-score-' + result_id,
+                              'eval-score-' + result_id + '-retry'))
     diagnostic = json.loads(local['trace_prediction_json']) if local else None
     preflight = db.query_one('SELECT payload FROM events WHERE run_id=?'
-                             " AND type='evaluation.trace_diagnosed' ORDER BY seq DESC LIMIT 1", (run_id,))
+                             " AND type IN ('evaluation.trace_diagnosed','trace.diagnosed') ORDER BY seq DESC LIMIT 1", (run_id,))
     checklist = json.loads(preflight['payload']) if preflight else None
     seal = db.query_one('SELECT payload FROM events WHERE run_id=?'
                         " AND type='evaluation.sealed' ORDER BY seq DESC LIMIT 1", (run_id,))
@@ -726,6 +791,16 @@ def _finish_result(result_id: str, run_id: str, *, scoring_status: str | None = 
     started = datetime.fromisoformat(row['started_at']) if row['started_at'] else None
     ended = datetime.fromisoformat(row['ended_at']) if row['ended_at'] else None
     marker = db.eval_mode(run_id) or {}
+    if ordinary:
+        frozen = snapshot.get('frozen', {}).get(row['challenge_id'], {})
+        marker = {'backend': snapshot.get('backend'),
+                  'experience_sha256': _sha(frozen.get('experience_manifests', {})),
+                  'challenge_content_sha256': frozen.get('challenge_content_sha256'),
+                  'challenge_source': frozen.get('challenge_source')}
+        if accepted and local and accepted.get('local_score_id') == local['id']:
+            seal_info['sealed_package_sha256'] = local['package_sha256']
+        if checklist is None and diagnostic:
+            checklist = diagnostic.get('diagnostics') if isinstance(diagnostic.get('diagnostics'), dict) else diagnostic
     result = {
         'run_id': run_id, 'config_sha256': hashlib.sha256(row['config_snapshot'].encode()).hexdigest(),
         'backend': marker.get('backend'),
@@ -737,6 +812,7 @@ def _finish_result(result_id: str, run_id: str, *, scoring_status: str | None = 
         'admission_error_code': seal_info.get('admission_error_code'),
         'science_score': score, 'science_source': local['score_source'] if local else None,
         'science_status': scoring_status or ('scored' if local else 'unavailable'),
+        'science_selection': ('accepted_final' if local and accepted.get('local_score_id') == local['id'] else 'latest_verified' if ordinary and local else 'legacy_evaluation'),
         'science_reason': scoring_reason, 'scorer_version': local['scorer_version'] if local else None,
         'trace_checklist_score': checklist.get('checklist_score') if checklist else None,
         'trace_status': checklist.get('status') if checklist else 'unavailable',

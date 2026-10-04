@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import sqlite3
 import uuid
-from . import config, db, run_clock
+from . import config, db, run_clock, resource_coordinator
 
 
 def shutdown_requested() -> bool:
@@ -27,14 +27,22 @@ async def safe_shutdown(controller, timeout: float = 60) -> dict:
     if not unsettled and not errors:
         # Cancellation closes both native processes, including an active PI
         # review. The executor safe-point receipt was obtained above.
-        tasks = list(controller._tasks.values())
+        tasks = list(set(controller._tasks.values()) | set(resource_coordinator.auxiliary_tasks()))
+        tasks = [task for task in tasks if task is not asyncio.current_task()]
         for task in tasks:
             task.cancel()
         if tasks:
             try:
-                await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), timeout=15)
+                outcomes = await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), timeout=15)
+                errors.extend({'error': type(item).__name__} for item in outcomes
+                              if isinstance(item, BaseException) and not isinstance(item, asyncio.CancelledError))
             except asyncio.TimeoutError:
                 errors.append({'error': 'native_process_close_timeout'})
+    errors.extend(resource_coordinator.close_unknowns())
+    db.execute("UPDATE curation_requests SET status='failed',error='安全关机中断整理；不会自动重复调用模型',updated_at=? WHERE status='running'", (db.utcnow(),))
+    auxiliary = resource_coordinator.auxiliary_tasks()
+    if auxiliary or db.query_one('SELECT 1 FROM model_session_leases LIMIT 1'):
+        errors.append({'error': 'native_sessions_still_open', 'auxiliary_tasks': len(auxiliary)})
     run_clock.heartbeat()
     backup_dir = config.WORKSPACE_ROOT / '.package-checks' / 'shutdown'
     backup_dir.mkdir(parents=True, exist_ok=True)
@@ -51,6 +59,8 @@ async def safe_shutdown(controller, timeout: float = 60) -> dict:
 
 async def recover(controller) -> list[dict]:
     """Called only after remote reconciliation; manual pauses remain manual."""
+    # Startup reconciliation is complete before this function is invoked.
+    db.execute("INSERT OR REPLACE INTO system_state(key,value) VALUES('shutdown_requested','0')")
     results = []
     for row in db.query("SELECT id FROM runs WHERE phase='recovering' AND clock_version=1 AND resume_on_startup=1"):
         try:
