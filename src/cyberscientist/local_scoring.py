@@ -376,7 +376,7 @@ def final_package_check(run_id: str, candidate: dict[str, Any]) -> dict[str, Any
 
 def latest_final_check(run_id: str) -> dict[str, Any]:
     row = db.query_one("SELECT payload FROM events WHERE run_id=?"
-                        " AND type='brain.action_rejected'"
+                        " AND type IN ('brain.action_rejected','run.final_package_checked','run.final_package_confirmed')"
                         " AND json_type(payload,'$.final_package_check')='object'"
                         " ORDER BY seq DESC LIMIT 1", (run_id,))
     return {'final_package_check': json.loads(row['payload'])['final_package_check']} if row else {}
@@ -415,9 +415,9 @@ def score_candidate(run_id: str) -> dict[str, Any]:
         raise LocalScoreError('RUN_NOT_RUNNING', '最终包评分需要正在运行的 Trial')
     manifest = scorer_manifest(run['challenge_id'])
     check = mailboxes.preflight_submission(run_id, run['current_trial_id'], None,
-                                          allow_proxy_evidence=bool(db.eval_mode(run_id)))
-    # Local evaluation measures science even if trace admission is blocked.
-    if db.eval_mode(run_id) and check['error_code'] in (
+                                          allow_proxy_evidence=True)
+    # Local grading measures science even if trace admission is blocked.
+    if check['error_code'] in (
             'TRACE_ADMISSION_BLOCKED', 'TRACE_ADMISSION_INDETERMINATE', 'PROXY_EVIDENCE'):
         check = check | {'error_code': None}
     if check['error_code']:
@@ -506,24 +506,18 @@ def evaluate(run_id: str, trial_id: str, sandbox_id: str,
             raise LocalScoreError('OPERATION_CONFLICT', '评分 operation_id 已绑定其他 Run/Trial')
         return dict(existing) | {'deduplicated': True}
     run = db.query_one('SELECT challenge_id,current_trial_id,phase,gate FROM runs WHERE id=?', (run_id,))
-    eval_retry = False
-    if (run and run['phase'] == 'finished'
-            and operation_id.startswith('eval-score-') and operation_id.endswith('-retry')):
-        from . import evaluations
-        eval_retry = evaluations.retry_authorized(
-            run_id, operation_id[len('eval-score-'):-len('-retry')])
-    if not run or run['current_trial_id'] != trial_id or (run['phase'] not in ('running', 'eval_scoring') and not eval_retry) or run['gate'] != 'open':
+    if not run or run['current_trial_id'] != trial_id or run['phase'] != 'running' or run['gate'] != 'open':
         raise LocalScoreError('RUN_NOT_RUNNING', '本地评分需要当前运行中的 Trial')
     manifest = scorer_manifest(run['challenge_id'])
     sandbox = db.query_one('SELECT * FROM compute_sandboxes WHERE run_id=? AND sandbox_id=?',
                            (run_id, sandbox_id))
     if sandbox and json.loads(sandbox['request_json']).get('image') != manifest['image']:
         raise LocalScoreError('SCORER_IMAGE_MISMATCH', '评分沙箱镜像与声明不符')
-    if preflight is not None and not db.eval_mode(run_id) and not _controller_preflight:
-        raise LocalScoreError('INVALID_ARGUMENT', '冻结预检仅供评测或控制器使用')
+    if preflight is not None and not _controller_preflight:
+        raise LocalScoreError('INVALID_ARGUMENT', '冻结预检仅供控制器使用')
     check = preflight if preflight is not None else mailboxes.preflight_submission(
-        run_id, trial_id, package_path, allow_proxy_evidence=bool(db.eval_mode(run_id)))
-    if db.eval_mode(run_id) and check['error_code'] in (
+        run_id, trial_id, package_path, allow_proxy_evidence=True)
+    if check['error_code'] in (
             'TRACE_ADMISSION_BLOCKED', 'TRACE_ADMISSION_INDETERMINATE', 'PROXY_EVIDENCE'):
         check = check | {'error_code': None}
     if check['error_code']:
@@ -573,7 +567,7 @@ def evaluate(run_id: str, trial_id: str, sandbox_id: str,
             {'environment_id': runtime['environment_id'], 'project': runtime['project'],
              'next_tool': 'research_local_score', 'action': 'prepare', 'sandbox_id': sandbox_id})
     if public_resource_zip is not None:
-        if not db.eval_mode(run_id) and not _controller_preflight:
+        if not _controller_preflight:
             raise LocalScoreError('INVALID_ARGUMENT', '公开评分数据仅供受控评分使用')
         staged_resource = stage / 'public_resource.zip'
         resource = public_resource_zip.read_bytes()

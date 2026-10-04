@@ -252,23 +252,6 @@ def list_evaluations() -> list[dict[str, Any]]:
         'SELECT id,suite,label,status,repeats,created_at,ended_at FROM eval_runs ORDER BY created_at DESC')]
 
 
-def _marker(config_snapshot: dict[str, Any], item: dict[str, Any], result_id: str) -> dict[str, Any]:
-    cid = item['challenge_id']
-    frozen = config_snapshot['frozen'][cid]
-    models = frozen.get('models') or config_snapshot['models']
-    return {'enabled': True, 'result_id': result_id,
-            'challenge_content_sha256': frozen['challenge_content_sha256'],
-            'challenge_source': frozen['challenge_source'],
-            'models': models, 'experience_manifests': frozen['experience_manifests'],
-            'experience_sha256': _sha(frozen['experience_manifests']),
-            'skills': frozen['skills'], 'skills_sha256': _sha(frozen['skills']),
-            'switches': {'experience_enabled': True,
-                         'shadow_enabled': config_snapshot['shadow_enabled'],
-                         'models': models,
-                         'skill_ids': {role: [skill['id'] for skill in frozen['skills'][role]]
-                                       for role in ('brain', 'executor')}}}
-
-
 def _limits(suite: str) -> dict[str, int]:
     return {'minutes': 60 if suite == 'fast' else 180,
             'jobs': 2 if suite == 'fast' else 20,
@@ -279,142 +262,56 @@ def _limits(suite: str) -> dict[str, int]:
 
 
 async def advance(controller: Any) -> None:
-    from . import power
+    """One scheduler for competition and old-topic batches; no evaluation abilities."""
+    from . import power, competition
     if power.shutdown_requested():
         return
-    """One idempotent scheduling pass, called periodically by the backend."""
-    from . import sandbox_costs, job_costs
     for evaluation in db.query("SELECT * FROM eval_runs WHERE status='running' ORDER BY created_at"):
         if evaluation['suite'] == 'competition':
-            from . import competition
             await competition.advance_round(controller, evaluation)
-            continue
-        eid = evaluation['id']
-        snapshot = json.loads(evaluation['config_json'])
-        if snapshot.get('ordinary_round'):
+        else:
+            evaluation = _ordinary_batch(evaluation)
             await _advance_ordinary(controller, evaluation)
-            continue
-        from . import backend_identity
-        if snapshot.get('backend') and not backend_identity.matches(snapshot['backend']):
-            raise EvaluationError('评测后端与冻结版本不一致；未继续调度或扩大额度')
-        by_id = {item['challenge_id']: item for item in snapshot['entries']}
-        for result in db.query('SELECT * FROM eval_results WHERE eval_id=? ORDER BY rowid', (eid,)):
-            if result['status'] in ('complete', 'failed'):
+
+
+def _ordinary_batch(evaluation):
+    """Adapt historical pending batches without changing their original grants.
+
+    Frozen source/model/experience metadata stays in the report. New pending
+    Runs use the ordinary live experience and skill interfaces.
+    """
+    snapshot = json.loads(evaluation['config_json'])
+    if snapshot.get('ordinary_round'):
+        return evaluation
+    snapshot.update(ordinary_round=True, mode='connected')
+    limit = snapshot.get('limits') or {
+        'minutes': 60 if evaluation['suite'] == 'fast' else 180,
+        'jobs': 2 if evaluation['suite'] == 'fast' else 5,
+        'sandbox_minutes': 60 if evaluation['suite'] == 'fast' else 180,
+        'sandboxes': 2, 'max_cpu': 16, 'max_compute_cost_cny': None}
+    with db.transaction() as conn:
+        for item in conn.execute('SELECT * FROM eval_results WHERE eval_id=?', (evaluation['id'],)).fetchall():
+            if item['template_json'] and item['template_json'] != '{}':
                 continue
-            rid = result['run_id']
-            if rid is None:
-                try:
-                    marker = _marker(snapshot, by_id[result['challenge_id']], result['id'])
-                    marker['eval_id'] = eid
-                    marker['backend'] = snapshot.get('backend')
-                    run = controller.create_run(result['challenge_id'], 'connected',
-                                                snapshot['shadow_enabled'], eval_mode=marker)
-                except Exception as exc:
-                    if getattr(exc, 'code', '') == 'RUN_ACTIVE':
-                        break
-                    _failure(result['id'], type(exc).__name__ + ': ' + str(exc)[:180])
-                    continue
-                rid = run['id']
-                db.execute('UPDATE eval_results SET run_id=?,status=\'created\',updated_at=? WHERE id=?',
-                           (rid, db.utcnow(), result['id']))
-            run = db.query_one('SELECT * FROM runs WHERE id=?', (rid,))
-            if run['phase'] not in TERMINAL and run['started_at'] and run['authorization_id']:
-                auth = db.query_one('SELECT max_run_minutes FROM authorizations WHERE id=?',
-                                    (run['authorization_id'],))
-                from . import run_clock
-                elapsed = run_clock.elapsed(run)
-                if auth and auth['max_run_minutes'] > 0 and elapsed >= auth['max_run_minutes'] * 60:
-                    # A paused infrastructure failure must not hold the queue
-                    # forever after its original grant ends. Stop native work;
-                    # preserve missing scores and do not rent a late scorer.
-                    prior = db.query_one("SELECT seq,payload FROM events WHERE run_id=?"
-                        " AND type IN ('brain.action_rejected','evaluation.local_score_unavailable')"
-                        " ORDER BY seq DESC LIMIT 1", (rid,))
-                    reason = '本 Run 原授权时长已耗尽；未扩大额度或追加评分'
-                    if not db.query_one("SELECT 1 FROM events WHERE run_id=?"
-                                        " AND type='evaluation.budget_exhausted'", (rid,)):
-                        db.append_event(rid, 'controller', 'evaluation.budget_exhausted',
-                            {'reason': reason, 'previous_phase': run['phase'],
-                             'prior_failure_event_seq': prior['seq'] if prior else None})
-                    await controller.control(rid, 'terminate', None, f'eval-expire-{rid}')
-                    await asyncio.to_thread(sandbox_costs.refresh, rid)
-                    await asyncio.to_thread(job_costs.refresh, rid)
-                    _finish_result(result['id'], rid, scoring_status='budget_exhausted',
-                                   scoring_reason=reason)
-                    continue
-            if run['phase'] == 'created':
-                # Historical frozen evaluations retain their original grants.
-                limit = snapshot.get('limits') or {
-                    'minutes': 60 if evaluation['suite'] == 'fast' else 180,
-                    'jobs': 2 if evaluation['suite'] == 'fast' else 5,
-                    'sandbox_minutes': 60 if evaluation['suite'] == 'fast' else 180,
-                    'sandboxes': 2, 'max_cpu': 16, 'max_compute_cost_cny': None}
-                if not run['authorization_id']:
-                    challenge = db.query_one('SELECT content FROM challenges WHERE id=?',
-                                             (result['challenge_id'],))
-                    controller.authorize(rid, 'connected', True, 0, limit['minutes'], 0,
-                        'Local-only evaluation; no platform submission; no experience writes',
-                        max_jobs=limit['jobs'], allow_data_download=True,
-                        max_sandboxes=limit['sandboxes'], max_sandbox_minutes=limit['sandbox_minutes'],
-                        job_limits={'max_cpu': limit['max_cpu']},
-                        max_compute_cost_cny=limit['max_compute_cost_cny'],
-                        allow_sandbox_gpu=False,
-                        objective=challenge['content'])
-                try:
-                    await controller.start_async(rid)
-                except Exception as exc:
-                    current = db.query_one('SELECT phase FROM runs WHERE id=?', (rid,))
-                    if current and current['phase'] in ('created', 'blocked'):
-                        db.execute("UPDATE runs SET phase='failed',ended_at=?,block_reason=? WHERE id=?",
-                                   (db.utcnow(), '评测启动失败：' + type(exc).__name__, rid))
-                    _failure(result['id'], type(exc).__name__ + ': ' + str(exc)[:180])
-                    continue
-                db.execute("UPDATE eval_results SET status='running',updated_at=? WHERE id=?",
-                           (db.utcnow(), result['id']))
-            elif run['phase'] == 'recovering':
-                recovery = db.query_one(
-                    "SELECT seq FROM events WHERE run_id=? AND type IN"
-                    " ('run.needs_recovery','run.reopened') ORDER BY seq DESC LIMIT 1", (rid,))
-                # One stable operation per recovery episode, not one forever:
-                # reusing the prior episode's ID would acknowledge a resume
-                # without rebuilding the now-lost native sessions.
-                episode = recovery['seq'] if recovery else run['state_version']
-                await controller.control(rid, 'resume', None,
-                                         f'eval-resume-{rid}-{episode}')
-                db.execute("UPDATE eval_results SET status='running',updated_at=? WHERE id=?",
-                           (db.utcnow(), result['id']))
-            elif run['phase'] == 'eval_scoring':
-                db.execute("UPDATE eval_results SET status='scoring',updated_at=? WHERE id=?",
-                           (db.utcnow(), result['id']))
-                score_status, score_reason = await asyncio.to_thread(_score_run, rid, result['id'])
-                await asyncio.to_thread(sandbox_costs.refresh, rid)
-                await asyncio.to_thread(job_costs.refresh, rid)
-                controller._finalize_run(rid, run['end_reason'] or 'evaluation completed')
-                _finish_result(result['id'], rid, scoring_status=score_status,
-                               scoring_reason=score_reason)
-            elif run['phase'] in TERMINAL:
-                await asyncio.to_thread(sandbox_costs.refresh, rid)
-                await asyncio.to_thread(job_costs.refresh, rid)
-                _finish_result(result['id'], rid)
-            else:
-                db.execute('UPDATE eval_results SET status=?,updated_at=? WHERE id=?',
-                           (run['phase'], db.utcnow(), result['id']))
-        pending = db.query_one("SELECT 1 FROM eval_results WHERE eval_id=?"
-                               " AND status NOT IN ('complete','failed') LIMIT 1", (eid,))
-        if not pending:
-            failed = db.query_one("SELECT 1 FROM eval_results WHERE eval_id=?"
-                                  " AND status='failed' LIMIT 1", (eid,))
-            db.execute('UPDATE eval_runs SET status=?,ended_at=?,updated_at=? WHERE id=?',
-                       ('complete_with_failures' if failed else 'complete',
-                        db.utcnow(), db.utcnow(), eid))
-            write_report(eid)
+            models = snapshot.get('frozen', {}).get(item['challenge_id'], {}).get('models') or snapshot['models']
+            template = {'model_config': models, 'shadow_enabled': snapshot.get('shadow_enabled', False),
+                        'solver_note': '', 'authorization': {
+                            'allow_model_calls': True, 'max_run_minutes': limit['minutes'],
+                            'max_model_turns': 0, 'max_jobs': limit['jobs'], 'max_submissions': 0,
+                            'max_sandboxes': limit['sandboxes'], 'max_sandbox_minutes': limit['sandbox_minutes'],
+                            'max_environment_saves': 0, 'allow_sandbox_gpu': False, 'allow_data_download': True,
+                            'job_limits': {'max_cpu': limit['max_cpu']},
+                            'max_compute_cost_cny': limit['max_compute_cost_cny']}}
+            conn.execute('UPDATE eval_results SET template_json=? WHERE id=?', (_canonical(template), item['id']))
+        conn.execute('UPDATE eval_runs SET config_json=? WHERE id=?', (_canonical(snapshot), evaluation['id']))
+    return db.query_one('SELECT * FROM eval_runs WHERE id=?', (evaluation['id'],))
 
 
 async def _advance_ordinary(controller, evaluation):
     """Old-topic batches share competition admission and ordinary capabilities.
 
-    Reporting observes completed Runs. Only a persisted legacy eval_scoring
-    phase uses the historical scorer finalizer during migration.
+    Reporting observes completed Runs. A persisted legacy eval_scoring
+    phase is finalized from recorded evidence without renting compute.
     """
     from . import competition, job_costs, sandbox_costs, run_clock
     eid = evaluation['id']
@@ -443,7 +340,6 @@ async def _advance_ordinary(controller, evaluation):
             continue
         score_status, score_reason = (None, None)
         if phase == 'eval_scoring':
-            score_status, score_reason = await asyncio.to_thread(_score_run, run['id'], item['id'])
             controller._finalize_run(run['id'], run['end_reason'] or 'evaluation completed')
         await asyncio.to_thread(sandbox_costs.refresh, run['id'])
         await asyncio.to_thread(job_costs.refresh, run['id'])
@@ -462,24 +358,6 @@ def _check_scorer_input_path(challenge_id: str, sealed: bytes) -> None:
         artifact_contracts.require_supported(challenge_id, sealed)
     except local_scoring.LocalScoreError as exc:
         raise EvaluationError(str(exc)) from exc
-
-
-def retry_authorized(run_id: str, result_id: str) -> bool:
-    """A single local-only post-finish scorer repair; no research or submission."""
-    result = db.query_one('SELECT status,result_json FROM eval_results WHERE id=? AND run_id=?',
-                          (result_id, run_id))
-    if not result or result['status'] != 'complete' or not result['result_json']:
-        return False
-    if json.loads(result['result_json']).get('science_score') is not None:
-        return False
-    if db.query_one("SELECT 1 FROM events WHERE run_id=?"
-                    " AND type='evaluation.score_retry_finished'"
-                    " AND json_extract(payload,'$.result_id')=? LIMIT 1", (run_id, result_id)):
-        return False
-    return bool(db.query_one("SELECT 1 FROM events WHERE run_id=?"
-                             " AND type='evaluation.score_retry_started'"
-                             " AND json_extract(payload,'$.result_id')=? LIMIT 1",
-                             (run_id, result_id)))
 
 
 def score_preflight(run, preflight: dict[str, Any], score_op: str, sandbox_op: str) -> dict[str, Any]:
@@ -604,47 +482,22 @@ def _score_run(run_id: str, result_id: str, *, retry: bool = False) -> tuple[str
 
 
 def retry_unavailable_score(result_id: str) -> dict[str, Any]:
-    """Retry one infrastructure-failed science score on the same sealed Run."""
+    """Refresh a report from registered receipts; never grant post-finish compute.
+
+    A new execution must use an explicitly reopened ordinary Run and its
+    remaining authorization. The report endpoint cannot supply that authority.
+    """
     result = db.query_one('SELECT * FROM eval_results WHERE id=?', (result_id,))
     if not result or not result['run_id'] or result['status'] != 'complete':
         raise EvaluationError('需要已完成且封存的评测结果')
     rid = result['run_id']
-    run = db.query_one('SELECT phase,authorization_id,started_at FROM runs WHERE id=?', (rid,))
+    run = db.query_one('SELECT phase FROM runs WHERE id=?', (rid,))
     if not run or run['phase'] != 'finished':
-        raise EvaluationError('仅已完成的评测 Run 可重试本地评分')
+        raise EvaluationError('需要已完成的普通 Run')
     prior = json.loads(result['result_json'] or '{}')
     if prior.get('science_score') is not None:
         raise EvaluationError('科学分已确认，不重试')
-    if db.query_one("SELECT 1 FROM events WHERE run_id=?"
-                    " AND type='evaluation.score_retry_finished'"
-                    " AND json_extract(payload,'$.result_id')=? LIMIT 1", (rid, result_id)):
-        raise EvaluationError('该结果已完成一次补评分，不重复租用资源')
-    sealed = config.WORKSPACE_DIR / 'runs' / rid / 'eval' / 'sealed_package.zip'
-    if not sealed.is_file() or sealed.is_symlink():
-        raise EvaluationError('原封存包不存在，不能重试')
-    auth = db.query_one('SELECT max_run_minutes FROM authorizations WHERE id=?',
-                        (run['authorization_id'],))
-    remaining = (auth['max_run_minutes'] * 60 -
-                 (datetime.fromisoformat(db.utcnow()) -
-                  datetime.fromisoformat(run['started_at'])).total_seconds()) if auth and run['started_at'] else 0
-    if remaining < 1800:
-        raise EvaluationError('原 Run 授权不足 30 分钟，不能租新的评分沙箱')
-    if not retry_authorized(rid, result_id):
-        db.append_event(rid, 'controller', 'evaluation.score_retry_started',
-                        {'result_id': result_id, 'sealed_package_sha256':
-                         hashlib.sha256(sealed.read_bytes()).hexdigest(),
-                         'prior_reason': prior.get('science_reason')})
-    try:
-        status, reason = _score_run(rid, result_id, retry=True)
-    finally:
-        try:
-            sandboxes.cleanup_run(rid)
-        except Exception as exc:
-            db.append_event(rid, 'controller', 'sandbox.cleanup_unknown',
-                            {'reason': type(exc).__name__, 'phase': 'eval_rescore'})
-    _finish_result(result_id, rid, scoring_status=status, scoring_reason=reason)
-    db.append_event(rid, 'controller', 'evaluation.score_retry_finished',
-                    {'result_id': result_id, 'status': status, 'reason': reason})
+    _finish_result(result_id, rid)
     write_report(result['eval_id'])
     return get_evaluation(result['eval_id'])
 
@@ -790,7 +643,7 @@ def _finish_result(result_id: str, run_id: str, *, scoring_status: str | None = 
     events = db.query('SELECT type FROM events WHERE run_id=?', (run_id,))
     started = datetime.fromisoformat(row['started_at']) if row['started_at'] else None
     ended = datetime.fromisoformat(row['ended_at']) if row['ended_at'] else None
-    marker = db.eval_mode(run_id) or {}
+    marker = db.evaluation_metadata(run_id) or {}
     if ordinary:
         frozen = snapshot.get('frozen', {}).get(row['challenge_id'], {})
         marker = {'backend': snapshot.get('backend'),

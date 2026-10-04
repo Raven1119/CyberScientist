@@ -1,8 +1,10 @@
-# 当前状态（2026-10-04）
+# 当前状态（2026-10-05）
 
-进度：2026-10-04 23:39 北京时间 · CS-UP-08 · W4 完成并推送 · commit 87116a2dde58bdcc2f8b455b292d59a1c239c2c1
+进度：2026-10-04 23:42 北京时间 · CS-UP-09 · W0 完成并推送 · commit cecb4d92883b9b9c5734a9333bb9642c5b205967
 
 ## 已实现
+
+- CS-UP-09 W1：普通比赛／目录批次使用同一运行能力；评测标签仅供报告，历史结束评分不再租资源。评分未知、缺证 achieved、分项退步、轨迹/依赖诊断改为可见事实；预测和经验观察条数不设任意三条门禁。限流/停滞提醒不停止重试，提交采用活动时钟。Prime 全局配置渲染删除；规则审计逐位置/逐句覆盖1702条。
 
 - CS-UP-09 W0：两个回退标签已推送并核对，追加 D-42–D-47；数据库再次一致性备份，回退操作步骤已记录。CS-UP-10 不开工。
 
@@ -36,7 +38,7 @@
 
 - CS-UP-06模型更新：项目内Linux Codex0.159.3，原0.155.1保留；两个应用原生路径与五题选择gpt-6.1-sol/xhigh，默认及全局CLI配置/认证不变。
 
-- CS-UP-05 W0–W2：设计约束已同步；目录收录 abc、FigQA-0177/0178、Paired-block Lean、Matchgate/SWAP，新增两道科学评分器。评测可用 `cyberscientist eval run --suite fast|hard --repeats 2` 启动，SQLite 持久队列按现有 Run 容量创建 connected Run，冻结经验、模型、监督和 skills 快照；评测 Run 禁止平台提交与经验写入，结束前封存、本地科学评分和公开 v6 轨迹诊断。`eval report <eval_id>` 重建 Markdown/JSON；前端评测页显示进度、分数区间与状态。原始评测包和回执仍留本机忽略目录。
+- CS-UP-05 W0–W2：设计约束已同步；目录收录 abc、FigQA-0177/0178、Paired-block Lean、Matchgate/SWAP，新增两道科学评分器。评测可用 `cyberscientist eval run --suite fast|hard --repeats 2` 启动，SQLite 持久队列按现有 Run 容量创建 connected Run，历史实现曾冻结经验、模型、监督和 skills 快照并限制能力；CS-UP-09 W1 已统一普通运行能力，保留原授权（批次提交为0）与报告快照。`eval report <eval_id>` 重建 Markdown/JSON；前端评测页显示进度、分数区间与状态。原始评测包和回执仍留本机忽略目录。
 - CS-UP-05 W3：公开题目当前 GET 不可取回时，评测可导入仓库中按文件和题面哈希固定的历史公开题面快照；Run 与结果记录题面内容哈希和来源。此回退仅用于目录内预先固定的题目，不替代当前平台状态确认。
 
 - CS-UP-04：W1 为 63 份历史原生轨迹生成固定 CLI、单条件补丁 CLI 和原生直读三种转换与哈希；W2 用公开 v6 原函数对照本机 63 份 v8 可见回执及 71 份旧组上限，逐代码保留不可观察与两种未列出解释。W3 在封存和平台选行后加入离线确定性诊断，只有 N06/N08/N09/N11/N14 的条件达标项形成真实补救建议；失败返回 unavailable，不改变既有准入。前端展示全量详情，提交事件与同 Trial 审阅帧只传达达标摘要；skill 加入对应证据补救动作。公开 MIT 源码与许可证按固定哈希 vendor；Playground CLI 只复制临时补丁，不改全局安装。见 `docs/TRACE_CONVERSION_VARIANTS_CS-UP-04.md`、`docs/TRACE_CHECKLIST_V6_V8_AGREEMENT.md` 和 `docs/DECISIONS.md` 的 CS-UP-04 节。
@@ -94,6 +96,8 @@
 - CS-SB-01 稀疏输入与唤醒修复：可选短研究摘要独立存储；新 Run 普通检查点不唤醒 shadow，Job/Trial 研究级重复状态按 ID 去重。详见 `docs/SPARSE_BRAIN_INPUT_WAKE_FIX_2026-09-24.md`。
 
 ## 已实际验证
+
+- CS-UP-09 W1：`.venv/bin/pytest -q` 全量899通过（413.66秒，日志留忽略目录）；规则/技能最终15通过，原生/评分最后46通过。前端 `npm test` 45通过，`npm run build` 成功；`compileall`、`git diff --check` 与46个暂存文件的密钥/体积/私有路径检查通过。Standards/Spec 两路有界审查的可操作项已修正。
 
 - CS-UP-09 W0：远程 main/fallback-1 均为 ec5e24b，fallback-0 为 5940418；基线跟踪文件干净，原未跟踪资料保留。SQLite backup、哈希核对、SQLite integrity_check通过，47条编号唯一、原41条决策不变；首个校验脚本编号错误导致先提交的偏差已记录并补做验证。哈希清单仅在本机忽略目录。
 

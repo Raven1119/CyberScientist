@@ -32,7 +32,7 @@ _NOTABLE = (
     "trial.stalled", "trial.done", "trial.reported_complete",
     "trial.created", "run.blocked", "run.pausing", "run.paused",
     "run.resumed", "run.time_limit", "brain.decision",
-    "brain.decision_rejected", "brain.action_rejected",
+    "brain.decision_rejected", "brain.action_rejected", "run.objective_assessment_unknown", "run.final_package_unknown", "run.final_package_checked",
     "guidance.sent", "guidance.acknowledged",
     "guidance.superseded", "prime.error", "prime.approval.rejected",
     "checkpoint.created", "submission.scored", "submission.score_corrected",
@@ -77,16 +77,6 @@ def authority_facts(run_id: str) -> dict[str, Any]:
     template = json.loads(run['config_snapshot']).get('competition', {}) if run else {}
     result['solver_note'] = template.get('solver_note', '')
     result['round_challenge_snapshot'] = template.get('challenge_snapshot')
-    if db.eval_mode(run_id):
-        result['evaluation_handoff'] = {
-            'platform_submission_allowed': False,
-            'experience_write_allowed': False,
-            'local_scoring_after_finish': True,
-            'agent_scoring_sandbox_required_for_finish': False,
-            'executor_verified_score_accepted': True,
-            'scoring_failure_returns_to_executor': True,
-            'environment_preparation': 'executor',
-        }
     return result
 
 
@@ -288,7 +278,7 @@ def build_frame(run_id: str, *, mode: str, frame_id: str,
                 "trial.stalled", "trial.done", "trial.reported_complete",
                 "submission.scored",
                 "submission.score_corrected", "run.blocked",
-                "brain.action_rejected", "brain.decision_rejected")):
+                "brain.action_rejected", "brain.decision_rejected", "run.objective_assessment_unknown", "run.final_package_unknown", "run.final_package_checked")):
             notable.append({"seq": e["seq"], "source": e["source"],
                             "type": e["type"],
                             "excerpt": strip_secrets(json.dumps(
@@ -340,7 +330,7 @@ def build_frame(run_id: str, *, mode: str, frame_id: str,
             "trial.stalled", "trial.done", "trial.reported_complete",
             "submission.scored",
             "submission.score_corrected", "run.blocked",
-            "brain.action_rejected", "brain.decision_rejected")]
+            "brain.action_rejected", "brain.decision_rejected", "run.objective_assessment_unknown", "run.final_package_unknown", "run.final_package_checked")]
         for item in notable:
             item["excerpt"] = item["excerpt"][:120]
 
@@ -382,7 +372,7 @@ def build_frame(run_id: str, *, mode: str, frame_id: str,
         "prediction_outcomes":submission_predictions.outcomes(run_id,through_seq=through_seq),
         "experience_context_id": context["id"],
         "brain_private_note_md": note,
-        "watchlist": sup["watchlist"][:3],
+        "watchlist": sup["watchlist"],
         "experiences": exps,
         "experience_index": context.get("index", []),
         "budget": {

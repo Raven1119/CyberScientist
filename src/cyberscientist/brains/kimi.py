@@ -380,9 +380,9 @@ class KimiBrain:
                 "kind=submit：结果包已可提交时发出；仅在已有 Run 授权、提交预算"
                 "和去重检查通过后，系统自动用实验邮箱提交（不投递给执行器），"
                 "随后异步等待评分；不扩大正式提交授权。\n"
-                "若 ObservationFrame.submission_prediction_version=1，submit guidance 必须附 prediction_md，"
+                "若 ObservationFrame.submission_prediction_version=1，submit guidance 可附 prediction_md，"
                 "说明本次改动和预计 displayScore/harbor_score/trace_score 哪些分量如何变化；"
-                "缺失会被拒绝。可选 prediction_verdicts=[{submission_id,verdict:confirmed|refuted|unclear,note_md}]"
+                "未提供则预测记为 unknown，不阻止已授权提交。可选 prediction_verdicts=[{submission_id,verdict:confirmed|refuted|unclear,note_md}]"
                 "评判帧中的已确认预测，证据不清时用 unclear。\n"
                 + ("只输出一个 JSON 代码块；可按需使用 research_trace 或 platform_scores，零读取可直接判断。\n\n"
                  if packet.get("sparse_brain_version") == 1 else
@@ -395,7 +395,7 @@ class KimiBrain:
             "目标与停止条件以本 Run 的用户指导和 authorization.note 为准。"
             "在授权范围内主动检验假设；用户要求实验闭环时，完成提交、反馈和经验整理即可收尾，"
             "不擅自增加必须满分的条件。finish 必须说明已完成的目标、证据和未解决项。"
-            "pause 只用于必须等用户才能推进的真正抉择点，不得为省配额而 pause。\n"
+            "遇到阻塞先尝试其他已授权路线；额度或全部渠道均耗尽时才暂停。\n"
             + (
                 "本次 trigger=run_start：先核对输入中的官方题面、资源路径和评分约束。"
                 "需要补证时使用已开放的只读工具；网络失败记录 unknown，"
@@ -403,7 +403,7 @@ class KimiBrain:
                 "资源试算、产物及停止条件；不以确认满分可达为启动条件。"
                 "每项判断标明已读来源，外部指导单独归因。\n"
                 if packet.get("trigger") == "run_start" else
-                "必要时可使用 research_trace 或 platform_scores；分布只作分诊参考，不作优化目标；不要求先读后答。\n"
+                "必要时可使用 research_trace 或 platform_scores；公开分布可辅助路线排序；保留来源、口径和 unknown。\n"
             ) +
             "根据下面的 ReviewPacket 做出一次判断。只输出一个 JSON 代码块，不要输出其他文字。\n\n"
             "Decision 结构（严格遵守；v2 待处理意图可增加指定条件字段）：\n"
@@ -412,7 +412,7 @@ class KimiBrain:
             '"summary":"一句话判断","evidence_refs":["引用见 ReviewPacket 事件"],'
             '"actions":[{"op":"..."}],'
             '"experience_proposals":[]}\n'
-            "actions 中每个元素只能是以下形状之一（1-3 个，最多一个主动作）：\n"
+            "actions 中每个元素只能是以下形状之一（最多一个改变运行方向的主动作）：\n"
             '- {"op":"start_trial","goal":"...","success_check":"..."}\n'
             '- {"op":"steer","trial_id":"当前 Trial","message":"..."}\n'
             '- {"op":"wait","reason":"...","duration_seconds":1800}（时长可省略，最长由设置限制）\n'
@@ -422,7 +422,7 @@ class KimiBrain:
             + ('- {"op":"finish","reason":"...","objective_assessment":{"status":"achieved|partial|not_achievable|stopped","evidence_refs":[],"remaining_md":"..."}}\n'
                '若 ReviewPacket 有 pending_intent，顶层必须给 pending_intent_resolution=replay|revise|drop；replay 重放原动作。\n'
                if packet.get("lifecycle_version") == 2 else '- {"op":"finish","reason":"..."}\n')
-            + "若最终包对账返回退步，可修正产物后 finish，或在 finish 中增加 "
+            + "最终评分未知或退步只作可见事实；PI 可修复或如实结束，并可选在 finish 中增加 "
             "finish_confirmation={token:反馈中的 confirmation_token,reason_md:明确确认原因}。\n"
             "旧 request_submission 会被明确拒绝：bundle_manifest_ref 尚无冻结包解析契约。"
             "提交建议仅在 requested/shadow 的 ReviewResult 中用 guidance.kind=submit，"

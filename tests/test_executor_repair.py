@@ -36,7 +36,13 @@ def test_repeated_finish_failure_reopens_same_trial_for_executor(monkeypatch, co
     assert run['phase'] == 'running'
     assert run['current_trial_id'] == tid
     assert all(run[key] == before[key] for key in ('started_at', 'authorization_id', 'config_snapshot'))
-    assert db.query_one('SELECT status FROM trials WHERE id=?', (tid,))['status'] == 'active'
+    assert db.query_one('SELECT status FROM trials WHERE id=?', (tid,))['status'] == 'done'
+    # PI may end honestly, or choose the existing executor-repair channel.
+    # Exercise that choice explicitly; a failed final grade is advisory.
+    unknown = db.query_one("SELECT seq FROM events WHERE run_id=? AND type='run.final_package_unknown'", (rid,))
+    assert unknown
+    asyncio.run(controller._request_executor_repair(rid, tid, stage='final_package_score',
+        code=code, detail=cause, event_seq=unknown['seq'], failure_details={'observed_cause': cause}))
     guidance = db.query_one("SELECT * FROM guidance WHERE run_id=? AND source='controller'", (rid,))
     assert guidance['status'] == 'sent'
     assert code in guidance['text_md'] and cause in guidance['text_md']
@@ -150,6 +156,9 @@ def test_executor_repair_then_finish_succeeds_without_new_trial(monkeypatch):
         raise local_scoring.LocalScoreError('INVALID_PACKAGE', 'missing artifact')
     monkeypatch.setattr(local_scoring, 'score_candidate', failed)
     asyncio.run(controller._apply_decision(rid, action, {}, None, None))
+    failed_event = db.query_one("SELECT seq FROM events WHERE run_id=? AND type='run.final_package_unknown'", (rid,))
+    asyncio.run(controller._request_executor_repair(rid, tid, stage='final_package_score',
+        code='INVALID_PACKAGE', detail='missing artifact', event_seq=failed_event['seq']))
     gid = db.query_one('SELECT id FROM guidance WHERE run_id=?', (rid,))['id']
     db.execute("UPDATE guidance SET status='applied' WHERE id=?", (gid,))
     db.execute("UPDATE trials SET status='done' WHERE id=?", (tid,))
@@ -157,7 +166,10 @@ def test_executor_repair_then_finish_succeeds_without_new_trial(monkeypatch):
     monkeypatch.setattr(local_scoring, 'score_candidate', lambda *a, **k: candidate)
     asyncio.run(controller._apply_decision(rid, action, {}, None, None))
     run = db.query_one('SELECT phase,current_trial_id FROM runs WHERE id=?', (rid,))
-    assert run['phase'] == 'eval_scoring' and run['current_trial_id'] == tid
+    assert run['phase'] == 'running' and run['current_trial_id'] == tid
+    assert db.query_one("SELECT 1 FROM review_requests WHERE run_id=? AND trigger='curation'", (rid,))
+    controller._finalize_run(rid, 'fixture curation complete')
+    assert db.query_one('SELECT phase FROM runs WHERE id=?', (rid,))['phase'] == 'finished'
     assert len(db.query('SELECT id FROM trials WHERE run_id=?', (rid,))) == 1
     assert len(executor.prompts) == 1
 
@@ -195,6 +207,10 @@ def test_repair_feedback_and_failure_event_redact_credentials(monkeypatch):
     monkeypatch.setattr(local_scoring, 'score_candidate', failed)
     asyncio.run(controller._apply_decision(rid, _decision([
         {'op': 'finish', 'reason': 'seal'}], rid=rid), {}, None, None))
+    failure = db.query_one("SELECT seq,payload FROM events WHERE run_id=? AND type='run.final_package_unknown'", (rid,))
+    assert failure
+    asyncio.run(controller._request_executor_repair(rid, tid, stage='final_package_score',
+        code='INVALID_PACKAGE', detail=json.loads(failure['payload'])['reason'], event_seq=failure['seq']))
     assert 'private-test-secret' not in executor.prompts[0][1]
     assert 'private-test-secret' not in json.dumps([dict(r) for r in db.query(
         'SELECT payload FROM events WHERE run_id=?', (rid,))])

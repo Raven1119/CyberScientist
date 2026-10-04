@@ -110,6 +110,6 @@ def prompt_segment(skills_: list[dict[str, Any]]) -> str:
         path = (Path(skill["source"]) / skill["id"] / "SKILL.md").resolve()
         lines.append(f"- {skill['name']}: {skill['description']}\n"
                      f"  SKILL.md: {path}")
-    return ("\n\n本 Trial 启用技能（使用前必须阅读对应的 SKILL.md，"
-            "再按其中的指令调用；引用的相对路径以该文件所在目录为准）：\n"
+    return ("\n\n本 Trial 可参考技能（调用前建议阅读对应的 SKILL.md，"
+            "采用适合当前证据的做法；引用的相对路径以该文件所在目录为准）：\n"
             + "\n".join(lines))

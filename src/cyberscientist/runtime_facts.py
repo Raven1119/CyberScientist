@@ -156,5 +156,5 @@ def facts(run_id: str) -> dict:
             'spent_estimates': {'job': cost['job_estimate'], 'sandbox': cost['sandbox_estimate']},
             'compute_budget': compute_budget.summary(run_id),
             'budget_note': '未知费用不计零；价格附观察时间，不是供应商最终账单。',
-            'historical_materials': {'own_local_materials_allowed': bool(db.eval_mode(run_id)),
+            'historical_materials': {'own_local_materials_allowed': True,
                                      'other_users_submissions_allowed': False}}

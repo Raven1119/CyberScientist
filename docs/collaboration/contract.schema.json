@@ -156,7 +156,6 @@
         },
         "watchlist": {
           "type": "array",
-          "maxItems": 3,
           "items": {
             "$ref": "#/$defs/Watch"
           }

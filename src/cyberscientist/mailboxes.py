@@ -36,14 +36,6 @@ def _platform() -> MailboxPlatform:
     return get_platform(config.load_settings()["mailbox"]["platform"])
 
 
-def _reject_eval_submission(run_id: str, operation: str) -> None:
-    """The zero-submission evaluation boundary is independent of authorization."""
-    if db.eval_mode(run_id):
-        db.append_event(run_id, 'controller', 'evaluation.submission_rejected',
-                        {'operation': operation})
-        raise MailboxError('EVAL_SUBMISSION_FORBIDDEN', '评测 Run 禁止平台提交')
-
-
 def _store_secret(secret_id: str, value: str) -> str:
     config.update_secret(secret_id, value)
     return f"local:{secret_id}"
@@ -380,9 +372,8 @@ def _check_budget(conn, run_id: str) -> None:
     auth = conn.execute("SELECT * FROM authorizations WHERE id=? AND run_id=?",
                         (run["authorization_id"], run_id)).fetchone()
     if auth and auth["max_run_minutes"] and run["started_at"]:
-        from datetime import datetime, timezone
-        deadline = datetime.fromisoformat(run["started_at"].replace("Z","+00:00")).timestamp() + auth["max_run_minutes"]*60
-        if datetime.now(timezone.utc).timestamp() >= deadline:
+        from . import run_clock
+        if run_clock.remaining(run, auth) <= 0:
             raise MailboxError("NEEDS_AUTHORIZATION","本轮授权时长已用尽")
     limit = auth["max_submissions"] if auth else 0
     used = conn.execute("SELECT COUNT(*) AS n FROM submissions WHERE run_id=?"
@@ -525,12 +516,11 @@ def preflight_submission(run_id: str, trial_id: str | None,
             raise MailboxError("INVALID_PACKAGE", f"ARM 包无法封存：{type(exc).__name__}") from exc
         report = arm_admission.check(sealed, _protocol_snapshot())
     code = None
-    if report["verdict"] == "blocked":
-        code = "TRACE_ADMISSION_BLOCKED"
-    elif report["verdict"] == "indeterminate" and not allow_indeterminate_admission:
-        code = "TRACE_ADMISSION_INDETERMINATE"
-    elif data["evidence_class"] == "proxy" and not allow_proxy_evidence:
-        code = "PROXY_EVIDENCE"
+    advisory_warnings = []
+    if report["verdict"] in ('blocked', 'indeterminate'):
+        advisory_warnings.append('轨迹诊断：' + report['verdict'])
+    if data["evidence_class"] == "proxy":
+        advisory_warnings.append('数据证据为 proxy，正式评分适用性仍需确认')
     if code is None and is_bundle:
         import io
         from . import job_preflight
@@ -545,7 +535,7 @@ def preflight_submission(run_id: str, trial_id: str | None,
                          and len(raw) <= 2_000_000}
             job_preflight.check_sources(files, entry=manifest.get("entrypoint"))
         except job_preflight.PreflightError as exc:
-            code = exc.code
+            advisory_warnings.append('环境/源码预检建议：' + exc.code)
         except (KeyError, ValueError, zipfile.BadZipFile):
             code = "INVALID_PACKAGE"
     diagnostic = trace_diagnostics.unavailable("non_ARM_bundle")
@@ -563,7 +553,7 @@ def preflight_submission(run_id: str, trial_id: str | None,
             "data_inputs": data, "trace_diagnostics": diagnostic,
             "allow_proxy_evidence": allow_proxy_evidence,
             "allow_indeterminate_admission": allow_indeterminate_admission,
-            "error_code": code,
+            "error_code": code, "advisory_warnings": advisory_warnings,
             "artifact_contract": _artifact_contract(run_id, sealed)}
 
 
@@ -700,7 +690,6 @@ def submit_experiment(run_id: str, trial_id: str | None,
                       allow_indeterminate_admission: bool = False,
                       prediction_md: str | None = None, *,
                       variant_context: dict[str, Any] | None = None) -> dict[str, Any]:
-    _reject_eval_submission(run_id, 'experiment')
     if not operation_id:
         raise MailboxError("INVALID_MESSAGE", "缺少 operation_id（幂等键）")
     if prediction_md is not None and (not isinstance(prediction_md,str) or
@@ -711,11 +700,6 @@ def submit_experiment(run_id: str, trial_id: str | None,
         prediction_md=strip_secrets(prediction_md)
         if not prediction_md.strip():
             raise MailboxError('INVALID_MESSAGE','prediction_md 不能只包含密钥')
-    run = db.query_one("SELECT config_snapshot FROM runs WHERE id=?", (run_id,))
-    if run and json.loads(run["config_snapshot"]).get("submission_prediction_version") == 1 \
-            and prediction_md is None:
-        raise MailboxError('PREDICTION_REQUIRED',
-                           '本 Run 的实验提交必须填写 prediction_md：说明改了什么及预计哪个分量如何变化')
     package = _resolve_package(run_id, trial_id, package_path)
     source_content = package.read_bytes()
     source_digest = hashlib.sha256(source_content).hexdigest()
@@ -791,7 +775,8 @@ def submit_experiment(run_id: str, trial_id: str | None,
                                 "checklist_cap": check["trace_diagnostics"].get("advisory_cap"),
                                 "advisories": check["trace_diagnostics"].get("advisories", [])[:8]},
                             "allow_proxy_evidence":allow_proxy_evidence,
-                            "allow_indeterminate_admission":allow_indeterminate_admission},trial_id=trial_id)
+                            "allow_indeterminate_admission":allow_indeterminate_admission,
+                            "advisory_warnings": check.get('advisory_warnings', [])},trial_id=trial_id)
     return _perform_submission(sid,platform,challenge_id)
 
 
@@ -809,7 +794,6 @@ def submit_trace_variant(source_submission_id: str, operation_id: str,
     if not source or source['is_harvest'] or source['score_confidence'] != 'confirmed':
         raise MailboxError('INVALID_STATE', '轨迹变体来源必须是已确认评分的实验提交')
     run_id, trial_id = source['run_id'], source['trial_id']
-    _reject_eval_submission(run_id, 'trace_variant')
     if not trial_id or not operation_id:
         raise MailboxError('INVALID_MESSAGE', '轨迹变体需要来源 Trial 与 operation_id')
     if projection_only:
@@ -928,7 +912,6 @@ def submit_exact_replay(source_submission_id: str, operation_id: str,
     if not prediction.strip():
         raise MailboxError('INVALID_MESSAGE', '预测不能只包含密钥')
     run_id, trial_id = source['run_id'], source['trial_id']
-    _reject_eval_submission(run_id, 'exact_replay')
     if not trial_id:
         raise MailboxError('INVALID_STATE', '重复提交来源缺少 Trial')
     frozen_path = (config.WORKSPACE_DIR / source['package_path']).resolve()
@@ -1284,7 +1267,6 @@ def harvest_submit(submission_id: str, operation_id: str,
         " WHERE s.id=?", (submission_id,))
     if not src:
         raise MailboxError("NOT_FOUND", f"来源提交不存在: {submission_id}")
-    _reject_eval_submission(src['run_id'], 'harvest')
     if src["mailbox_role"] != "experiment" or src["is_harvest"]:
         raise MailboxError("INVALID_STATE", "收割来源必须是实验邮箱的提交")
     if src["status"] != "submitted" or src["score_status"] != "scored":

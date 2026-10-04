@@ -8,7 +8,7 @@ export type ReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max'
 
 export interface SettingsStatus {
   secrets: Record<string, boolean>
-  prime_models_synced: boolean
+  prime_authentication: string
 }
 
 export interface Settings {

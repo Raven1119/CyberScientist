@@ -17,7 +17,6 @@ def _run_with_scorer():
     _scorer()
     snapshot = json.loads(db.query_one('SELECT config_snapshot FROM runs WHERE id=?',
                                       (rid,))['config_snapshot'])
-    snapshot['eval_mode'] = {'enabled': True}
     db.execute("UPDATE runs SET config_snapshot=?,phase='running',started_at=? WHERE id=?",
                (json.dumps(snapshot), db.utcnow(), rid))
     db.execute("UPDATE trials SET status='done' WHERE id=?", (tid,))
@@ -32,7 +31,7 @@ def _score(rid, tid, files, manifest, op, a, b):
     return local_scoring._record_score('MB_CH', rid, tid, op, sealed, manifest, science)
 
 
-def test_finish_rejects_loss_of_registered_components_and_brain_can_confirm(monkeypatch):
+def test_finish_records_loss_of_registered_components_and_optional_confirmation(monkeypatch):
     rid, tid, _, files, manifest = _run_with_scorer()
     for candidate_tid, values in [('candidate_a', (11, 0)), ('candidate_b', (0, 13))]:
         db.execute("INSERT INTO trials(id,run_id,goal,success_check,status,created_at)"
@@ -45,14 +44,16 @@ def test_finish_rejects_loss_of_registered_components_and_brain_can_confirm(monk
     monkeypatch.setattr(local_scoring, 'score_candidate',
                         lambda *args, **kwargs: calls.append(1) or candidate, raising=False)
     controller = RunController()
+    # Isolate completion policy from asynchronous curation, tested separately.
+    monkeypatch.setattr(controller, '_defer_finish_for_curation', lambda *a: False)
     action = {'op': 'finish', 'reason': 'freeze synthetic result',
               'objective_assessment': {'status': 'partial', 'evidence_refs': [],
                                        'remaining_md': 'synthetic unresolved result'}}
     asyncio.run(controller._apply_decision(rid, _decision([action], rid=rid), {}, None, None))
-    assert db.query_one('SELECT phase FROM runs WHERE id=?', (rid,))['phase'] == 'running'
-    rejected = db.query_one("SELECT payload FROM events WHERE run_id=?"
-                            " AND type='brain.action_rejected' ORDER BY seq DESC LIMIT 1", (rid,))
-    facts = json.loads(rejected['payload'])['final_package_check']
+    assert db.query_one('SELECT phase FROM runs WHERE id=?', (rid,))['phase'] == 'finished'
+    checked = db.query_one("SELECT payload FROM events WHERE run_id=?"
+                           " AND type='run.final_package_checked' ORDER BY seq DESC LIMIT 1", (rid,))
+    facts = json.loads(checked['payload'])['final_package_check']
     losses = {item['component']: item for item in facts['regressions']}
     assert losses['/components/part_a/score']['best_score'] == 11
     assert losses['/components/part_b/score']['best_score'] == 13
@@ -62,10 +63,11 @@ def test_finish_rejects_loss_of_registered_components_and_brain_can_confirm(monk
     packet = controller._lifecycle_packet(db.query_one('SELECT * FROM runs WHERE id=?', (rid,)),
                                          'finish_rejected', sparse=True)
     assert packet['final_package_check']['confirmation_token'] == facts['confirmation_token']
+    db.execute("UPDATE runs SET phase='running' WHERE id=?", (rid,))
     action['finish_confirmation'] = {'token': facts['confirmation_token'],
                                       'reason_md': 'explicitly retain this incomplete synthetic result'}
     asyncio.run(controller._apply_decision(rid, _decision([action], rid=rid), {}, None, None))
-    assert db.query_one('SELECT phase FROM runs WHERE id=?', (rid,))['phase'] == 'eval_scoring'
+    assert db.query_one('SELECT phase FROM runs WHERE id=?', (rid,))['phase'] == 'finished'
     assert db.query_one("SELECT 1 FROM events WHERE run_id=?"
                         " AND type='run.final_package_confirmed'", (rid,))
     assert db.query_one('SELECT 1 FROM submissions WHERE run_id=?', (rid,)) is None
@@ -149,7 +151,7 @@ def test_component_registry_distinguishes_scores_from_runtime_diagnostics():
                       '/components/bonus/points/first': 3, '/components/bonus/points/second': 0}
 
 
-def test_plateau_scores_reject_lost_declared_candidates_and_allow_confirmation(monkeypatch):
+def test_plateau_scores_record_lost_declared_candidates_and_optional_confirmation(monkeypatch):
     from cyberscientist import config
     rid, tid, _, files, _ = _run_with_scorer()
     path = config.WORKSPACE_DIR / 'challenges/MB_CH/scorer/scorer.json'
@@ -171,9 +173,11 @@ def test_plateau_scores_reject_lost_declared_candidates_and_allow_confirmation(m
     description.pop('comparison_contract'); path.write_text(json.dumps(description))
     monkeypatch.setattr(local_scoring, 'score_candidate', lambda *a, **k: final)
     controller = RunController()
+    # Isolate completion policy from asynchronous curation, tested separately.
+    monkeypatch.setattr(controller, '_defer_finish_for_curation', lambda *a: False)
     action = {'op': 'finish', 'reason': 'synthetic plateau finish'}
     asyncio.run(controller._apply_decision(rid, _decision([action], rid=rid), {}, None, None))
-    assert db.query_one('SELECT phase FROM runs WHERE id=?', (rid,))['phase'] == 'running'
+    assert db.query_one('SELECT phase FROM runs WHERE id=?', (rid,))['phase'] == 'finished'
     facts = local_scoring.latest_final_check(rid)['final_package_check']
     losses = {item['component']: item for item in facts['regressions']}
     assert set(losses) == {'/components/Q1/quality', '/components/Q2/quality'}
@@ -183,9 +187,10 @@ def test_plateau_scores_reject_lost_declared_candidates_and_allow_confirmation(m
     assert losses['/components/Q2/quality']['candidate_package_sha256'] == second['package_sha256']
     assert all(item['candidate_artifact_hashes'] for item in losses.values())
     assert final['science_score'] == 0  # Comparison does not rewrite formal points.
+    db.execute("UPDATE runs SET phase='running' WHERE id=?", (rid,))
     action['finish_confirmation'] = {'token': facts['confirmation_token'], 'reason_md': 'retain synthetic result'}
     asyncio.run(controller._apply_decision(rid, _decision([action], rid=rid), {}, None, None))
-    assert db.query_one('SELECT phase FROM runs WHERE id=?', (rid,))['phase'] == 'eval_scoring'
+    assert db.query_one('SELECT phase FROM runs WHERE id=?', (rid,))['phase'] == 'finished'
     assert db.query_one("SELECT 1 FROM events WHERE run_id=? AND type='run.final_package_confirmed'", (rid,))
 
 

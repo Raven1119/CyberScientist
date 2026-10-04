@@ -71,8 +71,8 @@ def prepare(run_id: str, trial_id: str, operation_id: str, sandbox_id: str,
         return _prepared(operation_id, sandbox_id, stored)
     manifest = local_scoring.scorer_manifest(run['challenge_id'])
     check = mailboxes.preflight_submission(run_id, trial_id, package_path,
-                                           allow_proxy_evidence=bool(db.eval_mode(run_id)))
-    if check['error_code'] and not (db.eval_mode(run_id) and check['error_code'] in (
+                                           allow_proxy_evidence=True)
+    if check['error_code'] and not (check['error_code'] in (
             'TRACE_ADMISSION_BLOCKED', 'TRACE_ADMISSION_INDETERMINATE', 'PROXY_EVIDENCE')):
         _error(check['error_code'], '候选包未通过封存预检')
     cached = local_scoring.reuse_score(run_id, trial_id, operation_id, check['sealed_bytes'], manifest)

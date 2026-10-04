@@ -65,6 +65,12 @@ class FakeController:
                    ' VALUES(?,?,?,?,?)', (trial, run_id, 'fake', 'fake', db.utcnow()))
         db.execute("UPDATE runs SET phase='eval_scoring',gate='open',current_trial_id=?,"
                    'started_at=? WHERE id=?', (trial, db.utcnow(), run_id))
+        # Models are fake: arrange already-registered science evidence before
+        # the next report pass. Production reporting must never rent compute.
+        scorer = evaluations._score_run
+        if scorer.__module__ != 'cyberscientist.evaluations':
+            result = db.query_one('SELECT id FROM eval_results WHERE run_id=?', (run_id,))
+            scorer(run_id, result['id'])
 
     async def control(self, run_id, action, text, operation_id):
         self.resumes.append(run_id)
@@ -115,9 +121,8 @@ def test_paused_infrastructure_failure_expires_original_grant_and_releases_queue
     controller = FakeController()
     snapshot = json.loads(db.query_one('SELECT config_json FROM eval_runs WHERE id=?',
                                      (evaluation['id'],))['config_json'])
-    marker = evaluations._marker(snapshot, snapshot['entries'][0], first['id'])
-    marker['eval_id'] = evaluation['id']
-    run = controller.create_run(first['challenge_id'], 'connected', False, eval_mode=marker)
+    run = controller.create_run(first['challenge_id'], 'connected', False,
+                                model_config=json.loads(first['template_json'])['model_config'])
     rid = run['id']
     controller.authorize(rid, 'connected', True, 0, 60, 0, '', max_jobs=2,
                          max_sandboxes=2, max_sandbox_minutes=60)
@@ -362,29 +367,27 @@ def test_one_post_finish_score_retry_reuses_sealed_run(monkeypatch, tmp_path):
     sealed = config.WORKSPACE_DIR / 'runs' / rid / 'eval' / 'sealed_package.zip'
     sealed.parent.mkdir(parents=True)
     sealed.write_bytes(b'frozen-science-package')
-    assert not evaluations.retry_authorized(rid, result_id)
     observed = []
-    def repaired_score(run_id, score_result_id, *, retry=False):
-        observed.append((run_id, score_result_id, retry))
-        assert evaluations.retry_authorized(rid, result_id)
-        trial = db.query_one('SELECT current_trial_id FROM runs WHERE id=?', (rid,))['current_trial_id']
-        db.execute('INSERT INTO local_scores(id,challenge_id,run_id,trial_id,package_sha256,'
-                   'science_artifact_hashes_json,manifest_science_sha256,science_score,'
-                   'trace_prediction_json,scorer_version,scorer_file_hashes_json,feature_version,'
-                   'model_version,sandbox_operation_id,created_at)'
-                   ' VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
-                   ('ls_retry', 'eval_a', rid, trial, 'frozen', '{}', 'frozen', 80,
-                    '{}', 'fixture', '{}', 'v1', 'v1', 'eval-score-' + result_id + '-retry',
-                    db.utcnow()))
-        return 'scored', None
-    monkeypatch.setattr(evaluations, '_score_run', repaired_score)
-    monkeypatch.setattr(evaluations.sandboxes, 'cleanup_run', lambda _: [])
+    monkeypatch.setattr(evaluations, '_score_run', lambda *a, **k: observed.append(a))
+    monkeypatch.setattr(sandboxes, 'create', lambda *a, **k: pytest.fail('report cannot rent compute'))
+    unavailable = evaluations.retry_unavailable_score(result_id)
+    item = next(x for x in unavailable['results'] if x['id'] == result_id)
+    assert item['result']['science_score'] is None
+    assert observed == []
+    # A trusted receipt arrives later; report refresh only reads the ledger.
+    trial = db.query_one('SELECT current_trial_id FROM runs WHERE id=?', (rid,))['current_trial_id']
+    db.execute('INSERT INTO local_scores(id,challenge_id,run_id,trial_id,package_sha256,'
+               'science_artifact_hashes_json,manifest_science_sha256,science_score,'
+               'trace_prediction_json,scorer_version,scorer_file_hashes_json,feature_version,'
+               'model_version,sandbox_operation_id,created_at)'
+               ' VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+               ('ls_retry', 'eval_a', rid, trial, 'frozen', '{}', 'frozen', 80,
+                '{}', 'fixture', '{}', 'v1', 'v1', 'eval-score-' + result_id + '-retry', db.utcnow()))
     updated = evaluations.retry_unavailable_score(result_id)
     item = next(x for x in updated['results'] if x['id'] == result_id)
     assert item['result']['science_score'] == 80
-    assert observed == [(rid, result_id, True)]
+    assert observed == []
     assert db.query_one('SELECT phase FROM runs WHERE id=?', (rid,))['phase'] == 'finished'
-    assert not evaluations.retry_authorized(rid, result_id)
     with pytest.raises(evaluations.EvaluationError, match='已确认'):
         evaluations.retry_unavailable_score(result_id)
 
@@ -490,8 +493,12 @@ def test_finished_run_sandbox_only_opens_for_recorded_score_retry(monkeypatch, t
     with pytest.raises(compute.ComputeError, match='Run 未运行'):
         sandboxes.create(rid, operation, {'timeout': 60})
     assert not calls
-    db.append_event(rid, 'controller', 'evaluation.score_retry_started',
-                    {'result_id': result_id})
+    db.append_event(rid, 'controller', 'evaluation.score_retry_started', {'result_id': result_id})
+    # Historical metadata does not grant a finished Run new compute authority.
+    with pytest.raises(compute.ComputeError, match='Run 未运行'):
+        sandboxes.create(rid, operation, {'timeout': 60})
+    assert not calls
+    db.execute("UPDATE runs SET phase='running',gate='open' WHERE id=?", (rid,))
     response = sandboxes.create(rid, operation, {'timeout': 60})
     assert response['status'] == 'active'
     assert len(calls) == 1 and calls[0][:2] == ['sandbox', 'create']
@@ -509,31 +516,38 @@ def test_display_interval_branches(cap, expected):
     assert evaluations.display_interval(None, cap)['lower'] is None
 
 
-def test_eval_submission_and_experience_writes_are_rejected():
+def test_historical_metadata_uses_ordinary_budget_and_experience_permissions():
     _challenge('eval_guard')
     controller = RunController()
-    run = controller.create_run('eval_guard', 'connected', eval_mode={
+    rid = controller.create_run('eval_guard', 'connected', eval_mode={
         'enabled': True, 'models': MODELS,
-        'experience_manifests': {'brain': [], 'executor': [], 'both': []}})
-    rid = run['id']
-    with pytest.raises(mailboxes.MailboxError) as error:
-        mailboxes.submit_experiment(rid, None, None, 'fake-op')
-    assert error.value.code == 'EVAL_SUBMISSION_FORBIDDEN'
-    controller._apply_experience_proposal(rid, 'fake-decision',
-                                           {'body_md': 'must not write'})
+        'experience_manifests': {'brain': [], 'executor': [], 'both': []}})['id']
+    controller.authorize(rid, 'connected', True, 0, 60, 0, 'fixture')
+    db.execute("UPDATE runs SET phase='running',started_at=? WHERE id=?", (db.utcnow(), rid))
+    with pytest.raises(mailboxes.MailboxError) as error, db.transaction() as conn:
+        mailboxes._check_budget(conn, rid)
+    assert error.value.code == 'NEEDS_AUTHORIZATION'
+    eid = controller._apply_experience_proposal(rid, 'fake-decision', {
+        'scope': 'challenge', 'title': 'Synthetic reusable procedure', 'body_md': 'Do this in the next Run.',
+        'applicability': 'fixture only', 'kind': 'procedure', 'evidence_refs': []})
+    assert eid
+    context = experience_context.freeze(rid, None, 'fixture-live')
+    item = next(e for e in context['items'] if e['id'] == eid)
     with db.transaction() as conn:
-        experience_context.adopt_tx(conn, rid, None,
-                                    [{'context_id': 'none'}], 'brain', 'fake')
-    event = {'run_id': rid, 'source': 'controller', 'type': 'image_facts.observed'}
-    assert environment_facts.record('fake-key', 'fake', {}, event)['status'] == 'rejected'
-    assert db.query_one('SELECT 1 FROM experience_revisions') is None
+        experience_context.adopt_tx(conn, rid, None, [{'context_id': context['id'],
+            'experience_id': eid, 'revision_id': item['revision_id']}], 'brain', 'fake')
+    event = db.append_event(rid, 'controller', 'image_facts.observed', {'status': 'fixture'})
+    from cyberscientist import experiences
+    fact = environment_facts.record('fake-key', 'fake', {'status': 'fixture'}, event)
+    assert experiences.get_experience(fact['id'])['frontmatter']['status'] == 'active'
+    assert db.query_one('SELECT 1 FROM experience_uses WHERE run_id=?', (rid,))
     assert db.query_one('SELECT 1 FROM submissions WHERE run_id=?', (rid,)) is None
     kinds = {row['type'] for row in db.query('SELECT type FROM events WHERE run_id=?', (rid,))}
-    assert 'evaluation.submission_rejected' in kinds
-    assert 'evaluation.experience_write_rejected' in kinds
+    assert 'evaluation.submission_rejected' not in kinds
+    assert 'evaluation.experience_write_rejected' not in kinds
 
 
-async def test_eval_finish_enters_scoring_with_open_gate(monkeypatch):
+async def test_historical_metadata_finish_uses_ordinary_curation(monkeypatch):
     _challenge('eval_finish')
     controller = RunController()
     rid = controller.create_run('eval_finish', 'connected', eval_mode={
@@ -555,9 +569,12 @@ async def test_eval_finish_enters_scoring_with_open_gate(monkeypatch):
                                              'remaining_md': ''}}]}
     await controller._apply_decision(rid, decision, {}, None, None)
     run = db.query_one('SELECT phase,gate FROM runs WHERE id=?', (rid,))
-    assert (run['phase'], run['gate']) == ('eval_scoring', 'open')
-    assert db.query_one("SELECT 1 FROM events WHERE run_id=? AND type='evaluation.scoring_started'",
-                        (rid,))
+    assert run['phase'] == 'running'
+    request = db.query_one("SELECT * FROM review_requests WHERE run_id=? AND trigger='curation'", (rid,))
+    assert request and json.loads(request['frame_json'])['finish_after']
+    assert not db.query_one("SELECT 1 FROM events WHERE run_id=? AND type='evaluation.scoring_started'", (rid,))
+    controller._finalize_run(rid, 'fixture curation complete')
+    assert db.query_one('SELECT phase FROM runs WHERE id=?', (rid,))['phase'] == 'finished'
 
 
 def test_science_score_still_runs_when_trace_admission_blocks(monkeypatch):
@@ -570,7 +587,7 @@ def test_science_score_still_runs_when_trace_admission_blocks(monkeypatch):
     now = db.utcnow()
     db.execute('INSERT INTO trials(id,run_id,goal,success_check,created_at)'
                ' VALUES(?,?,?,?,?)', (trial, rid, 'fake', 'fake', now))
-    db.execute("UPDATE runs SET phase='eval_scoring',gate='open',current_trial_id=? WHERE id=?",
+    db.execute("UPDATE runs SET phase='running',gate='open',current_trial_id=? WHERE id=?",
                (trial, rid))
     db.execute('INSERT INTO compute_sandboxes(operation_id,run_id,trial_id,sandbox_id,'
                'request_json,status,created_at,expires_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)',

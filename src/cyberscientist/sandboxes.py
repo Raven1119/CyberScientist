@@ -237,14 +237,7 @@ def create(run_id: str, operation_id: str, request: dict, *, _session_id: str | 
         run = conn.execute('SELECT * FROM runs WHERE id=?', (run_id,)).fetchone()
         from . import resource_coordinator
         resource_coordinator.require_compute_slot_tx(conn, 'sandbox')
-        eval_scoring = (run and run['phase'] == 'eval_scoring' and db.eval_mode(run_id))
-        eval_retry = False
-        if (run and run['phase'] == 'finished'
-                and operation_id.startswith('eval-scorer-') and operation_id.endswith('-retry')):
-            from . import evaluations
-            eval_retry = evaluations.retry_authorized(
-                run_id, operation_id[len('eval-scorer-'):-len('-retry')])
-        if not run or run['mode'] != 'connected' or (run['phase'] != 'running' and not eval_scoring and not eval_retry) or run['gate'] != 'open' or not run['current_trial_id']:
+        if not run or run['mode'] != 'connected' or run['phase'] != 'running' or run['gate'] != 'open' or not run['current_trial_id']:
             raise compute.ComputeError('RUN_NOT_RUNNING', 'Run 未运行或研究门禁关闭，不能创建沙箱')
         auth = conn.execute('SELECT * FROM authorizations WHERE id=?', (run['authorization_id'],)).fetchone()
         if not auth or auth['max_sandboxes'] <= 0 or auth['max_sandbox_minutes'] <= 0:
@@ -305,7 +298,7 @@ def create(run_id: str, operation_id: str, request: dict, *, _session_id: str | 
             db.append_event_tx(conn, run_id, 'controller', 'sandbox.resources_observed',
                 {'operation_id': operation_id, 'sandbox_id': sid, 'resources': resources,
                  'source': 'create_receipt'}, trial_id=run['current_trial_id'])
-    if sid and compute._run(run_id)['phase'] in TERMINAL_RUN and not eval_retry:
+    if sid and compute._run(run_id)['phase'] in TERMINAL_RUN:
         status = delete(run_id,sid)['status']
     return {'operation_id':operation_id,'sandbox_id':sid,'status':status,
             'receipt':_receipt(receipt)}

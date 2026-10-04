@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+import pytest
 from datetime import datetime, timedelta, timezone
 
 from cyberscientist import config, db, model_limits
@@ -166,15 +167,15 @@ async def test_silent_run_wakes_fake_brain_and_recovers_with_trial():
     await prime.close(sid)
 
 
-def test_second_stall_pauses_and_long_job_suppresses_watchdog():
+def test_second_stall_advises_and_long_job_suppresses_watchdog():
     controller, rid = _run()
     now = time.time()
     assert controller.check_liveness(rid, now=now) == 'review_queued'
     db.execute("UPDATE review_requests SET status='done' WHERE run_id=?", (rid,))
     assert controller.check_liveness(rid, now=now + 301) == 'needs_attention'
-    assert controller.run_snapshot(rid)['phase'] == 'paused'
+    assert controller.run_snapshot(rid)['phase'] == 'running'
     assert _types(rid).count('run.stall_detected') == 2
-    assert _types(rid)[-1] == 'run.needs_attention'
+    assert 'run.needs_attention' in _types(rid)
 
     other, job_run = _run_another('w2-job')
     db.execute("INSERT INTO compute_jobs(operation_id,run_id,trial_id,request_hash,"
@@ -267,7 +268,7 @@ async def test_brain_429_three_times_then_success_does_not_spend_failed_reviews(
     await prime.close(sid)
 
 
-def test_continuous_limit_pauses_without_spending_review():
+def test_continuous_limit_advises_without_spending_review():
     controller, rid = _run()
     controller.check_liveness(rid)
     req_id = db.query_one('SELECT id FROM review_requests WHERE run_id=?', (rid,))['id']
@@ -278,13 +279,14 @@ def test_continuous_limit_pauses_without_spending_review():
     old = (datetime.now(timezone.utc) - timedelta(seconds=3601)).isoformat()
     db.execute("UPDATE model_rate_limits SET first_at=? WHERE run_id=?", (old, rid))
     assert controller.check_liveness(rid) == 'rate_limit_attention'
-    assert controller.run_snapshot(rid)['phase'] == 'paused'
+    assert controller.run_snapshot(rid)['phase'] == 'running'
     assert db.query_one('SELECT brain_reviews_used FROM runs WHERE id=?', (rid,))[
         'brain_reviews_used'] == 0
-    assert _types(rid)[-1] == 'run.needs_attention'
+    assert 'run.needs_attention' in _types(rid)
 
 
-async def test_executor_429_retries_exact_prompt_and_never_records_abort():
+@pytest.mark.parametrize('limit_age', [1, 3601])
+async def test_executor_429_retries_exact_prompt_and_never_records_abort(limit_age):
     controller, rid = _run()
     tid = 'w2-trial'
     db.execute("INSERT INTO trials(id,run_id,goal,success_check,status,created_at)"
@@ -314,9 +316,10 @@ async def test_executor_429_retries_exact_prompt_and_never_records_abort():
         row = db.query_one("SELECT attempts,state FROM model_rate_limits WHERE run_id=?"
                            " AND role='executor'", (rid,))
         assert row['attempts'] == attempt + 1 and row['state'] == 'waiting'
-        db.execute("UPDATE model_rate_limits SET retry_at=? WHERE run_id=?"
+        db.execute("UPDATE model_rate_limits SET retry_at=?,first_at=? WHERE run_id=?"
                    " AND role='executor'", ((datetime.now(timezone.utc) -
-                   timedelta(seconds=1)).isoformat(), rid))
+                   timedelta(seconds=1)).isoformat(), (datetime.now(timezone.utc) -
+                   timedelta(seconds=limit_age)).isoformat(), rid))
         assert await controller.retry_limited_executor(rid) == 'retried'
     assert prime.prompts == ['original complete prompt'] * 3
     await controller._handle_signal(

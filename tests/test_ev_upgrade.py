@@ -248,7 +248,7 @@ def test_projected_trace_redacts_secret_and_omits_hidden_reasoning(monkeypatch):
     assert b'cost_usd' not in projected
 
 
-def test_missing_protocol_is_indeterminate_and_proxy_blocks_without_reservation(monkeypatch):
+def test_missing_protocol_and_proxy_remain_visible_advice(monkeypatch):
     resources = [{'dataset_id': 'public-id', 'version_id': '1', 'role': 'task-public-data'}]
     _, rid = _run(resources=resources)
     trial = 'trial_ev'
@@ -260,17 +260,19 @@ def test_missing_protocol_is_indeterminate_and_proxy_blocks_without_reservation(
     db.execute("INSERT INTO trials(id,run_id,goal,success_check,created_at)"
                " VALUES(?,?,?,?,?)", (trial, rid, 'g', 's', db.utcnow()))
     check = mailboxes.preflight_submission(rid, trial, None)
-    assert check['error_code'] == 'PROXY_EVIDENCE'
-    with pytest.raises(mailboxes.MailboxError) as exc:
-        mailboxes.submit_experiment(rid, trial, None, 'ev-submit',
-                                    prediction_md='修改输入数据，预计总分上升')
-    assert exc.value.code == 'PROXY_EVIDENCE'
-    assert db.query_one('SELECT COUNT(*) AS n FROM submissions')['n'] == 0
-    assert mailboxes.preflight_submission(rid, trial, None,
-        allow_proxy_evidence=True)['error_code'] is None
+    assert check['error_code'] is None
+    assert check['data_inputs']['evidence_class'] == 'proxy'
+    assert check['advisory_warnings']
+    mailboxes.register_experiment(1)
+    submitted = mailboxes.submit_experiment(rid, trial, None, 'ev-submit',
+                                           prediction_md='修改输入数据，预计总分上升')
+    assert submitted['id']
+    assert db.query_one('SELECT COUNT(*) AS n FROM submissions')['n'] == 1
     monkeypatch.setattr(mailboxes, '_protocol_snapshot', lambda: None)
-    assert mailboxes.preflight_submission(rid, trial, None,
-        allow_proxy_evidence=True)['error_code'] == 'TRACE_ADMISSION_INDETERMINATE'
+    unknown = mailboxes.preflight_submission(rid, trial, None, allow_proxy_evidence=True)
+    assert unknown['error_code'] is None
+    assert unknown['admission']['verdict'] == 'indeterminate'
+    assert unknown['advisory_warnings']
 
 
 def test_explicit_no_input_task_does_not_require_registered_public_resource():
@@ -294,7 +296,7 @@ def test_explicit_no_input_task_does_not_require_registered_public_resource():
     assert preflight['allow_proxy_evidence'] is False
 
 
-def test_blocked_trace_never_reserves_submission():
+def test_blocked_trace_is_visible_advice_for_authorized_submission():
     _, rid = _run()
     trial = 'blocked-trial'
     base = config.WORKSPACE_DIR / 'runs' / rid / 'trials' / trial
@@ -304,12 +306,13 @@ def test_blocked_trace_never_reserves_submission():
                " VALUES(?,?,?,?,?)", (trial, rid, 'g', 's', db.utcnow()))
     report = mailboxes.preflight_submission(rid, trial, None)
     assert report['admission']['verdict'] == 'blocked'
-    assert report['error_code'] == 'TRACE_ADMISSION_BLOCKED'
-    with pytest.raises(mailboxes.MailboxError) as exc:
-        mailboxes.submit_experiment(rid, trial, None, 'blocked-submit',
-                                    prediction_md='修改轨迹，预计总分上升')
-    assert exc.value.code == 'TRACE_ADMISSION_BLOCKED'
-    assert db.query_one('SELECT COUNT(*) AS n FROM submissions')['n'] == 0
+    assert report['error_code'] is None
+    assert report['advisory_warnings']
+    mailboxes.register_experiment(1)
+    submitted = mailboxes.submit_experiment(rid, trial, None, 'blocked-submit',
+                                           prediction_md='修改轨迹，预计总分上升')
+    assert submitted['id']
+    assert db.query_one('SELECT COUNT(*) AS n FROM submissions')['n'] == 1
 
 
 def test_platform_bundle_blocked_keeps_draft_and_skips_submit(tmp_path):
@@ -742,7 +745,7 @@ def test_compute_preflight_returns_advice_without_blocking_executor_choice(monke
     assert all(item['status'] == 'advisory' for item in reports) and len(calls) == 2
 
 
-async def test_v2_finish_requires_objective_assessment(monkeypatch):
+async def test_v2_finish_records_unknown_without_objective_assessment(monkeypatch):
     controller, rid = _run()
     monkeypatch.setattr(controller, '_make_prime', lambda settings: object())
     monkeypatch.setattr(controller, '_defer_finish_for_curation', lambda *a: False)
@@ -750,10 +753,14 @@ async def test_v2_finish_requires_objective_assessment(monkeypatch):
             'observed_state_version': 0, 'summary': 'finished', 'evidence_refs': [],
             'experience_proposals': []}
     await controller._apply_decision(rid, base | {'actions': [{'op': 'finish', 'reason': 'r'}]}, {}, None, None)
-    assert controller.run_snapshot(rid)['phase'] == 'running'
+    assert controller.run_snapshot(rid)['phase'] == 'finished'
+    assert controller.run_snapshot(rid)['objective_status'] == 'unknown'
+    db.execute("UPDATE runs SET phase='running' WHERE id=?", (rid,))
     await controller._apply_decision(rid, base | {'actions': [{'op': 'finish', 'reason': 'r',
         'objective_assessment': {'status': 'achieved', 'evidence_refs': [], 'remaining_md': ''}}]}, {}, None, None)
-    assert controller.run_snapshot(rid)['phase'] == 'running'
+    assert controller.run_snapshot(rid)['phase'] == 'finished'
+    assert controller.run_snapshot(rid)['objective_status'] == 'unknown'
+    db.execute("UPDATE runs SET phase='running' WHERE id=?", (rid,))
     await controller._apply_decision(rid, base | {'actions': [{'op': 'finish', 'reason': 'partial evidence',
         'objective_assessment': {'status': 'partial', 'evidence_refs': [], 'remaining_md': 'unresolved'}}]}, {}, None, None)
     snap = controller.run_snapshot(rid)
@@ -810,22 +817,23 @@ async def test_sparse_brain_receives_invalid_finish_refs_without_stall_wait(monk
     await controller._apply_decision(rid, decision, {}, None, None)
     assert controller.run_snapshot(rid)['phase'] == 'running'
     request = db.query_one("SELECT trigger FROM review_requests WHERE run_id=?"
-                           " AND trigger='finish_rejected' ORDER BY rowid DESC LIMIT 1", (rid,))
+                           " AND trigger='curation' ORDER BY rowid DESC LIMIT 1", (rid,))
     assert request is not None
     rejection = db.query_one("SELECT payload FROM events WHERE run_id=?"
-                             " AND type='brain.action_rejected' ORDER BY seq DESC LIMIT 1", (rid,))
+                             " AND type='run.objective_assessment_unknown' ORDER BY seq DESC LIMIT 1", (rid,))
     assert json.loads(rejection['payload'])['invalid_refs'] == [invalid]
     packet = controller._lifecycle_packet(
         db.query_one('SELECT * FROM runs WHERE id=?', (rid,)), 'finish_rejected', sparse=True)
     assert any(invalid in e.get('excerpt', '') for e in packet['new_events_since_last_review'])
-    assert any(e['type'] == 'brain.action_rejected'
+    assert any(e['type'] == 'run.objective_assessment_unknown'
                for e in packet['feedback']['notable_events'])
     for index in (2, 3):
         await controller._apply_decision(rid, decision | {'decision_id': f'bad-finish-{index}'},
                                          {}, None, None)
-    assert controller.run_snapshot(rid)['phase'] == 'paused'
+    assert controller.run_snapshot(rid)['phase'] == 'running'
+    assert controller.run_snapshot(rid)['objective_status'] == 'unknown'
     assert db.query_one("SELECT COUNT(*) AS n FROM review_requests WHERE run_id=?"
-                        " AND trigger='finish_rejected'", (rid,))['n'] == 2
+                        " AND trigger='curation'", (rid,))['n'] == 1
 
 
 async def test_review_metrics_and_read_only_csv(monkeypatch, tmp_path):
@@ -882,7 +890,7 @@ def test_legacy_run_budget_keeps_v1_global_semantics():
 
 
 @pytest.mark.parametrize('filename', ['result_package.json', 'submission.csv'])
-def test_nonzip_proxy_gate_precedes_submission_reservation(monkeypatch, filename):
+def test_nonzip_proxy_warning_precedes_submission_reservation(monkeypatch, filename):
     resources = [{'dataset_id': 'public-id', 'version_id': '1', 'role': 'task-public-data'}]
     _, rid = _run(resources=resources)
     trial = 'nonzip_proxy'
@@ -899,14 +907,11 @@ def test_nonzip_proxy_gate_precedes_submission_reservation(monkeypatch, filename
                " VALUES('proxy_mb','experiment','fixture@example.test','fixture','local:fixture','active',2,0,?)",
                (db.utcnow(),))
     assert mailboxes.preflight_submission(rid, trial, None)['admission']['verdict'] == 'not_applicable'
-    assert mailboxes.preflight_submission(rid, trial, None)['error_code'] == 'PROXY_EVIDENCE'
-    with pytest.raises(mailboxes.MailboxError) as error:
-        mailboxes.submit_experiment(rid, trial, None, 'blocked-'+filename,
-                                    prediction_md='修改输入数据，预计总分上升')
-    assert error.value.code == 'PROXY_EVIDENCE'
-    assert db.query_one('SELECT COUNT(*) AS n FROM submissions')['n'] == 0
-    assert db.query_one("SELECT submissions_used FROM mailboxes WHERE id='proxy_mb'")[0] == 0
-    assert platform_calls == []
+    check = mailboxes.preflight_submission(rid, trial, None)
+    assert check['error_code'] is None
+    assert check['data_inputs']['evidence_class'] == 'proxy'
+    assert check['advisory_warnings']
+    assert platform_calls == []  # preflight is still read-only
     mailboxes.submit_experiment(rid, trial, None, 'allowed-'+filename,
                                 allow_proxy_evidence=True,
                                 prediction_md='修改输入数据，预计总分上升')

@@ -110,15 +110,14 @@ def test_submission_prediction_is_frozen_and_inherited_by_harvest():
     assert db.query_one('SELECT prediction_md FROM submissions WHERE id=?',(harvest['id'],))['prediction_md']==text
 
 
-def test_new_run_manual_experiment_requires_prediction_before_reserving():
+def test_new_run_manual_experiment_keeps_optional_prediction_without_gate():
     _seed_challenge()
     rid = _make_run(prediction_required=True)
     _make_package(rid)
     mailboxes.register_experiment(1)
-    with pytest.raises(mailboxes.MailboxError) as exc:
-        mailboxes.submit_experiment(rid, 'trial_mb1', None, 'missing-prediction')
-    assert exc.value.code == 'PREDICTION_REQUIRED'
-    assert db.query_one('SELECT COUNT(*) AS n FROM submissions WHERE run_id=?', (rid,))['n'] == 0
+    unpredicted = mailboxes.submit_experiment(rid, 'trial_mb1', None, 'missing-prediction')
+    assert db.query_one('SELECT prediction_md FROM submissions WHERE id=?', (unpredicted['id'],))['prediction_md'] is None
+    assert db.query_one('SELECT COUNT(*) AS n FROM submissions WHERE run_id=?', (rid,))['n'] == 1
     text = '调整正则化；预计 harbor_score 增加'
     sub = mailboxes.submit_experiment(rid, 'trial_mb1', None, 'with-prediction',
                                       prediction_md=text)
@@ -139,8 +138,8 @@ async def test_new_run_submission_api_forwards_prediction():
         url = f'/api/v1/runs/{rid}/submissions'
         missing = await cli.post(url, json={'trial_id': 'trial_mb1',
                                             'operation_id': 'api-missing'})
-        assert missing.status_code == 422
-        assert missing.json()['detail']['code'] == 'PREDICTION_REQUIRED'
+        assert missing.status_code == 200
+        assert db.query_one('SELECT prediction_md FROM submissions WHERE id=?', (missing.json()['id'],))['prediction_md'] is None
         submitted = await cli.post(url, json={'trial_id': 'trial_mb1',
                                               'operation_id': 'api-predicted',
                                               'prediction_md': '调整参数，预计总分上升'})

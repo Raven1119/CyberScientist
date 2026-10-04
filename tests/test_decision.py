@@ -35,9 +35,9 @@ def test_unknown_action_fails():
     assert d.validate_structure(bad)
 
 
-def test_too_many_actions_fails():
+def test_multiple_observation_actions_have_no_arbitrary_three_action_cap():
     bad = valid_decision(actions=[{"op": "wait", "reason": "a"}] * 4)
-    assert d.validate_structure(bad)
+    assert not d.validate_structure(bad)
 
 
 def test_experience_proposal_scope_constraint():

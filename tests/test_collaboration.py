@@ -1012,7 +1012,7 @@ async def test_t13b_submit_guidance_failure_marks_failed(monkeypatch):
     await c.control(rid, "terminate", None, "op-term-t13b")
 
 
-async def test_new_run_rejects_submit_without_prediction_then_accepts_one(monkeypatch):
+async def test_new_run_accepts_optional_prediction_and_redacts_secrets(monkeypatch):
     _seed_challenge()
     c, brain, ex = _rig(shadow=False)
     rid = c.create_run('COLLAB_CH',shadow_enabled=False)['id']
@@ -1028,8 +1028,9 @@ async def test_new_run_rejects_submit_without_prediction_then_accepts_one(monkey
     frame=brain.calls[-1]
     await brain.results.put({'review_result':_review_result(frame['frame_id'],
         disposition='intervene',guidance=_guidance(kind='submit',intent='continue',text='提交'))})
-    assert await _wait(lambda: db.query_one("SELECT 1 FROM events WHERE run_id=? AND type='guidance.rejected'",(rid,)) is not None)
-    assert calls==[] and db.query_one("SELECT 1 FROM guidance WHERE run_id=?",(rid,)) is None
+    assert await _wait(lambda: len(calls)==1)
+    assert calls == [None]
+    assert not db.query_one("SELECT 1 FROM events WHERE run_id=? AND type='guidance.rejected'", (rid,))
     c.request_review(rid)
     assert await _wait(lambda: len([p for p in brain.calls if p.get('protocol')=='review_result'])>=2)
     frame=brain.calls[-1]
@@ -1039,9 +1040,9 @@ async def test_new_run_rejects_submit_without_prediction_then_accepts_one(monkey
     guidance['prediction_md']='调整滤波；预计 trace_score 上升，harbor_score 不变；误写 '+secret
     await brain.results.put({'review_result':_review_result(frame['frame_id'],
         disposition='intervene',guidance=guidance)})
-    assert await _wait(lambda: len(calls)==1)
-    assert secret not in calls[0]
-    assert secret not in db.query_one('SELECT prediction_md FROM guidance WHERE run_id=?',(rid,))['prediction_md']
+    assert await _wait(lambda: len(calls)==2)
+    assert secret not in calls[1]
+    assert secret not in db.query_one('SELECT prediction_md FROM guidance WHERE run_id=? ORDER BY created_at DESC',(rid,))['prediction_md']
     await c.control(rid,'terminate',None,'op-term-pred')
 
 
@@ -1113,7 +1114,7 @@ async def test_trial_prompt_includes_enabled_skills(tmp_path, monkeypatch):
     tid = await _start(c, brain, rid)
 
     prompt = ex.prompts[-1][1]
-    assert "本 Trial 启用技能" in prompt
+    assert "本 Trial 可参考技能" in prompt
     assert "- tdd: 测试驱动开发" in prompt
     ev = db.query_one(
         "SELECT payload, trial_id FROM events WHERE run_id=?"

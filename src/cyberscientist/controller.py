@@ -267,16 +267,12 @@ class RunController:
         snapshot = json.loads(run["config_snapshot"])
         settings = snapshot["settings"]
         settings["app"]["mode"] = run["mode"]
-        if not db.eval_mode(run_id):
-            settings["run_defaults"] = config.load_settings()["run_defaults"]
+        settings["run_defaults"] = config.load_settings()["run_defaults"]
         return settings
 
     @staticmethod
     def _enabled_skills(run_id: str, settings: dict[str, Any],
                         challenge_id: str, role: str) -> list[dict[str, Any]]:
-        marker = db.eval_mode(run_id)
-        if marker:
-            return marker.get('skills', {}).get(role, [])
         return skills_mod.effective_for(db.get_db(), settings, challenge_id, role=role)
 
     @staticmethod
@@ -308,7 +304,7 @@ class RunController:
                                  "env": [{"name": k, "value": v}
                                          for k, v in variables.items()]}],
                 "instructions": "长期研究会话。research_trace 可按需读取已登记公开记录；"
-                                "platform_scores 可只读查看本题匿名分数分布供分诊参考，不能将分布当优化目标。"
+                                "platform_scores 可只读查看本题匿名分数分布，辅助路线排序并保留来源和口径。"
                                 "没有读取必要时直接判断。不要使用通用 Shell、写文件或网络工具。"}
 
     def _require_model_authorization(self, run_id: str) -> None:
@@ -483,11 +479,11 @@ class RunController:
         if not challenge:
             raise ControllerError("NOT_FOUND", f"题目不存在: {challenge_id}")
         try:
-            selected = (challenge_models.from_challenge(challenge, settings) if eval_mode is None
-                        else {role: challenge_models.choose(role, eval_mode['models'][role], settings)
-                              for role in ('brain', 'executor')})
-            if model_config is not None:
-                selected = {role: challenge_models.choose(role, model_config.get(role), settings)
+            # Legacy callers may attach report metadata; models are ordinary per-Run choices.
+            supplied_models = model_config or (eval_mode or {}).get('models')
+            selected = challenge_models.from_challenge(challenge, settings)
+            if supplied_models is not None:
+                selected = {role: challenge_models.choose(role, supplied_models.get(role), settings)
                             for role in ('brain', 'executor')}
         except (ValueError, TypeError, KeyError) as exc:
             raise ControllerError("INVALID_ARGUMENT", f"题目模型配置无效：{exc}") from exc
@@ -507,9 +503,7 @@ class RunController:
                     "compute_policy_version": 1, "sparse_brain_version": 1,
                     "lifecycle_version": 2, "submission_prediction_version": 1}
         if eval_mode is not None:
-            if mode != "connected" or eval_mode.get("enabled") is not True:
-                raise ControllerError("INVALID_ARGUMENT", "评测标记只适用于真实 connected Run")
-            snapshot["eval_mode"] = json.loads(json.dumps(eval_mode))
+            snapshot["evaluation_metadata"] = json.loads(json.dumps(eval_mode))
         with config.mutation_lock, db.transaction() as conn:
             self._check_active_capacity(conn, config.load_settings())
             conn.execute(
@@ -1374,9 +1368,9 @@ class RunController:
         for row in limited:
             first = _parse_ts(row["first_at"])
             if first is not None and now - first >= limit_seconds:
-                self._pause_needs_attention(
-                    run_id, f"{row['role']} 模型持续限流超过 {limit_seconds} 秒；"
-                            "请检查额度或稍后恢复")
+                db.append_event(run_id, 'controller', 'run.needs_attention',
+                    {'reason': f"{row['role']} 模型持续限流超过 {limit_seconds} 秒",
+                     'advisory': True, 'available_action': '继续退避或选择另一条已授权路线'})
                 return "rate_limit_attention"
         if limited:
             return None  # A scheduled retry is a legitimate wait, not a stall.
@@ -1443,8 +1437,10 @@ class RunController:
                         {"strike": strike, "idle_seconds": int(now - baseline),
                          "diagnosis": diagnosis})
         if strike == 2:
-            self._pause_needs_attention(run_id,
-                "连续两次检测到研究无进展；大脑修复后仍未恢复，请检查 Run")
+            db.append_event(run_id, 'controller', 'run.needs_attention',
+                            {'reason': '连续检测到研究无进展', 'advisory': True,
+                             'diagnosis': diagnosis})
+            self._enqueue_lifecycle(run_id, trigger='stall_detected')
             return "needs_attention"
         self._enqueue_lifecycle(run_id, trigger="stall_detected")
         return "review_queued"
@@ -1503,8 +1499,7 @@ class RunController:
             (run_id,))
         if not row or self._require_run(run_id)["phase"] != "running":
             return None
-        if self.check_liveness(run_id) == "rate_limit_attention":
-            return "needs_attention"
+        self.check_liveness(run_id)  # prolonged throttling is advisory, not a retry gate
         if (_parse_ts(row["retry_at"]) or 0) > time.time():
             return None
         trial = db.query_one("SELECT id,status FROM trials WHERE id=?"
@@ -2877,13 +2872,6 @@ class RunController:
         if run["phase"] != "running" or self._run_minutes_exceeded(run):
             self._obsolete_request(req["id"],"Run 已关闭受控动作")
             return
-        if (result['disposition']=='intervene' and result['guidance']['kind']=='submit'
-                and json.loads(run['config_snapshot']).get('submission_prediction_version')==1
-                and not str(result['guidance'].get('prediction_md') or '').strip()):
-            db.append_event(run_id,'controller','guidance.rejected',
-                            {'review_id':req['id'],'kind':'submit',
-                             'reason':'本 Run 的实验提交必须提供 prediction_md：说明改了什么及预期分项变化'})
-            result={**result,'disposition':'silent','guidance':None}
         with db.transaction() as conn:
             sup = conn.execute("SELECT * FROM supervision WHERE run_id=?",
                                (run_id,)).fetchone()
@@ -3127,13 +3115,14 @@ class RunController:
             "new_events_since_last_review": [
                 {"seq": e["seq"], "source": e["source"], "type": e["type"],
                  **({} if sparse and e["type"] not in
-                    ("brain.action_rejected", "brain.decision_rejected")
+                    ("brain.action_rejected", "brain.decision_rejected", "run.objective_assessment_unknown", "run.final_package_unknown", "run.final_package_checked")
                     else observation.event_excerpt(e))}
                 for e in recent if not sparse or e["type"] in (
                     "checkpoint.created", "job.observed", "job.unknown",
                     "trial.stalled", "trial.done", "submission.scored",
                     "submission.score_corrected", "brain.action_rejected",
-                    "brain.decision_rejected")][-20:],
+                    "brain.decision_rejected", "run.objective_assessment_unknown",
+                    "run.final_package_unknown", "run.final_package_checked")][-20:],
             "budget_remaining": {
                 "brain_reviews": defaults["max_brain_reviews"]
                 - run["brain_reviews_used"],
@@ -3215,9 +3204,6 @@ class RunController:
         return current
 
     def _memory_manifest(self, run: Any, settings: dict[str, Any]) -> list[dict[str, Any]]:
-        marker = db.eval_mode(run["id"])
-        if marker:
-            return marker.get("experience_manifests", {}).get("brain", [])
         return experience_context.select(run["challenge_id"], goal=experience_context.run_goal(run['id']), role='brain')
 
     @staticmethod
@@ -3322,21 +3308,16 @@ class RunController:
                        stalled_trial_id=stalled_tid,
                        reported_trial_id=reported_tid)
 
-        if db.eval_mode(run_id):
-            if dec.get("experience_uses"):
-                db.append_event(run_id, "controller", "evaluation.experience_write_rejected",
-                                {"operation": "adopt", "count": len(dec["experience_uses"])})
-        else:
-            try:
-                with db.transaction() as conn:
-                    experience_context.adopt_tx(conn,run_id,current_tid,dec.get("experience_uses",[]),
-                                               "brain",f"decision:{dec['decision_id']}")
-                    submission_predictions.record_verdicts_tx(
-                        conn,run_id,dec.get('prediction_verdicts',[]),f"decision:{dec['decision_id']}")
-            except ValueError as exc:
-                db.append_event(run_id,"controller","experience.adoption_rejected",{"reason":str(exc)})
+        try:
+            with db.transaction() as conn:
+                experience_context.adopt_tx(conn, run_id, current_tid, dec.get("experience_uses", []),
+                                            "brain", f"decision:{dec['decision_id']}")
+                submission_predictions.record_verdicts_tx(
+                    conn, run_id, dec.get('prediction_verdicts', []), f"decision:{dec['decision_id']}")
+        except ValueError as exc:
+            db.append_event(run_id, "controller", "experience.adoption_rejected", {"reason": str(exc)})
 
-        for proposal in dec.get("experience_proposals", [])[:3]:
+        for proposal in dec.get("experience_proposals", []):
             self._apply_experience_proposal(run_id, dec["decision_id"], proposal)
 
         prime_sid = self._prime_sessions.get(run_id)
@@ -3505,27 +3486,16 @@ class RunController:
                 if v2:
                     assessment = action.get("objective_assessment")
                     if not isinstance(assessment, dict):
-                        db.append_event(run_id, "brain", "brain.action_rejected",
-                                        {"op": op, "reason": "v2 finish 缺少 objective_assessment"})
-                        continue
+                        assessment = {"status": "unknown", "evidence_refs": [],
+                                      "remaining_md": "PI 未提供目标评估"}
                     if assessment.get("status") == "achieved":
                         refs = assessment.get("evidence_refs") or []
-                        invalid = [ref for ref in refs
-                                   if not _objective_evidence_exists(run_id, ref)]
+                        invalid = [ref for ref in refs if not _objective_evidence_exists(run_id, ref)]
                         if not refs or invalid:
-                            db.append_event(run_id, "brain", "brain.action_rejected",
-                                            {"op": op, "reason": "achieved 缺少可解析的真实证据引用",
-                                             "invalid_refs": [_redact(str(ref), 120)
-                                                              for ref in invalid[:8]]})
-                            prior_repairs = db.query_one(
-                                "SELECT COUNT(*) AS n FROM review_requests WHERE run_id=?"
-                                " AND trigger='finish_rejected'", (run_id,))["n"]
-                            if prior_repairs < 2:
-                                self._enqueue_lifecycle(run_id, trigger="finish_rejected")
-                            else:
-                                self._pause_needs_attention(
-                                    run_id, "目标完成动作连续缺少可解析证据引用；已尝试两次自动复审")
-                            continue
+                            db.append_event(run_id, "brain", "run.objective_assessment_unknown",
+                                            {"reason": "achieved 缺少可解析的真实证据引用",
+                                             "invalid_refs": [_redact(str(ref), 120) for ref in invalid[:8]]})
+                            assessment = dict(assessment, status="unknown")
                 from . import local_scoring
                 try:
                     local_scoring.scorer_manifest(run["challenge_id"])
@@ -3545,33 +3515,17 @@ class RunController:
                             continue
                         facts = local_scoring.final_package_check(run_id, candidate)
                         confirmation = action.get('finish_confirmation') or {}
-                        if facts['regressions'] and confirmation.get('token') != facts['confirmation_token']:
-                            db.append_event(run_id, 'brain', 'brain.action_rejected',
-                                {'op': op, 'reason': '最终包子项低于本 Run 已登记最佳成绩',
-                                 'final_package_check': facts})
-                            self._enqueue_lifecycle(run_id, trigger='finish_rejected')
-                            continue
-                        if facts['regressions']:
-                            db.append_event(run_id, 'brain', 'run.final_package_confirmed',
-                                {'final_package_check': facts,
-                                 'reason_md': _redact(confirmation['reason_md'], 2000)})
-                        else:
-                            db.append_event(run_id, 'controller', 'run.final_package_checked',
-                                            {'final_package_check': facts})
+                        confirmed = confirmation.get('token') == facts['confirmation_token']
+                        db.append_event(run_id, 'brain' if confirmed else 'controller',
+                            'run.final_package_confirmed' if confirmed else 'run.final_package_checked',
+                            {'final_package_check': facts, 'advisory': True,
+                             'reason_md': _redact(confirmation.get('reason_md', action['reason']), 2000)})
                     except Exception as exc:
-                        failed = db.append_event(run_id, 'brain', 'brain.action_rejected',
-                            {'op': op, 'reason': '最终包评分未确认：' + _redact(str(exc), 300),
-                             'error_code': getattr(exc, 'code', type(exc).__name__)})
-                        repair = await self._request_executor_repair(
-                            run_id, run['current_trial_id'], stage='final_package_score',
-                            code=getattr(exc, 'code', type(exc).__name__),
-                            detail=str(exc), event_seq=failed['seq'],
-                            failure_details=getattr(exc, 'details', None))
-                        if not repair:
-                            db.append_event(run_id, 'controller', 'executor.repair_deferred',
-                                {'failure_seq': failed['seq'],
-                                 'reason': '当前 Run 状态、Trial 或原授权不允许执行器修复'})
-                        continue
+                        db.append_event(run_id, 'controller', 'run.final_package_unknown',
+                            {'reason': '最终包评分未确认：' + _redact(str(exc), 300),
+                             'error_code': getattr(exc, 'code', type(exc).__name__), 'advisory': True})
+                        if v2 and assessment.get('status') == 'achieved':
+                            assessment = dict(assessment, status='unknown')
                 if v2:
                     db.execute("UPDATE runs SET objective_status=?,end_reason=? WHERE id=?",
                                (assessment["status"], action["reason"], run_id))
@@ -3582,14 +3536,6 @@ class RunController:
                     db.append_event(run_id, "controller", "run.finish_deferred",
                                     {"notice": "先进行本题经验整理审阅，"
                                                "随后自动收尾"})
-                    continue
-                if db.eval_mode(run_id):
-                    with db.transaction() as conn:
-                        conn.execute("UPDATE runs SET phase='eval_scoring',gate='open',end_reason=? WHERE id=?",
-                                     (action['reason'], run_id))
-                        db.append_event_tx(conn, run_id, 'controller',
-                                           'evaluation.scoring_started',
-                                           {'reason': action['reason']})
                     continue
                 self._finalize_run(run_id, action["reason"])
             elif op == "promote_experience":
@@ -3619,10 +3565,6 @@ class RunController:
         带 target_id = 更新已有条目：追加新修订（冲突即更新，不拒绝）；
         更新全局 active 条目时内容落修订但状态回 candidate，待用户复核。
         """
-        if run_id and db.eval_mode(run_id):
-            db.append_event(run_id, "controller", "evaluation.experience_write_rejected",
-                            {"operation": "proposal", "decision_id": decision_id})
-            return None
         target_id = proposal.get("target_id")
         prior: dict[str, Any] | None = None
         try:
@@ -3705,10 +3647,6 @@ class RunController:
                                 {"reason": str(exc)[:200]})
 
     def _promote(self, run_id: str, action: dict[str, Any]) -> None:
-        if db.eval_mode(run_id):
-            db.append_event(run_id, "controller", "evaluation.experience_write_rejected",
-                            {"operation": "promote", "experience_id": action.get("experience_id")})
-            return
         try:
             exp = experiences.get_experience(action["experience_id"])
             scope = exp["frontmatter"]["scope"]
@@ -3762,10 +3700,6 @@ class RunController:
     def _defer_finish_for_curation(self, run_id: str, reason: str) -> bool:
         """Run 终态前先整理本题经验：需要且能整理则排 curation 审阅并推迟
         finish（返回 True）；审阅完结后由 _finish_request 钩子收尾。"""
-        if db.eval_mode(run_id):
-            db.append_event(run_id, "controller", "evaluation.curation_skipped",
-                            {"reason": "评测 Run 禁止经验整理"})
-            return False
         done = db.query_one(
             "SELECT id FROM review_requests WHERE run_id=?"
             " AND trigger='curation' AND status IN ('done','error','obsolete')",
@@ -3794,9 +3728,7 @@ class RunController:
         """效果回联原料：Run 起止时各记一份 active 经验版本清单。"""
         run = self._require_run(run_id)
         settings = config.load_settings()
-        marker = db.eval_mode(run_id)
-        manifest = (marker.get("experience_manifests", {}).get("both", []) if marker else
-                    experience_context.select(run["challenge_id"]))
+        manifest = experience_context.select(run["challenge_id"], goal=experience_context.run_goal(run_id))
         try:
             snap = json.loads(run["experience_snapshot"]) \
                 if run["experience_snapshot"] else {}
@@ -3990,7 +3922,7 @@ class RunController:
             from .curation import schema
             jsonschema.validate(decision, schema())
             applied = 0
-            for proposal in decision.get("experience_proposals", [])[:3]:
+            for proposal in decision.get("experience_proposals", []):
                 if proposal["scope"] != "global":
                     raise ControllerError("INVALID_CURATION", "全局整理只能提议全局候选")
                 proposal = {**proposal, "evidence_status": "hypothesis"}
@@ -4034,12 +3966,6 @@ class RunController:
     async def curate_run_experience(self, run_id: str, operation_id: str) -> dict:
         from .curation import run_evidence
         run = self._require_run(run_id)
-        if db.eval_mode(run_id):
-            db.append_event(run_id, "controller", "evaluation.experience_write_rejected",
-                            {"operation": "curation", "operation_id": operation_id})
-            raise ControllerError("INVALID_ACTION", "评测 Run 不允许经验整理")
-        if run['phase'] not in ('paused', 'recovering', 'finished', 'failed', 'cancelled'):
-            raise ControllerError('INVALID_STATE', '请先暂停研究，再整理本轮经验')
         if not operation_id or len(operation_id) > 128:
             raise ControllerError('INVALID_OPERATION', '需要稳定的 operation_id')
         # Filesystem experience reconciliation can commit, so perform it

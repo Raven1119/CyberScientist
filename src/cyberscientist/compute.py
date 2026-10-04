@@ -560,7 +560,7 @@ def reconcile(run_id: str) -> dict:
     host = client_host_overrides(bohrium_cfg,wenyon=False)['OPENAPI_HOST']
     host_fact = {'client':'legacy_job','host':host}
     try:
-        if not db.eval_mode(run_id) and config.resolve_secret(bohrium_cfg.get('access_key_secret_ref','')) and \
+        if config.resolve_secret(bohrium_cfg.get('access_key_secret_ref','')) and \
                 environment_facts.needs_refresh('bohrium:legacy_job:host',host_fact):
             event=db.append_event(run_id,'controller','environment.host_observed',
                                   {'client':'legacy_job','host':host,

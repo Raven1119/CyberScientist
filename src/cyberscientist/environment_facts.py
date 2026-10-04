@@ -34,10 +34,6 @@ def needs_refresh(fact_key: str, data: object) -> bool:
 
 def record(fact_key: str, title: str, data: object, event: dict) -> dict:
     """Write or refresh an active fact; `save_experience` verifies the event ref."""
-    if event and db.eval_mode(event.get('run_id', '')):
-        db.append_event(event['run_id'], 'controller', 'evaluation.experience_write_rejected',
-                        {'operation': 'environment_fact', 'fact_key': fact_key[:100]})
-        return {'status': 'rejected', 'reason': 'evaluation_mode'}
     if not event or event.get('source')!='controller' or event.get('type') not in (
             'image_facts.observed','sandbox.environment_observed','environment.host_observed',
             'environment.save_observed'):

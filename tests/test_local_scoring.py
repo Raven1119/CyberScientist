@@ -202,8 +202,7 @@ def test_public_resource_scoring_does_not_install_dependencies_or_mix_setup_stdo
     (scorer_dir / 'requirements.txt').write_text('numpy==2.2.6\n')
     row = db.query_one('SELECT config_snapshot FROM runs WHERE id=?', (rid,))
     snapshot = json.loads(row['config_snapshot'])
-    snapshot['eval_mode'] = {'enabled': True}
-    db.execute("UPDATE runs SET phase='eval_scoring',gate='open',config_snapshot=? WHERE id=?",
+    db.execute("UPDATE runs SET phase='running',gate='open',config_snapshot=? WHERE id=?",
                (json.dumps(snapshot), rid))
     sid = 'fake-resource-sandbox'
     now = db.utcnow()
@@ -231,7 +230,7 @@ def test_public_resource_scoring_does_not_install_dependencies_or_mix_setup_stdo
     monkeypatch.setattr(sandboxes, 'transfer', lambda *args, **kwargs: {'status': 'completed'})
     result = local_scoring.evaluate(rid, tid, sid, 'score-public-resource',
                                     preflight={'error_code': None, 'sealed_bytes': package},
-                                    public_resource_zip=public_zip)
+                                    public_resource_zip=public_zip, _controller_preflight=True)
     assert result['science_score'] == 20
     assert all('pip install' not in command for command in commands)
     with pytest.raises(local_scoring.LocalScoreError, match='单个有效评分 JSON'):

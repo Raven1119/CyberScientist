@@ -274,9 +274,9 @@ class CodexBrain:
                 "kind=submit：结果包已可提交时发出；仅在已有 Run 授权、提交预算"
                 "和去重检查通过后，系统自动用实验邮箱提交（不投递给执行器），"
                 "随后异步等待评分；不扩大正式提交授权。\n"
-                "若 ObservationFrame.submission_prediction_version=1，submit guidance 必须附 prediction_md，"
+                "若 ObservationFrame.submission_prediction_version=1，submit guidance 可附 prediction_md，"
                 "说明本次改动和预计 displayScore/harbor_score/trace_score 哪些分量如何变化；"
-                "缺失会被拒绝。可选 prediction_verdicts=[{submission_id,verdict:confirmed|refuted|unclear,note_md}]"
+                "未提供则预测记为 unknown，不阻止已授权提交。可选 prediction_verdicts=[{submission_id,verdict:confirmed|refuted|unclear,note_md}]"
                 "评判帧中的已确认预测，证据不清时用 unclear。\n"
                 + ("只输出一个 JSON 代码块；可按需使用 research_trace 或 platform_scores，零读取可直接判断。\n\n"
                  if optional_read else "只输出一个 JSON 代码块，不使用工具。\n\n")
@@ -288,7 +288,7 @@ class CodexBrain:
             "以当前用户目标、Run 意图与授权为准。持续提出可检验假设并用真实证据迭代，"
             "不把满分或耗尽预算设为默认停止前提。若用户目标是观察系统闭环，"
             "在真实提交、评分反馈与经验提取完成且观察充分后可以 finish，"
-            "明确停止依据和仍未知的事项。pause 用于必须等用户才能推进的抉择。\n"
+            "明确停止依据和仍未知的事项。遇到阻塞先换一条已授权路线；仅额度边界或所有已授权渠道均用尽才暂停。\n"
             + (
                 "本次 trigger=run_start：先核对输入中的官方题面、资源路径和评分约束。"
                 + ("需要补证时可按需读取已登记的公开轨迹；缺项记录 unknown，"
@@ -298,7 +298,7 @@ class CodexBrain:
                 "资源试算、产物及停止条件；不以确认满分可达为启动条件。"
                 "每项判断标明已读来源，外部指导单独归因。\n"
                 if packet.get("trigger") == "run_start" else
-                ("必要时使用 research_trace 或 platform_scores 按需读取；分数分布只作分诊参考，不作优化目标；不要求先读后答。\n"
+                ("必要时使用 research_trace 或 platform_scores 按需读取；公开分数分布可辅助路线排序；如实标注其来源、口径和 unknown。\n"
                  if optional_read else "不要使用任何工具。\n")
             ) +
             "根据下面的 ReviewPacket 做出一次判断。只输出一个 JSON 代码块，不要输出其他文字。\n\n"
@@ -307,7 +307,7 @@ class CodexBrain:
             '"run_id":"见 ReviewPacket","observed_state_version":见 ReviewPacket,'
             '"summary":"一句话判断","evidence_refs":["引用见 ReviewPacket 事件"],'
             '"actions":[{"op":"..."}],"experience_proposals":[]}\n'
-            "actions 中每个元素只能是以下形状之一（1-3 个，最多一个主动作）：\n"
+            "actions 中每个元素只能是以下形状之一（最多一个改变运行方向的主动作）：\n"
             '- {"op":"start_trial","goal":"...","success_check":"..."}\n'
             '- {"op":"steer","trial_id":"当前 Trial","message":"..."}\n'
             '- {"op":"wait","reason":"...","duration_seconds":1800}（时长可省略，最长由设置限制）\n'
@@ -317,7 +317,7 @@ class CodexBrain:
             + ('- {"op":"finish","reason":"...","objective_assessment":{"status":"achieved|partial|not_achievable|stopped","evidence_refs":[],"remaining_md":"..."}}\n'
                '若 ReviewPacket 有 pending_intent，顶层必须给 pending_intent_resolution=replay|revise|drop；replay 重放原动作。\n'
                if packet.get("lifecycle_version") == 2 else '- {"op":"finish","reason":"..."}\n')
-            + "若最终包对账返回退步，可修正产物后 finish，或在 finish 中增加 "
+            + "最终评分未知或退步只作可见事实；PI 可修复或如实结束，并可选在 finish 中增加 "
             "finish_confirmation={token:反馈中的 confirmation_token,reason_md:明确确认原因}。\n"
             "旧 request_submission 会被明确拒绝：bundle_manifest_ref 尚无冻结包解析契约。"
             "提交建议仅在 requested/shadow 的 ReviewResult 中用 guidance.kind=submit，"

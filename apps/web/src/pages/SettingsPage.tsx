@@ -354,8 +354,8 @@ export default function SettingsPage() {
             </div>
             <div className="actions">
               {settings._status && (
-                <Badge tone={settings._status.prime_models_synced ? 'green' : 'amber'}>
-                  {settings._status.prime_models_synced ? 'Prime models 已同步' : 'Prime models 未同步'}
+                <Badge tone="amber">
+                  Prime 原生认证待验证
                 </Badge>
               )}
               <HealthBadge state={conns.executor} />

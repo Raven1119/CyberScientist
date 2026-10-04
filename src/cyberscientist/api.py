@@ -25,73 +25,6 @@ from .prime import CodexExecutor, DemoPrime, KimiExecutor, PrimeRpc
 
 controller = RunController()
 
-PRIME_MODELS_PATH = Path.home() / ".prime" / "agent" / "models.json"
-
-
-def _sync_prime_models(settings: dict[str, Any]) -> bool:
-    """从 llm_profiles + secrets.json 渲染 Prime 原生 models.json。
-
-    单一事实源是 secrets.json；models.json 是 Prime 的官方凭据/模型配置面，
-    由后端托管重建（见 docs/DECISIONS.md）。无可用 profile 时不动现有文件。
-    """
-    providers: dict[str, Any] = {}
-    for p in settings.get("llm_profiles", []):
-        if p.get("protocol") != "openai_chat_completions":
-            continue
-        key = config.resolve_secret(p.get("secret_ref", ""))
-        if not key:
-            continue
-        pname = p.get("prime_provider") or "openrouter"
-        prov = providers.setdefault(pname, {
-            "baseUrl": p.get("base_url", ""),
-            "apiKey": key,
-            "api": "openai-completions",
-            "compat": {"supportsDeveloperRole": False},
-            "models": []})
-        prov["apiKey"] = key
-        prov["models"].append({
-            "id": p.get("model_id", ""),
-            "name": p.get("id", ""),
-            "reasoning": True,
-            "input": ["text"],
-            "contextWindow": p.get("context_window", 1048576),
-            "maxTokens": p.get("max_tokens", 16384),
-            "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0}})
-    if not providers:
-        return False
-    PRIME_MODELS_PATH.parent.mkdir(parents=True, exist_ok=True)
-    tmp = PRIME_MODELS_PATH.with_suffix(".tmp")
-    tmp.write_text(json.dumps({"providers": providers}, ensure_ascii=False,
-                              indent=2), encoding="utf-8")
-    tmp.replace(PRIME_MODELS_PATH)
-    return True
-
-
-def _prime_models_synced(settings: dict[str, Any]) -> bool:
-    """真实回读 models.json：每个已配置 profile 的模型都在且 provider 有 key。"""
-    if not PRIME_MODELS_PATH.exists():
-        return False
-    try:
-        data = json.loads(PRIME_MODELS_PATH.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
-        return False
-    providers = data.get("providers", {})
-    expected = [p for p in settings.get("llm_profiles", [])
-                if p.get("protocol") == "openai_chat_completions"
-                and config.resolve_secret(p.get("secret_ref", ""))]
-    if not expected:
-        return False
-    for p in expected:
-        pname = p.get("prime_provider") or "openrouter"
-        prov = providers.get(pname)
-        if not prov or not prov.get("apiKey"):
-            return False
-        if not any(m.get("id") == p.get("model_id")
-                   for m in prov.get("models", [])):
-            return False
-    return True
-
-
 class SettingsPut(BaseModel):
     settings: dict[str, Any]
     base_revision: int
@@ -263,7 +196,6 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
         # 启动对账发现不一致不再静默丢弃：如实告警（不写日志文件防密钥混入）
         print(f"[cyberscientist] 经验修订对账异常 {len(problems)} 项: "
               + "; ".join(str(p)[:120] for p in problems[:5]))
-    _sync_prime_models(config.load_settings())  # 启动即对齐 Prime 模型配置
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
@@ -449,11 +381,11 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
     @app.get("/api/v1/settings")
     async def get_settings() -> dict[str, Any]:
         s = config.load_settings()
-        # 真实文件状态同步：secrets.json 与 Prime models.json 回读，不回显值
+        # 仅报告项目后端配置状态；Prime 使用原生认证，绝不改写全局 CLI 配置。
         secrets_store = config.load_secrets()
         s["_status"] = {
             "secrets": {sid: True for sid in secrets_store},
-            "prime_models_synced": _prime_models_synced(s),
+            "prime_authentication": "native_unknown",
         }
         return s
 
@@ -494,7 +426,6 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
                                                      "message": f"{key} 必须为 {lower}–{upper} 的整数"})
             merged["revision"] = current["revision"] + 1
             config.save_settings(merged)
-        _sync_prime_models(merged)  # llm_profiles 可能变化，保持 models.json 同步
         return merged
 
 
@@ -504,16 +435,14 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
             raise HTTPException(422, detail={"code": "INVALID_SECRET_ID",
                                              "message": "secret_id 含非法字符"})
         config.update_secret(body.secret_id, body.value)
-        synced = _sync_prime_models(config.load_settings())
         return {"secret_ref": f"local:{body.secret_id}", "configured": True,
-                "prime_models_synced": synced}
+                "prime_authentication": "native_unknown"}
 
     @app.delete("/api/v1/secrets/{secret_id}")
     async def delete_secret(secret_id: str) -> dict[str, Any]:
         config.update_secret(secret_id, None)
-        synced = _sync_prime_models(config.load_settings())
         return {"secret_ref": f"local:{secret_id}", "configured": False,
-                "prime_models_synced": synced}
+                "prime_authentication": "native_unknown"}
 
     # ---------------- 连接测试 ----------------
 

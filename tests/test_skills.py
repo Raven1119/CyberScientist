@@ -123,10 +123,10 @@ def catalog_by_id(catalog, sid):
 def test_prompt_segment():
     seg = skills.prompt_segment([
         {"id": "tdd", "name": "tdd", "description": "测试驱动", "source": "/x"}])
-    assert seg.startswith("\n\n本 Trial 启用技能")
+    assert seg.startswith("\n\n本 Trial 可参考技能")
     assert "- tdd: 测试驱动" in seg
     assert "SKILL.md: /x/tdd/SKILL.md" in seg
-    assert "使用前必须阅读对应的 SKILL.md" in seg
+    assert "调用前建议阅读对应的 SKILL.md" in seg
     assert skills.prompt_segment([]) == ""
 
 

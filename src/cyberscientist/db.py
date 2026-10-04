@@ -784,13 +784,18 @@ def row_to_dict(row: sqlite3.Row | None) -> dict[str, Any] | None:
     return dict(row) if row else None
 
 
-def eval_mode(run_id: str) -> dict[str, Any] | None:
-    """Return the immutable evaluation marker used by external-effect guards."""
+def evaluation_metadata(run_id: str) -> dict[str, Any] | None:
+    """Read historical evaluation metadata for reports; never a capability switch."""
     row = query_one("SELECT config_snapshot FROM runs WHERE id=?", (run_id,))
     if not row:
         return None
-    marker = json.loads(row["config_snapshot"]).get("eval_mode")
+    snapshot = json.loads(row["config_snapshot"])
+    marker = snapshot.get("evaluation_metadata", snapshot.get("eval_mode"))
     return marker if isinstance(marker, dict) and marker.get("enabled") is True else None
+
+
+# Compatibility reader for historical callers; metadata carries no permissions.
+eval_mode = evaluation_metadata
 
 
 def list_challenge_skills(conn: sqlite3.Connection,
