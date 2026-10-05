@@ -45,6 +45,18 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.resetAllMocks() })
 
 describe('settings and skills persist together', () => {
+  it('keeps both PI forms fixed to native Astra and saves the migrated choice', async () => {
+    const user = userEvent.setup()
+    render(<SettingsPage />)
+    const model = await screen.findByLabelText('PI模型 ID') as HTMLInputElement
+    expect(model.value).toBe('gpt-6-astra')
+    expect(model.readOnly).toBe(true)
+    expect((screen.getByLabelText('PI提供方') as HTMLSelectElement).options.length).toBe(1)
+    expect((screen.getByLabelText('原生代理') as HTMLSelectElement).disabled).toBe(true)
+    expect((document.getElementById('brain-model') as HTMLInputElement).readOnly).toBe(true)
+    await user.click(screen.getAllByRole('button', { name: '保存设置' })[0])
+    await waitFor(() => expect(stored.brain).toMatchObject({runtime:'codex',model_id:'gpt-6-astra',reasoning_effort:'xhigh'}))
+  })
   it.each([0, 1])('saves checked skills through page save button %i and survives remount', async (index) => {
     const user = userEvent.setup()
     const view = render(<SettingsPage />)

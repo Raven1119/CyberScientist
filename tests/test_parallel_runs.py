@@ -9,7 +9,7 @@ from cyberscientist.prime import PrimeHealth
 
 
 def _models(executor: str = 'model-exec'):
-    return {'brain': {'runtime':'codex','model_id':'model-brain','reasoning_effort':'xhigh'},
+    return {'brain': {'runtime':'codex','model_id':'gpt-6-astra','reasoning_effort':'xhigh'},
             'executor': {'runtime':'codex','model_id':executor,'reasoning_effort':'high'}}
 
 

@@ -85,6 +85,7 @@ export default function SettingsPage() {
     setLoadError('')
     try {
       const fresh = await api.get<Settings>('/api/v1/settings')
+      fresh.brain = { ...fresh.brain, runtime: 'codex', provider: 'codex', model_id: 'gpt-6-astra', reasoning_effort: 'xhigh', auth_mode: 'native' }
       setSettings(fresh)
       setPricesDraft(JSON.stringify(fresh.model_pricing ?? {}, null, 2))
       setBaseRevision(fresh.revision)
@@ -228,21 +229,21 @@ export default function SettingsPage() {
             const current = settings[role] ?? { runtime: 'codex', provider: 'codex', model_id: 'gpt-6.1-sol', reasoning_effort: 'high' }
             const setRole = (value: ModelChoice) => update(s => ({ ...s, [role]: { ...s[role], ...value } }))
             return <fieldset key={role}><legend>{label}</legend>
-              <label>{label}提供方<select value={current.provider ?? current.runtime} onChange={e => setRole({ ...current,
+              <label>{label}提供方<select disabled={role === 'brain'} value={role === 'brain' ? 'codex' : current.provider ?? current.runtime} onChange={e => setRole({ ...current,
                 provider: e.target.value, runtime: e.target.value === 'deepseek' ? 'codex' : e.target.value,
                 model_id: e.target.value === 'deepseek' ? 'deepseek-flash' : current.model_id, reasoning_effort: 'high' })}>
-                <option value="codex">Codex</option><option value="deepseek">DeepSeek</option><option value="kimi">Kimi Code</option>
+                <option value="codex">Codex</option>{role !== 'brain' && <><option value="deepseek">DeepSeek</option><option value="kimi">Kimi Code</option></>}
                 {role === 'executor' && <option value="prime">Prime Agent</option>}
               </select></label>
-              <label>{label}模型 ID<input value={current.model_id} onChange={e => setRole({ ...current, model_id: e.target.value })} /></label>
+              <label>{label}模型 ID<input readOnly={role === 'brain'} value={role === 'brain' ? 'gpt-6-astra' : current.model_id} onChange={e => setRole({ ...current, model_id: e.target.value })} /></label>
               <label>{label}可执行文件<input value={current.executable ?? ''} onChange={e => update(s => ({ ...s, [role]: { ...s[role], ...current, executable: e.target.value } }))} /></label>
-              <label>{label}推理强度<select value={current.reasoning_effort} onChange={e => setRole({ ...current, reasoning_effort: e.target.value as ReasoningEffort })}>
-                {(current.provider === 'deepseek' ? ['low', 'high', 'max'] : ['low', 'medium', 'high', 'xhigh', 'max']).map(e => <option key={e}>{e}</option>)}
+              <label>{label}推理强度<select disabled={role === 'brain'} value={role === 'brain' ? 'xhigh' : current.reasoning_effort} onChange={e => setRole({ ...current, reasoning_effort: e.target.value as ReasoningEffort })}>
+                {(role === 'brain' ? ['xhigh'] : current.provider === 'deepseek' ? ['low', 'high', 'max'] : ['low', 'medium', 'high', 'xhigh', 'max']).map(e => <option key={e}>{e}</option>)}
               </select></label>
-              <label><input type="checkbox" checked={roleProbe[role] ?? false} onChange={e => setRoleProbe(v => ({ ...v, [role]: e.target.checked }))} />授权{label}一次真实工具探针</label>
+              <label><input type="checkbox" checked={roleProbe[role] ?? false} onChange={e => setRoleProbe(v => ({ ...v, [role]: e.target.checked }))} />授权{label}一次真实工具探针{['brain', 'executor'].includes(role) ? '（含网页搜索、读取和公开LKM检索各一次）' : ''}</label>
               <button type="button" disabled={!roleProbe[role]} onClick={async () => {
                 setRoleProbe(v => ({ ...v, [role]: false }))
-                try { setProbeResults(v => ({ ...v, [role]: '运行中' })); const result = await api.post(`/api/v1/connections/${role}/test`, { kind: 'tool_call_probe', confirm_spend: true, model_choice: current }); setProbeResults(v => ({ ...v, [role]: result })) }
+                try { setProbeResults(v => ({ ...v, [role]: '运行中' })); const result = await api.post(`/api/v1/connections/${role}/test`, { kind: ['brain', 'executor'].includes(role) ? 'connectivity_probe' : 'tool_call_probe', confirm_spend: true, model_choice: current }); setProbeResults(v => ({ ...v, [role]: result })) }
                 catch (e) { setProbeResults(v => ({ ...v, [role]: e instanceof Error ? e.message : String(e) })) }
               }}>验证{label}工具调用</button>
               {probeResults[role] !== undefined && <pre>{JSON.stringify(probeResults[role], null, 2)}</pre>}
@@ -340,6 +341,7 @@ export default function SettingsPage() {
                 <label htmlFor="brain-runtime">原生代理</label>
                 <select
                   id="brain-runtime"
+                  disabled
                   value={settings.brain.runtime}
                   onChange={(e) =>
                     update((s) => ({
@@ -354,7 +356,6 @@ export default function SettingsPage() {
                     }))
                   }
                 >
-                  <option value="kimi">Kimi Code</option>
                   <option value="codex">Codex</option>
                 </select>
               </div>
@@ -362,6 +363,7 @@ export default function SettingsPage() {
                 <label htmlFor="brain-model">模型 ID</label>
                 <input
                   id="brain-model"
+                  readOnly
                   value={settings.brain.model_id}
                   onChange={(e) => update((s) => ({ ...s, brain: { ...s.brain, model_id: e.target.value } }))}
                   placeholder="手动填写该原生运行时的模型 ID"
@@ -371,6 +373,7 @@ export default function SettingsPage() {
                 <label htmlFor="brain-effort">思考强度</label>
                 <select
                   id="brain-effort"
+                  disabled
                   value={normalizeEffort(settings.brain.runtime, settings.brain.reasoning_effort)}
                   onChange={(e) =>
                     update((s) => ({
@@ -379,11 +382,7 @@ export default function SettingsPage() {
                     }))
                   }
                 >
-                  {effortsFor(settings.brain.runtime).map((e) => (
-                    <option key={e.value} value={e.value}>
-                      {e.label}
-                    </option>
-                  ))}
+                  <option value="xhigh">xhigh</option>
                 </select>
               </div>
               <div className="field">

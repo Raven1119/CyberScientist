@@ -108,7 +108,7 @@ class CodexBrain:
         env = native_brain_environment()
         if spec.get("mcp_servers"):
             env.update({k: v for k, v in (spec.get("env") or {}).items()
-                        if k in ("CS_TOOL_TOKEN", "CS_TOOL_ROLE", "CS_API_URL")})
+                        if k in ("CS_TOOL_TOKEN", "CS_TOOL_ROLE", "CS_API_URL", 'CS_PUBLIC_RESEARCH_PROBE', 'CS_PUBLIC_PROBE_RECEIPTS')})
         from .. import model_providers
         env = model_providers.prepare(self.provider, env)
         self.rpc = JsonRpcStdio([self.executable, "app-server"],
@@ -182,6 +182,7 @@ class CodexBrain:
                             "detail": f"{itype} {'完成' if completed else '开始'}: {label[:2000]}",
                             "status": item.get("status"), "exit_code": item.get("exitCode"),
                             "output": output[-12000:], "item_id": item.get("id"),
+                            "item_type": itype, "command": item.get("command") if itype == "commandExecution" else None,
                         })
                     elif itype == "error":
                         error_msg = item.get("message", "未知错误")

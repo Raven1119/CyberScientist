@@ -14,6 +14,11 @@ type Item = { id: string; challenge_id: string; title: string; phase: string; pr
 type Round = { id: string; label: string; status: string; items: Item[]; resources: { sessions: { provider: string; used: number }[]; rate_limits: unknown[] } }
 const choice = (model: string): Choice => ({ runtime: 'codex', model_id: model, reasoning_effort: 'xhigh' })
 function ModelFields({ label, role, value, onChange }: { label: string; role: 'brain' | 'executor'; value: Choice; onChange: (value: Choice) => void }) {
+  if (role === 'brain') return <div className="form-grid">
+    <label>{label}提供方<select value="codex" disabled><option value="codex">Codex</option></select></label>
+    <label>{label}模型<input value="gpt-6-astra" readOnly /></label>
+    <label>{label}思考强度<select value="xhigh" disabled><option>xhigh</option></select></label>
+  </div>
   return <div className="form-grid">
     <label>{label}提供方<select value={value.provider ?? value.runtime} onChange={e => onChange({ ...value, provider: e.target.value, runtime: e.target.value === 'deepseek' ? 'codex' : e.target.value, model_id: e.target.value === 'deepseek' ? 'deepseek-flash' : value.model_id, reasoning_effort: 'high' })}>
       <option value="codex">Codex</option><option value="deepseek">DeepSeek</option><option value="kimi">Kimi Code</option>{role === 'executor' && <option value="prime">Prime Agent</option>}
@@ -44,7 +49,7 @@ export default function CompetitionPage() {
     let active = true
     void api.get<{ brain: Choice; executor: Choice; solver_roster?: SolverEntry[] }>('/api/v1/settings').then(settings => {
       if (active) setRoster(settings.solver_roster ?? [])
-      if (active && settings.brain && settings.executor) setTemplate(t => ({ ...t, model_config: { brain: settings.brain, executor: settings.executor } }))
+      if (active && settings.brain && settings.executor) setTemplate(t => ({ ...t, model_config: { brain: choice('gpt-6-astra'), executor: settings.executor } }))
     }).catch(() => {})
     return () => { active = false }
   }, [])

@@ -45,6 +45,9 @@ def choose(role: str, supplied: dict[str, Any] | None,
                         if p.get("id") == profile_id), None)
         if not profile or profile.get("model_id") != model.strip():
             raise ValueError("Prime 模型 ID 必须与当前 Prime Profile 的模型一致")
+    if role == 'brain':
+        from .pi_policy import validate
+        validate({'runtime': runtime, 'provider': provider, 'model_id': model.strip(), 'reasoning_effort': effort})
     result = {"runtime": runtime, "model_id": model.strip(),
               "reasoning_effort": effort}
     result['provider'] = provider
@@ -64,6 +67,9 @@ def from_challenge(row: Any, settings: dict[str, Any]) -> dict[str, dict[str, st
     for role in ("brain", "executor"):
         raw = row[f"{role}_config_json"]
         value = json.loads(raw) if raw else None
+        if role == 'brain' and value is not None:
+            from .pi_policy import migrated
+            value = migrated(value)  # Existing topic choices migrate; explicit API choices are validated.
         result[role] = choose(role, value, settings)
     return result
 

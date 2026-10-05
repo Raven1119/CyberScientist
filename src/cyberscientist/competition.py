@@ -173,6 +173,9 @@ def _template(template: dict, mode: str, *, frozen: bool = False) -> dict:
         raise CompetitionError('模板只接受模型、授权、监督和求解者备注')
     settings = config.load_settings()
     choices = dict(template.get('model_config') or {})
+    if frozen and choices.get('brain'):
+        from .pi_policy import migrated
+        choices['brain'] = migrated(choices['brain'])
     solver_entry = None
     if template.get('solver_id'):
         solver_entry = template.get('solver_entry') if frozen else challenge_models.solver(template['solver_id'], settings)
@@ -314,7 +317,7 @@ async def advance_round(controller, evaluation) -> None:
                 await controller.control(run['id'], 'pause', None, f"round-pause-{item['id']}-{run['state_version']}")
                 db.execute('UPDATE eval_results SET queue_paused=1 WHERE id=?', (item['id'],))
             continue
-        template = json.loads(item['template_json'])
+        template = _template(json.loads(item['template_json']), snapshot['mode'], frozen=True)
         try:
             if run is None:
                 # Do not create a capacity-consuming Run while its provider is

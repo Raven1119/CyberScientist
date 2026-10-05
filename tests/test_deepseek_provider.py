@@ -46,7 +46,10 @@ def test_four_roles_and_legacy_override_normalize_provider():
     settings = config.load_settings()
     for role in ('brain', 'executor', 'reviewer', 'post_review'):
         choice = {'runtime': 'codex', 'provider': 'deepseek', 'model_id': 'deepseek-flash', 'reasoning_effort': 'high'}
-        assert challenge_models.choose(role, choice, settings)['provider'] == 'deepseek'
+        if role == 'brain':
+            with pytest.raises(ValueError, match='PI只能'): challenge_models.choose(role, choice, settings)
+        else:
+            assert challenge_models.choose(role, choice, settings)['provider'] == 'deepseek'
     settings['executor'].update(provider='deepseek', model_id='deepseek-flash')
     config.save_settings(settings)
     seed()

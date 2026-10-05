@@ -151,6 +151,8 @@ def load_settings() -> dict[str, Any]:
             merged[k] = v
     if merged['policy'].get('science_compute') == 'bohrium_only':
         merged['policy']['science_compute'] = 'local_seconds_remote_heavy'
+    from .pi_policy import migrated
+    merged['brain'] = migrated(merged['brain'])
     return merged
 
 

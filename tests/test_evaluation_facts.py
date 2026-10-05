@@ -86,6 +86,7 @@ def test_evaluation_freezes_topic_model_choices_without_global_changes(monkeypat
     before = config.load_settings()
     choices = {role: {'runtime': 'codex', 'model_id': 'fixture-selected-model',
                       'reasoning_effort': 'xhigh'} for role in ('brain', 'executor')}
+    choices['brain']['model_id'] = 'gpt-6-astra'
     for cid in ('eval_a', 'eval_b'):
         db.execute('UPDATE challenges SET brain_config_json=?,executor_config_json=? WHERE id=?',
                    (json.dumps(choices['brain']), json.dumps(choices['executor']), cid))

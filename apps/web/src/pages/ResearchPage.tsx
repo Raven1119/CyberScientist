@@ -1330,24 +1330,24 @@ function ModelChoicesEditor({ value, onChange, prefix }: {
       <div key={role} className="field">
         <strong>{role === 'brain' ? '大脑' : '执行器'}模型</strong>
         <label htmlFor={`${prefix}-${role}-runtime`}>原生运行时</label>
-        <select id={`${prefix}-${role}-runtime`} value={value[role].runtime}
+        <select disabled={role === 'brain'} id={`${prefix}-${role}-runtime`} value={role === 'brain' ? 'codex' : value[role].runtime}
           onChange={(event) => onChange({ ...value, [role]: {
             ...value[role], runtime: event.target.value, model_id: '',
           } })}>
-          <option value="codex">Codex</option><option value="kimi">Kimi Code</option>
+          <option value="codex">Codex</option>{role !== 'brain' && <option value="kimi">Kimi Code</option>}
           {role === 'executor' && <option value="prime">Prime Agent</option>}
         </select>
         <label htmlFor={`${prefix}-${role}-model`}>模型 ID</label>
-        <input id={`${prefix}-${role}-model`} value={value[role].model_id}
+        <input readOnly={role === 'brain'} id={`${prefix}-${role}-model`} value={role === 'brain' ? 'gpt-6-astra' : value[role].model_id}
           onChange={(event) => onChange({ ...value, [role]: {
             ...value[role], model_id: event.target.value,
           } })} placeholder="手动填写；连接检查可验证可用性" />
         <label htmlFor={`${prefix}-${role}-effort`}>思考强度</label>
-        <select id={`${prefix}-${role}-effort`} value={value[role].reasoning_effort}
+        <select disabled={role === 'brain'} id={`${prefix}-${role}-effort`} value={role === 'brain' ? 'xhigh' : value[role].reasoning_effort}
           onChange={(event) => onChange({ ...value, [role]: {
             ...value[role], reasoning_effort: event.target.value as ModelChoice['reasoning_effort'],
           } })}>
-          {['low', 'medium', 'high', 'xhigh', 'max'].map((effort) =>
+          {(role === 'brain' ? ['xhigh'] : ['low', 'medium', 'high', 'xhigh', 'max']).map((effort) =>
             <option key={effort} value={effort}>{effort}</option>)}
         </select>
         <button type="button" className="btn small" disabled={checking !== null || !value[role].model_id.trim()}

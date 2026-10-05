@@ -530,14 +530,17 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
               )
     async def test_connection(conn_id: str, body: ConnectionTest) -> dict[str, Any]:
         settings = config.load_settings()
-        if body.kind == "tool_call_probe":
+        if body.kind in ("tool_call_probe", "connectivity_probe"):
             if conn_id not in ('brain', 'executor', 'reviewer', 'post_review'):
                 raise HTTPException(422, detail={'message': '未知模型角色'})
             if not body.confirm_spend:
                 raise HTTPException(403, detail={'message': '真实工具探针需显式一次模型调用授权'})
             from . import model_probe
             try:
-                return await model_probe.run(controller, conn_id, body.model_choice)
+                if body.kind == 'connectivity_probe' and conn_id not in ('brain', 'executor'):
+                    raise ValueError('联网探针只适用于PI和求解者')
+                return await model_probe.run(controller, conn_id, body.model_choice,
+                    connectivity=body.kind == 'connectivity_probe')
             except Exception as exc:
                 return {'status': 'unavailable', 'detail': observation.strip_secrets(str(exc))}
         if body.kind == "model_selection":
@@ -1319,6 +1322,24 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
         return await asyncio.to_thread(local_scoring.evaluate,
             identity['run_id'], body.get('trial_id'), body.get('sandbox_id'),
             body.get('operation_id'), body.get('package_path'))
+
+    @app.post('/api/v1/tools/public_research')
+    async def tool_public_research(request: Request) -> dict:
+        from . import public_research
+        identity = _tool_auth(request, role=None)
+        if identity['role'] not in ('brain', 'executor'):
+            raise HTTPException(403, detail={'message': '仅PI与执行器可公开检索'})
+        body = await request.json(); name = body.get('tool')
+        if name not in public_research.FUNCTIONS:
+            raise HTTPException(422, detail={'message': '不支持的公开检索工具'})
+        try:
+            result = await asyncio.to_thread(public_research.FUNCTIONS[name], body.get('url' if name == 'research_web_read' else 'query'))
+        except (ValueError, OSError) as exc:
+            raise HTTPException(422, detail={'message': observation.strip_secrets(str(exc))[:300]}) from exc
+        db.append_event(identity['run_id'], identity['role'], 'research.public_read', {
+            'tool': name, 'status': result['status'], 'source': result.get('source'), 'sha256': result.get('sha256'),
+            'http_status': result.get('http_status'), 'business_code': result.get('business_code')})
+        return result
 
     @app.get("/api/v1/challenges/{challenge_id}/local-scores")
     async def challenge_local_scores(challenge_id: str) -> dict:

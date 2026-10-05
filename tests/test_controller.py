@@ -131,9 +131,10 @@ def test_challenge_model_config_frozen_per_run_and_submission():
     a = c.run_snapshot(first)['config_snapshot']['settings']
     b = c.run_snapshot(second)['config_snapshot']['settings']
     assert (a['brain']['model_id'], a['executor']['model_id']) == (
-        'model-brain-a', 'model-exec-a')
+        'gpt-6-astra', 'model-exec-a')
     assert (b['brain']['model_id'], b['executor']['model_id']) == (
-        'model-brain-b', 'model-exec-b')
+        'gpt-6-astra', 'model-exec-b')
+    assert json.loads(db.query_one("SELECT brain_config_json FROM challenges WHERE id='MODEL_B'")[0]) == choices[1][0]
     assert mailboxes._submission_metadata(first)['model'] == 'demo'
     db.execute("UPDATE runs SET mode='connected' WHERE id IN (?,?)", (first, second))
     assert mailboxes._submission_metadata(first)['model'] == 'model-exec-a'

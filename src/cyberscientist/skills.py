@@ -23,7 +23,7 @@ SKILL_DIRS: tuple[Path, ...] = (
 )
 
 _FRONTMATTER_RE = re.compile(r"\A---[ \t]*\n(.*?)\n---[ \t]*\n?", re.DOTALL)
-BUILTIN_EXECUTOR_SKILLS = ('cyberscientist-sandbox', 'cyberscientist-clean-rerun')
+BUILTIN_EXECUTOR_SKILLS = ('cyberscientist-sandbox', 'cyberscientist-clean-rerun', 'bohrium-lkm')
 
 
 def _parse_skill_md(path: Path) -> dict[str, str]:
@@ -93,7 +93,7 @@ def effective_for(conn: sqlite3.Connection, settings: dict[str, Any],
     always_on = (settings.get("skills") or {}).get("always_on") or []
     bound = db.list_challenge_skills(conn, challenge_id) if challenge_id else []
     ids: list[str] = []
-    defaults = BUILTIN_EXECUTOR_SKILLS if role == 'executor' else ()
+    defaults = BUILTIN_EXECUTOR_SKILLS if role == 'executor' else ('bohrium-lkm',)
     for sid in list(defaults) + list(always_on) + bound:
         if sid in by_id and sid not in ids:
             ids.append(sid)
@@ -113,3 +113,13 @@ def prompt_segment(skills_: list[dict[str, Any]]) -> str:
     return ("\n\n本 Trial 可参考技能（调用前建议阅读对应的 SKILL.md，"
             "采用适合当前证据的做法；引用的相对路径以该文件所在目录为准）：\n"
             + "\n".join(lines))
+
+
+def brain_prompt_segment(skills_: list[dict[str, Any]]) -> str:
+    """The PI has no general Shell; supply the small public LKM skill inline."""
+    text = prompt_segment(skills_)
+    for skill in skills_:
+        if skill['id'] == 'bohrium-lkm':
+            path = Path(skill['source']) / skill['id'] / 'SKILL.md'
+            text += '\n\n受控公开检索技能正文：\n' + path.read_text()
+    return text
