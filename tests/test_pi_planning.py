@@ -26,7 +26,7 @@ async def test_first_pi_frame_reads_public_ranking_and_complete_cards_and_record
     cards = [{'id': 'other', 'revision_id': 'r1', 'body_md': 'Use method A; it failed at large k.'}]
     monkeypatch.setattr(planning, 'strategy_cards', lambda cid: seen.append(('cards', cid)) or cards)
     request = c._enqueue_lifecycle(rid, 'run_start')
-    brief = {'problem_md': 'Compute a converged quantity', 'science_md': 'Check its units',
+    brief = {'environment_choice': {'mode': 'from_zero', 'reason_md': 'Synthetic standalone environment'}, 'problem_md': 'Compute a converged quantity', 'science_md': 'Check its units',
         'ranked_methods': [{'name': 'B', 'reason_md': 'A failed at large k'}],
         'traps_md': 'Do not confuse eV and Hartree',
         'parallel_preparation': {'contract': 'result.json', 'verifier': 'finite units', 'environment': 'smoke'},

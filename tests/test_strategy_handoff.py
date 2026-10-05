@@ -16,7 +16,7 @@ class RouteChoosingBrain(ScriptableBrain):
         route = 'B: exact method' if any('A: approximation' in c['body_md'] for c in cards) else 'A: approximation'
         decision = _decision([{'op': 'start_trial', 'goal': route, 'success_check': 'formal scorer'}],
                              rid=packet['run_id'], sv=packet['state_version'])
-        decision['research_brief'] = {'route_md': route,
+        decision['research_brief'] = {'environment_choice': {'mode': 'from_zero', 'reason_md': 'Synthetic empty environment'}, 'route_md': route,
             'ranked_methods': [{'name': route, 'reason_md': 'Compare prior method and test an alternative'}],
             'difference_md': 'Uses exact arithmetic instead of A' if cards else 'First recorded route',
             'advice_md': 'Verify units, then compute in authorized Bohrium'}

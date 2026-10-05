@@ -57,6 +57,9 @@ def saves() -> list[dict]:
 
 
 def save(run_id, operation_id, dockerfile, recipe, smoke_command):
+    from . import environment_catalog
+    if environment_catalog.enabled():
+        raise compute.ComputeError('CATALOG_STARTING_POINT_ONLY', 'D-52：运行中不保存环境新版本；可自由更换基础镜像和安装依赖')
     if not isinstance(operation_id, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,70}', operation_id):
         raise compute.ComputeError('INVALID_OPERATION', '环境保存需要稳定 operation_id')
     if (not isinstance(dockerfile, str) or len(dockerfile) > 20_000

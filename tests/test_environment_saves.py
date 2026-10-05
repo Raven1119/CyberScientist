@@ -1,7 +1,13 @@
 """Synthetic private builds account for unknowns and auto-register facts."""
 import pytest
-from cyberscientist import compute,db,environment_saves,experiences
+from cyberscientist import compute,config,db,environment_saves,experiences
 from test_compute_gateway import run
+
+
+@pytest.fixture(autouse=True)
+def legacy_environment_build_policy():
+    settings = config.load_settings(); settings['features']['environment_catalog'] = False
+    config.save_settings(settings)
 
 
 def test_private_software_build_budget_and_smoke_receipt_register_fact(run,monkeypatch):

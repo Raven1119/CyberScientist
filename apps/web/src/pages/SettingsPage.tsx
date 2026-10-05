@@ -3,6 +3,7 @@ import { api, listSkills } from '../api'
 import { useApp } from '../app-context'
 import { Badge, LoadingState } from '../components'
 import { formatTime } from '../labels'
+import EnvironmentCatalog from '../EnvironmentCatalog'
 import type {
   ConnectionTestResult,
   LlmProfile,
@@ -222,6 +223,7 @@ export default function SettingsPage() {
           <label>赛末收割检查提前小时<input type="number" min="0" step="0.5" value={settings.harvest?.deadline_check_hours ?? 2}
             onChange={e => update(s => ({ ...s, harvest: { ...{ score_threshold: 100, experiments_done_at_leader: true, deadline_check_hours: 2 }, ...s.harvest, deadline_check_hours: Number(e.target.value) } }))} /></label>
         </article>
+        <EnvironmentCatalog />
         <article className="card card-body"><h2>四角色提供方</h2>
           <p>DeepSeek 密钥只读取后端环境变量或根目录 .env。工具探针会消耗一次模型调用。</p>
           {(['brain', 'executor', 'reviewer', 'post_review'] as const).map(role => {

@@ -599,6 +599,7 @@ def init_db() -> None:
         _ensure_columns(conn, "checkpoints", CHECKPOINT_V2_COLUMNS)
         _ensure_columns(conn, "runs", RUN_V2_COLUMNS)
         conn.execute('CREATE TABLE IF NOT EXISTS environment_saves (operation_id TEXT PRIMARY KEY,run_id TEXT NOT NULL,status TEXT NOT NULL,resource_id TEXT,recipe_json TEXT NOT NULL,smoke_command TEXT NOT NULL,recipe_sha256 TEXT NOT NULL,cost_status TEXT NOT NULL,receipt_json TEXT NOT NULL,created_at TEXT NOT NULL,updated_at TEXT NOT NULL)')
+        conn.execute('CREATE TABLE IF NOT EXISTS environment_catalog_entries (id TEXT PRIMARY KEY,descriptor_json TEXT NOT NULL,sha256 TEXT NOT NULL,registered_at TEXT NOT NULL)')
         _ensure_columns(conn, 'authorizations', {'max_environment_saves': 'INTEGER NOT NULL DEFAULT 0'})
         _ensure_columns(conn, 'authorizations', {'unlimited_resources': 'INTEGER NOT NULL DEFAULT 0'})
         conn.execute('CREATE TABLE IF NOT EXISTS job_score_receipts (operation_id TEXT PRIMARY KEY,run_id TEXT NOT NULL,job_operation_id TEXT NOT NULL,receipt_json TEXT NOT NULL,receipt_sha256 TEXT NOT NULL,created_at TEXT NOT NULL)')

@@ -3555,6 +3555,8 @@ class RunController:
                              "认证通过进程环境提供，不得打印、记录或写入提交包。\n")
                 from . import planning
                 task_text += planning.brief_for_run(run_id)
+                from . import environment_catalog
+                task_text += environment_catalog.executor_instructions(run_id)
                 if enabled_skills:
                     db.append_event(run_id, "controller",
                                     "trial.skills_enabled",

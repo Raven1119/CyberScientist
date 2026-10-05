@@ -44,6 +44,7 @@ def update_secret(secret_id: str, value: str | None) -> None:
         save_secrets(secrets)
 
 DEFAULT_SETTINGS: dict[str, Any] = {
+    'features': {'environment_catalog': True},
     "schema_version": 1,
     "revision": 0,
     "app": {"host": "127.0.0.1", "port": 8765, "mode": "demo",

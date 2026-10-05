@@ -474,6 +474,9 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
                 model_usage.validate(merged.get('model_pricing', {}))
                 from . import auto_harvest
                 merged['harvest'] = auto_harvest.validate(merged.get('harvest', {}))
+                features = merged.get('features', {})
+                if not isinstance(features, dict) or any(type(value) is not bool for value in features.values()):
+                    raise ValueError('功能开关必须是布尔值')
                 policy = merged.get('policy', {})
                 if type(policy.get('require_ended_submission', False)) is not bool or not isinstance(policy.get('allowed_submission_targets', []), list) or any(not isinstance(target, str) or not target for target in policy.get('allowed_submission_targets', [])):
                     raise ValueError('提交目标授权策略无效')
@@ -1203,6 +1206,15 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
         identity = _tool_auth(request)
         body = await request.json()
         request.state.operation_id = body.get('operation_id')
+        from . import environment_catalog
+        if environment_catalog.enabled():
+            try:
+                if body.get('action') == 'list': return {'items': environment_catalog.items(), 'choice': environment_catalog.current(identity['run_id'])}
+                if body.get('action') == 'restore': return environment_catalog.prepare(identity['run_id'], body.get('entry_id'), body.get('reason_md', ''))
+                if body.get('action') == 'observe_smoke': return environment_catalog.observe_smoke(identity['run_id'], body.get('operation_id'))
+                if body.get('action') == 'from_zero': return environment_catalog.choose(identity['run_id'], {'mode': 'from_zero', 'reason_md': body.get('reason_md')}, source='prime')
+            except ValueError as exc:
+                raise HTTPException(422, detail={'message': str(exc)}) from exc
         if body.get('action') == 'record_smoke':
             from . import planning
             return await asyncio.to_thread(planning.register_smoke, identity['run_id'],
@@ -1217,6 +1229,11 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
         if body.get('action') == 'list':
             return {'items': environment_saves.saves()}
         raise compute.ComputeError('INVALID_ACTION', '支持 save/reconcile/list/record_smoke')
+
+    @app.get('/api/v1/environment-catalog')
+    async def environment_catalog_list():
+        from . import environment_catalog
+        return {'enabled': environment_catalog.enabled(), 'items': environment_catalog.items()}
 
     @app.post("/api/v1/tools/job")
     async def tool_job(request: Request) -> dict:

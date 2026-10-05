@@ -105,6 +105,7 @@ def test_observed_09_invalid_path_and_command_are_rejected_before_reservation(ru
 
 def test_new_private_build_uses_native_raw_dockerfile_route_and_safe_name(run, monkeypatch):
     rid, _ = run
+    settings = config.load_settings(); settings['features']['environment_catalog'] = False; config.save_settings(settings)
     modern(); db.execute('UPDATE authorizations SET max_environment_saves=1 WHERE run_id=?', (rid,))
     calls = []
     def native(args, **kwargs):

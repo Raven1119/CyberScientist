@@ -144,9 +144,10 @@ _EXPERIENCE_TOOL = {'name': 'research_experience', 'description': '只读当前�
     'inputSchema': {'type': 'object', 'additionalProperties': False, 'properties': {
         'action': {'enum': ['list', 'read']}, 'experience_id': {'type': 'string'}}, 'required': ['action']}}
 _TOOLS.append(_EXPERIENCE_TOOL)
-_TOOLS.append({'name': 'research_environment', 'description': '在环境保存数量授权内构建私有公开软件镜像；固定配方和冒烟命令入账；unknown 不重发。list/reconcile 只读。',
+_TOOLS.append({'name': 'research_environment', 'description': '环境目录是可修改的起点：list查看，restore领取恢复和冒烟计划，observe_smoke核对实际回执；失败可换条目或from_zero。运行中不保存版本；旧功能关闭目录时保留save/reconcile。',
     'inputSchema': {'type': 'object', 'additionalProperties': False, 'properties': {
-        'action': {'enum': ['save', 'list', 'reconcile', 'record_smoke']}, 'operation_id': {'type': 'string'},
+        'action': {'enum': ['save', 'list', 'reconcile', 'record_smoke', 'restore', 'observe_smoke', 'from_zero']}, 'operation_id': {'type': 'string'},
+        'entry_id': {'type': 'string'}, 'reason_md': {'type': 'string'},
         'dockerfile': {'type': 'string'}, 'recipe': {'type': 'string'}, 'smoke_command': {'type': 'string'}}, 'required': ['action']}})
 
 _TRACE_TOOL = {

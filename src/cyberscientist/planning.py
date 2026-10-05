@@ -51,6 +51,11 @@ def startup(run_id: str, challenge: dict) -> dict:
                'brief_fields': ['problem_md', 'science_md', 'ranked_methods', 'traps_md',
                                 'parallel_preparation', 'acceptance_md'],
                'preparation_tracks': ['delivery_contract', 'verifier', 'environment_smoke']}
+    from . import environment_catalog
+    if environment_catalog.enabled():
+        context['environment_catalog'] = environment_catalog.items()
+        context['brief_fields'].append('environment_choice')
+        context['environment_choice_contract'] = {'mode': 'catalog|from_zero', 'entry_id': 'catalog时必填', 'reason_md': '选择依据'}
     db.execute('INSERT OR IGNORE INTO system_state(key,value) VALUES(?,?)',
                (key, json.dumps(context, ensure_ascii=False)))
     db.append_event(run_id, 'controller', 'research.startup_read', {
@@ -61,6 +66,12 @@ def startup(run_id: str, challenge: dict) -> dict:
 
 def record_brief(run_id: str, brief: dict, decision_id: str) -> dict:
     safe = json.loads(redact(json.dumps(brief, ensure_ascii=False), config.sensitive_values()))
+    from . import environment_catalog
+    if environment_catalog.enabled():
+        if not safe.get('environment_choice') and environment_catalog.current(run_id)['mode'] == 'unknown':
+            raise ValueError('首份研究简报必须给出environment_choice：选择目录起点或明确from_zero')
+        if safe.get('environment_choice'):
+            environment_catalog.choose(run_id, safe['environment_choice'])
     body = '# PI 研究简报\n\n' + '\n\n'.join(
         f"## {key}\n\n" + (value if isinstance(value, str) else
                               json.dumps(value, ensure_ascii=False, indent=2))

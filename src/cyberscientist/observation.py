@@ -78,6 +78,10 @@ def authority_facts(run_id: str) -> dict[str, Any]:
     result: dict[str, Any] = {'authorization': values,
                               'runtime_environments': runtime_environments.facts(),
                               'operating_facts': runtime_facts.facts(run_id)}
+    from . import environment_catalog
+    if environment_catalog.enabled():
+        result['environment_catalog'] = environment_catalog.items()
+        result['environment_choice'] = environment_catalog.current(run_id)
     run = db.query_one('SELECT config_snapshot FROM runs WHERE id=?', (run_id,))
     template = json.loads(run['config_snapshot']).get('competition', {}) if run else {}
     result['solver_note'] = template.get('solver_note', '')
