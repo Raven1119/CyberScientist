@@ -1456,14 +1456,32 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
     async def run_post_review(run_id: str) -> dict:
         controller._require_run(run_id)
         row = db.query_one('SELECT status,reason,report_path,error,updated_at FROM run_post_reviews WHERE run_id=?', (run_id,))
-        if not row:
-            return {'status': 'idle'}
-        result = dict(row)
-        if row['report_path']:
+        result = dict(row) if row else {'status': 'idle'}
+        if row and row['report_path']:
             path = config.WORKSPACE_DIR / row['report_path']
             if path.is_file():
                 result['report_md'] = path.read_text(encoding='utf-8')
+        result['versions'] = []
+        for item in db.query('SELECT id,version,status,reason,report_path,error,calls_used,native_call_limit,updated_at FROM run_post_review_versions WHERE run_id=? ORDER BY version', (run_id,)):
+            version = dict(item)
+            if item['report_path']:
+                path = (config.WORKSPACE_DIR / item['report_path']).resolve()
+                if path.is_relative_to(config.WORKSPACE_DIR.resolve()) and path.is_file(): version['report_md'] = path.read_text(encoding='utf-8')
+            result['versions'].append(version)
         return result
+
+    @app.post('/api/v1/runs/{run_id}/post-review')
+    async def repeat_post_review(run_id: str, request: Request) -> dict:
+        from . import maintenance
+        body = await request.json()
+        if not isinstance(body, dict): raise HTTPException(422, '复盘请求必须为对象')
+        try:
+            row = maintenance.grant_post_review(controller, run_id, body.get('operation_id', ''),
+                allow_model_calls=body.get('allow_model_calls'), reason=body.get('reason', ''),
+                max_format_rewrites=body.get('max_format_rewrites', 0))
+        except ValueError as exc: raise HTTPException(400, str(exc)) from exc
+        if row['status'] == 'pending': maintenance.schedule(maintenance.run_post_review(controller, run_id, review_id=row['id']))
+        return {'id': row['id'], 'version': row['version'], 'status': row['status'], 'native_call_limit': row['native_call_limit']}
 
     @app.post("/api/v1/tools/checkpoint")
     async def tool_checkpoint(request: Request) -> dict[str, Any]:

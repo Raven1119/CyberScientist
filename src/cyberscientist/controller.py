@@ -490,6 +490,9 @@ class RunController:
         try:
             # Legacy callers may attach report metadata; models are ordinary per-Run choices.
             supplied_models = model_config or (eval_mode or {}).get('models')
+            if model_config is None and supplied_models:
+                from .pi_policy import migrated
+                supplied_models = {**supplied_models, 'brain': migrated(supplied_models.get('brain') or settings['brain'])}
             selected = challenge_models.from_challenge(challenge, settings)
             if supplied_models is not None:
                 selected = {role: challenge_models.choose(role, supplied_models.get(role), settings)

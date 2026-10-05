@@ -49,6 +49,9 @@ def parse(text: str, packet: dict) -> BrainEvent:
 def feedback_prompt(prompt: str, packet: dict) -> str:
     feedback = packet.get('_format_feedback')
     if not feedback: return prompt
+    if feedback.startswith('trace_delivery:') and isinstance(packet.get('_read_missing_chunks'), list):
+        return (prompt + '\n后端未核验完整轨迹。本次只补读指定的只读分块，已验证分块不用重复；'
+            '禁止科学计算、联网、修改和提交。全部补读后在本会话重新输出完整JSON。\n' + feedback)
     return prompt + '\n上次结构化输出未执行。仅修正以下字段格式，在本会话重写完整 JSON；不要重复工具或受控动作。\n' + feedback
 
 
@@ -64,11 +67,23 @@ def claim_rewrite(runtime):
     context = getattr(runtime, 'format_rewrite_budget', None)
     if context is None: return None  # Standalone callers own their bounded authorization.
     rid, kind = context
+    if kind == 'post_review_version':
+        with db.transaction() as conn:
+            grant = conn.execute('SELECT * FROM run_post_review_versions WHERE id=?', (rid,)).fetchone()
+            run = conn.execute('SELECT phase FROM runs WHERE id=?', (grant['run_id'],)).fetchone() if grant else None
+            if not grant or not grant['allow_model_calls'] or grant['status'] != 'running' or not run or run['phase'] not in maintenance.TERMINAL:
+                raise ValueError('当前复盘格式纠正未获授权')
+            if grant['calls_used'] >= grant['native_call_limit']:
+                raise ValueError('本次复盘格式纠正额度已用尽')
+            conn.execute('UPDATE run_post_review_versions SET calls_used=calls_used+1,updated_at=? WHERE id=?', (db.utcnow(), rid))
+            db.append_event_tx(conn, grant['run_id'], 'brain', 'post_review.format_rewrite_reserved',
+                {'review_id': rid, 'calls_used': grant['calls_used'] + 1, 'native_call_limit': grant['native_call_limit']})
+        return None
     operation = 'format-rewrite-' + uuid.uuid4().hex
-    if kind == 'maintenance':
+    if kind in ('maintenance', 'post_review_legacy'):
         auth = db.query_one('SELECT a.allow_model_calls FROM authorizations a JOIN runs r ON r.authorization_id=a.id AND a.run_id=r.id WHERE r.id=?', (rid,))
         if not auth or not auth['allow_model_calls']: raise ValueError('原维护模型授权不可用')
-        maintenance.claim_call(rid, operation, 'format_rewrite')
+        maintenance.claim_call(rid, operation, 'format_rewrite', terminal_only=kind == 'post_review_legacy')
         return operation
     with db.transaction() as conn:
         run = conn.execute('SELECT * FROM runs WHERE id=?', (rid,)).fetchone()
@@ -106,9 +121,16 @@ async def review(runtime, session, packet):
                 if event.type == 'error' and event.payload.get('code') == 'FORMAT_INVALID':
                     invalid = event
                 else:
+                    if event.type == 'error':
+                        status = 'unknown' if event.payload.get('code') == 'NATIVE_TURN_UNKNOWN' else 'failed'
+                        # Persist before exposing the error: consumers may stop
+                        # iteration immediately, without resuming this generator.
+                        if reservation:
+                            from .maintenance import complete_call
+                            complete_call(reservation, status)
+                            reservation = None
                     yield event
                     if event.type == 'error':
-                        status = 'failed'
                         return  # Native failures are not format retries.
             status = 'failed' if invalid else 'done'
         finally:

@@ -46,14 +46,14 @@ def prompt(packet: dict) -> str:
         + '\n素材：\n' + json.dumps(packet, ensure_ascii=False))
 
 
-def run_evidence(run_id: str) -> dict[str, Any]:
+def run_evidence(run_id: str, through_seq: int | None = None) -> dict[str, Any]:
     """Freeze bounded public evidence; retain startup assistance and latest failures."""
     run = db.query_one('SELECT * FROM runs WHERE id=?', (run_id,))
     if not run:
         raise KeyError(run_id)
     public = []
-    for event in observation.events_through(run_id, 1, db.query_one(
-            'SELECT MAX(seq) AS n FROM events WHERE run_id=?', (run_id,))['n']):
+    cutoff = through_seq if through_seq is not None else db.query_one('SELECT COALESCE(MAX(seq),0) AS n FROM events WHERE run_id=?', (run_id,))['n']
+    for event in observation.events_through(run_id, 1, cutoff):
         kind, payload = event['type'], event['payload']
         important = (kind in observation._NOTABLE or kind.startswith(('job.', 'user.steer', 'run.authorized'))
                      or kind in ('brain.action_deferred', 'brain.action_rejected', 'guidance.queued'))
@@ -71,7 +71,7 @@ def run_evidence(run_id: str) -> dict[str, Any]:
             'report': observation.strip_secrets(cp['report'])[:2400],
             'evidence_refs': json.loads(cp['evidence_refs'])} for cp in reversed(checkpoints)]
     return {'run_id': run_id, 'challenge_id': run['challenge_id'], 'phase': run['phase'],
-            'through_seq': db.query_one('SELECT MAX(seq) AS n FROM events WHERE run_id=?', (run_id,))['n'],
+            'through_seq': cutoff,
             'events': selected, 'checkpoints': cps, 'events_omitted': len(public)-len(selected),
             'externally_assisted': any(e['type'] == 'user.steer.queued' for e in public),
             'evidence_refs': [e['evidence_ref'] for e in selected+cps],

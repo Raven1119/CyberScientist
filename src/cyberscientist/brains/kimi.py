@@ -230,9 +230,10 @@ class KimiBrain:
         notif_iter = self.rpc.notifications()
         final_text: list[str] = []
         error_msg: str | None = None
+        unknown_turn = False
 
         async def watch_turn() -> None:
-            nonlocal error_msg
+            nonlocal error_msg, unknown_turn
             try:
                 async for msg in notif_iter:
                     if msg.get("method") != "session/update":
@@ -249,6 +250,7 @@ class KimiBrain:
                 raise
             except Exception as exc:  # noqa: BLE001
                 error_msg = f"事件流异常: {exc}"
+                unknown_turn = True
 
         watcher = asyncio.create_task(watch_turn())
         prompt_task = asyncio.create_task(
@@ -265,8 +267,9 @@ class KimiBrain:
             stop = result.get("stopReason") if isinstance(result, dict) else None
             if stop and stop != "end_turn":
                 error_msg = f"turn stopReason: {stop}"
-        except (asyncio.TimeoutError, ProtocolError) as exc:
+        except (asyncio.TimeoutError, ProtocolError, OSError) as exc:
             error_msg = f"prompt 失败: {exc.__class__.__name__}: {str(exc)[:300]}"
+            unknown_turn = True
         finally:
             watcher.cancel()
             await asyncio.gather(watcher, return_exceptions=True)
@@ -274,7 +277,7 @@ class KimiBrain:
                 yield ev
 
         if error_msg:
-            yield BrainEvent("error", {"message": error_msg})
+            yield BrainEvent("error", {"message": error_msg, "code": 'NATIVE_TURN_UNKNOWN' if unknown_turn else 'NATIVE_FAILURE'})
             return
         # 流式 chunk 是增量片段，必须无缝拼接（不能用换行）
         joined = "".join(final_text)

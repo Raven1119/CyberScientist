@@ -629,6 +629,13 @@ def init_db() -> None:
         conn.execute('CREATE TABLE IF NOT EXISTS run_post_reviews ('
                      'run_id TEXT PRIMARY KEY REFERENCES runs(id),status TEXT NOT NULL,reason TEXT NOT NULL,'
                      'packet_json TEXT,result_json TEXT,report_path TEXT,error TEXT,created_at TEXT NOT NULL,updated_at TEXT NOT NULL)')
+        conn.execute('CREATE TABLE IF NOT EXISTS run_post_review_versions ('
+                     'id TEXT PRIMARY KEY,run_id TEXT NOT NULL REFERENCES runs(id),version INTEGER NOT NULL,'
+                     'status TEXT NOT NULL,reason TEXT NOT NULL,allow_model_calls INTEGER NOT NULL,'
+                     'calls_used INTEGER NOT NULL DEFAULT 0,packet_json TEXT NOT NULL,result_json TEXT,'
+                     'report_path TEXT,error TEXT,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,'
+                     'UNIQUE(run_id,version))')
+        _ensure_columns(conn, 'run_post_review_versions', {'native_call_limit': 'INTEGER NOT NULL DEFAULT 1'})
         conn.execute('CREATE TABLE IF NOT EXISTS package_reviews ('
                      'operation_id TEXT PRIMARY KEY,run_id TEXT NOT NULL REFERENCES runs(id),trial_id TEXT NOT NULL,'
                      'source_sha256 TEXT NOT NULL,sealed_sha256 TEXT NOT NULL,status TEXT NOT NULL,'
@@ -723,6 +730,18 @@ def transaction() -> Iterator[sqlite3.Connection]:
         except Exception:
             conn.rollback()
             raise
+
+
+@contextlib.contextmanager
+def read_snapshot() -> Iterator[sqlite3.Connection]:
+    """Pin related read helpers to one SQLite view without writing or committing."""
+    with _db_lock:
+        conn = get_db()
+        conn.execute('BEGIN')
+        try:
+            yield conn
+        finally:
+            conn.rollback()
 
 
 def query(sql: str, params: Iterable[Any] = ()) -> list[sqlite3.Row]:

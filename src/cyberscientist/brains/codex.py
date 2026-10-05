@@ -149,12 +149,25 @@ class CodexBrain:
         }
         if self.effort:
             turn_params["effort"] = self.effort
-        result = await self.rpc.request("turn/start", turn_params, timeout=30)
+        try:
+            result = await self.rpc.request("turn/start", turn_params, timeout=30)
+        except (asyncio.TimeoutError, ProtocolError, OSError) as exc:
+            try:
+                rejection = json.loads(str(exc))
+            except (ValueError, TypeError):
+                rejection = None
+            # Standard JSON-RPC parse/method/parameter rejections are explicit
+            # refusals. A timeout or transport error after sending is unknown.
+            refused = isinstance(rejection, dict) and rejection.get('code') in (-32700, -32600, -32601, -32602)
+            yield BrainEvent('error', {'message': str(exc) or 'turn/start回执超时，是否启动未知',
+                'code': 'NATIVE_REQUEST_REJECTED' if refused else 'NATIVE_TURN_UNKNOWN'})
+            return
         turn = result.get("turn", {})
         turn_id = turn.get("id")
         self._turn_id = turn_id
         final_text: list[str] = []
         error_msg: str | None = None
+        unknown_turn = False
         notif_iter = self.rpc.notifications()
         try:
             while True:
@@ -206,15 +219,16 @@ class CodexBrain:
                     if not params.get("willRetry"):
                         error_msg = str(params.get("error") or params.get("message") or "协议错误")
                 # 未知通知：跳过但记录
-        except (asyncio.TimeoutError, ProtocolError) as exc:
+        except (asyncio.TimeoutError, ProtocolError, OSError, StopAsyncIteration) as exc:
             error_msg = f"等待 turn 终态失败: {exc}"
+            unknown_turn = True
         finally:
             self._turn_id = None
         while not self._approval_events.empty():
             yield BrainEvent("approval_request", self._approval_events.get_nowait())
 
         if error_msg:
-            yield BrainEvent("error", {"message": error_msg})
+            yield BrainEvent("error", {"message": error_msg, "code": 'NATIVE_TURN_UNKNOWN' if unknown_turn else 'NATIVE_FAILURE'})
             return
         joined = "\n".join(final_text)
         yield structured_output.parse(joined, packet)

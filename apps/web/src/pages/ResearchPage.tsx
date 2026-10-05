@@ -1,4 +1,5 @@
 import SharedArea from '../SharedArea'
+import PostReviews from '../PostReviews'
 import { RunContinuation } from './RunContinuation'
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { ApiError, api, bindChallengeSkill, listSkills, unbindChallengeSkill, updateRunBudget } from '../api'
@@ -724,6 +725,7 @@ export default function ResearchPage() {
 
         <div className="stack right">
           {currentRun && <PackageReviews key={currentRun.id} runId={currentRun.id} />}
+          {currentRun && <PostReviews key={currentRun.id} runId={currentRun.id} phase={phase ?? 'created'} />}
           {currentRun && <SharedArea key={currentRun.challenge_id} challengeId={currentRun.challenge_id} />}
           <Observation key={currentRun?.id ?? challengeId ?? 'idle'} runId={currentRun?.id}
             phase={runDetail?.id === currentRun?.id ? runDetail?.phase : currentRun?.phase}
