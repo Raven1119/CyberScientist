@@ -3,6 +3,7 @@ import type { RunPhase } from './types'
 export const PHASE_LABELS: Record<RunPhase, string> = {
   created: '已创建',
   running: '研究进行中',
+  waiting_score: '等待评分',
   pausing: '正在暂停',
   paused: '已暂停',
   blocked: '已阻塞',
@@ -15,6 +16,7 @@ export const PHASE_LABELS: Record<RunPhase, string> = {
 export const PHASE_TONES: Record<RunPhase, 'green' | 'blue' | 'amber' | 'danger' | 'neutral'> = {
   created: 'neutral',
   running: 'green',
+  waiting_score: 'amber',
   pausing: 'amber',
   paused: 'amber',
   blocked: 'danger',
@@ -24,7 +26,7 @@ export const PHASE_TONES: Record<RunPhase, 'green' | 'blue' | 'amber' | 'danger'
   cancelled: 'neutral',
 }
 
-export const ACTIVE_PHASES: RunPhase[] = ['created', 'running', 'pausing', 'paused', 'blocked', 'recovering']
+export const ACTIVE_PHASES: RunPhase[] = ['created', 'running', 'waiting_score', 'pausing', 'paused', 'blocked', 'recovering']
 
 export const TERMINAL_PHASES: RunPhase[] = ['finished', 'failed', 'cancelled']
 

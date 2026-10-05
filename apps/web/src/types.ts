@@ -200,6 +200,7 @@ export interface RunBudget {
 
 export type RunPhase =
   | 'created'
+  | 'waiting_score'
   | 'running'
   | 'pausing'
   | 'paused'

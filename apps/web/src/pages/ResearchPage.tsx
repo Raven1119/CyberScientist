@@ -1,3 +1,4 @@
+import { RunContinuation } from './RunContinuation'
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { ApiError, api, bindChallengeSkill, listSkills, unbindChallengeSkill, updateRunBudget } from '../api'
 import { useApp } from '../app-context'
@@ -582,7 +583,7 @@ export default function ResearchPage() {
                   <Badge tone="amber">事件流已断开，正在重连…</Badge>
                 )}
                 {streamStatus === 'closed' && <Badge tone="neutral">事件流已归档</Badge>}
-                {phase === 'running' && (
+                {(phase === 'running' || phase === 'waiting_score') && (
                   <button type="button" className="btn" onClick={() => void pauseRun()}>
                     暂停研究
                   </button>
@@ -597,6 +598,7 @@ export default function ResearchPage() {
                     恢复研究（后端重启后）
                   </button>
                 )}
+                {currentRun && <RunContinuation key={currentRun.id} runId={currentRun.id} phase={phase ?? 'created'} refresh={() => void refreshRunDetail()} toast={toast} />}
                 {(active || recovering) && (
                   <button type="button" className="btn danger" onClick={() => setTerminateOpen(true)}>
                     {pausing ? '终止研究（不等暂停确认）' : '终止研究'}

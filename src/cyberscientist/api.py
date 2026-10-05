@@ -239,6 +239,7 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
         mailboxes.reconcile_draft_continuations()
         from . import power
         await power.recover(controller)
+        controller.scan_score_waits()
         # 后台评分轮询：提交后进入评分等待，由这里异步拿回分数。
         # 评分器可能长时间排队或抽风（409 scoringInProgress / 5xx），
         # 全部吞掉下一轮再试；轮询失败绝不影响服务本身。
@@ -270,6 +271,7 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
             import logging
             logger = logging.getLogger('cyberscientist.api')
             while not stop.is_set():
+                controller.scan_score_waits()
                 try:
                     await asyncio.to_thread(sandboxes.expire_due)
                     compute.release_unknown_slots()
@@ -1503,30 +1505,36 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
     @app.post("/api/v1/runs/{run_id}/submissions")
     async def submit_experiment(run_id: str, request: Request) -> dict[str, Any]:
         body = await request.json()
-        return await mailboxes.submit_async(mailboxes.submit_experiment,
+        result = await mailboxes.submit_async(mailboxes.submit_experiment,
             run_id, body.get("trial_id"), body.get("package_path"),
             body.get("operation_id", ""),
             body.get("allow_proxy_evidence", False),
             body.get("allow_indeterminate_admission", False),
             body.get("prediction_md"))
+        controller.notify_run_change(run_id)
+        return result
 
     @app.post("/api/v1/submissions/{submission_id}/trace-variants")
     async def submit_trace_variant(submission_id: str, request: Request) -> dict[str, Any]:
         body = await request.json()
-        return await mailboxes.submit_async(
+        result = await mailboxes.submit_async(
             mailboxes.submit_trace_variant, submission_id,
             body.get('operation_id', ''), body.get('prediction_md'),
             allow_proxy_evidence=body.get('allow_proxy_evidence', False),
             allow_indeterminate_admission=body.get('allow_indeterminate_admission', False),
             projection_only=body.get('projection_only', False), narrative_jsonl=body.get('narrative_jsonl'),
             narrative_written_at=body.get('narrative_written_at'))
+        controller.notify_run_change(result['run_id'])
+        return result
 
     @app.post("/api/v1/submissions/{submission_id}/exact-replay")
     async def submit_exact_replay(submission_id: str, request: Request) -> dict[str, Any]:
         body = await request.json()
-        return await mailboxes.submit_async(mailboxes.submit_exact_replay,
+        result = await mailboxes.submit_async(mailboxes.submit_exact_replay,
                                        submission_id, body.get('operation_id', ''),
                                        body.get('prediction_md', ''))
+        controller.notify_run_change(result['run_id'])
+        return result
 
     @app.post("/api/v1/runs/{run_id}/submissions/preflight")
     async def preflight_submission(run_id: str, request: Request) -> dict[str, Any]:
@@ -1555,7 +1563,7 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
         auto_harvest.reconcile_interrupted(include_running=False)
         for rid in result.get("changed_run_ids",[]):
             run = db.query_one("SELECT phase FROM runs WHERE id=?",(rid,))
-            if run and run["phase"] == "running":
+            if run and run["phase"] in ('running', 'waiting_score'):
                 controller.notify_run_change(rid)
 
     @app.get("/api/v1/polling")

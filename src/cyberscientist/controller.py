@@ -241,6 +241,9 @@ def _validate_question_answer(question: dict[str, Any],
 class RunController:
     def __init__(self) -> None:
         self._tasks: dict[str, asyncio.Task] = {}
+        self._score_wakes: dict[str, asyncio.Task] = {}
+        self._waiting_close_handles: dict[str, list[tuple[Any, Any]]] = {}
+        self._waiting_close_tasks: dict[str, asyncio.Task] = {}
         self._signals: dict[str, asyncio.Queue] = {}
         self._prime_sessions: dict[str, str] = {}
         self._pumps: dict[str, asyncio.Task] = {}
@@ -740,6 +743,29 @@ class RunController:
                       operation_id: str) -> dict[str, Any]:
         run = self._require_run(run_id)
         q = self._signals.get(run_id)
+        wait_marker = db.query_one('SELECT value FROM system_state WHERE key=?', ('await_score:' + run_id,))
+        if wait_marker and ((action == 'pause' and run['phase'] == 'waiting_score')
+                            or (action == 'resume' and run['phase'] == 'paused')):
+            with db.transaction() as conn:
+                previous = conn.execute('SELECT run_id,kind FROM operations WHERE operation_id=?', (operation_id,)).fetchone()
+                if previous:
+                    if previous['run_id'] != run_id or previous['kind'] != 'control.' + action:
+                        raise ControllerError('CONFLICT', '操作ID已用于其他动作')
+                    return {'status': 'confirmed', 'deduplicated': True}
+                conn.execute('INSERT INTO operations(operation_id,run_id,kind,status,request_summary,payload_hash,created_at) VALUES(?,?,?,?,?,?,?)',
+                    (operation_id, run_id, 'control.' + action, 'confirmed', action, '', db.utcnow()))
+                phase = 'paused' if action == 'pause' else 'waiting_score'
+                conn.execute('UPDATE runs SET phase=?,resume_on_startup=0 WHERE id=?', (phase, run_id))
+                if action == 'pause':
+                    conn.execute('INSERT OR REPLACE INTO system_state VALUES(?,?)', ('score_wait_paused:' + run_id, '1'))
+                else:
+                    conn.execute('DELETE FROM system_state WHERE key=?', ('score_wait_paused:' + run_id,))
+                db.append_event_tx(conn, run_id, 'user', 'run.score_wait_' + action, {'submission_id': wait_marker['value']})
+            if q:
+                q.put_nowait({'type': 'score_wait'})
+            if action == 'resume':
+                self._wake_scored_run(run_id)
+            return {'status': 'confirmed', 'detail': '仅改变自动唤醒许可，仍不计等待时长'}
         # 先完成全部校验，再落 operation_id；失败路径不消耗去重名额
         if action == "steer":
             if run["phase"] != "running":
@@ -791,8 +817,12 @@ class RunController:
                 if previous_op and previous_op["run_id"] == run_id \
                         and previous_op["kind"] == "control.reopen":
                     return {"status": "confirmed", "deduplicated": True}
-            if run["phase"] != "cancelled" or not run["started_at"]:
-                raise ControllerError("INVALID_STATE", "仅已取消且曾启动的 Run 可以重开")
+            if run["phase"] not in ('cancelled', 'finished') or not run["started_at"]:
+                raise ControllerError("INVALID_STATE", "仅已结束或取消且曾启动的 Run 可以续跑")
+            if self._tasks.get(run_id) and not self._tasks[run_id].done():
+                raise ControllerError('RECOVERABLE', '原 Run 会话仍在安全收尾，稍后续跑')
+            if db.query_one('SELECT 1 FROM system_state WHERE key=?', ('native_close_unknown:' + run_id,)):
+                raise ControllerError('RECOVERABLE', '原生会话关闭仍未知，先核对再续跑')
             self._require_model_authorization(run_id)
             if self._run_minutes_exceeded(run):
                 raise ControllerError("AUTH_EXPIRED", "原 Run 的时长授权已到期")
@@ -801,7 +831,7 @@ class RunController:
             with db.transaction() as conn:
                 self._check_active_capacity(conn, config.load_settings())
                 previous = conn.execute(
-                    "SELECT ended_at FROM runs WHERE id=? AND phase='cancelled'",
+                    "SELECT ended_at,phase FROM runs WHERE id=? AND phase IN ('cancelled','finished')",
                     (run_id,)).fetchone()
                 if not previous:
                     raise ControllerError("INVALID_STATE", "Run 状态已变化")
@@ -824,7 +854,7 @@ class RunController:
                     " block_reason=?, state_version=state_version+1 WHERE id=?",
                     ("已重开；等待原生 recovery 审阅", run_id))
                 db.append_event_tx(conn, run_id, "controller", "run.reopened", {
-                    "previous_phase": "cancelled", "previous_ended_at": previous["ended_at"],
+                    "previous_phase": previous['phase'], "previous_ended_at": previous["ended_at"],
                     "reason": _redact(text),
                     "notice": "保留原授权、运行时钟与 Job 账本；未自动重提或改写远端任务"})
             return {"status": "confirmed", "detail": "已进入 recovering；请恢复原 Run"}
@@ -960,6 +990,12 @@ class RunController:
             try:
                 from . import run_clock
                 run_clock.freeze(z["id"])
+                if z['phase'] == 'paused' and db.query_one('SELECT 1 FROM system_state WHERE key=?', ('score_wait_paused:' + z['id'],)):
+                    with db.transaction() as conn:
+                        conn.execute("UPDATE review_requests SET status='obsolete',updated_at=? WHERE run_id=? AND status IN ('pending','running')", (db.utcnow(), z['id']))
+                        collab.revoke_run_tokens(conn, z['id'])
+                        db.append_event_tx(conn, z['id'], 'controller', 'run.score_wait_reconciled', {'manual_pause_preserved': True})
+                    continue
                 inflight = [r["id"] for r in db.query(
                     "SELECT id FROM review_requests WHERE run_id=?"
                     " AND status IN ('pending','running')", (z["id"],))]
@@ -1326,8 +1362,88 @@ class RunController:
         strategies.maintain(run_id)
         from . import trial_notes
         trial_notes.record_closed(run_id)
+        from . import score_wait
+        if score_wait.enter(run_id):
+            if queue := self._signals.get(run_id):
+                queue.put_nowait({'type': 'score_wait'})
+        if self._require_run(run_id)['phase'] == 'waiting_score':
+            self._wake_scored_run(run_id)
+            return
         self._maybe_shadow(run_id)
         self._wake(run_id)
+
+    def _wake_scored_run(self, run_id: str) -> None:
+        from . import score_wait, power, resource_coordinator
+        if power.shutdown_requested() or not score_wait.confirmed(run_id):
+            return
+        if task := self._score_wakes.get(run_id):
+            if not task.done():
+                return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return  # Persisted marker is retried by the next server scan.
+        task = loop.create_task(self._resume_scored_run(run_id))
+        self._score_wakes[run_id] = task
+        owner = 'score-wake-' + run_id
+        resource_coordinator.register_auxiliary(owner, task)
+        task.add_done_callback(lambda _: resource_coordinator.release_sessions(owner))
+
+    def scan_score_waits(self) -> None:
+        from . import resource_coordinator
+        for rid in list(self._waiting_close_handles):
+            if self._waiting_close_tasks.get(rid) and not self._waiting_close_tasks[rid].done():
+                continue
+            task = asyncio.create_task(self._settle_waiting_close(rid))
+            self._waiting_close_tasks[rid] = task
+            owner = 'waiting-close-' + rid
+            resource_coordinator.register_auxiliary(owner, task)
+            task.add_done_callback(lambda _, owner=owner: resource_coordinator.release_sessions(owner))
+        for row in db.query("SELECT id FROM runs WHERE phase='waiting_score'"):
+            self._wake_scored_run(row['id'])
+
+    async def _settle_waiting_close(self, run_id: str) -> None:
+        pending = []
+        for runtime, session in self._waiting_close_handles.get(run_id, []):
+            try:
+                await asyncio.wait_for(runtime.close(session), 15)
+            except Exception:
+                pending.append((runtime, session))
+        if pending:
+            self._waiting_close_handles[run_id] = pending
+            return
+        self._waiting_close_handles.pop(run_id, None)
+        db.execute('DELETE FROM system_state WHERE key=?', ('native_close_unknown:' + run_id,))
+        db.append_event(run_id, 'controller', 'run.score_wait_close_confirmed', {'all_original_handles_closed': True})
+        self._wake_scored_run(run_id)
+
+    async def _resume_scored_run(self, run_id: str) -> None:
+        from . import score_wait, power
+        original = self._tasks.get(run_id)
+        if original and original is not asyncio.current_task():
+            await asyncio.shield(original)
+        submission = score_wait.confirmed(run_id)
+        if power.shutdown_requested() or not submission:
+            return
+        if db.query_one('SELECT 1 FROM system_state WHERE key=?', ('native_close_unknown:' + run_id,)):
+            return
+        with db.transaction() as conn:
+            if conn.execute('SELECT 1 FROM eval_results WHERE run_id=? AND paused=1', (run_id,)).fetchone():
+                return
+            changed = conn.execute("UPDATE runs SET phase='recovering',block_reason='已确认出分，唤醒PI'"
+                " WHERE id=? AND phase='waiting_score'", (run_id,)).rowcount
+            if not changed:
+                return
+            db.append_event_tx(conn, run_id, 'controller', 'run.score_wake', {
+                'submission_id': submission['id'], 'score': submission['score'],
+                'choices': ['finish', 'trace_variant', 'new_trial'], 'automatic_science': False})
+        try:
+            await self.control(run_id, 'resume', None, 'score-wake-' + submission['id'])
+            db.execute('DELETE FROM system_state WHERE key=?', ('await_score:' + run_id,))
+        except Exception as exc:
+            db.execute("UPDATE runs SET phase='waiting_score',block_reason=? WHERE id=? AND phase='recovering'",
+                (_redact(str(exc), 300), run_id))
+            db.append_event(run_id, 'controller', 'run.score_wake_blocked', {'error': _redact(str(exc), 300)})
 
     def _liveness_diagnosis(self, run_id: str, run: Any) -> dict[str, Any]:
         reviews = [dict(row) for row in db.query(
@@ -1680,6 +1796,9 @@ class RunController:
             while True:
                 run = self._require_run(run_id)
                 phase = run["phase"]
+                if phase == 'waiting_score' or (phase == 'paused' and db.query_one(
+                        'SELECT 1 FROM system_state WHERE key=?', ('score_wait_paused:' + run_id,))):
+                    break  # finally closes both native processes; no maintenance or token polling.
                 if phase in ("finished", "failed", "cancelled"):
                     break
                 # 有界授权：运行时长上限（只在 running 时触发一次；
@@ -1773,6 +1892,7 @@ class RunController:
             if tasks:
                 await asyncio.gather(*tasks,return_exceptions=True)
             close_failed = False
+            failed_handles = []
             for runtime, session in ((self._prime_instances.get(run_id,prime),
                                       self._prime_sessions.get(run_id,prime_sid)),
                                      (self._brain_instances.get(run_id,brain),
@@ -1782,6 +1902,7 @@ class RunController:
                         await runtime.close(session)
                     except Exception as exc:
                         close_failed = True
+                        failed_handles.append((runtime, session))
                         from . import resource_coordinator
                         resource_coordinator.close_failed(run_id, exc)
                         db.append_event(run_id,"controller","run.cleanup_error",{"error":_redact(str(exc))[:200]})
@@ -1800,6 +1921,13 @@ class RunController:
                             self._native_arrival_at,self._last_native_marker_at):
                 mapping.pop(run_id,None)
             ended = self._require_run(run_id)
+            if close_failed and ended['phase'] in ('waiting_score', 'paused'):
+                self._waiting_close_handles[run_id] = failed_handles
+            if ended['phase'] == 'waiting_score':
+                db.append_event(run_id, 'controller', 'run.score_wait_quiescent', {
+                    'native_sessions_closed': not close_failed, 'new_model_calls': False,
+                    'notice': '原生关闭未知时继续保留停止屏障，确认出分也不能重叠恢复'})
+                self._wake_scored_run(run_id)
             if ended['phase'] in ('finished', 'failed', 'cancelled'):
                 from . import maintenance
                 maintenance.queue_end(self, run_id, ended['end_reason'] or 'runtime_error')
@@ -1832,7 +1960,7 @@ class RunController:
     def _handle_signal_guarded_pause(self, run_id: str) -> bool:
         """暂停/正在暂停期间：只记账，不驱动 Trial 完成与大脑判断。"""
         phase = self._require_run(run_id)["phase"]
-        return phase in ("pausing", "paused", "eval_scoring")
+        return phase in ("pausing", "paused", "eval_scoring", 'waiting_score')
 
     async def _handle_signal(self, signal: dict[str, Any], run_id: str,
                              q: asyncio.Queue, **ctx: Any) -> None:
@@ -3161,6 +3289,8 @@ class RunController:
                 code=str(res.get('status') or 'SUBMISSION_UNCONFIRMED'),
                 detail=str(res.get('error') or '提交状态未确认；先只读核对原预约。'),
                 event_seq=result_event['seq'])
+        else:
+            self.notify_run_change(run_id)
 
     def _maybe_finalize_after_curation(self, request_id: str) -> None:
         """curation 审阅进入任何终态（done/error/obsolete）后，若它承载着被
@@ -3636,6 +3766,11 @@ class RunController:
                 if q:
                     await q.put({"type": "pause"})
             elif op == "finish":
+                from . import score_wait
+                if score_wait.enter(run_id):
+                    if queue := self._signals.get(run_id):
+                        queue.put_nowait({'type': 'score_wait'})
+                    return
                 if v2:
                     assessment = action.get("objective_assessment")
                     if not isinstance(assessment, dict):
@@ -3845,6 +3980,8 @@ class RunController:
 
     # ---------- 经验闭环：收尾整理 / 效果回联 / 全局整理 ----------
     def _finalize_run(self, run_id: str, reason: str) -> None:
+        if self._require_run(run_id)['phase'] == 'waiting_score':
+            return  # A late curation/finish result cannot end a score-waiting Run.
         from . import strategies
         strategies.maintain(run_id)
         self._record_experience_snapshot(run_id, "at_end")
