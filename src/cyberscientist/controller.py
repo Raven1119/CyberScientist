@@ -3077,7 +3077,7 @@ class RunController:
             guidance=db.query_one('SELECT prediction_md,text_md FROM guidance WHERE id=?',(guidance_id,))
             reviewed = db.query_one("SELECT operation_id,result_json,source_sha256,sealed_sha256 FROM package_reviews WHERE run_id=? AND trial_id=? AND status='done' ORDER BY updated_at DESC LIMIT 1", (run_id, trial_id))
             prediction=guidance['prediction_md'] if guidance else None
-            res = await asyncio.to_thread(
+            res = await mailboxes.submit_async(
                 mailboxes.submit_experiment, run_id, trial_id, None,
                 f"auto-{guidance_id}",**({'prediction_md':prediction} if prediction else {}))
         except Exception as exc:

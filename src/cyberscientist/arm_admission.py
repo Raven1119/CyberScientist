@@ -30,6 +30,31 @@ def _signal(ok: bool | None, detail: str, evidence: Any = None) -> dict[str, Any
     return {"ok": ok, "detail": detail, "evidence": evidence}
 
 
+
+def manifest_shape_errors(manifest: dict) -> list[str]:
+    """Known ARM v1 schema facts, from GET /schemas/arm-manifest/v1 (2026-10-05)."""
+    errors = []
+    execution = manifest.get('execution')
+    artifacts = execution.get('artifacts') if isinstance(execution, dict) else None
+    for label, values, required in (
+        ('execution.artifacts', artifacts, ('id', 'path', 'type')),
+        ('expected_outputs', manifest.get('expected_outputs'), ('name', 'type')),
+    ):
+        if values is None:
+            continue
+        if not isinstance(values, list):
+            errors.append(f'{label}: expected array')
+            continue
+        for index, value in enumerate(values):
+            if not isinstance(value, dict):
+                errors.append(f'{label}[{index}]: expected object')
+                continue
+            for key in required:
+                if not isinstance(value.get(key), str) or not value[key].strip():
+                    errors.append(f'{label}[{index}].{key}: required string missing')
+    return errors
+
+
 def check(bundle_bytes: bytes, protocol: dict[str, Any] | None) -> dict[str, Any]:
     """Evaluate documented signals on exactly the bytes about to be frozen.
 
@@ -67,6 +92,7 @@ def check(bundle_bytes: bytes, protocol: dict[str, Any] | None) -> dict[str, Any
             if str(manifest.get("arm_version")) not in ("1.0", "1.1"):
                 result["notes"].append("unsupported arm_version")
                 return result
+            result["manifest_errors"].extend(manifest_shape_errors(manifest))
             rows = selected.rows
             if not selected.readable or selected.unresolved_claims:
                 result["manifest_errors"].append("selected trace unreadable or pointer unresolved")
@@ -161,6 +187,8 @@ def check(bundle_bytes: bytes, protocol: dict[str, Any] | None) -> dict[str, Any
             elif true_signals + unknown_signals >= required:
                 result["verdict"] = "indeterminate"
             else:
+                result["verdict"] = "blocked"
+            if result["manifest_errors"]:
                 result["verdict"] = "blocked"
             if not all(modalities.values()):
                 result["manifest_errors"].append("required modality missing")

@@ -5,6 +5,7 @@ operation_id 幂等去重；额度只从未释放的 submissions 预留计算。
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import math
@@ -26,6 +27,32 @@ class MailboxError(Exception):
         super().__init__(message)
         self.code = code
         self.warnings = warnings or []
+
+
+async def submit_async(function, *args, **kwargs):
+    """Keep an in-flight submission thread visible until it actually finishes."""
+    from . import resource_coordinator
+    owner = 'submission-http-' + uuid.uuid4().hex
+    async def worker():
+        resource_coordinator.register_auxiliary(owner, asyncio.current_task())
+        http = asyncio.create_task(asyncio.to_thread(function, *args, **kwargs))
+        try:
+            while not http.done():
+                try:
+                    await asyncio.shield(http)
+                except asyncio.CancelledError:
+                    continue
+            return http.result()
+        finally:
+            resource_coordinator.release_sessions(owner)
+    task = asyncio.create_task(worker())
+    task.add_done_callback(lambda finished: None if finished.cancelled() else finished.exception())
+    return await asyncio.shield(task)
+
+
+def reconcile_draft_continuations() -> None:
+    """A lost worker is unknown; only a new explicit intent can repair a known draft."""
+    db.execute("UPDATE operations SET status='unknown' WHERE kind='submission.draft_continue' AND status='accepted'")
 
 
 def _rid(prefix: str) -> str:
@@ -121,9 +148,9 @@ def _round_end(snapshot: str | None) -> datetime | None:
 
 def _poll_deadline(row) -> datetime | None:
     round_end = _round_end(row['platform_snapshot_json'])
-    if round_end:
-        return round_end + timedelta(hours=72)
     submitted = _instant(row['submitted_at'] or row['created_at'])
+    if round_end and (not submitted or submitted <= round_end):
+        return round_end + timedelta(hours=72)
     return submitted + timedelta(days=7) if submitted else None
 
 
@@ -237,6 +264,10 @@ def _submission_items(rows) -> list[dict[str, Any]]:
 
 def _record_feedback(conn, row, kind: str, response: dict[str, Any]) -> bool:
     """Keep changed platform observations, including non-final grader failures."""
+    current = conn.execute('SELECT package_sha256,package_path,platform_ref FROM submissions WHERE id=?',
+                           (row['id'],)).fetchone()
+    if not current or any(current[key] != row[key] for key in ('package_sha256', 'package_path', 'platform_ref')):
+        return False  # A response for a superseded draft package cannot supply evidence.
     previous = conn.execute(
         "SELECT payload FROM events WHERE run_id=?"
         " AND type='submission.platform_feedback'"
@@ -363,7 +394,8 @@ def _run_challenge_id(run_id: str) -> str:
     return json.loads(row['config_snapshot']).get('challenge_platform_id', row['pid']) or ''
 
 
-def _check_budget(conn, run_id: str, *, terminal_harvest: bool = False) -> None:
+def _check_budget(conn, run_id: str, *, terminal_harvest: bool = False,
+                  existing_submission_id: str | None = None) -> None:
     run = conn.execute("SELECT * FROM runs WHERE id=?", (run_id,)).fetchone()
     if not run:
         raise MailboxError("NOT_FOUND", f"Run 不存在: {run_id}")
@@ -377,8 +409,8 @@ def _check_budget(conn, run_id: str, *, terminal_harvest: bool = False) -> None:
             raise MailboxError("NEEDS_AUTHORIZATION","本轮授权时长已用尽")
     limit = auth["max_submissions"] if auth else 0
     used = conn.execute("SELECT COUNT(*) AS n FROM submissions WHERE run_id=?"
-                        " AND reservation_released=0",
-                        (run_id,)).fetchone()["n"]
+                        " AND reservation_released=0 AND id!=?",
+                        (run_id, existing_submission_id or '')).fetchone()["n"]
     if used >= limit:
         raise MailboxError("NEEDS_AUTHORIZATION", f"提交授权已用尽（{used}/{limit}）")
 
@@ -392,7 +424,19 @@ def _duplicate(conn, operation_id: str, fingerprint: str):
                        (operation_id,)).fetchone()
     if row and row["request_hash"] != fingerprint:
         raise MailboxError("CONFLICT", "幂等键已用于不同请求或历史请求身份无法确认")
-    return dict(row) | {"deduplicated": True} if row else None
+    if row:
+        return dict(row) | {"deduplicated": True}
+    continuation = conn.execute("SELECT * FROM operations WHERE operation_id=?",
+                                (operation_id,)).fetchone()
+    if continuation:
+        if (continuation['kind'] != 'submission.draft_continue'
+                or continuation['payload_hash'] != fingerprint):
+            raise MailboxError('CONFLICT', '幂等键已用于不同操作')
+        context = json.loads(continuation['request_summary'])
+        row = conn.execute('SELECT * FROM submissions WHERE id=?',
+                           (context['submission_id'],)).fetchone()
+        return dict(row) | {'deduplicated': True}
+    return None
 
 
 def _freeze(sid: str, package: Path, content: bytes) -> str:
@@ -519,6 +563,8 @@ def preflight_submission(run_id: str, trial_id: str | None,
     advisory_warnings = []
     if report["verdict"] in ('blocked', 'indeterminate'):
         advisory_warnings.append('轨迹诊断：' + report['verdict'])
+    if report.get('manifest_errors'):
+        advisory_warnings.append('ARM manifest 格式事实：' + '; '.join(report['manifest_errors']))
     if data["evidence_class"] == "proxy":
         advisory_warnings.append('数据证据为 proxy，正式评分适用性仍需确认')
     if code is None and is_bundle:
@@ -651,7 +697,9 @@ def _automatic_harvest_guard(conn, src, trigger: dict | None = None, *, own_rese
         raise MailboxError('LOWER_SCORE', '不自动收割低于本方已收割成绩的结果')
 
 
-def _perform_submission(sid: str, platform: MailboxPlatform, challenge_id: str) -> dict:
+def _perform_submission(sid: str, platform: MailboxPlatform, challenge_id: str,
+                        *, resume_attempt_id: str | None = None,
+                        continuation_operation_id: str | None = None) -> dict:
     row = db.query_one("SELECT s.*, m.email, m.secret_ref, m.platform FROM submissions s"
                        " JOIN mailboxes m ON m.id=s.mailbox_id WHERE s.id=?", (sid,))
     def stage(name, attempt_id=None):
@@ -699,16 +747,19 @@ def _perform_submission(sid: str, platform: MailboxPlatform, challenge_id: str) 
             str(config.WORKSPACE_DIR / row["package_path"]), challenge_id=challenge_id,
             meta={"on_stage": stage, "on_feedback": feedback,
                   "package_bytes": frozen_bytes,
-                  "trace": _form_trace(frozen_bytes), **_submission_metadata(row["run_id"])})
+                  "trace": _form_trace(frozen_bytes), **_submission_metadata(row["run_id"]),
+                  **({'resume_attempt_id': resume_attempt_id} if resume_attempt_id else {})})
         # Only explicit definitive rejection without a remote side effect releases quota.
         status = "submitted" if receipt.get("accepted") is True else "unknown"
-        if receipt.get("accepted") is False and receipt.get("no_side_effect") is True:
+        if (receipt.get("accepted") is False and receipt.get("no_side_effect") is True
+                and not resume_attempt_id):
             status = "failed"
         error = None
         if receipt.get("receipt"):
             stage("submitted" if status == "submitted" else "unknown", receipt["receipt"])
     except Exception as exc:
-        status = "failed" if isinstance(exc, PlatformError) and exc.no_side_effect else "unknown"
+        status = "failed" if (isinstance(exc, PlatformError) and exc.no_side_effect
+                              and not resume_attempt_id) else "unknown"
         # External response bodies can contain credentials; record only classified errors.
         from .observation import strip_secrets
         error = strip_secrets(str(exc)) if isinstance(exc, PlatformError) else type(exc).__name__
@@ -717,8 +768,11 @@ def _perform_submission(sid: str, platform: MailboxPlatform, challenge_id: str) 
         conn.execute("UPDATE submissions SET status=?,score_status=?,error=?,submitted_at=? WHERE id=?",
                      (status,"pending" if status == "submitted" else "unknown",error,
                       db.utcnow() if status == "submitted" else None,sid))
-        if status == "failed" and not current["reservation_released"]:
+        if status == "failed" and not current["reservation_released"] and not resume_attempt_id:
             conn.execute("UPDATE submissions SET reservation_released=1 WHERE id=?",(sid,))
+        if continuation_operation_id:
+            conn.execute('UPDATE operations SET status=? WHERE operation_id=?',
+                         ('confirmed' if status == 'submitted' else 'unknown', continuation_operation_id))
         db.append_event_tx(conn,row["run_id"],"controller",f"submission.{status}",
                            {"submission_id":sid,"error":error,"is_demo":platform.is_demo},
                            trial_id=row["trial_id"])
@@ -817,45 +871,91 @@ def submit_experiment(run_id: str, trial_id: str | None,
         raise MailboxError(check["error_code"], "提交包预检未通过")
     content = check["sealed_bytes"]
     digest = check["sealed_package_sha256"]
+    continuation = None
     with db.transaction() as conn:
-        dup = _duplicate(conn,operation_id,fingerprint)
+        dup = _duplicate(conn, operation_id, fingerprint)
         if dup: return dup
-        _check_budget(conn,run_id)
-        challenge_key = _challenge_key(conn, run_id)
-        limit = config.load_settings()["mailbox"]["submission_limit"]
-        accounts = conn.execute("SELECT * FROM mailboxes WHERE role='experiment' AND status='active'"
-                                " AND platform=? AND is_demo=? ORDER BY created_at,id",
-                                (platform.name,int(platform.is_demo))).fetchall()
-        available = [(mb, _used_for(conn, mb["id"], challenge_key)) for mb in accounts]
-        available = [(mb, used) for mb, used in available if used < limit]
-        mb = sorted(available, key=lambda item: (item[1] == 0, -item[1], item[0]["created_at"], item[0]["id"]))[0][0] if available else None
-        if not mb:
-            raise MailboxError("NO_MAILBOX",f"题目 {challenge_key} 的实验邮箱额度已用尽或无可用邮箱（平台 {platform.name}）")
-        sid = _rid("sub")
-        frozen = _freeze(sid,package,content)
-        conn.execute("INSERT INTO submissions(id,run_id,trial_id,mailbox_id,package_path,package_sha256,"
-                     " status,operation_id,created_at,request_hash,stage,source_package_sha256,admission_json,prediction_md,"
-                     " source_submission_id,variant_of,narrative_sha256,science_artifact_hashes_json,science_artifact_match)"
-                     " VALUES(?,?,?,?,?,?,'unknown',?,?,?,'reserved',?,?,?,?,?,?,?,?)",
-                     (sid,run_id,trial_id,mb["id"],frozen,digest,operation_id,db.utcnow(),fingerprint,
-                      source_digest,json.dumps(check["admission"],ensure_ascii=False),prediction_md,
-                      variant_context['source_submission_id'] if variant_context else None,
-                      variant_context['source_submission_id'] if variant_context else None,
-                      variant_context['narrative_sha256'] if variant_context else None,
-                      json.dumps(science_hashes,sort_keys=True) if science_hashes is not None else None,
-                      1 if science_hashes is not None else None))
-        from . import local_scoring
-        local_scoring.bind_submission_tx(conn, sid, content)
-        db.append_event_tx(conn,run_id,"controller","submission.created",
-                           {"submission_id":sid,"package_sha256":digest,
-                            "source_package_sha256":source_digest,
-                            "trace_diagnostics": {
-                                "status": check["trace_diagnostics"]["status"],
-                                "checklist_cap": check["trace_diagnostics"].get("advisory_cap"),
-                                "advisories": check["trace_diagnostics"].get("advisories", [])[:8]},
-                            "allow_proxy_evidence":allow_proxy_evidence,
-                            "allow_indeterminate_admission":allow_indeterminate_admission,
-                            "advisory_warnings": check.get('advisory_warnings', [])},trial_id=trial_id)
+        # A new explicit PI/operator submission may repair one known rejected
+        # draft. Unknown create/submit requests and periodic polling never replay.
+        continuing = conn.execute("SELECT s.id FROM submissions s JOIN operations o"
+            " ON json_extract(CASE WHEN json_valid(o.request_summary) THEN o.request_summary ELSE '{}' END,'$.submission_id')=s.id"
+            " WHERE s.run_id=? AND s.trial_id IS ?"
+            " AND o.kind='submission.draft_continue' AND s.status='unknown'"
+            " AND (o.status='accepted' OR s.stage!='bundle_blocked') LIMIT 1",
+            (run_id, trial_id)).fetchone()
+        if continuing:
+            raise MailboxError('DRAFT_CONTINUATION_UNSETTLED', '同一草稿续提正在进行或状态未知；不新增 Attempt')
+        candidates = conn.execute("SELECT * FROM submissions WHERE run_id=? AND trial_id IS ?"
+            " AND is_harvest=0 AND status='unknown' AND stage='bundle_blocked'"
+            " AND platform_ref IS NOT NULL AND reservation_released=0"
+            " AND variant_of IS NULL AND replay_of IS NULL",
+            (run_id, trial_id)).fetchall() if variant_context is None else []
+        if candidates:
+            if len(candidates) != 1:
+                raise MailboxError('DRAFT_AMBIGUOUS', '存在多个未完成草稿；不猜测续提目标')
+            prior = candidates[0]
+            mailbox = conn.execute('SELECT * FROM mailboxes WHERE id=?', (prior['mailbox_id'],)).fetchone()
+            if (not mailbox or mailbox['status'] != 'active' or mailbox['platform'] != platform.name
+                    or bool(mailbox['is_demo']) != bool(platform.is_demo)):
+                raise MailboxError('DRAFT_MAILBOX_CHANGED', '原草稿邮箱不可用或平台已变；不新增 Attempt')
+            _check_budget(conn, run_id, existing_submission_id=prior['id'])
+            frozen = _freeze(prior['id'] + '-continue-' + hashlib.sha256(operation_id.encode()).hexdigest()[:16], package, content)
+            conn.execute("INSERT INTO operations(operation_id,run_id,kind,status,request_summary,payload_hash,created_at)"
+                " VALUES(?,?,'submission.draft_continue','accepted',?,?,?)",
+                (operation_id, run_id, json.dumps({'submission_id': prior['id']}), fingerprint, db.utcnow()))
+            conn.execute("UPDATE submissions SET package_path=?,package_sha256=?,source_package_sha256=?,"
+                " admission_json=?,prediction_md=?,stage='draft_continuing',error=NULL,"
+                " polling_stopped_at=NULL,score_last_polled_at=NULL WHERE id=?",
+                (frozen, digest, source_digest, json.dumps(check['admission'], ensure_ascii=False),
+                 prediction_md, prior['id']))
+            from . import local_scoring
+            local_scoring.bind_submission_tx(conn, prior['id'], content)
+            db.append_event_tx(conn, run_id, 'controller', 'submission.draft_continuation_requested',
+                {'submission_id': prior['id'], 'operation_id': operation_id,
+                 'previous_package_path': prior['package_path'], 'previous_package_sha256': prior['package_sha256'],
+                 'previous_polling_stopped_at': prior['polling_stopped_at'],
+                 'package_sha256': digest, 'platform_ref': prior['platform_ref'],
+                 'notice': '保留原 draft 与 Attempt 额度；原封存文件不覆盖'}, trial_id=trial_id)
+            continuation = (prior['id'], prior['platform_ref'])
+        else:
+            _check_budget(conn,run_id)
+            challenge_key = _challenge_key(conn, run_id)
+            limit = config.load_settings()["mailbox"]["submission_limit"]
+            accounts = conn.execute("SELECT * FROM mailboxes WHERE role='experiment' AND status='active'"
+                                    " AND platform=? AND is_demo=? ORDER BY created_at,id",
+                                    (platform.name,int(platform.is_demo))).fetchall()
+            available = [(mb, _used_for(conn, mb["id"], challenge_key)) for mb in accounts]
+            available = [(mb, used) for mb, used in available if used < limit]
+            mb = sorted(available, key=lambda item: (item[1] == 0, -item[1], item[0]["created_at"], item[0]["id"]))[0][0] if available else None
+            if not mb:
+                raise MailboxError("NO_MAILBOX",f"题目 {challenge_key} 的实验邮箱额度已用尽或无可用邮箱（平台 {platform.name}）")
+            sid = _rid("sub")
+            frozen = _freeze(sid,package,content)
+            conn.execute("INSERT INTO submissions(id,run_id,trial_id,mailbox_id,package_path,package_sha256,"
+                         " status,operation_id,created_at,request_hash,stage,source_package_sha256,admission_json,prediction_md,"
+                         " source_submission_id,variant_of,narrative_sha256,science_artifact_hashes_json,science_artifact_match)"
+                         " VALUES(?,?,?,?,?,?,'unknown',?,?,?,'reserved',?,?,?,?,?,?,?,?)",
+                         (sid,run_id,trial_id,mb["id"],frozen,digest,operation_id,db.utcnow(),fingerprint,
+                          source_digest,json.dumps(check["admission"],ensure_ascii=False),prediction_md,
+                          variant_context['source_submission_id'] if variant_context else None,
+                          variant_context['source_submission_id'] if variant_context else None,
+                          variant_context['narrative_sha256'] if variant_context else None,
+                          json.dumps(science_hashes,sort_keys=True) if science_hashes is not None else None,
+                          1 if science_hashes is not None else None))
+            from . import local_scoring
+            local_scoring.bind_submission_tx(conn, sid, content)
+            db.append_event_tx(conn,run_id,"controller","submission.created",
+                               {"submission_id":sid,"package_sha256":digest,
+                                "source_package_sha256":source_digest,
+                                "trace_diagnostics": {
+                                    "status": check["trace_diagnostics"]["status"],
+                                    "checklist_cap": check["trace_diagnostics"].get("advisory_cap"),
+                                    "advisories": check["trace_diagnostics"].get("advisories", [])[:8]},
+                                "allow_proxy_evidence":allow_proxy_evidence,
+                                "allow_indeterminate_admission":allow_indeterminate_admission,
+                                "advisory_warnings": check.get('advisory_warnings', [])},trial_id=trial_id)
+    if continuation:
+        return _perform_submission(continuation[0], platform, challenge_id, resume_attempt_id=continuation[1], continuation_operation_id=operation_id)
     return _perform_submission(sid,platform,challenge_id)
 
 
@@ -1071,7 +1171,9 @@ def poll_scores(run_id: str | None = None,
         if not manual and (r['polling_stopped_at'] or (deadline and when >= deadline)):
             if not r['polling_stopped_at']:
                 with db.transaction() as conn:
-                    conn.execute('UPDATE submissions SET polling_stopped_at=? WHERE id=?', (now,r['id']))
+                    conn.execute('UPDATE submissions SET polling_stopped_at=? WHERE id=?'
+                                 ' AND package_sha256 IS ? AND package_path IS ? AND platform_ref IS ?',
+                                 (now, r['id'], r['package_sha256'], r['package_path'], r['platform_ref']))
             continue
         if (not manual and r['score_confidence'] == 'confirmed'
                 and r['score_last_polled_at'] and _instant(r['score_last_polled_at'])
@@ -1115,7 +1217,7 @@ def poll_scores(run_id: str | None = None,
         except Exception as exc:
             errors += 1
             with db.transaction() as conn:
-                conn.execute('UPDATE submissions SET score_last_polled_at=? WHERE id=?', (now,r['id']))
+                conn.execute('UPDATE submissions SET score_last_polled_at=? WHERE id=? AND package_sha256=? AND package_path=? AND platform_ref=?', (now,r['id'],r['package_sha256'],r['package_path'],r['platform_ref']))
                 if _record_feedback(conn, r, "score_query_error", {
                         "error_type": type(exc).__name__, "outcome": "unknown"}):
                     changed_runs.add(r["run_id"])
@@ -1126,7 +1228,7 @@ def poll_scores(run_id: str | None = None,
                     changed_runs.add(r["run_id"])
         if score is None:
             still_unknown += 1
-            db.execute('UPDATE submissions SET score_last_polled_at=? WHERE id=?', (now,r['id']))
+            db.execute('UPDATE submissions SET score_last_polled_at=? WHERE id=? AND package_sha256=? AND package_path=? AND platform_ref=?', (now,r['id'],r['package_sha256'],r['package_path'],r['platform_ref']))
             continue
         if not math.isfinite(score):
             still_unknown += 1
@@ -1137,6 +1239,9 @@ def poll_scores(run_id: str | None = None,
         with db.transaction() as conn:
             current = conn.execute("SELECT * FROM submissions WHERE id=?",(r["id"],)).fetchone()
             # Compare-and-swap: a response requested before another update cannot overwrite it.
+            if (current['package_sha256'], current['package_path'], current['platform_ref']) != (
+                    r['package_sha256'], r['package_path'], r['platform_ref']):
+                continue
             if (current['score_status'],current['score'],current['score_confidence'],
                     current['score_last_polled_at']) != (r['score_status'],r['score'],
                     r['score_confidence'],r['score_last_polled_at']):

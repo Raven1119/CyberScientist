@@ -325,10 +325,27 @@ class BohriumPlaygroundPlatform:
             fields["results_json"] = json.dumps(results, ensure_ascii=False)
         on_stage = meta.get("on_stage") or (lambda *args: None)
         on_feedback = meta.get("on_feedback") or (lambda *args: None)
-        on_stage("create_sent")
-        attempt = self._http(
-            "POST", f"/challenges/{q_cid}/attempts",
-            token=secret, form=(fields, []))
+        resume_id = meta.get("resume_attempt_id")
+        if resume_id is not None:
+            if pkg.suffix.lower() != ".zip":
+                raise PlatformError("草稿续提需要 ARM ZIP；未发送", no_side_effect=True)
+            q_resume = urllib.parse.quote(str(resume_id), safe="")
+            owner = self._http("GET", "/auth/me", token=secret)
+            attempt = self._http("GET", f"/attempts/{q_resume}", token=secret)
+            if (not isinstance(owner, dict) or owner.get("id") is None
+                    or not isinstance(attempt, dict)
+                    or str(attempt.get("id")) != str(resume_id)
+                    or str(attempt.get("authorId")) != str(owner["id"])
+                    or attempt.get("challengeId") != challenge_id
+                    or attempt.get("status") != "draft"
+                    or attempt.get("bundleStatus") != "incomplete"):
+                raise PlatformError("未确认同账号、同题的未提交草稿；未发送", no_side_effect=True)
+            on_stage("draft_resuming", str(resume_id))
+        else:
+            on_stage("create_sent")
+            attempt = self._http(
+                "POST", f"/challenges/{q_cid}/attempts",
+                token=secret, form=(fields, []))
         attempt_id = attempt.get("id") if isinstance(attempt, dict) else None
         if attempt_id is None:
             raise PlatformError("创建 attempt 响应缺少 id 字段，提交未完成")
@@ -338,6 +355,10 @@ class BohriumPlaygroundPlatform:
 
         bundle_uploaded = False
         if pkg.suffix.lower() == ".zip":
+            if resume_id is not None:
+                from . import power
+                if power.shutdown_requested():
+                    raise PlatformError('安全关机停止草稿续提；未发送', no_side_effect=True)
             on_stage("upload_sent", str(attempt_id))
             uploaded = self._http("POST", f"/attempts/{q_aid}/bundle", token=secret,
                                   form=({}, [("bundle", pkg.name, package_bytes)]))
@@ -357,6 +378,10 @@ class BohriumPlaygroundPlatform:
                 on_stage("bundle_blocked", str(attempt_id))
                 raise PlatformError("bundle_blocked: 平台未放行封存包；保留 draft 与额度")
 
+        if resume_id is not None:
+            from . import power
+            if power.shutdown_requested():
+                raise PlatformError('安全关机停止草稿 submit；未发送', no_side_effect=True)
         on_stage("submit_sent", str(attempt_id))
         submitted = self._http("POST", f"/attempts/{q_aid}/submit", token=secret)
         on_feedback("submit", public_feedback(submitted, secret, self.operator_token))

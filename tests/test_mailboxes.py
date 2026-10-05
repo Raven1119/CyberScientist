@@ -341,6 +341,9 @@ def test_round_end_stops_automatic_poll_but_manual_still_reads(monkeypatch):
     sub = mailboxes.submit_experiment(rid, 'trial_mb1', None, 'score-stop')
     base = datetime.now(timezone.utc).replace(microsecond=0)
     round_end = base - timedelta(hours=73)
+    # This case covers an on-time submission, whose historical window expires.
+    db.execute('UPDATE submissions SET submitted_at=? WHERE id=?',
+               ((round_end - timedelta(hours=1)).isoformat(), sub['id']))
     db.execute('UPDATE challenges SET platform_snapshot_json=? WHERE id=?',
                (json.dumps({'round': {'roundEndAt': round_end.isoformat()}}), 'MB_CH'))
     platform = mailboxes._platform()
