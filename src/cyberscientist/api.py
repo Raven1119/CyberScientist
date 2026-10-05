@@ -1274,6 +1274,20 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
         controller._require_run(run_id)
         return {'items': [package_reviews.get(r['operation_id'], run_id) for r in db.query('SELECT operation_id FROM package_reviews WHERE run_id=? ORDER BY created_at', (run_id,))]}
 
+    @app.post('/api/v1/tools/trace_variant')
+    async def tool_trace_variant(request: Request):
+        identity = _tool_auth(request, role='brain')
+        body = await request.json()
+        source = db.query_one('SELECT run_id FROM submissions WHERE id=?', (body.get('source_submission_id'),))
+        if not source or source['run_id'] != identity['run_id']:
+            raise HTTPException(403, detail={'message': '只能为本 Run 的提交发起变体'})
+        result = await mailboxes.submit_async(mailboxes.submit_trace_variant,
+            body.get('source_submission_id'), body.get('operation_id', ''), body.get('prediction_md'),
+            projection_only=body.get('projection_only', False), narrative_jsonl=body.get('narrative_jsonl'),
+            narrative_written_at=body.get('narrative_written_at'))
+        controller.notify_run_change(identity['run_id'])
+        return result
+
     @app.post("/api/v1/tools/package_check")
     async def tool_package_check(request: Request) -> dict:
         identity = _tool_auth(request)
@@ -1504,7 +1518,8 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
             body.get('operation_id', ''), body.get('prediction_md'),
             allow_proxy_evidence=body.get('allow_proxy_evidence', False),
             allow_indeterminate_admission=body.get('allow_indeterminate_admission', False),
-            projection_only=body.get('projection_only', False))
+            projection_only=body.get('projection_only', False), narrative_jsonl=body.get('narrative_jsonl'),
+            narrative_written_at=body.get('narrative_written_at'))
 
     @app.post("/api/v1/submissions/{submission_id}/exact-replay")
     async def submit_exact_replay(submission_id: str, request: Request) -> dict[str, Any]:

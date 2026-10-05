@@ -151,6 +151,8 @@ def validate(raw: bytes, run_id: str, through_seq: int,
         elif annotation:
             if writing_time is None or abs((stamp - writing_time).total_seconds()) > 2:
                 reasons.append(f"{prefix}: 事后注释时间须与叙述文件写作时间一致")
+            if any(_time(event['recorded_at']) is not None and stamp < _time(event['recorded_at']) for event in cited):
+                reasons.append(f"{prefix}: 事后注释时间不能早于引用事件")
         elif not any(stamp == _time(event["recorded_at"]) for event in cited):
             reasons.append(f"{prefix}: timestamp 不是引用事件的记录时间")
         if "artifact_path" in row:

@@ -3,6 +3,7 @@ import { api, ApiError } from '../api'
 import { useApp } from '../app-context'
 import { Badge, Modal } from '../components'
 import { SCORE_STATUS_LABELS, SUBMISSION_STATUS_LABELS } from '../labels'
+import { TraceVariants } from './TraceVariants'
 import type { Mailbox, MailboxList, MailboxUsage, Submission } from '../types'
 
 interface RunSummary {
@@ -558,6 +559,7 @@ export default function MailboxPage() {
                 )}
               </div>
             )}
+            {currentRun && <TraceVariants key={currentRun.id} runId={currentRun.id} items={submissions} refresh={refresh} />}
             {!currentRun ? (
               <p className="small-text">尚无 Run。</p>
             ) : submissions.length === 0 ? (

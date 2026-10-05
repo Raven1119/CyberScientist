@@ -963,12 +963,23 @@ def submit_trace_variant(source_submission_id: str, operation_id: str,
                          prediction_md: str | None, *,
                          allow_proxy_evidence: bool = False,
                          allow_indeterminate_admission: bool = False,
-                         projection_only: bool = False) -> dict[str, Any]:
+                         projection_only: bool = False,
+                         narrative_jsonl: str | None = None,
+                         narrative_written_at: str | None = None) -> dict[str, Any]:
     """Resubmit frozen science bytes with a new, reference-checked narrative."""
     import io
 
     if type(projection_only) is not bool:
         raise MailboxError('INVALID_ARGUMENT', 'projection_only 必须是显式布尔值')
+    if not isinstance(prediction_md, str) or not prediction_md.strip() or len(prediction_md) > 4000:
+        raise MailboxError('INVALID_MESSAGE', '轨迹变体必须填写非空有界预测')
+    from .observation import strip_secrets
+    prediction_md = strip_secrets(prediction_md).strip()
+    if narrative_jsonl is not None and (projection_only or not isinstance(narrative_jsonl, str)
+            or not narrative_jsonl.strip() or len(narrative_jsonl.encode('utf-8')) > 512_000):
+        raise MailboxError('INVALID_TRACE_NARRATIVE', '叙述必须是非空有界 JSONL，不能与纯投影同时使用')
+    if narrative_jsonl is not None and strip_secrets(narrative_jsonl) != narrative_jsonl:
+        raise MailboxError('INVALID_TRACE_NARRATIVE', '叙述含密钥，拒绝封存')
     source = db.query_one("SELECT * FROM submissions WHERE id=?", (source_submission_id,))
     if not source or source['is_harvest'] or source['score_confidence'] != 'confirmed':
         raise MailboxError('INVALID_STATE', '轨迹变体来源必须是已确认评分的实验提交')
@@ -977,6 +988,17 @@ def submit_trace_variant(source_submission_id: str, operation_id: str,
         raise MailboxError('INVALID_MESSAGE', '轨迹变体需要来源 Trial 与 operation_id')
     if projection_only:
         narrative_bytes, written_at, narrative_hash = None, None, None
+    elif narrative_jsonl is not None:
+        written_at = narrative_written_at or db.utcnow()
+        from datetime import datetime, timezone
+        try:
+            stamp = datetime.fromisoformat(written_at.replace('Z', '+00:00'))
+            if stamp.tzinfo is None or stamp.timestamp() > datetime.now(timezone.utc).timestamp() + 2:
+                raise ValueError('invalid writing time')
+        except (ValueError, TypeError, AttributeError) as exc:
+            raise MailboxError('INVALID_TRACE_NARRATIVE', '叙述写作时间必须是有时区且非未来的 ISO 时间') from exc
+        narrative_bytes = narrative_jsonl.encode('utf-8')
+        narrative_hash = hashlib.sha256(narrative_bytes).hexdigest()
     else:
         narrative_bytes, written_at = _narrative_for_trial(run_id, trial_id)
         if narrative_bytes is None or written_at is None:
