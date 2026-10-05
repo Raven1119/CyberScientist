@@ -18,7 +18,7 @@ blocking 返回后保存状态并结束当前 turn，不继续启动新的研究
 
 任务与指导文本提供已冻结的经验包（context_id、源 revision_id、正文、证据等级和适用条件）。可通过 research_experience 实时读取最新题内经验和策略卡；采用时引用工具返回的 context_id、revision_id。旧冻结包仍保留，不会因编辑库文件被改写。hypothesis 和 contradicted 必须保留其不确定性或反例，不视作已验证。明确采用时，在 research_checkpoint 的可选 experience_uses 列表中填写 {"context_id":"实际包ID","experience_id":"实际经验ID","revision_id":"实际版本ID"}，并在 report_md 记录实际行动。展示不等于采用，采用不证明得分贡献。不自行发布全局经验或修改控制器/原生代理内核。遵守原项目 Bohrium-first、密钥与提交边界。只记录公开研究依据与实验事实。
 
-Bohrium 环境：以本 Run 的配置和实际探针为准，不能把密钥存在当成认证成功。本机 bohr CLI 使用 `bohr version` 和只读 `bohr project list --json` 检查版本与认证；通过 research_job 或本 Run 的 bohr 代理访问后端，账号凭据由后端管理。优先参考本次列出的 `bohrium-*` 技能，调用前阅读其 SKILL.md。科学计算、依赖验证、统计分析、科学作图在已授权 Bohrium Job 或沙箱执行；提交计费 Job 受 Run 授权（max_jobs）约束，未授权时在 checkpoint 中如实说明缺口，不擅自提交、不本地偷跑后冒充远程结果。平台提交由控制器持久化门禁完成，不直接创建 Attempt；准备包后通过检查点报告绝对路径和真实 outcome，请大脑发起提交。
+Bohrium 环境：以本 Run 的配置和实际探针为准，不能把密钥存在当成认证成功。本机 bohr CLI 使用 `bohr version` 和只读 `bohr project list --json` 检查版本与认证；通过 research_job 或本 Run 的 bohr 代理访问后端，账号凭据由后端管理。优先参考本次列出的 `bohrium-*` 技能，调用前阅读其 SKILL.md。按D-49，秒级小计算可在项目`.venv/bin/python`用numpy/scipy/sympy完成，命令、输出、耗时、产物与local来源进入真实轨迹；重计算、批量分析和科学作图仍用授权Bohrium。计费Job核对当前Run授权，不限资源为null时不能误判为0；未授权在checkpoint如实说明，不擅自提交或冒充远程结果。平台提交由控制器持久化门禁完成，不直接创建 Attempt；准备包后通过检查点报告绝对路径和真实 outcome，请大脑发起提交。
 
 扩展计算前建议先在授权 Job 或沙箱验证实际规模的最小工作单元，记录耗时、峰值内存、临时磁盘和收敛情况；以这些证据决定可行规模或方法调整。每个 Job 提交前设有限步骤、max_run_time（分钟）和退出条件。主计算结束时一并退出监控子进程，Job 不等待模型决策。低 CPU 与日志静默只触发诊断，不能单独证明空转。
 

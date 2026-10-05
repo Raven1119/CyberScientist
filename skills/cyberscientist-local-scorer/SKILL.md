@@ -11,7 +11,7 @@ metadata:
 
 先核对每条样本在提交时的轮次、评分策略、原始科学文件和分项回执。只有同一评分方式下可配对的输入与科学分，才用于推断字段、门槛或容差；仅有总分时记录“不可复刻”。主办方告知的 30–70 轨迹因子规则是外部规则，不是从历史分数推断的。CS-UP-03R 的 71 条历史实时分项记录没有可取回科学包或轨迹；10 条完整展示分与告知规则冲突，另一个分段计算虽能在样本内解释它们，平台未确认其适用性，见 `docs/SCORER_REVERSE_ENGINEERING.md`。不要把这些分数当作产物评分器的验收样本。
 
-将评分器放在 `workspace/challenges/<challenge_id>/scorer/`，用 `scorer.json` 声明 Python 入口、题目镜像、人工版本和契约版本。入口接收从封存 ARM 包提取的科学输入 ZIP：轨迹成员已剔除，manifest 的 trace 指针已移除。只输出一个 JSON 对象：`score`（0–100）、`components`、`confidence`、`notes`、`scorer_version`；最后一项使用运行时提供的 `CS_SCORER_VERSION`。不要从主机执行科学计算；通过当前 Run 授权的 Bohrium Job 或沙箱网关，在声明镜像中运行。评分器文件及镜像声明的任何变化都要产生新版本。
+将评分器放在 `workspace/challenges/<challenge_id>/scorer/`，用 `scorer.json` 声明 Python 入口、题目镜像、人工版本和契约版本。入口接收从封存ARM包提取的科学输入ZIP：轨迹成员已剔除，manifest的trace指针已移除。只输出一个JSON对象：`score`（0–100）、`components`、`confidence`、`notes`、`scorer_version`；最后一项使用运行时提供的`CS_SCORER_VERSION`。按D-49，秒级小计算可在项目`.venv`用numpy/scipy/sympy完成并留下命令、输出、耗时和产物来源；重计算仍在授权Bohrium执行。正式评分继续通过下述可信登记通道，不能把本地自报值当系统评分。评分器文件及镜像声明的变化都产生新版本。
 
 提交前对当前产物做本地评分，把评分器版本、封存包哈希和分项写入账本；建议在实验提交时写下可证伪的分数变化预测，缺失则记录 unknown。平台分数只有在 `confirmed` 后才作为校准目标。对齐同一封存包哈希，分别看科学分、轨迹分和展示分；分数或回执修订时更新校准状态，不悄悄覆盖旧预测。将不一致归因于具体尚未复刻的规则，而非伪造更高本地分。
 

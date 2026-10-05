@@ -75,7 +75,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
                    "token_secret_ref": ""},
     "bohrium": {"executable": "", "wenyon_executable": "", "wenyon_home": "",
                 "access_key_secret_ref": "", "project_id": None, "host_overrides": {}},
-    "policy": {"science_compute": "bohrium_only",
+    "policy": {"science_compute": "local_seconds_remote_heavy",
                "default_authorization": "read_only",
                "allow_formal_submission": False,
                "require_ended_submission": False, "allowed_submission_targets": []},
@@ -149,6 +149,8 @@ def load_settings() -> dict[str, Any]:
             merged[k].update(v)
         else:
             merged[k] = v
+    if merged['policy'].get('science_compute') == 'bohrium_only':
+        merged['policy']['science_compute'] = 'local_seconds_remote_heavy'
     return merged
 
 

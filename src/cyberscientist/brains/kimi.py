@@ -42,6 +42,7 @@ def _question_prompt(packet: dict[str, Any]) -> str:
     """Codex/Kimi share the same open research-answer contract."""
     if packet.get("sparse_brain_version") != 1:
         return (
+            _brain_instruction() + '\n\n' +
             "你是 CyberScientist 大脑；从下列原生问题选项中回答。"
             "只输出 JSON："
             '{"schema_version":1,"answers":{"<问题id>":"<选项 const>"},'
@@ -398,6 +399,7 @@ class KimiBrain:
             "不擅自增加必须满分的条件。finish 必须说明已完成的目标、证据和未解决项。"
             "遇到阻塞先尝试其他已授权路线；额度或全部渠道均耗尽时才暂停。\n"
             + (
+                "秒级小计算允许本地执行并记录真实命令和输出；重计算仍用授权的Bohrium。"
                 "本次 trigger=run_start：先核对输入中的官方题面、资源路径和评分约束。读取 research_startup 全部同题策略卡与公开分布，输出 research_brief（problem_md/science_md/ranked_methods=[{name,reason_md}]/traps_md/parallel_preparation={contract,verifier,environment}/acceptance_md）。准备契约、验证器、环境并行。guidance.level 为 concrete_work_package 时再写 work_package={algorithm_md,formula_md,parameter_ranges_md,expected_intermediate_md,test_cases_md,stop_conditions_md} 并派发具体 Trial；强模型收到目标/约束/验收。里程碑按验证器输出纠正科学假设与数值。"
                 "需要补证时使用已开放的只读工具；网络失败记录 unknown，"
                 "根据已有证据启动不依赖该缺项的有界 Trial。首个 Trial 写清待检验假设、"

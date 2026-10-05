@@ -3544,7 +3544,8 @@ class RunController:
                              f"{experience_context.encode(experience_context.for_trial(run_id,trial_id))}\n"
                              f"{executor_instruction_suffix()}"
                              f"{skills_mod.prompt_segment(enabled_skills)}\n"
-                             "运行环境：Linux；科学计算使用已授权的 Bohrium Job 或沙箱，分别受本轮额度约束。\n"
+                             "运行环境：Linux；秒级小计算允许本地执行，命令、输出、耗时与产物必须留在真实轨迹中；重计算使用已授权的 Bohrium Job 或沙箱。\n"
+                             f"本地科学Python：{config.WORKSPACE_ROOT / '.venv/bin/python'}（numpy/scipy/sympy）；不要修改运行内核、供应商协议或评分器。\n"
                              "使用 PATH 中的 bohr；它会脱敏原生 CLI 错误输出，不得绕过代理执行原始 CLI。\n"
                              f"Bohrium 项目 ID：{(settings.get('bohrium') or {}).get('project_id') or '未配置'}。"
                              "认证通过进程环境提供，不得打印、记录或写入提交包。\n")

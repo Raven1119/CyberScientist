@@ -15,11 +15,16 @@ dependencies = [
 [project.scripts]
 cyberscientist = "cyberscientist.cli:main"
 
+[project.optional-dependencies]
+local-science = ["numpy==2.2.6", "scipy==1.15.3", "sympy==1.14.0"]
+
 [dependency-groups]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
     "numpy==2.2.6",
+    "scipy==1.15.3",
+    "sympy==1.14.0",
 ]
 
 [build-system]
