@@ -584,6 +584,15 @@ def init_db() -> None:
         conn.executescript(SCHEMA_LOCAL_SCORING)
         conn.executescript(SCHEMA_EVALUATIONS)
         conn.executescript(SCHEMA_COMPUTE_COST)
+        conn.executescript('''CREATE TABLE IF NOT EXISTS challenge_shared_versions (
+            id TEXT PRIMARY KEY,challenge_id TEXT NOT NULL REFERENCES challenges(id),
+            name TEXT NOT NULL,version INTEGER NOT NULL,path TEXT NOT NULL,sha256 TEXT NOT NULL,
+            source_run_id TEXT NOT NULL REFERENCES runs(id),source_trial_id TEXT NOT NULL,
+            source_event_seq INTEGER NOT NULL,created_at TEXT NOT NULL,
+            UNIQUE(challenge_id,name,version));
+            CREATE TABLE IF NOT EXISTS challenge_validator_versions (
+            challenge_id TEXT NOT NULL REFERENCES challenges(id),version TEXT NOT NULL,
+            descriptor_json TEXT NOT NULL,created_at TEXT NOT NULL,PRIMARY KEY(challenge_id,version));''')
         conn.executescript('''CREATE TABLE IF NOT EXISTS model_session_leases (
             owner TEXT NOT NULL, role TEXT NOT NULL, provider TEXT NOT NULL,
             created_at TEXT NOT NULL, PRIMARY KEY(owner,role));

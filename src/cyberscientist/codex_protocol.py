@@ -13,13 +13,13 @@ from .jsonrpc_stdio import JsonRpcStdio, ProtocolError
 
 CLIENT_INFO = {"name": "cyberscientist", "version": "0.1.0"}
 COLLAB_TOOLS = (
-    "research_checkpoint", "ack_guidance", "research_job",
+    "research_shared", "research_checkpoint", "ack_guidance", "research_job",
     "research_sandbox", "research_package_check",
     "research_trace_narrative_check", "research_local_score", "research_data",
     "research_operating_facts", "research_environment", "research_experience",
     'research_web_search', 'research_web_read', 'research_lkm',
 )
-BRAIN_TOOLS = ("research_trace_variant", "research_review_package", "research_trace", "platform_scores", "research_operating_facts", "research_experience", 'research_web_search', 'research_web_read', 'research_lkm')
+BRAIN_TOOLS = ("research_shared", "research_trace_variant", "research_review_package", "research_trace", "platform_scores", "research_operating_facts", "research_experience", 'research_web_search', 'research_web_read', 'research_lkm')
 
 
 # Native authentication stays in Codex's own HOME/CODEX_HOME. This allowlist

@@ -282,6 +282,7 @@ class CodexBrain:
                 "和去重检查通过后，系统自动用实验邮箱提交（不投递给执行器），"
                 "随后异步等待评分；不扩大正式提交授权。\n"
                 "提交前可用 research_review_package(trial_id,operation_id,package_path) 调用全新只读审查者；问题清单是建议，PI 决定修复或在 submit guidance.text_md 写明理由后照常提交。\n"
+                "可用 research_shared(action=list) 查看本题追加式共享区与正式验证器版本；共享内容仍需执行器核验，不能自行修改验证器。\n"
                 "已确认出分后可用 research_trace_variant(source_submission_id,operation_id,prediction_md,narrative_jsonl) 直接发起叙述变体；科学产物不变、消耗原提交额度，必须写预测，所有引用限原封存 cutoff；未知不重发。\n"
                 "若 ObservationFrame.submission_prediction_version=1，submit guidance 可附 prediction_md，"
                 "说明本次改动和预计 displayScore/harbor_score/trace_score 哪些分量如何变化；"

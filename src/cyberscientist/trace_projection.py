@@ -97,6 +97,9 @@ def project(run_id: str, trial_id: str | None, through_seq: int,
         elif kind == "checkpoint.created":
             steps.append(base | {"step_type": "observation", "title": "Checkpoint " + _safe(payload.get("checkpoint_id")),
                                  "body": _safe(payload.get("report_excerpt"))})
+        elif kind in ('shared.imported', 'shared.published'):
+            steps.append(base | {'step_type': 'observation', 'title': kind,
+                'body': _safe(json.dumps({**payload, 'science_verified': False}, ensure_ascii=False))})
         elif kind in ("trial.created", "brain.decision", "guidance.delivered"):
             steps.append(base | {"step_type": "decision", "title": kind,
                                  "body": _safe(payload.get("goal") or payload.get("summary") or payload.get("reason"))})

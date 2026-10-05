@@ -170,6 +170,14 @@ _SCORES_TOOL = {
                     "properties": {}, "required": []}}
 
 
+_SHARED_TOOL = {'name': 'research_shared',
+    'description': '查看本题追加式共享版本/正式验证器；执行器可发布本Trial文件并引用真实来源事件，或复制版本到本Trial。科学是否正确仍需验证；不能覆盖版本或改评分器。',
+    'inputSchema': {'type': 'object', 'additionalProperties': False, 'properties': {
+        'action': {'enum': ['list', 'publish', 'import']}, 'trial_id': {'type': 'string'},
+        'name': {'type': 'string'}, 'source_path': {'type': 'string'}, 'source_event_seq': {'type': 'integer'},
+        'artifact_id': {'type': 'string'}}, 'required': ['action']}}
+_TOOLS.append(_SHARED_TOOL)
+
 _VARIANT_TOOL = {'name': 'research_trace_variant',
     'description': '仅 PI：为本 Run 已确认评分的实验提交生成叙述变体，冻结科学产物；必须写预测并消耗原提交额度。叙述引用仅限原封存 cutoff，未知不可重发。',
     'inputSchema': {'type': 'object', 'additionalProperties': False, 'properties': {
@@ -247,7 +255,7 @@ def _handle(msg: dict) -> dict | None:
         role = os.environ.get("CS_TOOL_ROLE", "executor")
         return {"jsonrpc": "2.0", "id": mid, "result": {
             "tools": _PUBLIC_TOOLS if os.environ.get('CS_PUBLIC_RESEARCH_PROBE') else
-                [_VARIANT_TOOL, _REVIEW_TOOL, _TRACE_TOOL, _DATA_TOOL, _SCORES_TOOL, _NARRATIVE_TOOL, _FACTS_TOOL, _EXPERIENCE_TOOL, *_PUBLIC_TOOLS] if role == "brain" else _TOOLS}}
+                [_SHARED_TOOL, _VARIANT_TOOL, _REVIEW_TOOL, _TRACE_TOOL, _DATA_TOOL, _SCORES_TOOL, _NARRATIVE_TOOL, _FACTS_TOOL, _EXPERIENCE_TOOL, *_PUBLIC_TOOLS] if role == "brain" else _TOOLS}}
     if method == "tools/call":
         params = msg.get("params", {})
         name = params.get("name")
@@ -257,6 +265,8 @@ def _handle(msg: dict) -> dict | None:
             out = connectivity_probe.call(name, args)
         elif name in ('research_web_search', 'research_web_read', 'research_lkm'):
             out = _post('/api/v1/tools/public_research', {'tool': name, **args}, timeout=120, retry_transient=False)
+        elif name == 'research_shared':
+            out = _post('/api/v1/tools/shared', args, timeout=90, retry_transient=False)
         elif name == 'research_trace_variant':
             out = ({'error': '此工具仅 PI 可用'} if os.environ.get('CS_TOOL_ROLE') != 'brain' else
                    _post('/api/v1/tools/trace_variant', args, timeout=960, retry_transient=False))

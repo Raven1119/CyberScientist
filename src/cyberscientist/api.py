@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import zipfile
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
@@ -1289,6 +1290,31 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
             narrative_written_at=body.get('narrative_written_at'))
         controller.notify_run_change(identity['run_id'])
         return result
+
+    @app.get('/api/v1/challenges/{challenge_id}/shared')
+    async def challenge_shared(challenge_id: str):
+        from . import shared_artifacts
+        return await asyncio.to_thread(shared_artifacts.catalog, challenge_id)
+
+    @app.post('/api/v1/tools/shared')
+    async def tool_shared(request: Request):
+        from . import shared_artifacts
+        identity = _tool_auth(request, role=None)
+        body = await request.json(); action = body.get('action')
+        run = controller._require_run(identity['run_id'])
+        try:
+            if action == 'list':
+                if identity['role'] not in ('brain', 'executor'): raise ValueError('仅PI与执行器可查看共享区')
+                return await asyncio.to_thread(shared_artifacts.catalog, run['challenge_id'])
+            if identity['role'] != 'executor':
+                raise HTTPException(403, detail={'message': '仅执行器可发布/导入，不能修改正式验证器'})
+            if action == 'publish':
+                return await asyncio.to_thread(shared_artifacts.publish, run['id'], body.get('trial_id'), body.get('name'), body.get('source_path'), body.get('source_event_seq'))
+            if action == 'import':
+                return await asyncio.to_thread(shared_artifacts.import_artifact, run['id'], body.get('trial_id'), body.get('artifact_id'))
+            raise ValueError('支持list/publish/import')
+        except (ValueError, OSError, zipfile.BadZipFile) as exc:
+            raise HTTPException(422, detail={'message': observation.strip_secrets(str(exc))[:400]}) from exc
 
     @app.post("/api/v1/tools/package_check")
     async def tool_package_check(request: Request) -> dict:
