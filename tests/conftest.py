@@ -76,6 +76,8 @@ def isolated_workspace(tmp_path, monkeypatch):
     def no_live_drift_fetch():
         raise RuntimeError('应用单元测试不访问真实平台；协议探针需显式fixture')
     monkeypatch.setattr(protocol_drift, 'fetch_documents', no_live_drift_fetch)
+    from cyberscientist import leaderboards
+    monkeypatch.setattr(leaderboards, 'fetch', lambda slug, base_url: (_ for _ in ()).throw(RuntimeError('公开榜单真实查询需显式fixture')))
     # A connected ledger fixture is not permission to call the developer's
     # installed native model. Protocol tests use explicit temp fake binaries.
     from pathlib import Path
@@ -110,6 +112,8 @@ async def drain_run_maintenance(isolated_workspace):
     from cyberscientist import job_recovery
     await job_recovery.drain()
     await auto_harvest.drain()
+    from cyberscientist import leaderboards
+    await leaderboards.drain()
     while pending := [task for task in maintenance.ACTIVE_TASKS if not task.done()]:
         for task in pending:
             task.cancel()

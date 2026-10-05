@@ -50,7 +50,7 @@ def _fetch_page(slug: str, page: int) -> dict:
     return client._http('GET',path,token=None)
 
 
-def _collect(slug: str) -> dict:
+def _collect(slug: str, *, fetch_page=None) -> dict:
     deadline=time.monotonic()+_FETCH_BUDGET_SECONDS
     attempts=[]
     seen=set()
@@ -58,7 +58,7 @@ def _collect(slug: str) -> dict:
     for page in range(1,_MAX_PAGES+1):
         if time.monotonic()>=deadline:
             raise TimeoutError('公开尝试列表分页超过读取时限')
-        body=_fetch_page(slug,page)
+        body=(fetch_page or _fetch_page)(slug,page)
         if time.monotonic()>=deadline:
             raise TimeoutError('公开尝试列表分页超过读取时限')
         if not isinstance(body,dict) or not isinstance(body.get('attempts'),list) \
@@ -116,7 +116,11 @@ def _aggregate(attempts: list[dict], total: int) -> dict:
             t=_number(card.get('trace_score'))
             if h is not None: harbor.append(h)
             if t is not None: trace.append(t)
-    return {'status':'ok','submission_count':total,
+    from .mailbox_platform import final_score
+    from .mailboxes import _score_anomaly
+    confirmed = [final_score(attempt) for attempt in attempts if final_score(attempt) is not None and not _score_anomaly(attempt)]
+    return {'status':'ok','leaderboard_best_score':max(confirmed) if confirmed else None,
+            'submission_count':total,
             'author_count':len(authors) if author_complete else None,
             'scored_count':len(scores),'display_score_bins':bins,
             'unbinned_score_count':unbinned,

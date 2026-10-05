@@ -119,3 +119,20 @@ it('shows provider cooldown and native request model throttle facts', async () =
   expect(screen.getByText(/"retry_at": "future"/)).toBeTruthy()
   expect(screen.getByText(/"model_id": "gpt-6.1-sol"/)).toBeTruthy()
 })
+
+it('sorts known score gaps descending and leaves unknown last without replacing zero', async () => {
+  const base = detail.items[0]
+  const changed = { ...detail, items: [
+    { ...base, id: 'a', challenge_id: 'a', title: '未知题', score_gap: null, leaderboard_best: null, our_best: null },
+    { ...base, id: 'b', challenge_id: 'b', title: '小差距题', score_gap: 5, leaderboard_best: 90, our_best: 85 },
+    { ...base, id: 'c', challenge_id: 'c', title: '大差距题', score_gap: 80, leaderboard_best: 80, our_best: 0 },
+  ] }
+  get.mockImplementation(async (path: string) => path === '/api/v1/rounds' ? { items: [{ id: 'round_one', status: 'draft' }] } : changed)
+  render(<CompetitionPage />); await screen.findByText('大差距题')
+  const rows = screen.getAllByRole('row').slice(1)
+  expect(rows[0].textContent).toContain('大差距题')
+  expect(rows[1].textContent).toContain('小差距题')
+  expect(rows[2].textContent).toContain('未知题')
+  expect(rows[0].querySelectorAll('td')[4].textContent).toBe('0')
+  expect(rows[2].querySelectorAll('td')[5].textContent).toBe('unknown')
+})

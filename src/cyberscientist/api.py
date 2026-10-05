@@ -358,6 +358,8 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
             await asyncio.gather(task, clock_task, watch_task, evaluation_task, job_recovery_task, return_exceptions=True)
             await job_recovery.drain()
             await auto_harvest.drain()
+            from . import leaderboards
+            await leaderboards.drain()
 
     app = FastAPI(title="CyberScientist", docs_url=None, openapi_url=None,
                   lifespan=lifespan)
@@ -975,7 +977,11 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
     @app.get('/api/v1/rounds/{round_id}')
     async def read_round(round_id: str):
         from . import competition
-        try: return competition.get_round(round_id)
+        try:
+            result = competition.get_round(round_id)
+            from . import leaderboards
+            leaderboards.start_round(round_id)
+            return result
         except ValueError as exc: raise HTTPException(404, detail={'message': str(exc)}) from exc
 
     @app.post('/api/v1/rounds/{round_id}/triage')

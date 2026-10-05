@@ -10,6 +10,7 @@ type Template = { solver_id?: string; model_config: { brain: Choice; executor: C
 type Item = { id: string; challenge_id: string; title: string; phase: string; priority: number;
   paused: number; run_id: string | null; local_best: number | null; platform_best: { score: number; score_confidence: string } | null;
   triage: { difficulty: string; estimated_minutes: number | null; estimated_cost_cny: number | null; recommended_model: string; reason: string } | null;
+  leaderboard_best?: number | null; our_best?: number | null; score_gap?: number | null;
   model_cost?: unknown; trace_diagnostic: unknown; usage: unknown[]; cost: unknown; next_action: string | null }
 type Round = { id: string; label: string; status: string; items: Item[]; resources: { sessions: { provider: string; used: number }[]; rate_limits: unknown[]; provider_backoff?: unknown[]; native_throttle?: unknown[] } }
 const choice = (model: string): Choice => ({ runtime: 'codex', model_id: model, reasoning_effort: 'xhigh' })
@@ -83,6 +84,11 @@ export default function CompetitionPage() {
       model_config: { ...current.model_config, executor: entry ?? current.model_config.executor } })
   }}><option value="">手动模型配置</option>{roster.map(v => <option key={v.id} value={v.id}>{v.name} · {v.model_id}</option>)}</select></label>
   const url = `/api/v1/rounds/${encodeURIComponent(id)}`
+  const rankedItems = [...(round?.items ?? [])].sort((a, b) => {
+    if (a.score_gap == null) return b.score_gap == null ? b.priority - a.priority : 1
+    if (b.score_gap == null) return -1
+    return b.score_gap - a.score_gap || b.priority - a.priority
+  })
   return <section><div className="page-head"><h1>比赛轮次</h1></div>
     <button className="btn" disabled={busy} onClick={async () => {
       setBusy(true)
@@ -121,8 +127,8 @@ export default function CompetitionPage() {
       <button className="btn" disabled={busy || round.status !== 'draft'} onClick={() => void action(`${url}/triage`, { allow_model_calls: true })}>授权一次题目分诊</button>
       <button className="btn primary" disabled={busy || round.status !== 'draft'} onClick={() => void action(`${url}/confirm`, {
         template, overrides })}>确认模板与授权，开始排队</button>
-      <div className="evaluation-table-wrap"><table><thead><tr><th>题目与分诊</th><th>Run</th><th>本地最好分</th><th>平台最好分</th><th>轨迹诊断</th><th>token / 金额</th><th>状态与下一步</th><th>操作</th></tr></thead>
-        <tbody>{round.items.map(item => <tr key={item.id}>
+      <div className="evaluation-table-wrap"><table><thead><tr><th>题目与分诊</th><th>Run</th><th>本地最好分</th><th>榜单最高确认分</th><th>我方确认最好分</th><th>可提升分差</th><th>轨迹诊断</th><th>token / 金额</th><th>状态与下一步</th><th>操作</th></tr></thead>
+        <tbody>{rankedItems.map(item => <tr key={item.id}>
           <td>{item.title}{item.triage && <p>{item.triage.difficulty} · {item.triage.recommended_model}<br />预计 {item.triage.estimated_minutes ?? 'unknown'} 分钟 / {item.triage.estimated_cost_cny ?? 'unknown'} 元<br />{item.triage.reason}</p>}
             {round.status === 'draft' && <details><summary>此题模型与备注</summary>
               {solverSelect(item.title, overrides[item.challenge_id] ?? template, value => setOverrides(v => ({ ...v, [item.challenge_id]: value })))}
@@ -145,7 +151,7 @@ export default function CompetitionPage() {
                     [item.challenge_id]: { ...current, authorization: { ...current.authorization, [key]: Number(e.target.value) } } } })} />}</label>)}
             </details>}</td>
           <td>{item.run_id || '排队中'}</td><td>{item.local_best ?? 'unknown'}</td>
-          <td>{item.platform_best ? `${item.platform_best.score} (${item.platform_best.score_confidence})` : 'unknown'}</td>
+          <td>{item.leaderboard_best ?? 'unknown'}</td><td>{item.our_best ?? 'unknown'}</td><td>{item.score_gap ?? 'unknown'}</td>
           <td>{item.trace_diagnostic ? <details><summary>查看诊断</summary><pre>{JSON.stringify(item.trace_diagnostic, null, 2)}</pre></details> : 'unknown'}</td>
           <td><details><summary>用量与费用</summary><pre>{JSON.stringify({ tokens: item.usage, model_cost: item.model_cost, cost: item.cost }, null, 2)}</pre></details></td>
           <td>{item.phase}<p>{item.next_action}</p></td>

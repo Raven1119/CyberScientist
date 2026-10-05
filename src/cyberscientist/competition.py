@@ -286,9 +286,9 @@ def get_round(round_id: str) -> dict:
         item['blocked_reason'] = run['block_reason'] if run else r['error']
         item['local_best'] = db.query_one('SELECT MAX(science_score) FROM local_scores WHERE challenge_id=?',
                                          (r['challenge_id'],))[0]
-        scored = db.query_one('SELECT score,score_confidence FROM submissions WHERE run_id=? AND score IS NOT NULL'
-                              ' ORDER BY score DESC LIMIT 1', (r['run_id'],))
-        item['platform_best'] = dict(scored) if scored else None
+        from . import leaderboards
+        item.update(leaderboards.facts(r['challenge_id']))
+        item['platform_best'] = {'score': item['our_best'], 'score_confidence': 'confirmed'} if item['our_best'] is not None else None
         item['trace_diagnostic'] = db.query_one("SELECT payload FROM events WHERE run_id=? AND type IN"
                                                " ('evaluation.trace_diagnosed','trace.diagnosed') ORDER BY seq DESC LIMIT 1",
                                                (r['run_id'],))
