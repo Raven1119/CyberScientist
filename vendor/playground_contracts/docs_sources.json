@@ -1,0 +1,14 @@
+{
+  "arm_docs": {
+    "source": "https://play.bohrium.com/api/docs/arm-bundles",
+    "sha256": "80531a80f6cfbdb20db8eb98bdf6b60f1757f644a978c365b0ea8fc3e6f41637",
+    "bytes": 16272,
+    "http_status": 200
+  },
+  "agent_api_docs": {
+    "source": "https://play.bohrium.com/api/docs/dev/AGENT_API.md",
+    "sha256": "6301618411a4ebd03dc8caf42e9c3c58048ef01eb5050661e9be11713663e2cd",
+    "bytes": 46268,
+    "http_status": 200
+  }
+}

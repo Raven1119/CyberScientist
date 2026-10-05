@@ -81,6 +81,8 @@ def import_round(challenge_ids: list[str] | None = None, *, season: str = '',
                  round_seq: int | None = None, label: str = '', mode: str = 'connected') -> dict:
     if mode not in ('connected', 'demo'):
         raise CompetitionError('mode 必须为 connected 或 demo')
+    from . import protocol_drift
+    drift = protocol_drift.check() if mode == 'connected' else {'status': 'not_checked_demo'}
     public = _public_round(season, round_seq) if season and round_seq is not None else None
     slugs = public['challengeIds'] if public else challenge_ids
     if not isinstance(slugs, list) or not slugs or len(slugs) > 100 or any(
@@ -94,7 +96,7 @@ def import_round(challenge_ids: list[str] | None = None, *, season: str = '',
     now = db.utcnow()
     snapshot = {'schema': 'cyberscientist-competition/v1', 'mode': mode, 'entries': entries,
                 'season': season, 'round_seq': round_seq, 'public_round': public,
-                'backend': backend_identity.capture()}
+                'backend': backend_identity.capture(), 'protocol_drift': drift}
     with db.transaction() as conn:
         conn.execute('INSERT INTO eval_runs(id,suite,repeats,label,status,config_json,created_at,updated_at)'
                      " VALUES(?,'competition',1,?,'draft',?,?,?)", (rid, label, _dump(snapshot), now, now))
@@ -305,6 +307,7 @@ def get_round(round_id: str) -> dict:
         items.append(item)
     snapshot = json.loads(row['config_json'])
     return {'id': round_id, 'label': row['label'], 'status': row['status'], 'items': items,
+            'protocol_drift': snapshot.get('protocol_drift', {'status': 'unknown'}),
             'template': snapshot.get('template'), 'experience_snapshot_sha256': snapshot.get('experience_snapshot_sha256'),
             'resources': resource_coordinator.status()}
 

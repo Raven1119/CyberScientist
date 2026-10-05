@@ -30,3 +30,16 @@ test('failed acknowledgement keeps the durable alert visible', async () => {
   expect(screen.getByRole('dialog')).toBeTruthy()
   expect(navigation.setPage).not.toHaveBeenCalled()
 })
+
+test('protocol drift popup shows changed field facts and navigates to settings', async () => {
+  vi.mocked(api.get).mockResolvedValue({ items: [{ id: 'drift', run_id: null, challenge_id: null,
+    kind: 'platform.protocol_changed', title: '平台协议或接口文档发生变化', payload: { changes: [{ document: 'protocol', changed_paths: ['version'] }] } }] })
+  vi.mocked(api.post).mockResolvedValue({ acknowledged_at: 'saved' })
+  render(<PersistentAlerts />)
+  await screen.findByRole('dialog', { name: '平台协议或接口文档发生变化' })
+  expect(screen.getByText(/"version"/)).toBeTruthy()
+  expect(screen.getByText(/所有 PI/)).toBeTruthy()
+  fireEvent.click(screen.getByText('查看设置'))
+  await waitFor(() => expect(navigation.setPage).toHaveBeenCalledWith('settings'))
+  expect(navigation.setFocusedRunId).not.toHaveBeenCalled()
+})

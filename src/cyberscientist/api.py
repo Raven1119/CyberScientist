@@ -1313,6 +1313,16 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
         from . import platform_contracts
         return await asyncio.to_thread(platform_contracts.describe)
 
+    @app.get('/api/v1/protocol-drift')
+    async def get_protocol_drift():
+        from . import protocol_drift
+        return protocol_drift.facts()
+
+    @app.post('/api/v1/protocol-drift/check')
+    async def check_protocol_drift():
+        from . import protocol_drift
+        return await asyncio.to_thread(protocol_drift.check)
+
     @app.post('/api/v1/platform-contracts/refresh')
     async def platform_contract_refresh():
         from . import platform_contracts

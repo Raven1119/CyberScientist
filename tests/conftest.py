@@ -70,6 +70,12 @@ def isolated_workspace(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "EXPERIENCE_DIR", exp)
     # Backend-only dotenv is outside test data; tests cannot use its real key.
     monkeypatch.setattr(config, 'deepseek_key', lambda: None)
+    # Importing a connected synthetic round is not a live protocol probe.
+    # Dedicated tests replace this fetch with explicit public-contract fixtures.
+    from cyberscientist import protocol_drift
+    def no_live_drift_fetch():
+        raise RuntimeError('应用单元测试不访问真实平台；协议探针需显式fixture')
+    monkeypatch.setattr(protocol_drift, 'fetch_documents', no_live_drift_fetch)
     # A connected ledger fixture is not permission to call the developer's
     # installed native model. Protocol tests use explicit temp fake binaries.
     from pathlib import Path
