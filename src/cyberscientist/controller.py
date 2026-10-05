@@ -26,7 +26,7 @@ from typing import Any
 
 import jsonschema
 
-from . import collab, config, datasets, db, decision as decision_mod, experiences, mailboxes, observation, experience_context, challenge_models, model_limits, submission_predictions
+from . import collab, config, datasets, db, decision as decision_mod, experiences, mailboxes, observation, experience_context, challenge_models, model_limits, submission_predictions, run_limits
 from . import skills as skills_mod
 from .brains.base import BrainRuntime
 from .brains.codex import CodexBrain
@@ -547,13 +547,18 @@ class RunController:
                   max_sandboxes: int = 0, max_sandbox_minutes: int = 0,
                   allow_sandbox_gpu: bool = False,
                   max_compute_cost_cny: float | str | None = None,
-                  objective: str | None = None, max_environment_saves: int = 0) -> dict[str, Any]:
+                  objective: str | None = None, max_environment_saves: int = 0,
+                  unlimited_resources: bool = False) -> dict[str, Any]:
         run = self._require_run(run_id)
         if run["phase"] not in ("created", "blocked"):
             raise ControllerError("INVALID_STATE", f"当前阶段 {run['phase']} 不能授权")
         from .compute import validate_limits
         limits = validate_limits(job_limits)
         from . import compute_budget
+        if type(unlimited_resources) is not bool:
+            raise ControllerError('INVALID_ARGUMENT', '资源不限授权必须是布尔值')
+        if unlimited_resources:
+            max_compute_cost_cny = None
         cost_cap = compute_budget.validate_cap(max_compute_cost_cny)
         if any(type(v) is not int or v < 0 for v in (max_jobs, max_run_minutes,
                 max_submissions, max_model_turns, max_sandboxes, max_sandbox_minutes, max_environment_saves)):
@@ -572,12 +577,14 @@ class RunController:
              int(allow_data_download), config.load_settings()["run_defaults"]["max_trials"],
              max_sandboxes,max_sandbox_minutes,int(allow_sandbox_gpu),cost_cap))
         db.execute("UPDATE authorizations SET max_environment_saves=? WHERE id=?", (max_environment_saves, auth_id))
+        db.execute('UPDATE authorizations SET unlimited_resources=? WHERE id=?', (int(unlimited_resources), auth_id))
         db.execute("UPDATE runs SET authorization_id=?, block_reason=NULL,objective_md=? WHERE id=?",
                    (auth_id, (objective if objective is not None else note), run_id))
         if run["phase"] == "blocked":
             db.execute("UPDATE runs SET phase='created' WHERE id=?", (run_id,))
         db.append_event(run_id, "controller", "run.authorized",
-                        {"scope": scope, "allow_model_calls": allow_model_calls})
+                        {"scope": scope, "allow_model_calls": allow_model_calls,
+                         'unlimited_resources': unlimited_resources})
         return {"authorization_id": auth_id}
 
     def update_budget(self, run_id: str, *, max_brain_reviews: int | None = None,
@@ -1099,7 +1106,7 @@ class RunController:
         """One research judgment; full text is saved before native transport."""
         run = self._require_run(run_id)
         defaults = config.load_settings()["run_defaults"]
-        if run["brain_reviews_used"] >= defaults["max_brain_reviews"]:
+        if run_limits.reached(run_id, run["brain_reviews_used"], defaults["max_brain_reviews"]):
             self._finish_request(
                 req["id"], "error",
                 error=f"大脑判断额度用尽 {defaults['max_brain_reviews']} 次")
@@ -1133,8 +1140,8 @@ class RunController:
             "trial_summary": {"trial_id": trial["id"], "goal": trial["goal"],
                               "status": trial["status"]} if trial else None,
             "budget_remaining": {
-                "brain_reviews": defaults["max_brain_reviews"]
-                - run["brain_reviews_used"] - 1},
+                "brain_reviews": run_limits.displayed(run_id, defaults["max_brain_reviews"]
+                - run["brain_reviews_used"] - 1)},
             "question": question,
         }
         if self._lifecycle_v2(run):
@@ -2291,7 +2298,7 @@ class RunController:
         if not sup or not sup["enabled"] or sup["degraded"]:
             return
         cfg = self._shadow_cfg(run)
-        if sup["reviews_used"] >= cfg["max_reviews"]:
+        if run_limits.reached(run_id, sup["reviews_used"], cfg["max_reviews"]):
             return
         if self._sparse_brain(run) and db.query_one(
                 "SELECT 1 FROM review_requests WHERE run_id=?"
@@ -2369,7 +2376,7 @@ class RunController:
         if not sup or not sup["enabled"] or sup["degraded"]:
             return
         cfg = self._shadow_cfg(run)
-        if sup["reviews_used"] >= cfg["max_reviews"]:
+        if run_limits.reached(run_id, sup["reviews_used"], cfg["max_reviews"]):
             return
         pending = db.query_one(
             "SELECT id FROM review_requests WHERE run_id=?"
@@ -2547,7 +2554,7 @@ class RunController:
         if not sup or not sup["enabled"] or sup["degraded"]:
             self._obsolete_request(req["id"], "静默监督不可用")
             return None
-        if sup["reviews_used"] >= cfg["max_reviews"]:
+        if run_limits.reached(run_id, sup["reviews_used"], cfg["max_reviews"]):
             self._obsolete_request(req["id"], "shadow 观察额度用尽")
             with db.transaction() as conn:
                 conn.execute(
@@ -2682,7 +2689,7 @@ class RunController:
 
         # 额度：lifecycle/显式消耗大脑判断上限；shadow 消耗观察子额度
         if mode == "lifecycle" or req["blocking"]:
-            if run["brain_reviews_used"] >= defaults["max_brain_reviews"]:
+            if run_limits.reached(run_id, run["brain_reviews_used"], defaults["max_brain_reviews"]):
                 if mode == "lifecycle":
                     db.execute(
                         "UPDATE runs SET phase='pausing', pending_end_reason='brain_review_limit', block_reason=?"
@@ -3233,9 +3240,9 @@ class RunController:
                     "brain.decision_rejected", "run.objective_assessment_unknown",
                     "run.final_package_unknown", "run.final_package_checked")][-20:],
             "budget_remaining": {
-                "brain_reviews": defaults["max_brain_reviews"]
-                - run["brain_reviews_used"],
-                "model_turns": (auth["max_model_turns"] if auth else 0),
+                "brain_reviews": run_limits.displayed(run_id, defaults["max_brain_reviews"]
+                - run["brain_reviews_used"]),
+                "model_turns": run_limits.displayed(run_id, auth["max_model_turns"] if auth else 0),
             },
             **observation.authority_facts(run_id),
             "experience_manifest": self._memory_manifest(run, settings),
@@ -3478,7 +3485,7 @@ class RunController:
                 auth = db.query_one("SELECT max_trials FROM authorizations WHERE id=?",
                                     (run["authorization_id"],)) if v2 else None
                 limit = auth["max_trials"] if v2 and auth and auth["max_trials"] else defaults["max_trials"]
-                if trial_count >= limit:
+                if run_limits.reached(run_id, trial_count, limit):
                     if v2:
                         pending_action = {"decision_id": dec["decision_id"], "action": action,
                                           "state_version": run["state_version"],
@@ -4251,7 +4258,7 @@ class RunController:
                                    "last_review_at": None,
                                    "evidence_revision": 0}
         d["watchlist"] = json.loads(d.get("watchlist") or "[]")
-        d["max_reviews"] = cfg["max_reviews"]
+        d["max_reviews"] = run_limits.displayed(run_id, cfg["max_reviews"])
         d["brain_busy"] = brain_running
         d["gate"] = run["gate"]
         d["executor_busy"] = self._executor_busy.get(run_id, False)
@@ -4459,22 +4466,23 @@ class RunController:
                             (run["authorization_id"],)) if run["authorization_id"] else None
         return {
             "brain_reviews_used": run["brain_reviews_used"],
-            "max_brain_reviews": defaults["max_brain_reviews"],
+            "max_brain_reviews": run_limits.displayed(run["id"], defaults["max_brain_reviews"]),
             "trials_used": len(db.query("SELECT id FROM trials WHERE run_id=?",
                                         (run["id"],))),
             "max_trials": (auth["max_trials"] if self._lifecycle_v2(run) and auth and auth["max_trials"]
-                           else defaults["max_trials"]),
+                           else defaults["max_trials"]) if not run_limits.unlimited(run["id"]) else None,
             "run_minutes_limit": auth["max_run_minutes"] if auth else 0,
             "run_minutes_exceeded": self._run_minutes_exceeded(run),
-            "model_turns": {"limit": auth["max_model_turns"] if auth else 0,
+            "unlimited_resources": run_limits.unlimited(run["id"]),
+            "model_turns": {"limit": run_limits.displayed(run["id"], auth["max_model_turns"] if auth else 0),
                             "used": None,
                             "known_cost": None, "unknown_cost": True,
                             "enforced": False,
                             "note": "原生代理内部调用量尚未完整计量；不能将未知用量视为零"},
             "max_submissions": auth["max_submissions"] if auth else 0,
-            "max_jobs": auth["max_jobs"] if auth else 0,
-            "max_sandboxes": auth["max_sandboxes"] if auth else 0,
-            "max_sandbox_minutes": auth["max_sandbox_minutes"] if auth else 0,
+            "max_jobs": run_limits.displayed(run["id"], auth["max_jobs"] if auth else 0),
+            "max_sandboxes": run_limits.displayed(run["id"], auth["max_sandboxes"] if auth else 0),
+            "max_sandbox_minutes": run_limits.displayed(run["id"], auth["max_sandbox_minutes"] if auth else 0),
             "allow_sandbox_gpu": bool(auth["allow_sandbox_gpu"]) if auth else False,
         }
 

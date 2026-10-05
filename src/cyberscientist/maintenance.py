@@ -27,12 +27,14 @@ def claim_call(run_id: str, operation_id: str, kind: str) -> None:
         used = conn.execute('SELECT COUNT(*) FROM maintenance_calls WHERE run_id=?', (run_id,)).fetchone()[0]
         if old:
             raise ValueError('维护调用已开始过；不自动重复未知模型调用')
-        if used >= CALL_LIMIT:
+        from . import run_limits
+        unlimited = run_limits.unlimited(run_id, conn=conn)
+        if not unlimited and used >= CALL_LIMIT:
             raise ValueError('每个 Run 的整理／复盘独立两次调用额度已用尽')
         conn.execute('INSERT INTO maintenance_calls VALUES(?,?,?,?,?,?)',
                      (operation_id, run_id, kind, 'running', db.utcnow(), db.utcnow()))
         db.append_event_tx(conn, run_id, 'controller', 'maintenance.call_started', {
-            'operation_id': operation_id, 'kind': kind, 'used': used + 1, 'limit': CALL_LIMIT})
+            'operation_id': operation_id, 'kind': kind, 'used': used + 1, 'limit': None if unlimited else CALL_LIMIT})
 
 
 def complete_call(operation_id: str, status: str) -> None:

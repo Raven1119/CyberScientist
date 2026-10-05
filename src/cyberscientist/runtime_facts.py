@@ -119,13 +119,17 @@ def facts(run_id: str) -> dict:
             environment['network'][kind]['observations'].append({
                 'host': payload.get('host'), 'result': payload.get('result', 'unknown'),
                 'event_ref': f"{row['run_id']}#{row['seq']}"})
+    if auth and auth['unlimited_resources']:
+        for key in ('jobs', 'sandbox_minutes', 'sandbox_concurrent_slots'):
+            remaining[key] = None
     from . import compute, compute_budget
     limits = compute.validate_limits(json.loads(auth['job_limits_json'])) if auth else compute.DEFAULT_LIMITS
+    unlimited = bool(auth and auth['unlimited_resources'])
     import re
     allowed_machines = {}
     for name, price in quotes['job']['rates'].items():
         match = re.fullmatch(r'c(\d+)_m(\d+)_cpu', name)
-        if match and int(match[1]) <= limits['max_cpu'] and int(match[2]) <= limits['max_memory_gb']:
+        if match and (unlimited or int(match[1]) <= limits['max_cpu'] and int(match[2]) <= limits['max_memory_gb']):
             allowed_machines[name] = price
     channels = {}
     for row in db.query('SELECT status,input_bytes FROM compute_jobs'):
@@ -149,7 +153,8 @@ def facts(run_id: str) -> dict:
     cost = compute.costs(run_id)
     return {'status': 'observed', 'observed_at': now.isoformat(), 'remaining': remaining,
             'scoring': scoring, 'environment': environment, 'cpu_prices': quotes,
-            'effective_job_limits': limits, 'allowed_priced_machines': allowed_machines,
+            'unlimited_resources': unlimited,
+            'effective_job_limits': {key: value if type(value) is bool else None for key, value in limits.items()} if unlimited else limits, 'allowed_priced_machines': allowed_machines,
             'channels_by_input_size': {'job': channels, 'sandbox_transfer': transfer_channels}, 'registered_environments': runtime_environments.facts() + saved_environments,
             'environment_save_authorization': {'limit': auth['max_environment_saves'] if auth else 0,
                 'used': sum(item['run_id'] == run_id for item in saved_environments), 'cost_status': 'unknown' if saved_environments else 'no_saves'},

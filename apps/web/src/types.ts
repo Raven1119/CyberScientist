@@ -183,17 +183,18 @@ export interface TrialSummary {
 }
 
 export interface RunBudget {
+  unlimited_resources?: boolean
   brain_reviews_used: number
-  max_brain_reviews: number
+  max_brain_reviews: number | null
   trials_used: number
-  max_trials: number
+  max_trials: number | null
   run_minutes_limit: number
   run_minutes_exceeded: boolean
-  model_turns: { limit: number; known_cost: number | null; unknown_cost: boolean | number }
+  model_turns: { limit: number | null; known_cost: number | null; unknown_cost: boolean | number }
   max_submissions: number
-  max_jobs: number
-  max_sandboxes: number
-  max_sandbox_minutes: number
+  max_jobs: number | null
+  max_sandboxes: number | null
+  max_sandbox_minutes: number | null
   allow_sandbox_gpu: boolean
 }
 
@@ -349,7 +350,7 @@ export interface SupervisionStatus {
   covered_seq: number
   evidence_revision: number
   reviews_used: number
-  max_reviews: number
+  max_reviews: number | null
   private_note_md: string
   watchlist: SupervisionWatchItem[]
   last_review_at: string | null

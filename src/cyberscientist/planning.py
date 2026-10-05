@@ -99,9 +99,9 @@ def untried_channels(run_id: str) -> list[str]:
     result = []
     jobs = db.query_one('SELECT COUNT(*) AS n FROM compute_jobs WHERE run_id=?', (run_id,))['n']
     boxes = db.query_one('SELECT COUNT(*) AS n FROM compute_sandboxes WHERE run_id=?', (run_id,))['n']
-    if auth['max_jobs'] > 0 and jobs == 0 and compute_available and run_clock.remaining(run, auth) >= 60:
+    if (auth['unlimited_resources'] or auth['max_jobs'] > 0) and jobs == 0 and compute_available and run_clock.remaining(run, auth) >= 60:
         result.append('bohrium_job')
-    if auth['max_sandboxes'] > 0 and auth['max_sandbox_minutes'] > 0 and boxes == 0 and compute_available:
+    if (auth['unlimited_resources'] or auth['max_sandboxes'] > 0 and auth['max_sandbox_minutes'] > 0) and boxes == 0 and compute_available:
         result.append('bohrium_sandbox')
     snapshot = json.loads(run['config_snapshot']).get('competition', {}).get('challenge_snapshot')
     topic = db.query_one('SELECT resources_json FROM challenges WHERE id=?', (run['challenge_id'],))

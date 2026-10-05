@@ -5,7 +5,7 @@ import type { SolverEntry } from '../types'
 
 type Choice = { provider?: string; note?: string; runtime: string; model_id: string; reasoning_effort: string }
 type Template = { solver_id?: string; model_config: { brain: Choice; executor: Choice }; authorization: {
-  allow_model_calls: boolean; max_run_minutes: number; max_jobs: number; max_submissions: number;
+  unlimited_resources?: boolean; allow_model_calls: boolean; max_run_minutes: number; max_jobs: number; max_submissions: number;
   max_sandboxes: number; max_environment_saves: number; max_sandbox_minutes: number; allow_data_download: boolean }; solver_note: string }
 type Item = { id: string; challenge_id: string; title: string; phase: string; priority: number;
   paused: number; run_id: string | null; local_best: number | null; platform_best: { score: number; score_confidence: string } | null;
@@ -37,8 +37,8 @@ export default function CompetitionPage() {
   const [busy, setBusy] = useState(false)
   const [shutdown, setShutdown] = useState<{ can_shutdown: boolean; message: string; remote_jobs: unknown[]; remote_sandboxes: unknown[] } | null>(null)
   const [overrides, setOverrides] = useState<Record<string, Template>>({})
-  const [template, setTemplate] = useState<Template>({ model_config: { brain: choice('gpt-6.1-sol'), executor: choice('gpt-6.1-sol') },
-    authorization: { allow_model_calls: true, max_run_minutes: 60, max_jobs: 2, max_submissions: 0,
+  const [template, setTemplate] = useState<Template>({ model_config: { brain: choice('gpt-6-astra'), executor: choice('gpt-6.1-sol') },
+    authorization: { unlimited_resources: true, allow_model_calls: true, max_run_minutes: 60, max_jobs: 2, max_submissions: 0,
       max_sandboxes: 2, max_environment_saves: 0, max_sandbox_minutes: 60, allow_data_download: true }, solver_note: '' })
   useEffect(() => {
     let active = true
@@ -98,14 +98,16 @@ export default function CompetitionPage() {
     <label>选择轮次<select value={id} onChange={e => setId(e.target.value)}><option value="">暂无轮次</option>
       {rounds.map(r => <option key={r.id} value={r.id}>{r.label || r.id} · {r.status}</option>)}</select></label>
     <fieldset><legend>整轮模板与授权</legend>
+      <label><input type="checkbox" checked={template.authorization.unlimited_resources === true} onChange={e => setTemplate(t => ({ ...t, authorization: { ...t.authorization, unlimited_resources: e.target.checked } }))} />比赛资源不限</label>
+      {template.authorization.unlimited_resources && <p>Job 数、并发、规格、金额、模型判断、Trial 与维护调用不限；用量照常记录。研究时长、提交次数和速率限制继续生效。</p>}
       {solverSelect("整轮", template, setTemplate)}
       {(['brain', 'executor'] as const).map(role => <ModelFields key={role} role={role} label={role === 'brain' ? 'PI ' : '求解者 '}
         value={template.model_config[role]} onChange={value => setTemplate(t => ({ ...t, solver_id: role === 'executor' ? undefined : t.solver_id, model_config: { ...t.model_config, [role]: value } }))} />)}
       <p>Prime 模型须与连接设置中的 Profile 一致；各提供方的原生认证在连接设置中配置。</p>
       {([['max_run_minutes', '每 Run 分钟'], ['max_jobs', '每 Run Job 数'], ['max_submissions', '每 Run 总 Attempt 数（含收割）'],
         ['max_sandboxes', '每 Run 沙箱并发'], ['max_environment_saves', '每 Run 环境保存数'], ['max_sandbox_minutes', '每 Run 沙箱累计分钟']] as const).map(([key, title]) =>
-        <label key={key}>{title}<input type="number" min="0" value={template.authorization[key]} onChange={e => setTemplate(t => ({ ...t,
-          authorization: { ...t.authorization, [key]: Number(e.target.value) } }))} /></label>)}
+        <label key={key}>{title}{template.authorization.unlimited_resources && !['max_run_minutes', 'max_submissions', 'max_environment_saves'].includes(key) ? <output>不限</output> : <input type="number" min="0" value={template.authorization[key]} onChange={e => setTemplate(t => ({ ...t,
+          authorization: { ...t.authorization, [key]: Number(e.target.value) } }))} />}</label>)}
       <label>给 PI 的求解者备注<input value={template.solver_note} onChange={e => setTemplate(t => ({ ...t, solver_note: e.target.value }))} /></label>
     </fieldset>
     {round && <><p>轮次 {round.id} · {round.status}</p>
@@ -128,11 +130,13 @@ export default function CompetitionPage() {
               }))} /></label>
             </details>}
             {round.status === 'draft' && <details><summary>此题授权</summary>
+              <label><input type="checkbox" aria-label={`${item.title}资源不限`} checked={(overrides[item.challenge_id] ?? template).authorization.unlimited_resources === true}
+                onChange={e => setOverrides(v => { const current = v[item.challenge_id] ?? template; return { ...v, [item.challenge_id]: { ...current, authorization: { ...current.authorization, unlimited_resources: e.target.checked } } } })} />此题资源不限</label>
               {([['max_run_minutes', '分钟'], ['max_jobs', 'Job 数'], ['max_submissions', '总 Attempt 数（含收割）'],
                 ['max_sandboxes', '沙箱并发'], ['max_environment_saves', '环境保存数'], ['max_sandbox_minutes', '沙箱累计分钟']] as const).map(([key, title]) =>
-                <label key={key}>{title}<input type="number" min="0" value={(overrides[item.challenge_id] ?? template).authorization[key]}
+                <label key={key}>{title}{(overrides[item.challenge_id] ?? template).authorization.unlimited_resources && !['max_run_minutes', 'max_submissions', 'max_environment_saves'].includes(key) ? <output>不限</output> : <input aria-label={`${item.title}${title}`} type="number" min="0" value={(overrides[item.challenge_id] ?? template).authorization[key]}
                   onChange={e => setOverrides(v => { const current = v[item.challenge_id] ?? template; return { ...v,
-                    [item.challenge_id]: { ...current, authorization: { ...current.authorization, [key]: Number(e.target.value) } } } })} /></label>)}
+                    [item.challenge_id]: { ...current, authorization: { ...current.authorization, [key]: Number(e.target.value) } } } })} />}</label>)}
             </details>}</td>
           <td>{item.run_id || '排队中'}</td><td>{item.local_best ?? 'unknown'}</td>
           <td>{item.platform_best ? `${item.platform_best.score} (${item.platform_best.score_confidence})` : 'unknown'}</td>

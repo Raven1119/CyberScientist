@@ -219,7 +219,8 @@ def _authorized(conn, run_id):
     if json.loads(run['config_snapshot']).get('compute_policy_version') != 1:
         raise ComputeError('LEGACY_RUN', '升级前的 Run 未有完整算力账本；先核清旧任务，再用新 Run 授权计算')
     auth = conn.execute('SELECT * FROM authorizations WHERE id=?', (run['authorization_id'],)).fetchone()
-    if run['mode'] != 'connected' or not auth or auth['max_jobs'] <= 0:
+    unlimited = bool(auth and auth['unlimited_resources'])
+    if run['mode'] != 'connected' or not auth or not unlimited and auth['max_jobs'] <= 0:
         raise ComputeError('NOT_AUTHORIZED', '本轮没有真实算力授权')
     if not auth['max_run_minutes'] or not run['started_at']:
         raise ComputeError('UNBOUNDED_JOB', '真实算力需要明确的本轮时长上限')
@@ -229,9 +230,9 @@ def _authorized(conn, run_id):
         raise ComputeError('AUTH_EXPIRED', '本轮算力授权已到期')
     limits = DEFAULT_LIMITS | json.loads(auth['job_limits_json'])
     rows = conn.execute('SELECT * FROM compute_jobs WHERE run_id=?', (run_id,)).fetchall()
-    if sum(r['status'] != 'not_started' for r in rows) >= auth['max_jobs']:
+    if not unlimited and sum(r['status'] != 'not_started' for r in rows) >= auth['max_jobs']:
         raise ComputeError('JOB_LIMIT', '已达到 Job 总数上限（包括失败与 unknown）')
-    if sum(occupies_slot(r) for r in rows) >= limits['max_concurrent_jobs']:
+    if not unlimited and sum(occupies_slot(r) for r in rows) >= limits['max_concurrent_jobs']:
         raise ComputeError('CONCURRENCY_LIMIT', '运行中及未知任务已占满并发额度')
     return run, limits, remaining
 
@@ -370,15 +371,17 @@ def submit(run_id: str, operation_id: str, spec: dict, input_directory: str,
                     or parent_now['retry_operation_id'] != operation_id):
                 raise ComputeError('INVALID_RETRY', '原 Job 已接上或重交预约已改变')
         from . import resource_coordinator
-        resource_coordinator.require_compute_slot_tx(conn, 'job')
+        resource_coordinator.require_compute_slot_tx(conn, 'job', run_id=run_id)
         machine = re.fullmatch(r'c(\d+)_m(\d+)_cpu', str(spec.get('machine_type', '')))
-        if not machine or not (1 <= int(machine[1]) <= limits['max_cpu'] and 1 <= int(machine[2]) <= limits['max_memory_gb']):
+        unlimited = conn.execute('SELECT unlimited_resources FROM authorizations WHERE id=?', (run['authorization_id'],)).fetchone()[0]
+        if (not machine or int(machine[1]) < 1 or int(machine[2]) < 1
+                or not unlimited and (int(machine[1]) > limits['max_cpu'] or int(machine[2]) > limits['max_memory_gb'])):
             raise ComputeError('RESOURCE_LIMIT', '当前受控入口仅接受授权范围内的 CPU 机型')
         minutes = spec.get('max_run_time')
         if type(minutes) is not int or not 1 <= minutes <= math.floor(remaining / 60):
             raise ComputeError('RESOURCE_LIMIT', 'Job 时限必须小于本轮剩余授权')
         disk = spec.get('disk_size', 10)
-        if type(disk) is not int or not 1 <= disk <= limits['max_disk_gb']:
+        if type(disk) is not int or disk < 1 or not unlimited and disk > limits['max_disk_gb']:
             raise ComputeError('RESOURCE_LIMIT', '磁盘配置超出授权')
         if spec.get('nnode', 1) != 1 or spec.get('max_reschedule_times', 0) != 0:
             raise ComputeError('RESOURCE_LIMIT', '仅支持单节点，禁止平台自动重调度重跑')

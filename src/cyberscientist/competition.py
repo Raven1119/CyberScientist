@@ -184,7 +184,7 @@ def _template(template: dict, mode: str, *, frozen: bool = False) -> dict:
     auth = template.get('authorization') or {}
     allowed = {'max_run_minutes', 'max_jobs', 'max_submissions', 'max_model_turns', 'max_sandboxes',
                'max_sandbox_minutes', 'allow_sandbox_gpu', 'allow_data_download', 'job_limits', 'max_environment_saves',
-               'max_compute_cost_cny', 'allow_model_calls'}
+               'max_compute_cost_cny', 'allow_model_calls', 'unlimited_resources'}
     if not isinstance(auth, dict) or set(auth) - allowed:
         raise CompetitionError('授权模板字段不符')
     for key in ('max_run_minutes', 'max_jobs', 'max_submissions', 'max_model_turns', 'max_sandboxes', 'max_sandbox_minutes', 'max_environment_saves'):
@@ -198,9 +198,14 @@ def _template(template: dict, mode: str, *, frozen: bool = False) -> dict:
     from . import compute, compute_budget
     compute.validate_limits(auth.get('job_limits'))
     compute_budget.validate_cap(auth.get('max_compute_cost_cny'))
-    for key in ('allow_model_calls', 'allow_sandbox_gpu', 'allow_data_download'):
+    for key in ('allow_model_calls', 'allow_sandbox_gpu', 'allow_data_download', 'unlimited_resources'):
         if key in auth and type(auth[key]) is not bool:
             raise CompetitionError('授权开关必须是布尔值')
+    # New confirmations use the competition policy. Frozen old templates retain
+    # their original bounded authorization unless they already carried this flag.
+    auth = dict(auth, unlimited_resources=auth.get('unlimited_resources', not frozen))
+    if auth['unlimited_resources']:
+        auth['max_compute_cost_cny'] = None
     return {'model_config': models, 'authorization': auth, 'solver_id': template.get('solver_id'),
             'solver_entry': solver_entry,
             'shadow_enabled': bool(template.get('shadow_enabled', False)),

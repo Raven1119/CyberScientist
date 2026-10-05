@@ -746,13 +746,13 @@ export default function ResearchPage() {
                 <span>预算 · 大脑判断</span>
                 <span>
                   {runDetail?.budget
-                    ? `${runDetail.budget.brain_reviews_used} / ${runDetail.budget.max_brain_reviews}`
+                    ? `${runDetail.budget.brain_reviews_used} / ${runDetail.budget.max_brain_reviews ?? '不限'}`
                     : '—'}
                 </span>
               </div>
               <div className="meta-row">
                 <span>预算 · 模型调用上限</span>
-                <span>{runDetail?.budget ? String(runDetail.budget.model_turns.limit) : '—'}</span>
+                <span>{runDetail?.budget ? String(runDetail.budget.model_turns.limit ?? '不限') : '—'}</span>
               </div>
               <div className="meta-row">
                 <span>费用 · 已知部分</span>
@@ -780,7 +780,7 @@ export default function ResearchPage() {
               </div>
               <div className="meta-row">
                 <span>算力上限</span>
-                <span>{runDetail?.budget ? runDetail.budget.max_jobs : '—'}</span>
+                <span>{runDetail?.budget ? (runDetail.budget.max_jobs ?? '不限') : '—'}</span>
               </div>
               {currentRun && runDetail?.budget && (
                 <button
@@ -914,12 +914,12 @@ function BudgetDialog({
   useEffect(() => {
     if (open) {
       setForm({
-        max_brain_reviews: budget.max_brain_reviews,
-        max_trials: budget.max_trials,
-        max_model_turns: budget.model_turns.limit,
+        max_brain_reviews: budget.max_brain_reviews ?? 0,
+        max_trials: budget.max_trials ?? 0,
+        max_model_turns: budget.model_turns.limit ?? 0,
         max_run_minutes: budget.run_minutes_limit,
         max_submissions: budget.max_submissions,
-        max_jobs: budget.max_jobs,
+        max_jobs: budget.max_jobs ?? 0,
       })
     }
   }, [open, budget])
@@ -935,17 +935,19 @@ function BudgetDialog({
     { key: 'max_jobs', label: '算力上限（Bohrium Job 数）', min: 1 },
   ]
 
+  const editableFields = budget.unlimited_resources ? FIELDS.filter(f => ['max_run_minutes', 'max_submissions'].includes(f.key)) : FIELDS
+
   async function save() {
     const current = {
-      max_brain_reviews: budget.max_brain_reviews,
-      max_trials: budget.max_trials,
-      max_model_turns: budget.model_turns.limit,
+      max_brain_reviews: budget.max_brain_reviews ?? 0,
+      max_trials: budget.max_trials ?? 0,
+      max_model_turns: budget.model_turns.limit ?? 0,
       max_run_minutes: budget.run_minutes_limit,
       max_submissions: budget.max_submissions,
-      max_jobs: budget.max_jobs,
+      max_jobs: budget.max_jobs ?? 0,
     }
     const body: Record<string, number> = {}
-    for (const { key } of FIELDS) {
+    for (const { key } of editableFields) {
       if (form[key] !== current[key]) body[key] = form[key]
     }
     if (Object.keys(body).length === 0) {
@@ -966,10 +968,11 @@ function BudgetDialog({
 
   return (
     <Modal open={open} onClose={onClose} title="调整预算">
+      {budget.unlimited_resources && <p>比赛资源不限，用量照常记录；可调整研究时长和提交次数。</p>}
       <p className="sub">
         保存后立即生效，无需重启或中断当前 Run。大脑判断与 Trial 上限作用于全局设置；模型调用、运行时长与提交上限作用于本 Run 的授权。
       </p>
-      {FIELDS.map(({ key, label, min }) => (
+      {editableFields.map(({ key, label, min }) => (
         <div className="field" key={key}>
           <label htmlFor={`budget-${key}`}>{label}</label>
           <input
@@ -2295,7 +2298,7 @@ function SupervisionPanel({
         </div>
         <div className="meta-row">
           <span>观察用量</span>
-          <span>{supervision ? `${supervision.reviews_used} / ${supervision.max_reviews}` : '—'}</span>
+          <span>{supervision ? `${supervision.reviews_used} / ${supervision.max_reviews ?? '不限'}` : '—'}</span>
         </div>
         <div className="meta-row">
           <span>上次审阅</span>

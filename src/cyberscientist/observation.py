@@ -69,6 +69,11 @@ def authority_facts(run_id: str) -> dict[str, Any]:
         values['job_limits'] = validate_limits(json.loads(auth['job_limits_json']))
         values.update(allow_sandbox_gpu=bool(auth['allow_sandbox_gpu']),
                       allow_data_download=bool(auth['allow_data_download']))
+        values['unlimited_resources'] = bool(auth['unlimited_resources'])
+        if auth['unlimited_resources']:
+            for key in ('max_jobs', 'max_sandboxes', 'max_sandbox_minutes', 'max_compute_cost_cny'):
+                values[key] = None
+            values['job_limits'] = {key: value if type(value) is bool else None for key, value in values['job_limits'].items()}
     from . import runtime_environments, runtime_facts
     result: dict[str, Any] = {'authorization': values,
                               'runtime_environments': runtime_environments.facts(),
@@ -378,13 +383,13 @@ def build_frame(run_id: str, *, mode: str, frame_id: str,
         "experiences": exps,
         "experience_index": context.get("index", []),
         "budget": {
-            "remaining_shadow_reviews": max(
+            "remaining_shadow_reviews": None if auth and auth["unlimited_resources"] else max(
                 0, shadow_cfg.get("max_reviews", 8) - sup["reviews_used"]),
-            "remaining_control_turns": max(
+            "remaining_control_turns": None if auth and auth["unlimited_resources"] else max(
                 0, defaults.get("max_brain_reviews", 20)
                 - run["brain_reviews_used"]),
-            "max_model_turns": auth["max_model_turns"] if auth else 0,
-            "max_jobs": auth["max_jobs"] if auth else 0,
+            "max_model_turns": None if auth and auth["unlimited_resources"] else auth["max_model_turns"] if auth else 0,
+            "max_jobs": None if auth and auth["unlimited_resources"] else auth["max_jobs"] if auth else 0,
             "known_cost": None,
         },
         "quality": {

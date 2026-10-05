@@ -155,7 +155,7 @@ def bounded_lifetime(run_id: str, requested: int) -> int:
     reserve their full lifetime, as in ordinary sandbox admission.
     """
     run = compute._run(run_id)
-    auth = db.query_one('SELECT max_run_minutes,max_sandbox_minutes FROM authorizations WHERE id=?',
+    auth = db.query_one('SELECT max_run_minutes,max_sandbox_minutes,unlimited_resources FROM authorizations WHERE id=?',
                         (run['authorization_id'],))
     if not auth or not run['started_at']:
         raise compute.ComputeError('SANDBOX_BUDGET', '评分没有有效时长授权')
@@ -168,7 +168,7 @@ def bounded_lifetime(run_id: str, requested: int) -> int:
                            datetime.fromisoformat(row['created_at'])).total_seconds())
                    for row in db.query('SELECT * FROM compute_sandboxes WHERE run_id=?', (run_id,)))
     seconds = math.floor(min(requested, run_left - 5,
-                             auth['max_sandbox_minutes'] * 60 - reserved - 5))
+                             float('inf') if auth['unlimited_resources'] else auth['max_sandbox_minutes'] * 60 - reserved - 5))
     if seconds < 1:
         raise compute.ComputeError('SANDBOX_BUDGET', '评分沙箱时长额度已耗尽')
     return seconds
@@ -236,16 +236,17 @@ def create(run_id: str, operation_id: str, request: dict, *, _session_id: str | 
                     'status': prior['status'], 'deduplicated': True}
         run = conn.execute('SELECT * FROM runs WHERE id=?', (run_id,)).fetchone()
         from . import resource_coordinator
-        resource_coordinator.require_compute_slot_tx(conn, 'sandbox')
+        resource_coordinator.require_compute_slot_tx(conn, 'sandbox', run_id=run_id)
         if not run or run['mode'] != 'connected' or run['phase'] != 'running' or run['gate'] != 'open' or not run['current_trial_id']:
             raise compute.ComputeError('RUN_NOT_RUNNING', 'Run 未运行或研究门禁关闭，不能创建沙箱')
         auth = conn.execute('SELECT * FROM authorizations WHERE id=?', (run['authorization_id'],)).fetchone()
-        if not auth or auth['max_sandboxes'] <= 0 or auth['max_sandbox_minutes'] <= 0:
+        unlimited = bool(auth and auth['unlimited_resources'])
+        if not auth or not unlimited and (auth['max_sandboxes'] <= 0 or auth['max_sandbox_minutes'] <= 0):
             raise compute.ComputeError('NOT_AUTHORIZED', '本 Run 未授权沙箱数量和累计分钟数')
         if gpu and not auth['allow_sandbox_gpu']:
             raise compute.ComputeError('GPU_NOT_AUTHORIZED', '沙箱 GPU 未单独授权')
         limits = compute.validate_limits(json.loads(auth['job_limits_json']))
-        if request.get('cpu') and int(request['cpu'].split('c')[0]) > limits['max_cpu']:
+        if not unlimited and request.get('cpu') and int(request['cpu'].split('c')[0]) > limits['max_cpu']:
             raise compute.ComputeError('RESOURCE_LIMIT', '沙箱CPU核心数超出本Run的机器授权')
         if not run['started_at'] or auth['max_run_minutes'] <= 0:
             raise compute.ComputeError('UNBOUNDED_SANDBOX', '沙箱需要本 Run 的时长上限')
@@ -253,7 +254,7 @@ def create(run_id: str, operation_id: str, request: dict, *, _session_id: str | 
         run_left = run_clock.remaining(run, auth)
         rows = conn.execute('SELECT status,created_at,expires_at,deleted_at FROM compute_sandboxes'
                             ' WHERE run_id=?', (run_id,)).fetchall()
-        if sum(row['status'] in LIVE for row in rows) >= auth['max_sandboxes']:
+        if not unlimited and sum(row['status'] in LIVE for row in rows) >= auth['max_sandboxes']:
             raise compute.ComputeError('SANDBOX_LIMIT', '已达到同时存在的沙箱上限')
         reserved = sum((datetime.fromisoformat(row['expires_at']) -
                         datetime.fromisoformat(row['created_at'])).total_seconds()
@@ -261,7 +262,7 @@ def create(run_id: str, operation_id: str, request: dict, *, _session_id: str | 
                        max(0, (datetime.fromisoformat(row['deleted_at']) -
                                datetime.fromisoformat(row['created_at'])).total_seconds())
                        for row in rows)
-        if timeout > run_left or reserved + timeout > auth['max_sandbox_minutes'] * 60:
+        if timeout > run_left or not unlimited and reserved + timeout > auth['max_sandbox_minutes'] * 60:
             raise compute.ComputeError('SANDBOX_BUDGET', '沙箱时长超过本 Run 剩余额度')
         expires = (datetime.now(timezone.utc) + timedelta(seconds=timeout)).isoformat()
         compute_budget.reserve_tx(conn, run_id, 'sandbox', operation_id, timeout, price)

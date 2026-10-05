@@ -123,6 +123,7 @@ class AuthorizeBody(BaseModel):
     max_submissions: int = 0
     max_jobs: int = 0
     max_environment_saves: int = 0
+    unlimited_resources: bool = False
     max_sandboxes: int = 0
     max_sandbox_minutes: int = 0
     allow_sandbox_gpu: bool = False
@@ -1019,6 +1020,7 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
                                     allow_sandbox_gpu=body.allow_sandbox_gpu,
                                     max_compute_cost_cny=body.max_compute_cost_cny,
                                     max_environment_saves=body.max_environment_saves,
+                                    unlimited_resources=body.unlimited_resources,
                                     objective=body.objective)
 
     @app.put("/api/v1/runs/{run_id}/budget")

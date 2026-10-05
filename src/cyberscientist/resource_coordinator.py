@@ -79,7 +79,10 @@ def throttle(name: str, retry_at: str) -> None:
                (name, retry_at, db.utcnow()))
 
 
-def require_compute_slot_tx(conn, kind: str) -> None:
+def require_compute_slot_tx(conn, kind: str, *, run_id: str | None = None) -> None:
+    from . import run_limits
+    if run_id and run_limits.unlimited(run_id, conn=conn):
+        return
     settings = config.load_settings().get('resources', {})
     limit = settings.get('max_concurrent_jobs' if kind == 'job' else 'max_concurrent_sandboxes')
     if limit is None:
