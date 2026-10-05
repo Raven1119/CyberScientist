@@ -25,7 +25,7 @@ CS-UP-09：1702条规则审计与评测单一路径；PI科学简报和弱求解
 | 09 W5 | 5902c86 |
 | 09 W6 | effb0cb |
 | 09 W7 | 723cc64 |
-| 09 W8 运行修复 | 1be5534、64ade21、b0d9bee；最终验收记录随本报告提交 |
+| 09 W8 | 1be5534、64ade21、b0d9bee；最终补修及验收报告 f25e1eb |
 
 `lightchaser-fallback-0` 指向5940418；`lightchaser-fallback-1`指向08最终提交ec5e24b，两标签已推送并核对。迁移前用SQLite backup留一致性备份，迁移只增表／列；回退步骤见 [LIGHTCHASER_ROLLBACK.md](LIGHTCHASER_ROLLBACK.md)。
 
