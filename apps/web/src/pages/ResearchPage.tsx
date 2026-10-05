@@ -3,6 +3,7 @@ import { ApiError, api, bindChallengeSkill, listSkills, unbindChallengeSkill, up
 import { useApp } from '../app-context'
 import { Badge, Modal, LoadingState } from '../components'
 import { RunOperations } from './RunOperations'
+import PackageReviews from '../PackageReviews'
 import { Observation } from '../design/Observation'
 import {
   ACTIVE_PHASES,
@@ -719,6 +720,7 @@ export default function ResearchPage() {
         </div>
 
         <div className="stack right">
+          {currentRun && <PackageReviews key={currentRun.id} runId={currentRun.id} />}
           <Observation key={currentRun?.id ?? challengeId ?? 'idle'} runId={currentRun?.id}
             phase={runDetail?.id === currentRun?.id ? runDetail?.phase : currentRun?.phase}
             connected={streamStatus === 'open'} supervision={supervision} demo={demoMode} />

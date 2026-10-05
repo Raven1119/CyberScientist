@@ -29,7 +29,7 @@ class Reviewer:
     async def review(self, session, packet):
         assert packet['task'] == 'package_review'
         assert set(packet) == {'protocol', 'task', 'instructions', 'challenge', 'delivery_contract',
-                               'sealed_package', 'local_scores', 'local_score_status', 'trace_diagnostics', 'admission', 'output_contract'}
+                               'sealed_package', 'local_scores', 'local_score_status', 'scorer_source', 'trace_diagnostics', 'admission', 'output_contract'}
         assert packet['local_score_status'] == 'unknown'
         self.calls.append(('packet', packet))
         yield BrainEvent('task_result', {'result': {'verdict': 'issues', 'issues': ['契约路径不符；没有干净环境复跑证据'], 'summary_md': 'PI 决定修复或提交'}})
