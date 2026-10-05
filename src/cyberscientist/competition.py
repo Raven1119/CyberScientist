@@ -204,6 +204,10 @@ def _template(template: dict, mode: str, *, frozen: bool = False) -> dict:
     # New confirmations use the competition policy. Frozen old templates retain
     # their original bounded authorization unless they already carried this flag.
     auth = dict(auth, unlimited_resources=auth.get('unlimited_resources', not frozen))
+    if not frozen:
+        auth['job_limits'] = dict(auth.get('job_limits') or {})
+        auth['job_limits'].setdefault('allow_gpu', True)
+        auth.setdefault('allow_sandbox_gpu', True)
     if auth['unlimited_resources']:
         auth['max_compute_cost_cny'] = None
     return {'model_config': models, 'authorization': auth, 'solver_id': template.get('solver_id'),

@@ -222,6 +222,8 @@ def create(run_id: str, operation_id: str, request: dict, *, _session_id: str | 
     gpu = request.get('gpu', False)
     if gpu is not False and gpu is not True and gpu not in ('4090', '5090', 'l20'):
         raise compute.ComputeError('INVALID_COMMAND', 'GPU 参数无效')
+    if gpu and request.get('cpu') and not request.get('image'):
+        raise compute.ComputeError('INVALID_COMMAND', 'GPU快捷模板不能同时指定CPU；自定义CPU规格需要显式镜像地址')
     project_id = compute._project_id(config.load_settings()['bohrium'].get('project_id'))
     now = db.utcnow()
     from . import compute_budget

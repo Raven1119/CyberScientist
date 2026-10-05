@@ -207,6 +207,8 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
         compute.recover_pending()
         bohrium_cfg = config.load_settings()['bohrium']
         if config.resolve_secret(bohrium_cfg.get('access_key_secret_ref','')):
+            from . import machine_catalog
+            await asyncio.to_thread(machine_catalog.refresh)
             try:
                 await asyncio.to_thread(sandboxes.reconcile_startup)
             except Exception:

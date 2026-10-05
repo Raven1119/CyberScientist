@@ -151,7 +151,8 @@ def facts(run_id: str) -> dict:
     from . import environment_saves
     saved_environments = environment_saves.saves()
     cost = compute.costs(run_id)
-    return {'status': 'observed', 'observed_at': now.isoformat(), 'remaining': remaining,
+    from . import machine_catalog
+    return {'status': 'observed', 'observed_at': now.isoformat(), 'remaining': remaining, 'gpu_machine_catalog': machine_catalog.facts(),
             'scoring': scoring, 'environment': environment, 'cpu_prices': quotes,
             'unlimited_resources': unlimited,
             'effective_job_limits': {key: value if type(value) is bool else None for key, value in limits.items()} if unlimited else limits, 'allowed_priced_machines': allowed_machines,

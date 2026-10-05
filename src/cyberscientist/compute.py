@@ -76,8 +76,8 @@ def validate_limits(value: dict | None) -> dict:
     for key in ('max_concurrent_jobs', 'max_cpu', 'max_memory_gb', 'max_disk_gb'):
         if type(limits[key]) is not int or limits[key] < 1:
             raise ComputeError('INVALID_LIMITS', '资源上限必须为正整数')
-    if limits['allow_gpu'] is not False:
-        raise ComputeError('INVALID_LIMITS', '本版本只支持 CPU 授权')
+    if type(limits['allow_gpu']) is not bool:
+        raise ComputeError('INVALID_LIMITS', 'GPU 授权必须是布尔值')
     return limits
 
 
@@ -374,9 +374,15 @@ def submit(run_id: str, operation_id: str, spec: dict, input_directory: str,
         resource_coordinator.require_compute_slot_tx(conn, 'job', run_id=run_id)
         machine = re.fullmatch(r'c(\d+)_m(\d+)_cpu', str(spec.get('machine_type', '')))
         unlimited = conn.execute('SELECT unlimited_resources FROM authorizations WHERE id=?', (run['authorization_id'],)).fetchone()[0]
-        if (not machine or int(machine[1]) < 1 or int(machine[2]) < 1
-                or not unlimited and (int(machine[1]) > limits['max_cpu'] or int(machine[2]) > limits['max_memory_gb'])):
-            raise ComputeError('RESOURCE_LIMIT', '当前受控入口仅接受授权范围内的 CPU 机型')
+        from . import machine_catalog
+        gpu = machine_catalog.job(str(spec.get('machine_type', ''))) if not machine else None
+        if gpu and not limits['allow_gpu']:
+            raise ComputeError('GPU_NOT_AUTHORIZED', '本 Run 未授权 GPU Job')
+        cpu = int(machine[1]) if machine else gpu.get('cpuCoreNum', 0) if gpu else 0
+        memory = int(machine[2]) if machine else gpu.get('memory', 0) if gpu else 0
+        if (not machine and not gpu or machine and (cpu < 1 or memory < 1)
+                or not unlimited and (cpu < 1 or memory < 1 or cpu > limits['max_cpu'] or memory > limits['max_memory_gb'])):
+            raise ComputeError('RESOURCE_LIMIT', '机型不在已观察的目录或超出授权规格')
         minutes = spec.get('max_run_time')
         if type(minutes) is not int or not 1 <= minutes <= math.floor(remaining / 60):
             raise ComputeError('RESOURCE_LIMIT', 'Job 时限必须小于本轮剩余授权')
