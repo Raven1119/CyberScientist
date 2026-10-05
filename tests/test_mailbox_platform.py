@@ -18,6 +18,14 @@ from cyberscientist.mailbox_platform import (
     explicit_create_rejection, get_platform)
 
 
+def valid_arm_zip():
+    stream = io.BytesIO()
+    with zipfile.ZipFile(stream, 'w') as z:
+        z.writestr('arm_manifest.json', json.dumps({'arm_version': '1.1', 'paper': {'title': 'Synthetic fixture'}, 'entrypoint': 'run.py'}))
+        z.writestr('run.py', 'print(42)')
+    return stream.getvalue()
+
+
 class FakeHTTP:
     """记录调用并按 (method, path 前缀) 返回预置响应。"""
 
@@ -130,6 +138,8 @@ def test_submit_zip_happy_path(tmp_path):
     pkg = tmp_path / "bundle.zip"
     with zipfile.ZipFile(pkg, "w") as z:
         z.writestr("results/x.csv", "a,b\n1,2\n")
+        z.writestr('arm_manifest.json', json.dumps({'arm_version': '1.1', 'paper': {'title': 'Synthetic fixture'}, 'entrypoint': 'run.py'}))
+        z.writestr('run.py', 'print(42)')
     p, fake = _platform({
         ("POST", "/challenges/ch-1/attempts"): {"id": 42},
         ("POST", "/attempts/42/bundle"): {"ok": True},
@@ -155,7 +165,7 @@ def test_submit_zip_happy_path(tmp_path):
 
 def test_submit_projects_sealed_trace_onto_documented_inline_fields(tmp_path):
     pkg = tmp_path / "bundle.zip"
-    pkg.write_bytes(b"fixture")
+    pkg.write_bytes(valid_arm_zip())
     p, fake = _platform({
         ("POST", "/challenges/ch-1/attempts"): {"id": 42},
         ("POST", "/attempts/42/bundle"): {"ok": True},
@@ -179,7 +189,7 @@ def test_submit_projects_sealed_trace_onto_documented_inline_fields(tmp_path):
 
 def test_long_inline_timestamp_preserves_instant_with_utc_z(tmp_path):
     pkg = tmp_path / "bundle.zip"
-    pkg.write_bytes(b"fixture")
+    pkg.write_bytes(valid_arm_zip())
     p, fake = _platform({
         ("POST", "/challenges/ch-1/attempts"): {"id": 42},
         ("POST", "/attempts/42/bundle"): {"ok": True},
@@ -194,7 +204,7 @@ def test_long_inline_timestamp_preserves_instant_with_utc_z(tmp_path):
 
 def test_long_inline_title_moves_full_wording_to_body(tmp_path):
     pkg = tmp_path / "bundle.zip"
-    pkg.write_bytes(b"fixture")
+    pkg.write_bytes(valid_arm_zip())
     p, fake = _platform({
         ("POST", "/challenges/ch-1/attempts"): {"id": 42},
         ("POST", "/attempts/42/bundle"): {"ok": True},
@@ -211,7 +221,7 @@ def test_long_inline_title_moves_full_wording_to_body(tmp_path):
 @pytest.mark.parametrize("value", ["not-a-time", "2026-09-27T09:27:38", 123])
 def test_invalid_inline_timestamp_stops_before_create(tmp_path, value):
     pkg = tmp_path / "bundle.zip"
-    pkg.write_bytes(b"fixture")
+    pkg.write_bytes(valid_arm_zip())
     p, fake = _platform({})
     with pytest.raises(PlatformError) as error:
         p.submit_package("agent-x", "asp_x", str(pkg), "ch-1", meta={"trace": [
@@ -222,7 +232,7 @@ def test_invalid_inline_timestamp_stops_before_create(tmp_path, value):
 
 def test_invalid_inline_trace_is_rejected_before_remote_create(tmp_path):
     pkg = tmp_path / "bundle.zip"
-    pkg.write_bytes(b"fixture")
+    pkg.write_bytes(valid_arm_zip())
     p, fake = _platform({})
     with pytest.raises(PlatformError) as error:
         p.submit_package("agent-x", "asp_x", str(pkg), "ch-1",

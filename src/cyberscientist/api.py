@@ -1296,6 +1296,19 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
         from . import shared_artifacts
         return await asyncio.to_thread(shared_artifacts.catalog, challenge_id)
 
+    @app.get('/api/v1/platform-contracts')
+    async def platform_contract_status():
+        from . import platform_contracts
+        return await asyncio.to_thread(platform_contracts.describe)
+
+    @app.post('/api/v1/platform-contracts/refresh')
+    async def platform_contract_refresh():
+        from . import platform_contracts
+        try:
+            return await asyncio.to_thread(platform_contracts.refresh)
+        except (ValueError, OSError) as exc:
+            raise HTTPException(422, detail={'message': observation.strip_secrets(str(exc))[:400]}) from exc
+
     @app.post('/api/v1/tools/shared')
     async def tool_shared(request: Request):
         from . import shared_artifacts

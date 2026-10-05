@@ -1,4 +1,5 @@
 """Known rejected drafts can be repaired by a new explicit submission, without another Attempt."""
+from test_mailbox_platform import valid_arm_zip
 import json
 import asyncio
 from datetime import datetime, timezone, timedelta
@@ -110,7 +111,7 @@ def test_draft_continuation_keeps_authority_and_mailbox_boundaries(monkeypatch, 
 
 @pytest.mark.parametrize('change', [None, 'owner', 'challenge', 'id', 'submitted', 'pending_bundle'])
 def test_native_adapter_checks_owned_unsubmitted_target_before_any_post(tmp_path, change):
-    pkg = tmp_path / 'sealed.zip'; pkg.write_bytes(b'fixture zip bytes')
+    pkg = tmp_path / 'sealed.zip'; pkg.write_bytes(valid_arm_zip())
     draft = {'id': 17, 'authorId': 'owner', 'challengeId': 'old', 'status': 'draft', 'bundleStatus': 'incomplete'}
     if change == 'owner': draft['authorId'] = 'other'
     if change == 'challenge': draft['challengeId'] = 'other'
@@ -124,7 +125,7 @@ def test_native_adapter_checks_owned_unsubmitted_target_before_any_post(tmp_path
         if method == 'GET': return draft
         if path.endswith('/bundle'): return {'bundleStatus': 'complete'}
         return {'accepted': True}
-    platform = BohriumPlaygroundPlatform('https://fixture.invalid'); platform._http = http
+    platform = BohriumPlaygroundPlatform('https://play.bohrium.com/api'); platform._http = http
     if change:
         with pytest.raises(PlatformError, match='未确认'):
             platform.submit_package('fixture', 'fixture-token', str(pkg), 'old', {'resume_attempt_id': '17'})
@@ -195,14 +196,14 @@ async def test_submission_thread_stays_tracked_through_repeated_cancellation():
 
 
 def test_shutdown_after_owned_draft_get_prevents_continuation_post(tmp_path):
-    pkg = tmp_path / 'sealed.zip'; pkg.write_bytes(b'fixture')
+    pkg = tmp_path / 'sealed.zip'; pkg.write_bytes(valid_arm_zip())
     posts = []
     def http(method, path, **kwargs):
         if method == 'POST': posts.append(path)
         if path == '/auth/me': return {'id': 'owner'}
         db.execute("INSERT OR REPLACE INTO system_state(key,value) VALUES('shutdown_requested','1')")
         return {'id': 17, 'authorId': 'owner', 'challengeId': 'old', 'status': 'draft', 'bundleStatus': 'incomplete'}
-    platform = BohriumPlaygroundPlatform('https://fixture.invalid'); platform._http = http
+    platform = BohriumPlaygroundPlatform('https://play.bohrium.com/api'); platform._http = http
     with pytest.raises(PlatformError, match='安全关机'):
         platform.submit_package('fixture', 'fixture-token', str(pkg), 'old', {'resume_attempt_id': '17'})
     assert not posts

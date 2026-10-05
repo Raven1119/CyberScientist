@@ -96,8 +96,8 @@ def test_each_lost_receipt_keeps_attempt_and_reservation(monkeypatch, failed_sta
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, 'w') as archive:
         archive.writestr('arm_manifest.json', json.dumps({
-            'arm_version': '1.1', 'entrypoint': 'src/reproduce.py',
-            'execution': {'log_path': 'results/run.log'},
+            'arm_version': '1.1', 'paper': {'title': 'Synthetic fixture'}, 'entrypoint': 'src/reproduce.py',
+            'execution': {'log_path': 'results/run.log', 'artifacts': [{'id': 'log', 'path': 'results/run.log', 'type': 'data'}]},
             'trace': {'files': ['traces/trace.jsonl']}}))
         archive.writestr('src/reproduce.py', 'print("fixture")\n')
         archive.writestr('results/run.log', 'fixture log\n')
@@ -106,7 +106,7 @@ def test_each_lost_receipt_keeps_attempt_and_reservation(monkeypatch, failed_sta
             {'step_type': 'tool_call', 'title': 'fixture call', 'tool_call_id': 'x'},
             {'step_type': 'tool_result', 'title': 'fixture result', 'tool_call_id': 'x'}]))
     package.write_bytes(buf.getvalue())
-    platform = BohriumPlaygroundPlatform('https://unused.invalid')
+    platform = BohriumPlaygroundPlatform('https://play.bohrium.com/api')
     platform.name='demo'; platform.is_demo=True
     calls=[]
     def http(method, url, **kwargs):

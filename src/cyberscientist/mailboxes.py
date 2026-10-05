@@ -568,6 +568,20 @@ def preflight_submission(run_id: str, trial_id: str | None,
     if data["evidence_class"] == "proxy":
         advisory_warnings.append('数据证据为 proxy，正式评分适用性仍需确认')
     if code is None and is_bundle:
+        run = db.query_one('SELECT mode FROM runs WHERE id=?', (run_id,))
+        if run and run['mode'] == 'connected':
+            from . import platform_contracts
+            from jsonschema.exceptions import SchemaError
+            from referencing.exceptions import Unresolvable, CannotDetermineSpecification
+            try:
+                schema_check = platform_contracts.validate_bundle(sealed)
+            except (ValueError, KeyError, TypeError, OSError, SchemaError, Unresolvable, CannotDetermineSpecification) as exc:
+                code = 'PLATFORM_SCHEMA_UNAVAILABLE'
+                advisory_warnings.append('平台schema缓存不可用：' + str(exc)[:600])
+            else:
+                if not schema_check['valid']:
+                    code = 'PLATFORM_SCHEMA_INVALID'
+                    advisory_warnings.extend(schema_check['errors'])
         import io
         from . import job_preflight
         try:
@@ -868,7 +882,8 @@ def submit_experiment(run_id: str, trial_id: str | None,
                 {"code": check["error_code"], "source_package_sha256": source_digest,
                  "sealed_package_sha256": check["sealed_package_sha256"],
                  "admission": check["admission"]}, trial_id=trial_id)
-        raise MailboxError(check["error_code"], "提交包预检未通过")
+        raise MailboxError(check["error_code"], "提交包预检未通过：" + '; '.join(check.get('advisory_warnings', [])),
+                           warnings=check.get('advisory_warnings', []))
     content = check["sealed_bytes"]
     digest = check["sealed_package_sha256"]
     continuation = None

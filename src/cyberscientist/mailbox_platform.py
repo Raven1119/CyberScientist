@@ -24,6 +24,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
+import jsonschema
+from referencing.exceptions import Unresolvable, CannotDetermineSpecification
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Protocol
@@ -323,6 +325,14 @@ class BohriumPlaygroundPlatform:
                     f"JSON 提交包无法解析: {pkg.name}", no_side_effect=True) from exc
         if results is not None:
             fields["results_json"] = json.dumps(results, ensure_ascii=False)
+        if pkg.suffix.lower() == '.zip':
+            from . import platform_contracts
+            try:
+                checked = platform_contracts.validate_bundle(package_bytes, self.base_url)
+            except (ValueError, KeyError, TypeError, OSError, jsonschema.exceptions.SchemaError, Unresolvable, CannotDetermineSpecification) as exc:
+                raise PlatformError('平台schema缓存不可用，未创建或上传：' + public_feedback(str(exc), secret, self.operator_token), no_side_effect=True) from exc
+            if not checked['valid']:
+                raise PlatformError('平台schema本地校验失败：' + '; '.join(checked['errors']), no_side_effect=True)
         on_stage = meta.get("on_stage") or (lambda *args: None)
         on_feedback = meta.get("on_feedback") or (lambda *args: None)
         resume_id = meta.get("resume_attempt_id")

@@ -1,0 +1,30 @@
+{
+  "protocol": {
+    "source": "https://play.bohrium.com/api/protocol",
+    "http_status": 200,
+    "sha256": "7042a86210915ad516521b052be3c62278c28696716909ca43cb08ea375c8cf4",
+    "fetched_at": "2026-10-05T16:03:14.387359+00:00",
+    "bytes": 21194
+  },
+  "arm_manifest": {
+    "source": "https://play.bohrium.com/api/schemas/arm-manifest/v1",
+    "http_status": 200,
+    "sha256": "4f98b1bb9aa162a67505f528b1782eac5b4304887ca8202c75f95d0898220a9d",
+    "fetched_at": "2026-10-05T16:03:16.607344+00:00",
+    "bytes": 10567
+  },
+  "characterization": {
+    "source": "https://play.bohrium.com/api/schemas/characterization/v1",
+    "http_status": 200,
+    "sha256": "78e838c883999b2e6eaa8295460c4216be1952d0f8f1ea2f709df481ebb7cd7c",
+    "fetched_at": "2026-10-05T16:03:19.104669+00:00",
+    "bytes": 4328
+  },
+  "trace_step": {
+    "source": "https://play.bohrium.com/api/schemas/trace-step/v1",
+    "http_status": 200,
+    "sha256": "7977d831ae4ca9b822aa013c097eee0f1d4eb937174ead7138489be62bd59c7c",
+    "fetched_at": "2026-10-05T16:03:21.310923+00:00",
+    "bytes": 1654
+  }
+}
