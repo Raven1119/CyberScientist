@@ -39,6 +39,12 @@ async def safe_shutdown(controller, timeout: float = 60) -> dict:
             if still_running:
                 errors.append({'error': 'native_process_close_timeout'})
     errors.extend(resource_coordinator.close_unknowns())
+    from . import job_recovery
+    recovery_tasks = list(job_recovery.ACTIVE.values()) + list(job_recovery.ADVICE_ACTIVE.values())
+    if recovery_tasks:
+        _, pending = await asyncio.wait(recovery_tasks, timeout=max(0, deadline - asyncio.get_running_loop().time()))
+        if pending:
+            errors.append({'error': 'job_reconciliation_still_active', 'tasks': len(pending)})
     db.execute("UPDATE curation_requests SET status='failed',error='安全关机中断整理；不会自动重复调用模型',updated_at=? WHERE status='running'", (db.utcnow(),))
     auxiliary = resource_coordinator.auxiliary_tasks()
     if auxiliary or db.query_one('SELECT 1 FROM model_session_leases LIMIT 1'):

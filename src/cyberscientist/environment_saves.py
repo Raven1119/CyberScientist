@@ -10,11 +10,32 @@ from . import compute, config, db, environment_facts
 
 
 def _api(method, path, payload=None):
+    settings = config.load_settings()['bohrium']
+    if settings.get('wenyon_executable') and method == 'POST' and path == 'image/private':
+        from pathlib import Path
+        stage = config.DATA_DIR / 'environment-builds' / hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
+        stage.mkdir(parents=True, exist_ok=True)
+        dockerfile = stage / 'Dockerfile'
+        dockerfile.write_bytes(base64.b64decode(payload['dockerfile'], validate=True))
+        receipt = compute._native(['image', 'build', '--name', payload['name'],
+            '--project-id', str(payload['projectId']), '--desc', payload['desc'],
+            '--dockerfile', str(dockerfile), '-y', '--no-interactive', '-o', 'json'], modern=True)
+        try:
+            envelope = json.loads(receipt['stdout'])
+            response = envelope.get('data', {}).get('response', {})
+        except (ValueError, AttributeError):
+            envelope, response = {}, {}
+        accepted = receipt['ok'] and envelope.get('ok') is True and response.get('id')
+        return {'status': 'received' if accepted else 'unknown' if receipt.get('unknown') else 'failed',
+                'route': '/openapi/v4/sandbox_work/image/build',
+                'body': {'code': 0, 'data': response} if accepted else envelope,
+                'native_receipt': receipt, 'sha256': hashlib.sha256(receipt['stdout'].encode()).hexdigest()}
     key = config.resolve_secret(config.load_settings()['bohrium'].get('access_key_secret_ref', ''))
     if not key:
         raise compute.ComputeError('MISSING_CREDENTIAL', '环境保存缺少 Bohrium 凭据')
     headers = {'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json'}
-    request = urllib.request.Request('https://open.bohrium.com/openapi/v2/' + path,
+    version = 'v4' if settings.get('wenyon_executable') else 'v2'
+    request = urllib.request.Request(compute.client_host_overrides(settings, wenyon=True)['OPENAPI_HOST'] + '/openapi/' + version + '/' + path,
         data=json.dumps(payload).encode() if payload is not None else None, headers=headers, method=method)
     try:
         with urllib.request.urlopen(request, timeout=60) as response:
@@ -23,7 +44,7 @@ def _api(method, path, payload=None):
                 return {'status': 'unknown', 'reason': 'oversized_response'}
             parsed = json.loads(raw)
             from .bohr_proxy import redact_value
-            return {'status': 'received', 'http_status': response.status,
+            return {'status': 'received', 'http_status': response.status, 'route': '/openapi/' + version + '/' + path,
                     'body': redact_value(parsed, [key]), 'sha256': hashlib.sha256(raw).hexdigest()}
     except urllib.error.HTTPError as exc:
         return {'status': 'failed' if 400 <= exc.code < 500 else 'unknown', 'http_status': exc.code}
@@ -73,8 +94,9 @@ def save(run_id, operation_id, dockerfile, recipe, smoke_command):
                      (operation_id, run_id, 'creating', None, request, smoke_command, digest, 'unknown', '{}', db.utcnow(), db.utcnow()))
         db.append_event_tx(conn, run_id, 'controller', 'environment.save_reserved',
                            {'operation_id': operation_id, 'recipe_sha256': digest, 'cost_status': 'unknown'})
+    name = 'csenv' + hashlib.sha256(operation_id.encode()).hexdigest()[:24] if config.load_settings()['bohrium'].get('wenyon_executable') else 'cs-env-' + operation_id
     try:
-        response = _api('POST', 'image/private', {'name': 'cs-env-' + operation_id,
+        response = _api('POST', 'image/private', {'name': name,
             'projectId': project, 'device': 'container', 'desc': 'Public software environment; ' + digest,
             'buildType': 1, 'dockerfile': base64.b64encode(effective.encode()).decode()})
     except compute.ComputeError as exc:
@@ -84,6 +106,7 @@ def save(run_id, operation_id, dockerfile, recipe, smoke_command):
     body = response.get('body') or {}
     data = body.get('data', body) if isinstance(body, dict) else {}
     resource_id = (data.get('id') or data.get('imageId')) if isinstance(body, dict) and isinstance(data, dict) and body.get('code') == 0 else None
+    resource_id = str(resource_id) if resource_id else None
     if isinstance(body, dict) and body.get('code') not in (None, 0):
         resource_id = None
         response['status'] = 'failed'
@@ -105,7 +128,8 @@ def reconcile(operation_id):
         listing = _api('GET', 'image/private?device=container&type=private&page=1&pageSize=100')
         body = listing.get('body') or {}
         data = body.get('data', body) if isinstance(body, dict) else {}
-        matches = [item for item in data.get('items', []) if item.get('name') == 'cs-env-' + operation_id] if isinstance(data, dict) else []
+        names = {'cs-env-' + operation_id, 'csenv' + hashlib.sha256(operation_id.encode()).hexdigest()[:24]}
+        matches = [item for item in data.get('items', []) if item.get('name', '').removesuffix(':latest') in names] if isinstance(data, dict) else []
         if len(matches) != 1 or not matches[0].get('id'):
             return {'status': 'unknown', 'automatic_resend': False}
         db.execute('UPDATE environment_saves SET resource_id=?,status=\'building\' WHERE operation_id=?', (str(matches[0]['id']), operation_id))
@@ -115,7 +139,8 @@ def reconcile(operation_id):
     data = body.get('data', body) if isinstance(body, dict) else {}
     # Numeric undocumented build states are retained as observations, not
     # promoted to a smoke pass. Only the documented available state verifies.
-    verified = isinstance(body, dict) and body.get('code') == 0 and isinstance(data, dict) and data.get('status') == 'available'
+    verified = isinstance(body, dict) and body.get('code') == 0 and isinstance(data, dict) and (
+        data.get('status') == 'available' or response.get('route', '').startswith('/openapi/v4/') and data.get('status') == 2)
     status = 'verified' if verified else row['status']
     db.execute('UPDATE environment_saves SET status=?,receipt_json=?,updated_at=? WHERE operation_id=?',
                (status, json.dumps(response), db.utcnow(), operation_id))

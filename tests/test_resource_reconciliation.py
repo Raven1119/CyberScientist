@@ -63,7 +63,7 @@ def test_partial_page_failure_preserves_exact_match_and_does_not_release_absence
     assert by_id['uncertain-reservation']['status'] == 'Finished'
     assert by_id['unresolved']['status'] == 'unknown'
     assert by_id['unresolved']['platform_job_id'] is None
-    assert calls == [1, 2]
+    assert calls == [1, 2, 2, 2]  # retry a failed page; retain the original partial-read assertions
     billing = by_id['uncertain-reservation']['receipt']['billing']
     assert billing['native_amount'] == '0.12' and billing['currency'] is None
     assert compute.costs(rid)['total_amount'] is None

@@ -244,8 +244,9 @@ def register_job(run_id: str, trial_id: str, operation_id: str, execution_operat
             if not captured or captured['sha256'] != _hash(raw) or len(raw) > 2_000_000:
                 _error('SCORE_RECEIPT_MISMATCH', '系统下载文件哈希不符')
             return raw
-        archive_path = destination / str(job['platform_job_id']) / 'out.zip'
-        captured = next((item for item in files if item['path'] == str(job['platform_job_id']) + '/out.zip'), None)
+        native_id = job['bohr_job_id'] if job['bohr_job_id'] is not None else job['platform_job_id']
+        archive_path = destination / str(native_id) / 'out.zip'
+        captured = next((item for item in files if item['path'] == str(native_id) + '/out.zip'), None)
         if not captured or not archive_path.is_file() or archive_path.is_symlink() or captured['sha256'] != compute._file_sha256(archive_path):
             _error('SCORE_RECEIPT_MISMATCH', '系统下载 ZIP 哈希不符')
         with zipfile.ZipFile(archive_path) as archive:

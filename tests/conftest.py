@@ -101,6 +101,8 @@ async def drain_run_maintenance(isolated_workspace):
     import asyncio
     from cyberscientist import maintenance, auto_harvest
     db.execute("INSERT OR REPLACE INTO system_state(key,value) VALUES('shutdown_requested','1')")
+    from cyberscientist import job_recovery
+    await job_recovery.drain()
     await auto_harvest.drain()
     while pending := [task for task in maintenance.ACTIVE_TASKS if not task.done()]:
         for task in pending:

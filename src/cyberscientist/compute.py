@@ -1,7 +1,9 @@
 """Run-scoped Bohrium operations. Only this backend child receives account keys.
 
-Reservations are committed before a create call; uncertain receipts keep both
-quota and concurrency occupied. No cloud mutation is retried automatically.
+Reservations precede create calls. Modern uncertain creates release concurrency
+and reconcile by exact name. A tracked worker may replay frozen input under a
+new identity only after a complete successful observation proves absence.
+Historical uncertain operations are never replayed automatically.
 """
 from __future__ import annotations
 
@@ -13,6 +15,7 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import time
 import zipfile
 from datetime import datetime, timezone
 
@@ -145,6 +148,9 @@ def _native(args: list[str], *, timeout: int = 90, modern: bool = False) -> dict
     env.update(BOHR_ACCESS_KEY=key, ACCESS_KEY=key,
                PROJECT_ID=str(settings.get('project_id', '')))
     env.update(client_host_overrides(settings, wenyon=wenyon))
+    if wenyon:
+        env['BOHR_API_URL'] = env['OPENAPI_HOST']
+        env['BOHR_OPENAPI_HOST'] = env['OPENAPI_HOST']
     try:
         result = subprocess.run([executable, *args], env=env, capture_output=True,
                                 text=True, errors='replace', timeout=timeout)
@@ -153,6 +159,12 @@ def _native(args: list[str], *, timeout: int = 90, modern: bool = False) -> dict
         success = result.returncode == 0 and not re.search(
             r'(?im)^\s*(error:|unknown (?:shorthand )?flag|panic:)|json: cannot unmarshal object into Go struct field RespErr\.error of type string',
             out + '\n' + err)
+        try:
+            envelope = json.loads(out)
+            if isinstance(envelope, dict) and envelope.get('ok') is False:
+                success = False
+        except ValueError:
+            pass
         # The CLI can finish while its HTTP request has no known outcome.
         # In particular its COMMAND_FAILED/http=400 envelope is also used for
         # a data-plane deadline; that is not a confirmed remote rejection.
@@ -198,6 +210,9 @@ def list_jobs(run_id: str) -> dict:
 
 
 def _authorized(conn, run_id):
+    barrier = conn.execute("SELECT value FROM system_state WHERE key='shutdown_requested'").fetchone()
+    if barrier and barrier['value'] == '1':
+        raise ComputeError('SHUTDOWN_REQUESTED', '安全关机已关闭新的 Job 投递')
     run = conn.execute('SELECT * FROM runs WHERE id=?', (run_id,)).fetchone()
     if not run or run['phase'] != 'running' or run['gate'] != 'open' or not run['current_trial_id']:
         raise ComputeError('RUN_NOT_RUNNING', 'Run 未运行或研究门禁关闭；禁止新增算力')
@@ -225,6 +240,8 @@ def occupies_slot(row, now=None) -> bool:
     if row['status'] in TERMINAL | {'not_started'}:
         return False
     if row['status'] == 'unknown':
+        if 'concurrency_released' in row.keys() and row['concurrency_released']:
+            return False
         now = datetime.now(timezone.utc) if now is None else now
         first = row['unknown_since'] or row['created_at']
         return (now - datetime.fromisoformat(first)).total_seconds() < 600
@@ -245,11 +262,19 @@ def release_unknown_slots() -> list[str]:
 
 
 def submit(run_id: str, operation_id: str, spec: dict, input_directory: str,
-           preflight: dict | None = None) -> dict:
+           preflight: dict | None = None, *, _retry_of: str | None = None) -> dict:
     if not isinstance(operation_id, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,100}', operation_id):
         raise ComputeError('INVALID_OPERATION', '需要稳定且安全的 operation_id')
     run = _run(run_id)
-    source = _path(run, input_directory)
+    if _retry_of:
+        parent = db.query_one('SELECT * FROM compute_jobs WHERE operation_id=? AND run_id=?', (_retry_of, run_id))
+        source = Path(input_directory).resolve()
+        if (not parent or parent['trial_id'] != run['current_trial_id']
+                or parent['retry_operation_id'] != operation_id
+                or source != (config.DATA_DIR / 'job-inputs' / _retry_of / 'input').resolve()):
+            raise ComputeError('INVALID_RETRY', '自动重交只能使用本 Trial 原预约的冻结输入')
+    else:
+        source = _path(run, input_directory)
     if not source.is_dir():
         raise ComputeError('INVALID_PATH', '输入目录不存在')
     from . import datasets
@@ -262,6 +287,11 @@ def submit(run_id: str, operation_id: str, spec: dict, input_directory: str,
                'nnode', 'result_path', 'dataset_path'}
     if not isinstance(spec, dict) or set(spec)-allowed:
         raise ComputeError('INVALID_SPEC', 'Job 配置含未支持字段')
+    result_path = spec.get('result_path')
+    if result_path is not None and (not isinstance(result_path, str) or not re.fullmatch(r'/(personal|share)(/[^\x00\r\n]*)?', result_path)):
+        raise ComputeError('INVALID_RESULT_PATH', 'Job 自动下载路径必须位于 /personal 或 /share；/data 不是结果盘路径')
+    if re.search(r'<(?:base64plan|[A-Z_]*PLACEHOLDER)>', str(spec.get('command', '')), re.I):
+        raise ComputeError('INVALID_SPEC', 'Job 命令仍含未替换占位符，请使用准备工具返回的完整命令')
     if preflight is not None and not isinstance(preflight, dict):
         raise ComputeError('INVALID_PREFLIGHT', 'preflight 必须是对象')
     key = config.resolve_secret(config.load_settings()['bohrium'].get('access_key_secret_ref', ''))
@@ -282,6 +312,14 @@ def submit(run_id: str, operation_id: str, spec: dict, input_directory: str,
             relative = str(path.relative_to(source))
             manifest.append((relative, sha))
             frozen_modes[relative] = path.stat().st_mode & 0o777
+    if _retry_of:
+        original = _verify_frozen_retry(dict(parent) | {'spec': json.loads(parent['spec_json'])}, source)
+        if manifest != [tuple(entry) for entry in original['files']] or frozen_modes != original['file_modes']:
+            raise ComputeError('FROZEN_INPUT_CHANGED', '原冻结输入或权限在重交准备期间改变')
+        # The original manifest supplies copy expectations; a fresh scan must
+        # never silently bless changed scientific bytes for an automatic retry.
+        manifest = [tuple(entry) for entry in original['files']]
+        frozen_modes = original['file_modes']
     if total > 256 * 1024**2:
         from . import runtime_environments
         details = {'input_bytes': total, 'threshold_bytes': 256 * 1024**2,
@@ -324,6 +362,13 @@ def submit(run_id: str, operation_id: str, spec: dict, input_directory: str,
                 raise ComputeError('CONFLICT', '操作 ID 已绑定其他请求，不能覆盖或重发')
             return dict(old) | {'deduplicated': True}
         run, limits, remaining = _authorized(conn, run_id)
+        if _retry_of:
+            parent_now = conn.execute('SELECT * FROM compute_jobs WHERE operation_id=?', (_retry_of,)).fetchone()
+            if (not parent_now or parent_now['run_id'] != run_id
+                    or parent_now['status'] != 'not_started' or parent_now['platform_job_id'] is not None
+                    or parent_now['trial_id'] != run['current_trial_id']
+                    or parent_now['retry_operation_id'] != operation_id):
+                raise ComputeError('INVALID_RETRY', '原 Job 已接上或重交预约已改变')
         from . import resource_coordinator
         resource_coordinator.require_compute_slot_tx(conn, 'job')
         machine = re.fullmatch(r'c(\d+)_m(\d+)_cpu', str(spec.get('machine_type', '')))
@@ -350,6 +395,8 @@ def submit(run_id: str, operation_id: str, spec: dict, input_directory: str,
                      " VALUES(?,?,?,?,?,?,'submitting',?,?,?,?)", (operation_id, run_id, run['current_trial_id'], digest,
                      _json(effective), str(source), now, now, _json(data_refs),
                      'probe' if options.get('purpose') == 'probe' else 'compute'))
+        if _retry_of:
+            conn.execute('UPDATE compute_jobs SET retry_of=? WHERE operation_id=?', (_retry_of, operation_id))
         db.append_event_tx(conn, run_id, 'controller', 'job.reserved',
                            {'operation_id': operation_id, 'job_name': effective['job_name'],
                             'data_refs': data_refs}, trial_id=run['current_trial_id'])
@@ -370,6 +417,8 @@ def submit(run_id: str, operation_id: str, spec: dict, input_directory: str,
             overlap = b''
             with os.fdopen(os.open(src, os.O_RDONLY | os.O_NOFOLLOW), 'rb') as stream, \
                     dest.open('xb') as output:
+                if os.fstat(stream.fileno()).st_mode & 0o777 != frozen_modes[rel]:
+                    raise ValueError('冻结输入时文件权限改变')
                 for data in iter(lambda: stream.read(1024 * 1024), b''):
                     file_digest.update(data)
                     if secret and secret in overlap + data:
@@ -390,25 +439,52 @@ def submit(run_id: str, operation_id: str, spec: dict, input_directory: str,
         db.execute('UPDATE compute_jobs SET input_bytes=? WHERE operation_id=?', (total, operation_id))
         (staging / 'job.json').write_text(_json(effective))
         (staging / 'manifest.json').write_text(_json({'request_hash': digest, 'files': manifest, 'file_modes': frozen_modes}))
+        db.execute('UPDATE compute_jobs SET frozen_manifest_sha256=? WHERE operation_id=?',
+                   (_file_sha256(staging / 'manifest.json'), operation_id))
         # Pause may have arrived while copying; never dispatch from a stopped Run.
         current_run = _run(run_id)
-        if current_run['phase'] != 'running' or current_run['gate'] != 'open' or current_run['current_trial_id'] != run['current_trial_id']:
+        from . import power
+        if power.shutdown_requested() or current_run['phase'] != 'running' or current_run['gate'] != 'open' or current_run['current_trial_id'] != run['current_trial_id']:
             raise ValueError('冻结输入期间 Run 已暂停')
+        if _retry_of:
+            parent_now = db.query_one('SELECT status,platform_job_id,retry_operation_id FROM compute_jobs WHERE operation_id=?', (_retry_of,))
+            if (not parent_now or parent_now['status'] != 'not_started'
+                    or parent_now['platform_job_id'] is not None or parent_now['retry_operation_id'] != operation_id):
+                raise ValueError('冻结输入期间原 Job 已接上，重交取消')
     except (OSError, ValueError, TypeError) as exc:
         receipt = {'ok': False, 'not_started': True, 'stderr': str(exc)[:500]}
     else:
+        modern = False
         try:
-            receipt = _native(['job', 'submit', '-i', str(staging / 'job.json'), '-p', str(staging / 'input')],
-                              timeout=_submit_timeout(total))
+            settings = config.load_settings()['bohrium']
+            modern = bool(settings.get('wenyon_executable'))
+            args = ['job', 'submit', '-i', str(staging / 'job.json')]
+            args += (['--input_directory', str(staging / 'input'), '-y', '--no-interactive', '-o', 'json']
+                     if modern else ['-p', str(staging / 'input')])
+            started = time.monotonic()
+            receipt = _native(args, timeout=_submit_timeout(total), **({'modern': True} if modern else {}))
+            receipt['transport'] = 'bohr_v4' if modern else 'legacy_job'
+            receipt['dispatch_seconds'] = round(time.monotonic() - started, 3)
         except Exception as exc:
             # A gateway/client error after dispatch cannot establish that no
             # remote Job exists. Keep the reservation and expose uncertainty.
             receipt = {'ok': False, 'unknown': True, 'exit_code': None,
-                       'stdout': '', 'stderr': 'Bohrium 提交未确认: ' + type(exc).__name__}
+                       'stdout': '', 'stderr': 'Bohrium 提交未确认: ' + type(exc).__name__,
+                       'transport': 'bohr_v4' if modern else 'legacy_job'}
         if _local_project_parse_failure(receipt):
             receipt['not_started'] = True
     matches = re.findall(r'\bJobId:\s*(\d+)', receipt.get('stdout', ''), re.I)
     job_id = int(matches[0]) if len(set(matches)) == 1 else None
+    bohr_id = None
+    if receipt.get('transport') == 'bohr_v4':
+        try:
+            envelope = json.loads(receipt['stdout'])
+            data = envelope.get('data') or {}
+            if receipt['ok'] and not receipt.get('truncated') and envelope.get('ok') is True and type(data.get('jobId')) is int:
+                job_id = data['jobId']
+                bohr_id = data.get('bohrJobId') if type(data.get('bohrJobId')) is int else None
+        except (ValueError, TypeError, AttributeError):
+            pass
     status = 'accepted' if job_id else ('not_started' if receipt.get('not_started') else 'unknown')
     with db.transaction() as conn:
         current = conn.execute('SELECT * FROM compute_jobs WHERE operation_id=?', (operation_id,)).fetchone()
@@ -416,10 +492,18 @@ def submit(run_id: str, operation_id: str, spec: dict, input_directory: str,
             job_id, status = current['platform_job_id'], current['status']
         conn.execute('UPDATE compute_jobs SET platform_job_id=?,status=?,receipt_json=?,updated_at=? WHERE operation_id=?',
                      (job_id, status, _json(receipt), db.utcnow(), operation_id))
+        if bohr_id is not None:
+            conn.execute('UPDATE compute_jobs SET bohr_job_id=? WHERE operation_id=?', (bohr_id, operation_id))
         db.append_event_tx(conn, run_id, 'controller', 'job.' + status,
                            {'operation_id': operation_id, 'platform_job_id': job_id, 'status': status, 'receipt': receipt}, trial_id=run['current_trial_id'])
     if status == 'unknown':
         db.execute('UPDATE compute_jobs SET unknown_since=COALESCE(unknown_since,?) WHERE operation_id=?', (db.utcnow(), operation_id))
+        if receipt.get('transport') == 'bohr_v4':
+            db.execute('UPDATE compute_jobs SET concurrency_released=1 WHERE operation_id=?', (operation_id,))
+            db.append_event(run_id, 'controller', 'job.reconciliation_scheduled',
+                            {'operation_id': operation_id, 'within_seconds': 120,
+                             'concurrency_released': True}, trial_id=run['current_trial_id'])
+            _maybe_fallback_advice(run_id, run['current_trial_id'])
     return {'operation_id': operation_id, 'platform_job_id': job_id, 'status': status, 'receipt': receipt}
 
 
@@ -484,10 +568,12 @@ def _job_page(page: int) -> dict:
     key = config.resolve_secret(cfg.get('access_key_secret_ref', ''))
     if not key:
         raise ComputeError('MISSING_CREDENTIAL', 'Job 只读对账缺少后端密钥')
-    host = client_host_overrides(cfg, wenyon=False)['OPENAPI_HOST']
+    modern = bool(cfg.get('wenyon_executable'))
+    host = client_host_overrides(cfg, wenyon=modern)['OPENAPI_HOST']
     try:
-        response = httpx.get(host + '/openapi/v1/job/list',
-            params={'accessKey': key, 'groupId': -1, 'page': page, 'pageSize': 100}, timeout=15)
+        response = httpx.get(host + ('/openapi/v4/job/list' if modern else '/openapi/v1/job/list'),
+            params={'groupId': -1, 'page': page, 'pageSize': 100, **({} if modern else {'accessKey': key})},
+            **({'headers': {'Authorization': 'Bearer ' + key}} if modern else {}), timeout=15)
         response.raise_for_status()
         value = response.json()
     except Exception as exc:
@@ -495,6 +581,23 @@ def _job_page(page: int) -> dict:
     if not isinstance(value, dict) or value.get('code') != 0:
         raise ComputeError('JOB_OBSERVATION_UNKNOWN', 'Job API 未确认成功')
     data = value.get('data')
+    if modern:
+        pagination = data.get('pagination', {}) if isinstance(data, dict) else {}
+        total, size = pagination.get('total'), pagination.get('page_size')
+        if (not isinstance(data, dict) or not isinstance(data.get('items'), list)
+                or any(not isinstance(item, dict) for item in data['items'])
+                or pagination.get('page') != page or type(total) is not int or total < 0
+                or type(size) is not int or size < 1):
+            raise ComputeError('JOB_OBSERVATION_UNKNOWN', '新版 Job 分页结构未确认')
+        fields = ('id', 'bohrId', 'jobName', 'status', 'webStatus', 'cost', 'spendTime', 'createTime', 'errorInfo')
+        expected = min(size, max(0, total - (page - 1) * size))
+        ids = [item.get('id') for item in data['items']]
+        if (len(data['items']) != expected or any(type(jid) is not int for jid in ids)
+                or len(set(ids)) != len(ids)):
+            raise ComputeError('JOB_OBSERVATION_UNKNOWN', '新版 Job 分页条数或身份与总数矛盾')
+        return {'items': [{field: item[field] for field in fields if field in item} for item in data['items']],
+                'page': page, 'total_pages': max(1, math.ceil(total / size)), 'total': total, 'page_size': size,
+                'api_route': '/openapi/v4/job/list'}
     if (not isinstance(data, dict) or not isinstance(data.get('items'), list)
             or any(not isinstance(item, dict) for item in data['items'])
             or data.get('page') != page or type(data.get('totalPage')) is not int):
@@ -503,27 +606,56 @@ def _job_page(page: int) -> dict:
     fields = ('id', 'jobName', 'status', 'cost', 'spendTime', 'createTime')
     return {'items': [{field: item[field] for field in fields if field in item}
                       for item in data['items']],
-            'page': page, 'total_pages': data['totalPage']}
+            'page': page, 'total_pages': data['totalPage'], 'api_route': '/openapi/v1/job/list'}
 
 
-def _read_job_pages(rows: list[dict], max_pages: int = 3) -> tuple[list[dict], dict]:
-    remote, pages, failure = [], 0, None
+def _read_job_pages(rows: list[dict], max_pages: int = 100) -> tuple[list[dict], dict]:
+    remote, pages, failure, complete = [], 0, None, False
+    expected_total, seen_ids, api_route = None, set(), None
+    deadline = time.monotonic() + 110
     wanted = {row['spec']['job_name'] for row in rows}
     for page in range(1, max_pages + 1):
-        try:
-            result = _job_page(page)
-        except ComputeError as exc:
-            failure = exc.code
+        result = None
+        for attempt in range(3):
+            try:
+                result = _job_page(page)
+                break
+            except ComputeError as exc:
+                failure = exc.code
+                if attempt < 2 and time.monotonic() < deadline:
+                    time.sleep(2 ** attempt)
+                else:
+                    break
+        if result is None or time.monotonic() >= deadline:
             break
+        failure = None
+        if result.get('api_route'):
+            if api_route and api_route != result['api_route']:
+                failure = 'JOB_OBSERVATION_ROUTE_CHANGED'
+                break
+            api_route = result['api_route']
+        if 'total' in result:
+            if expected_total is not None and result['total'] != expected_total:
+                failure = 'JOB_PAGINATION_CHANGED'
+                break
+            expected_total = result['total']
+            ids = [item.get('id') for item in result['items']]
+            if any(jid in seen_ids for jid in ids) or len(set(ids)) != len(ids):
+                failure = 'JOB_PAGINATION_DUPLICATE'
+                break
+            seen_ids.update(ids)
         pages += 1
         remote.extend(result['items'])
         # A later failed page cannot erase facts already received on earlier pages.
-        if wanted <= {item.get('jobName') for item in remote} or page >= result['total_pages']:
+        complete = page >= result['total_pages'] and expected_total is not None and len(seen_ids) == expected_total
+        exhausted = page >= result['total_pages']
+        if wanted <= {item.get('jobName') for item in remote} or exhausted:
             break
     return remote, {'source': 'job_list_api', 'pages_received': pages,
+                    'api_route': api_route,
                     'max_pages': max_pages, 'error_code': failure,
-                    'status': 'partial' if failure or pages == max_pages else 'received',
-                    'absence_does_not_prove_not_created': True}
+                    'status': 'received' if complete or wanted <= {j.get('jobName') for j in remote} else 'partial',
+                    'complete': complete, 'absence_does_not_prove_not_created': not complete}
 
 
 def reconciliation_runs(*, startup: bool = False) -> list[str]:
@@ -532,10 +664,12 @@ def reconciliation_runs(*, startup: bool = False) -> list[str]:
         " AND (r.phase NOT IN ('finished','failed','cancelled') OR j.platform_job_id IS NOT NULL)")
     return [row['run_id'] for row in db.query(
         'SELECT DISTINCT j.run_id FROM compute_jobs j JOIN runs r ON r.id=j.run_id'
-        " WHERE j.status NOT IN ('Finished','Failed','Stopped','not_started')" + active)]
+        " WHERE (j.status NOT IN ('Finished','Failed','Stopped','not_started')"
+        " OR (j.retry_operation_id IS NOT NULL AND j.retry_error IS NULL AND NOT EXISTS"
+        " (SELECT 1 FROM compute_jobs child WHERE child.operation_id=j.retry_operation_id)))" + active)]
 
 
-def reconcile(run_id: str) -> dict:
+def reconcile(run_id: str, *, allow_retry: bool = False) -> dict:
     rows = list_jobs(run_id)['items']
     if not rows:
         return list_jobs(run_id)
@@ -543,6 +677,7 @@ def reconcile(run_id: str) -> dict:
     use_api = bool(config.resolve_secret(cfg.get('access_key_secret_ref', '')))
     if use_api:
         remote, metadata = _read_job_pages(rows)
+        metadata['api_route'] = metadata.get('api_route') or ('/openapi/v4/job/list' if cfg.get('wenyon_executable') else '/openapi/v1/job/list')
         receipt = {'ok': bool(metadata['pages_received']), 'stdout': _json(remote),
                    'observation': metadata}
     else:
@@ -557,22 +692,24 @@ def reconcile(run_id: str) -> dict:
         return list_jobs(run_id) | {'observation': 'unknown'}
     from . import environment_facts
     bohrium_cfg=config.load_settings()['bohrium']
-    host = client_host_overrides(bohrium_cfg,wenyon=False)['OPENAPI_HOST']
-    host_fact = {'client':'legacy_job','host':host}
+    modern = bool(bohrium_cfg.get('wenyon_executable'))
+    client = 'bohr_v4' if modern else 'legacy_job'
+    host = client_host_overrides(bohrium_cfg,wenyon=modern)['OPENAPI_HOST']
+    host_fact = {'client':client,'host':host}
     try:
         if config.resolve_secret(bohrium_cfg.get('access_key_secret_ref','')) and \
-                environment_facts.needs_refresh('bohrium:legacy_job:host',host_fact):
+                environment_facts.needs_refresh('bohrium:'+client+':host',host_fact):
             event=db.append_event(run_id,'controller','environment.host_observed',
-                                  {'client':'legacy_job','host':host,
+                                  {'client':client,'host':host,
                                    'receipt_sha256':hashlib.sha256(receipt['stdout'].encode()).hexdigest()})
-            environment_facts.record('bohrium:legacy_job:host','Bohrium Job 客户端主机',host_fact,event)
+            environment_facts.record('bohrium:'+client+':host','Bohrium Job 客户端主机',host_fact,event)
     except Exception:
         log.exception('Could not record Job host environment fact')
-    return _settle_observations(run_id, rows, remote, use_api, receipt.get('observation'))
+    return _settle_observations(run_id, rows, remote, use_api, receipt.get('observation'), allow_retry=allow_retry)
 
 
 def _settle_observations(run_id: str, rows: list[dict], remote: list[dict],
-                         use_api: bool, observation: dict | None) -> dict:
+                         use_api: bool, observation: dict | None, *, allow_retry: bool = False) -> dict:
     """Persist only owned exact matches from an already received read-only page."""
     for row in rows:
         name = row['spec']['job_name']
@@ -583,13 +720,20 @@ def _settle_observations(run_id: str, rows: list[dict], remote: list[dict],
                             {'operation_id': row['operation_id'], 'matches': len(matches),
                              'observation': observation, 'status': row['status']},
                             trial_id=row['trial_id'])
+            if not matches and allow_retry:
+                if (row.get('retry_operation_id') and row['status'] == 'not_started'
+                        and observation and observation.get('complete') is True and not observation.get('error_code')):
+                    _dispatch_retry(run_id, row, row['retry_operation_id'])
+                else:
+                    _retry_confirmed_absent(run_id, row, observation)
             continue
         found = dict(matches[0])
         # Old API codes: 2 was matched to Finished receipts; -1 was matched
         # to an owned Failed describe receipt. The CLI's separate numeric
         # status field is not the list API code. Other codes stay unknown.
         if use_api and type(found.get('status')) is int:
-            found['status'] = {2: 'Finished', -1: 'Failed'}.get(found['status'], found['status'])
+            states = {0: 'Pending', 1: 'Running', 3: 'Scheduling', 2: 'Finished', -1: 'Failed'} if observation and observation.get('api_route') == '/openapi/v4/job/list' else {2: 'Finished', -1: 'Failed'}
+            found['status'] = states.get(found['status'], found['status'])
         if found.get('status') not in TERMINAL | {'Running', 'Pending', 'Scheduling'}:
             continue  # Absence never releases a reservation or authorizes a retry.
         if type(found.get('id')) is not int:
@@ -602,6 +746,8 @@ def _settle_observations(run_id: str, rows: list[dict], remote: list[dict],
                 status = current['status']
             conn.execute('UPDATE compute_jobs SET platform_job_id=?,status=?,observed_at=?,updated_at=? WHERE operation_id=?',
                          (found['id'], status, db.utcnow(), db.utcnow(), row['operation_id']))
+            if type(found.get('bohrId')) is int:
+                conn.execute('UPDATE compute_jobs SET bohr_job_id=? WHERE operation_id=?', (found['bohrId'], row['operation_id']))
             if use_api:
                 from decimal import Decimal, InvalidOperation
                 try:
@@ -612,7 +758,7 @@ def _settle_observations(run_id: str, rows: list[dict], remote: list[dict],
                     amount = None
                 billing = {'native_amount': str(amount) if amount is not None else None,
                            'currency': None, 'status': 'platform_reported' if amount is not None else 'unknown',
-                           'source': '/openapi/v1/job/list:cost', 'observed_at': db.utcnow(),
+                           'source': (observation or {}).get('api_route', 'unknown') + ':cost', 'observed_at': db.utcnow(),
                            'spend_seconds': found.get('spendTime')}
                 stored = json.loads(current['receipt_json'] or '{}')
                 stored['billing'] = billing
@@ -626,6 +772,99 @@ def _settle_observations(run_id: str, rows: list[dict], remote: list[dict],
                                    {'operation_id': row['operation_id'], 'platform_job_id': found['id'],
                                     'status': status, 'remote': found}, trial_id=row['trial_id'])
     return list_jobs(run_id) | {'observation': 'received'}
+
+
+def _retry_confirmed_absent(run_id: str, row: dict, observation: dict | None) -> None:
+    """New v4 creates only: full successful observation, active grant, frozen bytes.
+
+    Historical unknowns are never replayed. The parent holds the retry identity
+    before dispatch so concurrent polls and restarts cannot invent another one.
+    """
+    receipt = row.get('receipt', {})
+    if (row['status'] != 'unknown' or row['platform_job_id'] is not None
+            or receipt.get('transport') != 'bohr_v4' or not observation
+            or observation.get('complete') is not True or observation.get('error_code')):
+        return
+    age = (datetime.now(timezone.utc) - datetime.fromisoformat(row['created_at'])).total_seconds()
+    if age < 60:
+        return
+    import uuid
+    with db.transaction() as conn:
+        current = conn.execute('SELECT * FROM compute_jobs WHERE operation_id=?', (row['operation_id'],)).fetchone()
+        run = conn.execute('SELECT * FROM runs WHERE id=?', (run_id,)).fetchone()
+        if (not run or run['phase'] != 'running' or run['gate'] != 'open'
+                or run['current_trial_id'] != row['trial_id'] or current['status'] != 'unknown'
+                or current['platform_job_id'] is not None or current['retry_operation_id']):
+            return
+        identifier = 'retry-' + uuid.uuid4().hex
+        conn.execute("UPDATE compute_jobs SET status='not_started',retry_operation_id=?,retry_at=? WHERE operation_id=?",
+                     (identifier, db.utcnow(), row['operation_id']))
+        db.append_event_tx(conn, run_id, 'controller', 'job.absent_confirmed',
+                           {'operation_id': row['operation_id'], 'retry_operation_id': identifier,
+                            'observation': observation, 'frozen_input_only': True}, trial_id=row['trial_id'])
+    _dispatch_retry(run_id, row, identifier)
+
+
+def _maybe_fallback_advice(run_id: str, trial_id: str) -> None:
+    failures = []
+    for row in reversed(list_jobs(run_id)['items']):
+        if (row['receipt'].get('transport') != 'bohr_v4'
+                or row['status'] not in ('unknown', 'not_started')
+                or row['status'] == 'not_started' and not row.get('retry_operation_id')):
+            break
+        failures.append(row['operation_id'])
+    if len(failures) >= 2:
+        db.append_event(run_id, 'controller', 'job.sandbox_fallback_advice',
+                        {'consecutive_create_failures': len(failures), 'operations': failures,
+                         'advice': 'Job 创建持续失败；可在授权沙箱执行同一计算，由执行器选择。',
+                         'automatic_sandbox_creation': False}, trial_id=trial_id)
+
+
+def _dispatch_retry(run_id: str, row: dict, identifier: str) -> None:
+    if row.get('retry_error'):
+        return
+    if db.query_one('SELECT 1 FROM compute_jobs WHERE operation_id=?', (identifier,)):
+        return
+    frozen = config.DATA_DIR / 'job-inputs' / row['operation_id'] / 'input'
+    try:
+        _verify_frozen_retry(row, frozen)
+        run = _run(run_id)
+        auth = db.query_one('SELECT * FROM authorizations WHERE id=?', (run['authorization_id'],))
+        from . import run_clock
+        seconds = run_clock.remaining(run, auth) if auth else 0
+        effective = dict(row['spec'], max_run_time=min(row['spec']['max_run_time'], math.floor(seconds / 60)))
+        submit(run_id, identifier, effective, str(frozen), _retry_of=row['operation_id'])
+    except ComputeError as exc:
+        if exc.code == 'FROZEN_INPUT_CHANGED':
+            db.execute('UPDATE compute_jobs SET retry_error=? WHERE operation_id=?', (exc.code, row['operation_id']))
+        db.append_event(run_id, 'controller', 'job.retry_blocked',
+                        {'operation_id': identifier, 'code': exc.code, 'message': str(exc)}, trial_id=row['trial_id'])
+
+
+def _verify_frozen_retry(row: dict, frozen: Path) -> dict:
+    """Bind replay to the original backend-saved manifest and actual file modes."""
+    manifest_path = frozen.parent / 'manifest.json'
+    try:
+        manifest_bytes = manifest_path.read_bytes()
+        if (frozen.is_symlink() or manifest_path.is_symlink() or not row.get('frozen_manifest_sha256')
+                or hashlib.sha256(manifest_bytes).hexdigest() != row['frozen_manifest_sha256']):
+            raise ValueError()
+        manifest = json.loads(manifest_bytes)
+        if manifest['request_hash'] != row['request_hash']:
+            raise ValueError()
+        paths = {path.relative_to(frozen).as_posix(): path for path in frozen.rglob('*') if path.is_file()}
+        if set(paths) != {name for name, digest in manifest['files']}:
+            raise ValueError()
+        for name, digest in manifest['files']:
+            path = paths[name]
+            if (path.is_symlink() or not path.resolve().is_relative_to(frozen.resolve())
+                    or _file_sha256(path) != digest or path.stat().st_mode & 0o777 != manifest['file_modes'][name]):
+                raise ValueError()
+        if json.loads((frozen.parent / 'job.json').read_text()) != row['spec']:
+            raise ValueError()
+        return manifest
+    except (OSError, ValueError, KeyError, TypeError):
+        raise ComputeError('FROZEN_INPUT_CHANGED', '原冻结输入、权限或请求清单已改变，自动重交被拒绝') from None
 
 
 def stop(run_id: str, operation_id: str) -> dict:
@@ -643,7 +882,10 @@ def stop(run_id: str, operation_id: str) -> dict:
         if not changed:
             return {'status': 'stopping', 'deduplicated': True}
         db.append_event_tx(conn, run_id, 'controller', 'job.stop_requested', {'operation_id': operation_id})
-    receipt = _native(['job', 'terminate', str(row['platform_job_id'])])
+    modern = row['bohr_job_id'] is not None
+    receipt = _native(['job', 'terminate', str(row['bohr_job_id'] if modern else row['platform_job_id'])]
+                      + (['-y', '--no-interactive', '-o', 'json'] if modern else []),
+                      **({'modern': True} if modern else {}))
     # Even exit 0 and a success message are only receipts, not terminal state.
     db.execute("UPDATE compute_jobs SET status=CASE WHEN status='stopping' THEN 'stop_unknown' ELSE status END,receipt_json=?,updated_at=? WHERE operation_id=?",
                (_json(receipt), db.utcnow(), operation_id))
@@ -758,18 +1000,22 @@ def cli(run_id: str, args: list[str], cwd: str) -> dict:
             raise ComputeError('NOT_OWNED', 'Job 未登记在本 Run，拒绝操作')
         if args[1] == 'terminate':
             return stop(run_id, row['operation_id'])
-        command = ['job', args[1], '-j', str(jid)]
+        modern = row['bohr_job_id'] is not None
+        command = (['job', args[1], '-i', str(row['bohr_job_id'])] if modern and args[1] == 'describe'
+                   else ['job', args[1], str(row['bohr_job_id'])] if modern else ['job', args[1], '-j', str(jid)])
         if opts.output:
             dest = _path(run, str(work / opts.output)); dest.mkdir(parents=True, exist_ok=True)
-            command += ['-o', str(dest)]
+            command += ['--out' if modern else '-o', str(dest)]
         if args[1] in ('log', 'download') and not opts.output:
             raise ComputeError('INVALID_PATH', '日志/结果下载必须显式指定 -o 工作目录')
-        if opts.json:
+        if modern:
+            command += ['-o', 'json', '--no-interactive']
+        elif opts.json:
             command.append('--json')
         before = ({p.relative_to(dest).as_posix(): (p.stat().st_size, p.stat().st_mtime_ns)
                    for p in dest.rglob('*') if p.is_file() and not p.is_symlink()}
                   if args[1] in ('log', 'download') else {})
-        receipt = _native(command)
+        receipt = _native(command, **({'modern': True} if modern else {}))
         if args[1] in ('log', 'download'):
             key = config.resolve_secret(config.load_settings()['bohrium'].get('access_key_secret_ref', ''))
             files = []
@@ -820,7 +1066,7 @@ def cli(run_id: str, args: list[str], cwd: str) -> dict:
                 else:
                     # bohr 1.1.0 downloads <job_id>/out.zip; inspect the
                     # declared member without extracting any archive paths.
-                    with zipfile.ZipFile(dest / str(jid) / 'out.zip') as archive:
+                    with zipfile.ZipFile(dest / str(row['bohr_job_id'] if modern else jid) / 'out.zip') as archive:
                         matches = [item for item in archive.infolist()
                                    if item.filename == 'results/facts.json']
                         if len(matches) != 1 or matches[0].file_size > 2_000_000:

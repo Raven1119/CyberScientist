@@ -15,7 +15,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
-from . import collab, config, db, datasets, experiences, mailboxes, skills, compute, observation, sandboxes, local_scoring, trace_diagnostics, evaluations
+from . import collab, config, db, datasets, experiences, mailboxes, skills, compute, observation, sandboxes, local_scoring, trace_diagnostics, evaluations, job_recovery
 from .brains.codex import CodexBrain
 from .brains.demo import DemoBrain
 from .brains.kimi import KimiBrain
@@ -218,7 +218,7 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
         from . import auto_harvest
         for run_id in compute.reconciliation_runs(startup=True):
             try:
-                await asyncio.to_thread(compute.reconcile, run_id)
+                await job_recovery.reconcile(run_id, controller)
             except Exception:
                 # Other Runs still need their independent startup recovery.
                 import logging
@@ -250,7 +250,7 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
                     await asyncio.to_thread(sandboxes.reconcile_deletions)
                     for run_id in compute.reconciliation_runs():
                         try:
-                            await asyncio.to_thread(compute.reconcile, run_id)
+                            await job_recovery.reconcile(run_id, controller)
                             controller.notify_run_change(run_id)
                         except Exception:
                             import logging
@@ -320,10 +320,24 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
                 except asyncio.TimeoutError:
                     pass
 
+        async def _job_recovery_loop() -> None:
+            from . import job_recovery
+            import logging
+            while not stop.is_set():
+                try:
+                    await job_recovery.advance(controller)
+                except Exception:
+                    logging.getLogger('cyberscientist.api').exception('Job recovery scheduling failed')
+                try:
+                    await asyncio.wait_for(stop.wait(), 5)
+                except asyncio.TimeoutError:
+                    pass
+
         task = asyncio.create_task(_poll_loop())
         clock_task = asyncio.create_task(_clock_loop())
         watch_task = asyncio.create_task(_watch_loop())
         evaluation_task = asyncio.create_task(_evaluation_loop())
+        job_recovery_task = asyncio.create_task(_job_recovery_loop())
         try:
             yield
         finally:
@@ -333,7 +347,9 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
             clock_task.cancel()
             watch_task.cancel()
             evaluation_task.cancel()
-            await asyncio.gather(task, clock_task, watch_task, evaluation_task, return_exceptions=True)
+            job_recovery_task.cancel()
+            await asyncio.gather(task, clock_task, watch_task, evaluation_task, job_recovery_task, return_exceptions=True)
+            await job_recovery.drain()
             await auto_harvest.drain()
 
     app = FastAPI(title="CyberScientist", docs_url=None, openapi_url=None,
@@ -1207,7 +1223,7 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
                                              body.get("spec"), body.get("input_directory", ""),
                                              body.get("preflight"))
         elif action == "reconcile":
-            result = await asyncio.to_thread(compute.reconcile, rid)
+            result = await job_recovery.reconcile(rid, controller)
         elif action == "stop":
             result = await asyncio.to_thread(compute.stop, rid, body.get("operation_id"))
         elif action == "list":
@@ -1319,7 +1335,7 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
 
     @app.post("/api/v1/runs/{run_id}/jobs/reconcile")
     async def reconcile_jobs(run_id: str) -> dict:
-        return await asyncio.to_thread(compute.reconcile, run_id)
+        return await job_recovery.reconcile(run_id, controller)
 
     @app.post("/api/v1/runs/{run_id}/jobs/{operation_id}/resolve-local-parse")
     async def resolve_local_job_parse(run_id: str, operation_id: str) -> dict:

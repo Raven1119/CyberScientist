@@ -70,7 +70,15 @@ JobSpec 由用户允许的项目、镜像、机型、资源、时限、脚本和
 
 没有凭据时允许使用**显式手写测试 fixture**来开发状态机；这种 fixture 必须标记 synthetic，不能放进“真实协议回归录制”目录。获得一次授权真实响应后再追加真实脱敏 fixture，校验适配器的假设。
 
-## 2026-09-23：Bohrium 受控适配边界
+## 2026-10-05：现代 Bohrium Job 与私有镜像
+
+已配置应用独立 bohr 2.7.8 时，Job 使用原生 `job submit -i <json> --input_directory <dir> -y --no-interactive -o json`。实际 v4 链路先用小请求预约上传存储，独立上传输入，再以小型 `/openapi/v4/job/add` 调度计算。解析平台 `jobId` 与原生下载/日志/停止用的 `bohrJobId`；两个身份不能互换。密钥只注入后端子进程，HOME/XDG及host覆盖限定本应用。
+
+现代未知创建释放并发位，独立后台按唯一名称精确对账。只有完整、总数一致且无错误的全部分页确认不存在，至少60秒后才在原授权中自动以新操作ID重交原冻结字节。短页、重复、分页失败和历史unknown均不能授权重放。同步只读查询不触发创建；所有异步重交入口登记实际工作线程直到结束，关机等待该线程。
+
+私有镜像在现代配置下使用原生 `image build` 的 `/openapi/v4/sandbox_work/image/build`。最小构建已在实际Job和沙箱冒烟通过；旧v2最小构建仍HTTP200加业务148888，不能把HTTP成功当资源成功。真实统计、分阶段计时、前后对照及剩余风险见 `CS_UP_10_FIX_EVIDENCE.md`，原始回执留本机忽略目录。
+
+## 2026-09-23：Bohrium 受控适配边界（历史旧CLI）
 
 `compute.py` 复用本仓库 Linux bohr 1.1.0 实测命令：`job submit -i <json> -p <dir>`、`job list -n 100 --json`、`job terminate <id>`；列表匹配字段来自现有真实审计快照 `id/jobName/status`。不猜测 describe 的状态字段或不存在的创建幂等接口。创建幂等由本地持久占位提供；外部请求结果未知时查询，不重发。
 
