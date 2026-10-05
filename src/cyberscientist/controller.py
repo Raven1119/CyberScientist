@@ -3304,6 +3304,16 @@ class RunController:
         if run["phase"] != "running" or self._run_minutes_exceeded(run):
             db.append_event(run_id,"brain","brain.decision_stale",{"detail":"Run 已关闭受控动作"})
             return
+        # Older/native PI wording may put the scientific work package at root.
+        # Preserve its contents in the declared brief; action/authority validation stays identical.
+        if isinstance(dec.get('work_package'), dict) and isinstance(dec.get('research_brief'), dict):
+            brief = dec['research_brief']
+            if 'work_package' not in brief or brief['work_package'] == dec['work_package']:
+                work_package = dec['work_package']
+                dec = {key: value for key, value in dec.items() if key != 'work_package'}
+                dec['research_brief'] = {**brief, 'work_package': work_package}
+                db.append_event(run_id, 'brain', 'brain.decision_normalized',
+                                {'field': 'work_package', 'destination': 'research_brief.work_package'})
         structural = decision_mod.validate_structure(dec)
         db.append_event(run_id, "brain", "brain.decision",
                         {"decision_id": dec.get("decision_id"),

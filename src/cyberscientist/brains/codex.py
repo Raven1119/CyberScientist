@@ -301,7 +301,7 @@ class CodexBrain:
             "在真实提交、评分反馈与经验提取完成且观察充分后可以 finish，"
             "明确停止依据和仍未知的事项。遇到阻塞先换一条已授权路线；仅额度边界或所有已授权渠道均用尽才暂停。\n"
             + (
-                "本次 trigger=run_start：先核对输入中的官方题面、资源路径和评分约束。读取 research_startup 全部同题策略卡与公开分布，输出 research_brief（problem_md/science_md/ranked_methods=[{name,reason_md}]/traps_md/parallel_preparation={contract,verifier,environment}/acceptance_md）。准备契约、验证器、环境并行。guidance.level 为 concrete_work_package 时再写 work_package={algorithm_md,formula_md,parameter_ranges_md,expected_intermediate_md,test_cases_md,stop_conditions_md} 并派发具体 Trial；强模型收到目标/约束/验收。里程碑按验证器输出纠正科学假设与数值。"
+                "本次 trigger=run_start：先核对输入中的官方题面、资源路径和评分约束。读取 research_startup 全部同题策略卡与公开分布，输出 research_brief（problem_md/science_md/ranked_methods=[{name,reason_md}]/traps_md/parallel_preparation={contract,verifier,environment}/acceptance_md）。准备契约、验证器、环境并行。guidance.level 为 concrete_work_package 时在 research_brief 内写 work_package={algorithm_md,formula_md,parameter_ranges_md,expected_intermediate_md,test_cases_md,stop_conditions_md} 并派发具体 Trial；强模型收到目标/约束/验收。里程碑按验证器输出纠正科学假设与数值。"
                 + ("需要补证时可按需读取已登记的公开轨迹；缺项记录 unknown，"
                  if optional_read else
                  "需要补证时使用已开放的只读工具；网络失败记录 unknown，")

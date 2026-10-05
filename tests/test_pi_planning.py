@@ -10,7 +10,8 @@ from test_collaboration import _decision, _rig, _seed_challenge
 from test_sandboxes import run
 
 
-async def test_first_pi_frame_reads_public_ranking_and_complete_cards_and_records_weak_work(monkeypatch):
+@pytest.mark.parametrize("native_root_work_package", [False, True])
+async def test_first_pi_frame_reads_public_ranking_and_complete_cards_and_records_weak_work(monkeypatch, native_root_work_package):
     _seed_challenge()
     db.execute("UPDATE challenges SET origin='https://public.example/topic',resources_json='[]' WHERE id='COLLAB_CH'")
     c, brain, executor = _rig(shadow=False)
@@ -35,7 +36,9 @@ async def test_first_pi_frame_reads_public_ranking_and_complete_cards_and_record
           'test_cases_md': 'known limit=1', 'stop_conditions_md': '1% or grant exhausted'}}
     c._prime_sessions[rid] = await executor.start({})
     decision = _decision([{'op': 'start_trial', 'goal': 'method B', 'success_check': '1% convergence'}], rid=rid)
-    decision['research_brief'] = brief
+    decision['research_brief'] = dict(brief)
+    if native_root_work_package:
+        decision['work_package'] = decision['research_brief'].pop('work_package')
     await brain.results.put({'decision': decision})
     await c._run_one_review_impl(rid, db.query_one('SELECT * FROM review_requests WHERE id=?', (request,)), brain, None)
     assert seen == [('ranking', rid), ('cards', 'COLLAB_CH')]
