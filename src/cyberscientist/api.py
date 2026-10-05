@@ -1732,6 +1732,10 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
                                            operator="user", reason=body.reason,
                                            base_hash=None)
 
+    @app.get('/api/v1/experiences/pending-approvals')
+    async def pending_experience_approvals():
+        return experiences.pending_approvals()
+
     @app.get("/api/v1/experiences/{exp_id}")
     async def get_exp(exp_id: str) -> dict[str, Any]:
         return experiences.get_experience(exp_id)

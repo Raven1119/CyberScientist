@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { api } from './api'
 import { useApp } from './app-context'
 import { Modal } from './components'
+import GlobalApprovals from './GlobalApprovals'
 
 interface Alert { id: string; run_id: string | null; challenge_id: string | null; kind: string; title: string; payload: Record<string, unknown> }
 
@@ -32,7 +33,7 @@ export default function PersistentAlerts() {
     } catch (err) { setError('确认未保存：' + (err instanceof Error ? err.message : String(err))) }
     finally { setBusy(false) }
   }, [current, busy, setPage, setCurrentChallengeId, setFocusedRunId])
-  if (!current) return null
+  if (!current) return <GlobalApprovals />
   return <Modal open title={current.title} onClose={() => void acknowledge()}>
     {current.run_id && <p>Run：{current.run_id}</p>}
     {current.kind === 'platform.protocol_changed' && <>

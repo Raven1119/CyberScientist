@@ -306,6 +306,20 @@ def list_experiences(scope: str | None = None,
     return {"items": items, "errors": errors}
 
 
+@_locked
+def pending_approvals() -> dict:
+    """Only an undecided global draft is actionable; a new revision requeues."""
+    listed = list_experiences('global')
+    items = []
+    for item in listed['items']:
+        if item['status'] != 'candidate' or item['kind'] == 'environment': continue
+        revision = db.query_one('SELECT operator,reason FROM experience_revisions WHERE id=?', (item['revision_id'],))
+        if revision and revision['operator'] == 'user' and (revision['reason'] or '').startswith('用户驳回:'): continue
+        detail = get_experience(item['id'])
+        items.append({**item, 'body_md': detail['body_md']})
+    return {'items': items, 'errors': listed['errors']}
+
+
 def _load_current(exp_id: str) -> tuple[Path, str, dict[str, Any]]:
     """按经验 id 定位当前文件（global 与当前 challenge 目录）。"""
     _safe_id(exp_id)
