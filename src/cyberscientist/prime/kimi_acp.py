@@ -368,7 +368,7 @@ class KimiExecutor:
             yield ev
 
     async def close(self, session_id: str) -> None:
-        sess = self._sessions.pop(session_id, None)
+        sess = self._sessions.get(session_id)
         if not sess:
             return
         if sess.pump_task:
@@ -381,6 +381,10 @@ class KimiExecutor:
         except Exception:  # noqa: BLE001
             pass
         await sess.rpc.stop()
+        tasks = [t for t in (sess.pump_task, sess.prompt_task) if t]
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        self._sessions.pop(session_id, None)
 
     # ---------- 事件泵：ACP update → 控制器词汇 ----------
     async def _pump(self, sess: _Session) -> None:

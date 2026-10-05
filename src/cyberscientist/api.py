@@ -25,6 +25,8 @@ from .prime import CodexExecutor, DemoPrime, KimiExecutor, PrimeRpc
 
 controller = RunController()
 
+CLOCK_HEARTBEAT_SECONDS = 15
+
 class SettingsPut(BaseModel):
     settings: dict[str, Any]
     base_revision: int
@@ -270,11 +272,6 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
                     compute.release_unknown_slots()
                 except Exception:
                     logger.exception('Sandbox expiry cleanup failed')
-                from . import run_clock
-                try:
-                    run_clock.heartbeat()
-                except Exception:
-                    logger.exception('Active-time heartbeat failed')
                 from . import maintenance
                 try:
                     await maintenance.advance(controller)
@@ -310,7 +307,21 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
                 except asyncio.TimeoutError:
                     pass
 
+        async def _clock_loop() -> None:
+            from . import run_clock
+            import logging
+            while not stop.is_set():
+                try:
+                    run_clock.heartbeat()
+                except Exception:
+                    logging.getLogger('cyberscientist.api').exception('Active-time heartbeat failed')
+                try:
+                    await asyncio.wait_for(stop.wait(), CLOCK_HEARTBEAT_SECONDS)
+                except asyncio.TimeoutError:
+                    pass
+
         task = asyncio.create_task(_poll_loop())
+        clock_task = asyncio.create_task(_clock_loop())
         watch_task = asyncio.create_task(_watch_loop())
         evaluation_task = asyncio.create_task(_evaluation_loop())
         try:
@@ -319,9 +330,10 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
             stop.set()
             db.execute("INSERT OR REPLACE INTO system_state VALUES('shutdown_requested','1')")
             task.cancel()
+            clock_task.cancel()
             watch_task.cancel()
             evaluation_task.cancel()
-            await asyncio.gather(task, watch_task, evaluation_task, return_exceptions=True)
+            await asyncio.gather(task, clock_task, watch_task, evaluation_task, return_exceptions=True)
             await auto_harvest.drain()
 
     app = FastAPI(title="CyberScientist", docs_url=None, openapi_url=None,

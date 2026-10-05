@@ -169,7 +169,7 @@ class CodexExecutor:
             yield ev
 
     async def close(self, session_id: str) -> None:
-        sess = self._sessions.pop(session_id, None)
+        sess = self._sessions.get(session_id)
         if not sess:
             return
         tasks = [t for t in (sess.pump_task, sess.turn_task, sess.requests_task) if t]
@@ -177,6 +177,7 @@ class CodexExecutor:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
         await sess.rpc.stop()
+        self._sessions.pop(session_id, None)
 
     async def _pump(self, sess: _Session) -> None:
         params = {}

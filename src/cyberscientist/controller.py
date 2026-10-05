@@ -821,6 +821,9 @@ class RunController:
             from . import power
             if power.shutdown_requested():
                 raise ControllerError('SHUTDOWN', '安全关机已关闭新会话；后端完成启动对账后才能恢复')
+            if (run_id, 'brain_interrupt') in self._session_restarts or db.query_one(
+                    "SELECT 1 FROM system_state WHERE key=?", ('native_close_unknown:' + run_id,)):
+                raise ControllerError('RECOVERABLE', '大脑原生会话停止仍在核对；不能恢复并重叠调用')
             self._require_model_authorization(run_id)
             if run["phase"] == "recovering":
                 from . import resource_coordinator
@@ -1185,6 +1188,9 @@ class RunController:
                     error_msg = ev.payload.get("message", "")
         except Exception as exc:  # noqa: BLE001
             error_msg = f"{exc.__class__.__name__}: {str(exc)[:300]}"
+        request_now = db.query_one('SELECT status FROM review_requests WHERE id=?', (req['id'],))
+        if not request_now or request_now['status'] != 'running':
+            return
         if error_msg and (limit := model_limits.classify(error_msg)):
             self._record_model_limit(run_id, "brain", limit,
                                      request_id=req["id"], mode="requested")
@@ -1669,10 +1675,7 @@ class RunController:
                 # 不设守卫会每轮重复置 paused + continue 空转，永不 await，
                 # 同步 DB 写把事件循环彻底堵死——2026-09-19 实测 seq 爆炸到 9 万+）
                 if phase == "running" and self._run_minutes_exceeded(run):
-                    db.execute("UPDATE runs SET phase='pausing', pending_end_reason='authorization_expired', block_reason=? WHERE id=?",
-                               ("达到本轮授权运行时长上限", run_id))
-                    db.append_event(run_id, "controller", "run.time_limit",
-                                    {"notice": "达到授权时长上限；已暂停新增受控操作"})
+                    self._expire_active_run(run_id, notify=False)
                     phase = "pausing"
                 if phase == "pausing":
                     receipt = await self._prime_instances[run_id].abort(
@@ -1706,14 +1709,18 @@ class RunController:
                                       f"不伪造已暂停"})
                     phase = self._require_run(run_id)["phase"]
                     if phase == "pausing":
-                        try:
-                            signal = await asyncio.wait_for(q.get(), timeout=30)
-                        except asyncio.TimeoutError:
-                            db.execute("UPDATE runs SET block_reason=? WHERE id=?"
-                                       " AND phase='pausing'",
-                                       ("执行器暂停确认仍未知；正在继续核对会话，远程任务独立运行", run_id))
-                            continue
-                        await self._handle_signal(signal, run_id, q)
+                        while True:
+                            try:
+                                signal = await asyncio.wait_for(q.get(), timeout=30)
+                            except asyncio.TimeoutError:
+                                db.execute("UPDATE runs SET block_reason=? WHERE id=?"
+                                           " AND phase='pausing'",
+                                           ("执行器暂停确认仍未知；正在继续核对会话，远程任务独立运行", run_id))
+                                break
+                            if signal['type'] == 'authorization_expired_wake':
+                                continue  # Expiry is already being reconciled.
+                            await self._handle_signal(signal, run_id, q)
+                            break
                         continue
                 try:
                     timeout = min(3600, max(0.01,self._run_seconds_remaining(run))) if phase == "running" else 3600
@@ -1725,7 +1732,7 @@ class RunController:
                     db.append_event(run_id, "controller", "run.idle_notice",
                                     {"detail": "长时间无事件；Run 保持运行，等待新信号"})
                     continue
-                await self._handle_signal(signal, run_id, q,
+                await self._handle_signal_with_deadline(signal, run_id, q,
                                           prime=self._prime_instances[run_id],
                                           prime_sid=self._prime_sessions[run_id])
         except asyncio.CancelledError:
@@ -1754,6 +1761,7 @@ class RunController:
                 task.cancel()
             if tasks:
                 await asyncio.gather(*tasks,return_exceptions=True)
+            close_failed = False
             for runtime, session in ((self._prime_instances.get(run_id,prime),
                                       self._prime_sessions.get(run_id,prime_sid)),
                                      (self._brain_instances.get(run_id,brain),
@@ -1762,9 +1770,15 @@ class RunController:
                     try:
                         await runtime.close(session)
                     except Exception as exc:
+                        close_failed = True
                         from . import resource_coordinator
                         resource_coordinator.close_failed(run_id, exc)
                         db.append_event(run_id,"controller","run.cleanup_error",{"error":_redact(str(exc))[:200]})
+            if not close_failed:
+                # The Run-level flag aggregates both native roles. Clear it
+                # only after ALL original sessions are confirmed closed;
+                # historical failure events remain in the audit ledger.
+                db.execute('DELETE FROM system_state WHERE key=?', ('native_close_unknown:' + run_id,))
             with db.transaction() as conn:
                 collab.revoke_run_tokens(conn,run_id)
                 conn.execute('DELETE FROM model_session_leases WHERE owner=?', (run_id,))
@@ -2393,6 +2407,12 @@ class RunController:
                 wake.clear()
                 await wake.wait()
                 continue
+            if self._brain_instances.get(run_id, brain) is None:
+                refreshed = await self._restart_brain_session(run_id, brain, b_session)
+                if refreshed is None:
+                    self._pause_needs_attention(run_id, '大脑会话恢复失败；请检查连接')
+                    continue
+                brain, b_session = refreshed
             rate_wait = db.query_one(
                 "SELECT retry_at FROM model_rate_limits WHERE run_id=? AND role='brain'",
                 (run_id,))
@@ -2440,17 +2460,8 @@ class RunController:
                     except asyncio.TimeoutError:
                         pass
                     continue  # 重新按优先级取（可能有更紧急请求到达）
-            try:
-                await asyncio.wait_for(
-                    self._run_one_review(run_id, req, brain, b_session),
-                    timeout=config.load_settings()["run_defaults"]["brain_review_timeout_seconds"])
-            except asyncio.TimeoutError:
-                current = db.query_one("SELECT status FROM review_requests WHERE id=?",
-                                       (req["id"],))
-                if current and current["status"] == "running":
-                    self._review_failed(run_id, req,
-                                        "lifecycle" if req["source"] == "lifecycle" else "requested",
-                                        "大脑审阅超时；原生会话将重启")
+            if await self._review_with_deadline(run_id, req, brain, b_session):
+                return  # Expiry closes this session; it cannot start a replacement turn.
             current = db.query_one("SELECT status FROM review_requests WHERE id=?",
                                    (req["id"],))
             if current and current["status"] == "error" and self._require_run(run_id)["phase"] == "running":
@@ -2488,16 +2499,28 @@ class RunController:
 
     async def _restart_brain_session_impl(self, run_id: str, old_brain: BrainRuntime,
                                           old_session: Any) -> tuple[BrainRuntime, Any] | None:
-        try:
-            await asyncio.wait_for(old_brain.close(old_session), timeout=15)
-        except Exception:
-            log.exception("Run %s old brain session close failed", run_id)
+        from . import resource_coordinator
+        if db.query_one('SELECT 1 FROM system_state WHERE key=?', ('native_close_unknown:' + run_id,)):
+            return None
+        if self._brain_instances.get(run_id, old_brain) is not None:
+            try:
+                await asyncio.wait_for(old_brain.close(old_session), timeout=15)
+            except Exception as exc:
+                resource_coordinator.close_failed(run_id, exc)
+                log.exception("Run %s old brain session close failed", run_id)
+                return None
+        current = self._require_run(run_id)
+        if current['phase'] != 'running' or self._run_minutes_exceeded(current):
+            return None
         try:
             new_brain = self._make_brain(self._runtime_settings(run_id))
             work = config.WORKSPACE_DIR / "runs" / run_id / "brain_view"
             work.mkdir(parents=True, exist_ok=True)
+            spec = self._brain_spec(run_id, self._runtime_settings(run_id), work)
+            if isinstance(new_brain, CodexBrain):
+                spec['resume_thread_id'] = old_session.session_id
             new_session = await asyncio.wait_for(new_brain.open(
-                self._brain_spec(run_id, self._runtime_settings(run_id), work)), timeout=60)
+                spec), timeout=60)
         except Exception:
             log.exception("Run %s brain session restart failed", run_id)
             return None
@@ -2798,6 +2821,10 @@ class RunController:
             db.append_event(run_id, "brain", "brain.raw_output",
                             _runtime_event_payload({"text": "".join(raw_parts)}))
 
+        request_now = db.query_one('SELECT status FROM review_requests WHERE id=?', (req['id'],))
+        if not request_now or request_now['status'] != 'running':
+            db.append_event(run_id, 'brain', 'brain.review_late', {'review_id': req['id']})
+            return
         if error_msg and (limit := model_limits.classify(error_msg)):
             self._record_model_limit(run_id, "brain", limit,
                                      request_id=req["id"], mode=mode)
@@ -2950,8 +2977,12 @@ class RunController:
             # 必须在事务内重查：req 快照取自 pending 时刻，shadow_epoch 列在
             # 标 running 时才写入，直接用快照等于不做失效检查。
             cur = conn.execute(
-                "SELECT source, shadow_epoch FROM review_requests WHERE id=?",
+                "SELECT source, shadow_epoch, status FROM review_requests WHERE id=?",
                 (req["id"],)).fetchone()
+            locked_run = conn.execute('SELECT * FROM runs WHERE id=?', (run_id,)).fetchone()
+            if (not cur or cur['status'] != 'running' or not locked_run or
+                    locked_run['phase'] != 'running' or self._run_minutes_exceeded(locked_run)):
+                return
             if cur and cur["source"] == "shadow" and sup and \
                     cur["shadow_epoch"] is not None and \
                     cur["shadow_epoch"] != sup["shadow_epoch"]:
@@ -4274,6 +4305,9 @@ class RunController:
         return self._run_seconds_remaining(run) <= 0
 
     def _run_seconds_remaining(self, run: Any) -> float:
+        # A row held across an await can have an old heartbeat even while the
+        # live backend continues renewing it. Use the current persisted clock.
+        run = self._require_run(run['id'])
         auth = db.query_one("SELECT * FROM authorizations WHERE id=?",
                             (run["authorization_id"],)) if run["authorization_id"] else None
         minutes = auth["max_run_minutes"] if auth else 0
@@ -4284,6 +4318,139 @@ class RunController:
             return float("inf")
         from . import run_clock
         return run_clock.remaining(run, auth)
+
+    def _expire_active_run(self, run_id: str, *, notify: bool = True) -> None:
+        with db.transaction() as conn:
+            changed = conn.execute("UPDATE runs SET phase='pausing',pending_end_reason='authorization_expired',"
+                "block_reason='达到本轮授权运行时长上限' WHERE id=? AND phase='running'", (run_id,))
+            if changed.rowcount:
+                db.append_event_tx(conn, run_id, 'controller', 'run.time_limit',
+                    {'notice': '达到授权时长上限；已暂停新增受控操作'})
+        queue = self._signals.get(run_id)
+        if notify and changed.rowcount and queue is not None:
+            queue.put_nowait({'type': 'authorization_expired_wake'})
+
+    async def _handle_signal_with_deadline(self, signal, run_id, queue, **kwargs) -> None:
+        run = self._require_run(run_id)
+        if run['phase'] != 'running':
+            await self._handle_signal(signal, run_id, queue, **kwargs)
+            return
+        remaining = self._run_seconds_remaining(run)
+        if remaining <= 0:
+            self._expire_active_run(run_id, notify=False)
+            return
+        task = asyncio.create_task(self._handle_signal(signal, run_id, queue, **kwargs))
+        try:
+            if await self._wait_for_active_work(run_id, task):
+                await task
+            else:
+                self._expire_active_run(run_id, notify=False)
+        finally:
+            if not task.done():
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+
+    async def _review_with_deadline(self, run_id, req, brain, session) -> bool:
+        remaining = self._run_seconds_remaining(self._require_run(run_id))
+        if remaining <= 0:
+            self._expire_active_run(run_id)
+            self._obsolete_request(req['id'], '授权时长已用尽')
+            return True
+        timeout = config.load_settings()['run_defaults']['brain_review_timeout_seconds']
+        task = asyncio.create_task(self._run_one_review(run_id, req, brain, session))
+        expired = False
+        completed = False
+        cancelled = False
+        reason = 'review_cancelled'
+        try:
+            if await self._wait_for_active_work(run_id, task, timeout):
+                await task
+                completed = True
+                return False
+            current_run = self._require_run(run_id)
+            expired = (current_run['pending_end_reason'] == 'authorization_expired'
+                       or self._run_minutes_exceeded(current_run))
+            closed = current_run['phase'] != 'running'
+            if expired:
+                self._expire_active_run(run_id)
+                self._obsolete_request(req['id'], '授权时长已用尽；原生中断正在核对')
+            elif closed:
+                self._obsolete_request(req['id'], 'Run 已暂停；原生中断正在核对')
+            else:
+                self._review_failed(run_id, req,
+                    'lifecycle' if req['source'] == 'lifecycle' else 'requested',
+                    '大脑审阅超时；原生会话将重启')
+            reason = 'authorization_expired' if expired else 'run_paused' if closed else 'review_timeout'
+        except asyncio.CancelledError:
+            cancelled = True
+        finally:
+            if not completed:
+                current = self._require_run(run_id)
+                expired = (expired or current['pending_end_reason'] == 'authorization_expired'
+                           or self._run_minutes_exceeded(current))
+                if expired:
+                    self._expire_active_run(run_id)
+                    reason = 'authorization_expired'
+                request_now = db.query_one('SELECT status FROM review_requests WHERE id=?', (req['id'],))
+                if request_now and request_now['status'] in ('pending', 'running'):
+                    self._obsolete_request(req['id'], '原生审阅停止；迟到结果不再生效')
+                from . import resource_coordinator
+                owner = 'review-stop-' + req['id']
+                self._session_restarts.add((run_id, 'brain_interrupt'))
+                # Track the cancellation-safe owner, not its shielded cleanup:
+                # shutdown can cancel the owner repeatedly without losing the
+                # exact native turn before interruption/close have settled.
+                resource_coordinator.register_auxiliary(owner, asyncio.current_task())
+                cleanup = asyncio.create_task(self._stop_native_review(
+                    run_id, req, brain, session, task, reason))
+                try:
+                    while not cleanup.done():
+                        try:
+                            await asyncio.shield(cleanup)
+                        except asyncio.CancelledError:
+                            cancelled = True
+                    await cleanup
+                finally:
+                    resource_coordinator.release_sessions(owner)
+                    self._session_restarts.discard((run_id, 'brain_interrupt'))
+            if cancelled:
+                raise asyncio.CancelledError
+        return expired
+
+    async def _stop_native_review(self, run_id, req, brain, session, task, reason) -> None:
+        # Codex's generator clears its native turn ID in finally. Interrupt
+        # while consumption is still alive, then reap it and close the process;
+        # an accepted interrupt alone does not establish a stopped model call.
+        try:
+            receipt = await asyncio.wait_for(brain.cancel(session), 10)
+        except Exception as exc:
+            receipt = {'status': 'unknown', 'detail': type(exc).__name__}
+        db.append_event(run_id, 'brain', 'brain.interrupt_requested',
+            {'review_id': req['id'], 'reason': reason, 'receipt': _runtime_event_payload(receipt)})
+        if not task.done():
+            task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        try:
+            await asyncio.wait_for(brain.close(session), 15)
+            self._brain_instances[run_id] = None
+            db.append_event(run_id, 'brain', 'brain.session_closed', {'reason': reason})
+        except Exception as exc:
+            from . import resource_coordinator
+            resource_coordinator.close_failed(run_id, exc)
+            db.append_event(run_id, 'brain', 'brain.close_unknown', {'reason': type(exc).__name__})
+
+    async def _wait_for_active_work(self, run_id, task, timeout=None) -> bool:
+        deadline = asyncio.get_running_loop().time() + timeout if timeout is not None else float('inf')
+        while True:
+            run = self._require_run(run_id)
+            remaining = self._run_seconds_remaining(run)
+            timeout_left = deadline - asyncio.get_running_loop().time()
+            if run['phase'] != 'running' or remaining <= 0 or timeout_left <= 0:
+                return task.done()
+            # Grants can be explicitly changed while a native call is pending.
+            done, _ = await asyncio.wait({task}, timeout=min(1, remaining, timeout_left))
+            if done:
+                return True
 
     def _budget_status(self, run: Any) -> dict[str, Any]:
         settings = config.load_settings()

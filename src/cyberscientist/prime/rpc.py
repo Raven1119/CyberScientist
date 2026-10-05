@@ -96,12 +96,28 @@ class PrimeJsonlClient:
     async def stop(self) -> None:
         if self._reader:
             self._reader.cancel()
-        if self.proc:
+        for pending in self._pending.values():
+            if not pending.done():
+                pending.set_exception(ProtocolError('Prime 已停止'))
+        self._pending.clear()
+        proc = self.proc
+        if proc and proc.returncode is None:
             try:
-                self.proc.terminate()
-                await asyncio.wait_for(self.proc.wait(), 5)
-            except (ProcessLookupError, asyncio.TimeoutError):
-                self.proc.kill()
+                proc.terminate()
+            except ProcessLookupError:
+                pass
+            try:
+                await asyncio.wait_for(proc.wait(), 5)
+            except asyncio.TimeoutError:
+                try:
+                    proc.kill()
+                except ProcessLookupError:
+                    pass
+                await proc.wait()
+        if self._reader:
+            await asyncio.gather(self._reader, return_exceptions=True)
+        self.proc = None
+        self._reader = None
 
 
 async def _qiter(q: asyncio.Queue) -> AsyncIterator[Any]:
@@ -308,6 +324,7 @@ class PrimeRpc:
         await self._client(session_id).respond_ui(req_id, **fields)
 
     async def close(self, session_id: str) -> None:
-        client = self._clients.pop(session_id, None)
+        client = self._clients.get(session_id)
         if client:
             await client.stop()
+            self._clients.pop(session_id, None)

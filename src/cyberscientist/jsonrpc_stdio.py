@@ -161,13 +161,14 @@ class JsonRpcStdio:
             if not pending.done():
                 pending.set_exception(ProtocolError(f"{self.name} 已停止"))
         self._pending.clear()
-        proc, self.proc = self.proc, None
+        proc = self.proc
         if proc and proc.returncode is None:
             try:
                 proc.terminate()
-                await asyncio.wait_for(proc.wait(), 5)
             except ProcessLookupError:
                 pass
+            try:
+                await asyncio.wait_for(proc.wait(), 5)
             except asyncio.TimeoutError:
                 try:
                     proc.kill()
@@ -176,6 +177,7 @@ class JsonRpcStdio:
                 await proc.wait()
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
+        self.proc = None
         self._reader_task = self._stderr_task = None
 
 

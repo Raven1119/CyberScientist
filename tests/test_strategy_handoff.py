@@ -53,6 +53,7 @@ async def test_second_run_reads_all_same_topic_cards_chooses_other_route_and_rea
     with db.transaction() as conn:
         token = collab.issue_token(conn, r2, 'brain', 'fixture-brain', 1)
     reqid = c1._enqueue_lifecycle(r1, 'fixture-milestone')
+    db.execute("UPDATE review_requests SET status='running' WHERE id=?", (reqid,))
     req = db.query_one('SELECT * FROM review_requests WHERE id=?', (reqid,))
     result = _review_result('milestone')
     result['research_brief'] = {'route_md': 'A: approximation', 'advice_md': 'Avoid large k; use exact arithmetic'}
@@ -111,6 +112,7 @@ async def test_milestone_brief_is_redacted_before_review_record_and_experience_w
     rid = await launch(c, RouteChoosingBrain(), FakeExecutor())
     config.update_secret('synthetic', 'SYNTHETIC_STRATEGY_SECRET')
     reqid = c._enqueue_lifecycle(rid, 'milestone')
+    db.execute("UPDATE review_requests SET status='running' WHERE id=?", (reqid,))
     req = db.query_one('SELECT * FROM review_requests WHERE id=?', (reqid,))
     result = _review_result('milestone')
     result['research_brief'] = {'advice_md': 'SYNTHETIC_STRATEGY_SECRET',

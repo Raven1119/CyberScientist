@@ -75,6 +75,7 @@ async def test_review_stop_changes_route_instead_of_closing_unused_authorized_ch
     db.execute("UPDATE runs SET phase='running',started_at=? WHERE id=?", (db.utcnow(), rid))
     c._executor_busy[rid] = True
     reqid = c._enqueue_lifecycle(rid, 'fixture')
+    db.execute("UPDATE review_requests SET status='running' WHERE id=?", (reqid,))
     req = db.query_one('SELECT * FROM review_requests WHERE id=?', (reqid,))
     c._apply_review_result(rid, req, 'requested', {'frame_id': 'fixture'},
         _review_result('fixture', 'intervene', _guidance(kind='stop', intent='reframe')))
