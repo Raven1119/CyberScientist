@@ -88,6 +88,9 @@ def main() -> None:
     serve.add_argument("--brain-executable", default=None,
                        help="大脑 CLI 可执行文件路径（默认自动探测）")
     sub.add_parser("shutdown", help="安全暂停、备份并列出远程任务")
+    preflight = sub.add_parser('preflight', help='只读赛前自检（不启动Run或模型turn）')
+    preflight.add_argument('--json', action='store_true')
+    preflight.add_argument('--port', type=int, default=None)
     evaluation = sub.add_parser('eval', help='运行或生成本地评测报告')
     evaluation_sub = evaluation.add_subparsers(dest='eval_command', required=True)
     eval_run = evaluation_sub.add_parser('run', help='启动一层评测')
@@ -99,6 +102,19 @@ def main() -> None:
     eval_rescore = evaluation_sub.add_parser('rescore', help='原 Run 封存包的一次受控补评分')
     eval_rescore.add_argument('result_id')
     args = parser.parse_args()
+
+    if args.command == 'preflight':
+        from . import config, observation
+        port = args.port or config.load_settings()['app']['port']
+        request = urllib.request.Request(f'http://127.0.0.1:{port}/api/v1/preflight', data=b'{}', headers={'Content-Type': 'application/json'}, method='POST')
+        try:
+            with urllib.request.urlopen(request, timeout=600) as response:
+                result = json.load(response)
+        except (OSError, ValueError) as exc:
+            print(observation.strip_secrets('赛前自检未完成：' + str(exc)), file=sys.stderr)
+            raise SystemExit(2)
+        print(json.dumps(result, ensure_ascii=False) if args.json else '\n'.join(item['status'].upper() + ' · ' + item['name'] + ' · ' + item['detail'] for item in result['items']))
+        raise SystemExit(1 if result['status'] == 'fail' else 0)
 
     if args.command == 'shutdown':
         from . import config

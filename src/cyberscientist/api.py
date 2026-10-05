@@ -443,6 +443,21 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
         return {"ok": True, "mode": config.load_settings()["app"]["mode"],
                 "time": db.utcnow(), 'backend': backend_identity.loaded()}
 
+    @app.get('/api/v1/preflight')
+    async def get_preflight():
+        from . import preflight
+        return preflight.cached()
+
+    @app.post('/api/v1/preflight')
+    async def run_preflight():
+        from . import preflight
+        async def connection(name):
+            return await test_connection(name, ConnectionTest(kind='inspect'))
+        try:
+            return await preflight.run(connection, health)
+        except resource_coordinator.ResourceWait as exc:
+            raise HTTPException(409, detail={'code': exc.code, 'message': str(exc)}) from exc
+
     # ---------------- 设置与秘密 ----------------
 
     @app.get("/api/v1/settings")

@@ -73,6 +73,15 @@ def register_auxiliary(owner: str, task: asyncio.Task) -> None:
     _auxiliary_tasks[owner] = task
 
 
+def auxiliary_task(owner: str):
+    return _auxiliary_tasks.get(owner)
+
+
+def unregister_auxiliary(owner: str) -> None:
+    """An ended operation may retain its lease/unknown without owning its caller."""
+    _auxiliary_tasks.pop(owner, None)
+
+
 def throttle(name: str, retry_at: str) -> None:
     db.execute('INSERT INTO model_provider_backoff(provider,retry_at,first_at) VALUES(?,?,?)'
                ' ON CONFLICT(provider) DO UPDATE SET retry_at=MAX(retry_at,excluded.retry_at)',

@@ -5,6 +5,7 @@ import { Badge, LoadingState } from '../components'
 import { formatTime } from '../labels'
 import EnvironmentCatalog from '../EnvironmentCatalog'
 import ProtocolDrift from '../ProtocolDrift'
+import Preflight from '../Preflight'
 import type {
   ConnectionTestResult,
   LlmProfile,
@@ -216,6 +217,7 @@ export default function SettingsPage() {
         </button>
       </div>}
       <fieldset className="settings-stack settings-fields" disabled={saving}>
+        <Preflight />
         <ProtocolDrift />
         <article className="card card-body"><h2>自动收割</h2>
           <p>只重交已确认成绩的同一包，消耗本 Run 总 Attempt 额度；失败或状态不明会提醒，不自动重发。</p>
