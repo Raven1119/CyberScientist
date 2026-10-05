@@ -43,7 +43,8 @@ class FakeController(RunController):
 def test_ten_challenge_round_respects_limits_retries_and_survives_restart():
     ids = challenges()
     rnd = competition.import_round(ids, mode='demo')
-    competition.confirm(rnd['id'], template())
+    bounded = template(); bounded['authorization']['unlimited_resources'] = False
+    competition.confirm(rnd['id'], bounded)
     ctl = FakeController()
     asyncio.run(evaluations.advance(ctl))
     limited = db.query_one('SELECT retry_at,status FROM eval_results WHERE retry_at IS NOT NULL')

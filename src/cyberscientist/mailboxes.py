@@ -754,6 +754,9 @@ def _perform_submission(sid: str, platform: MailboxPlatform, challenge_id: str,
                     _automatic_harvest_guard(conn, src, trigger, own_reservation=sid)
             except MailboxError as exc:
                 raise PlatformError(str(exc), no_side_effect=True) from exc
+        from . import features
+        if row['is_harvest'] and str(row['operation_id']).startswith('auto-harvest-') and not features.enabled('auto_harvest'):
+            raise PlatformError('自动收割已关闭；未发送，预约已释放', no_side_effect=True)
         if power.shutdown_requested():
             raise PlatformError('安全关机已停止新增提交；未发送', no_side_effect=True)
         receipt = platform.submit_package(

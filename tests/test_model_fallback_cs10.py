@@ -144,7 +144,7 @@ async def test_competition_freezes_prechecked_projection_even_if_recovered_at_cr
     competition.confirm(round_value['id'],template());prolonged(settings['executor'])
     db.execute('UPDATE model_provider_backoff SET retry_at=?',((datetime.now(timezone.utc)-timedelta(seconds=1)).isoformat(),))
     admissions=[];real_reserve=resource_coordinator.reserve_sessions_tx
-    def reserve(conn,owner,choices):admissions.append(json.loads(json.dumps(choices)));return real_reserve(conn,owner,choices)
+    def reserve(conn,owner,choices,**kwargs):admissions.append(json.loads(json.dumps(choices)));return real_reserve(conn,owner,choices,**kwargs)
     monkeypatch.setattr(resource_coordinator,'reserve_sessions_tx',reserve)
     class Controller(RunController):
         def create_run(self,*args,**kwargs):

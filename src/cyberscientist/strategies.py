@@ -23,6 +23,8 @@ def maintain(run_id: str, **kwargs) -> dict | None:
 
 @config.serialized_mutation
 def update(run_id: str, *, brief: dict | None = None, event: dict | None = None) -> dict | None:
+    from . import features
+    if not features.enabled('strategy_cards'): return None
     run = db.query_one('SELECT * FROM runs WHERE id=?', (run_id,))
     if not run:
         return None

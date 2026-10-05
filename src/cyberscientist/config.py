@@ -44,7 +44,7 @@ def update_secret(secret_id: str, value: str | None) -> None:
         save_secrets(secrets)
 
 DEFAULT_SETTINGS: dict[str, Any] = {
-    'features': {'environment_catalog': True, 'scorer_audit': True, 'await_score': True, 'shared_area': True, 'protocol_drift': True},
+    'features': {'auto_harvest': True, 'reviewer': True, 'strategy_cards': True, 'deepseek_fallback': True, 'system_triage': True, 'local_calculation': True, 'environment_catalog': True, 'scorer_audit': True, 'await_score': True, 'shared_area': True, 'protocol_drift': True},
     "schema_version": 1,
     "revision": 0,
     "app": {"host": "127.0.0.1", "port": 8765, "mode": "demo",

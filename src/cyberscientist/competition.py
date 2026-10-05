@@ -116,6 +116,8 @@ def _round(round_id: str):
 
 async def triage(round_id: str, controller, allow_model_calls: bool = False) -> dict:
     row = _round(round_id)
+    from . import features
+    if not features.enabled('system_triage'): raise CompetitionError('系统分诊已关闭；可导入用户分诊')
     snapshot = json.loads(row['config_json'])
     if snapshot['mode'] == 'connected' and not allow_model_calls:
         raise CompetitionError('分诊调用模型需显式授权')
@@ -334,10 +336,11 @@ async def advance_round(controller, evaluation) -> None:
                 # Do not create a capacity-consuming Run while its provider is
                 # full. Native startup repeats this check under the writer lock.
                 with db.transaction() as conn:
-                    resource_coordinator.reserve_sessions_tx(conn, item['id'], admission_models)
+                    resource_coordinator.reserve_sessions_tx(conn, item['id'], admission_models, unlimited_resources=template['authorization'].get('unlimited_resources', False))
                     conn.execute('DELETE FROM model_session_leases WHERE owner=?', (item['id'],))
                 run = controller.create_run(item['challenge_id'], snapshot['mode'], template['shadow_enabled'],
-                                            model_config=admission_models, solver_projection=fallback)
+                                            model_config=admission_models, solver_projection=fallback,
+                                            competition_resource_unlimited=template['authorization'].get('unlimited_resources', False))
                 db.execute("UPDATE eval_results SET run_id=?,status='created' WHERE id=?", (run['id'], item['id']))
                 # Freeze note and round link without creating capability restrictions.
                 state = json.loads(db.query_one('SELECT config_snapshot FROM runs WHERE id=?', (run['id'],))['config_snapshot'])

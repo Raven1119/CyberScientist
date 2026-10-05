@@ -98,7 +98,7 @@ export default function CompetitionPage() {
     }}>安全关机</button>
     {shutdown && <div role="status"><strong>{shutdown.message}</strong><p>远程任务继续运行和计费。</p>
       <pre>{JSON.stringify({ jobs: shutdown.remote_jobs, sandboxes: shutdown.remote_sandboxes }, null, 2)}</pre></div>}
-    <p>导入整轮，查看分诊，确认模型与有界授权后自动排队。默认同时最多 6 个 Run、每个提供方 10 个会话；连接设置可调整。未确认的分数显示 unknown。</p>
+    <p>导入整轮，查看分诊，确认模型与有界授权后自动排队。资源不限的比赛不设 Run 与会话并发数上限，提供方限速仍排队；普通有界 Run 使用连接设置的上限。未确认的分数显示 unknown。</p>
     <div className="form-grid">
       <label>赛季 slug<input value={season} onChange={e => setSeason(e.target.value)} /></label>
       <label>轮次<input type="number" min="1" value={seq} onChange={e => setSeq(Number(e.target.value))} /></label>

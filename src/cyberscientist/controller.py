@@ -26,7 +26,7 @@ from typing import Any
 
 import jsonschema
 
-from . import collab, config, datasets, db, decision as decision_mod, experiences, mailboxes, observation, experience_context, challenge_models, model_limits, submission_predictions, run_limits
+from . import collab, config, datasets, db, decision as decision_mod, experiences, mailboxes, observation, experience_context, challenge_models, model_limits, submission_predictions, run_limits, features
 from . import skills as skills_mod
 from .brains.base import BrainRuntime
 from .brains.codex import CodexBrain
@@ -463,7 +463,8 @@ class RunController:
 
     # ---------- Run 生命周期 ----------
     @staticmethod
-    def _check_active_capacity(conn: Any, settings: dict[str, Any]) -> None:
+    def _check_active_capacity(conn: Any, settings: dict[str, Any], unlimited_resources: bool = False) -> None:
+        if unlimited_resources: return
         limit = settings["run_defaults"].get("max_active_runs", 3)
         if type(limit) is not int or limit < 1:
             raise ControllerError("INVALID_ARGUMENT", "max_active_runs 必须为正整数")
@@ -479,7 +480,10 @@ class RunController:
                    shadow_enabled: bool | None = None,
                    eval_mode: dict[str, Any] | None = None,
                    model_config: dict[str, Any] | None = None,
-                   solver_projection: dict[str, Any] | None = None) -> dict[str, Any]:
+                   solver_projection: dict[str, Any] | None = None,
+                   competition_resource_unlimited: bool = False) -> dict[str, Any]:
+        if type(competition_resource_unlimited) is not bool:
+            raise ControllerError('INVALID_ARGUMENT', '比赛资源标记必须为布尔值')
         settings = config.load_settings()
         mode = mode if mode is not None else settings["app"]["mode"]
         if mode not in ("demo", "connected"):
@@ -529,7 +533,7 @@ class RunController:
         if eval_mode is not None:
             snapshot["evaluation_metadata"] = json.loads(json.dumps(eval_mode))
         with config.mutation_lock, db.transaction() as conn:
-            self._check_active_capacity(conn, config.load_settings())
+            self._check_active_capacity(conn, config.load_settings(), competition_resource_unlimited)
             conn.execute(
                 "INSERT INTO runs(id, challenge_id, mode, phase, state_version, intention,"
                 " config_snapshot, created_at) VALUES(?,?,?,?,0,NULL,?,?)",
@@ -842,7 +846,7 @@ class RunController:
             if not text or not text.strip():
                 raise ControllerError("INVALID_ARGUMENT", "重开需要记录原因")
             with db.transaction() as conn:
-                self._check_active_capacity(conn, config.load_settings())
+                self._check_active_capacity(conn, config.load_settings(), run_limits.unlimited(run_id, conn=conn))
                 previous = conn.execute(
                     "SELECT ended_at,phase FROM runs WHERE id=? AND phase IN ('cancelled','finished')",
                     (run_id,)).fetchone()
@@ -2940,7 +2944,7 @@ class RunController:
             if req["trigger"] == "curation" and self._sparse_brain(run):
                 # Curation uses its own native conversation and evidence packet.
                 from . import resource_coordinator
-                resource_coordinator.reserve_auxiliary('maintenance-' + req['id'], self._runtime_settings(run_id))
+                resource_coordinator.reserve_auxiliary('maintenance-' + req['id'], self._runtime_settings(run_id), unlimited_resources=run_limits.unlimited(run_id))
                 maintenance_brain = self._make_brain(self._runtime_settings(run_id))
                 work = config.WORKSPACE_DIR / "runs" / run_id / "curation" / req["id"]
                 work.mkdir(parents=True, exist_ok=True)
@@ -3705,7 +3709,7 @@ class RunController:
                              f"{experience_context.encode(experience_context.for_trial(run_id,trial_id))}\n"
                              f"{executor_instruction_suffix()}"
                              f"{skills_mod.prompt_segment(enabled_skills)}\n"
-                             "运行环境：Linux；秒级小计算允许本地执行，命令、输出、耗时与产物必须留在真实轨迹中；重计算使用已授权的 Bohrium Job 或沙箱。\n"
+                             f"{features.science_instruction()}"
                              f"本地科学Python：{config.WORKSPACE_ROOT / '.venv/bin/python'}（numpy/scipy/sympy）；不要修改运行内核、供应商协议或评分器。\n"
                              "使用 PATH 中的 bohr；它会脱敏原生 CLI 错误输出，不得绕过代理执行原始 CLI。\n"
                              f"Bohrium 项目 ID：{(settings.get('bohrium') or {}).get('project_id') or '未配置'}。"
@@ -4327,7 +4331,7 @@ class RunController:
         try:
             self._require_model_authorization(row['run_id'])
             settings = self._runtime_settings(row['run_id'])
-            resource_coordinator.reserve_auxiliary(owner, settings)
+            resource_coordinator.reserve_auxiliary(owner, settings, unlimited_resources=run_limits.unlimited(row['run_id']))
             brain = self._make_brain(settings)
             work = config.WORKSPACE_DIR / 'curation' / request_id
             work.mkdir(parents=True, exist_ok=True)
@@ -4707,6 +4711,9 @@ def executor_instruction_suffix() -> str:
     path = (Path(__file__).resolve().parent.parent.parent
             / "prompts" / "collaboration" / "executor.md")
     try:
-        return "\n\n" + path.read_text(encoding="utf-8").strip()
+        from . import features
+        text = path.read_text(encoding="utf-8").strip()
+        text = features.render_science_policy(text)
+        return "\n\n" + text
     except OSError:
         return ""

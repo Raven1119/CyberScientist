@@ -17,10 +17,12 @@ def provider(choice: dict) -> str:
     return choice.get('provider') or choice.get('runtime', 'codex')
 
 
-def reserve_sessions_tx(conn, owner: str, choices: dict) -> None:
+def reserve_sessions_tx(conn, owner: str, choices: dict, *, unlimited_resources: bool = False) -> None:
     barrier = conn.execute("SELECT value FROM system_state WHERE key='shutdown_requested'").fetchone()
     if barrier and barrier['value'] == '1':
         raise ResourceWait('安全关机已关闭新会话，等待启动对账')
+    from . import run_limits
+    unlimited_resources = unlimited_resources or run_limits.unlimited(owner, conn=conn)
     limits = config.load_settings().get('resources', {}).get('provider_sessions', {})
     wanted = {role: provider(choice) for role, choice in choices.items()}
     for name in set(wanted.values()):
@@ -36,7 +38,7 @@ def reserve_sessions_tx(conn, owner: str, choices: dict) -> None:
                             (name,)).fetchone()[0]
         if type(limit) is not int or limit < 1:
             raise ValueError('提供方并发上限必须是正整数')
-        if used + count > limit:
+        if not unlimited_resources and used + count > limit:
             raise ResourceWait(f'{name} 会话已占用 {used}/{limit}，等待释放')
     for role, name in wanted.items():
         if role in existing and existing[role] != name:
@@ -50,13 +52,13 @@ def release_sessions(owner: str) -> None:
     db.execute('DELETE FROM model_session_leases WHERE owner=?', (owner,))
 
 
-def reserve_auxiliary(owner: str, settings: dict, role: str = 'brain') -> None:
+def reserve_auxiliary(owner: str, settings: dict, role: str = 'brain', *, unlimited_resources: bool = False) -> None:
     from . import power
     if power.shutdown_requested():
         raise ResourceWait('安全关机已关闭新会话，等待启动对账')
     if settings['app']['mode'] == 'connected':
         with db.transaction() as conn:
-            reserve_sessions_tx(conn, owner, {role: settings[role]})
+            reserve_sessions_tx(conn, owner, {role: settings[role]}, unlimited_resources=unlimited_resources)
     try:
         task = asyncio.current_task()
     except RuntimeError:

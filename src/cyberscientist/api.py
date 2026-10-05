@@ -508,9 +508,8 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
                 model_usage.validate(merged.get('model_pricing', {}))
                 from . import auto_harvest
                 merged['harvest'] = auto_harvest.validate(merged.get('harvest', {}))
-                features = merged.get('features', {})
-                if not isinstance(features, dict) or any(type(value) is not bool for value in features.values()):
-                    raise ValueError('功能开关必须是布尔值')
+                from . import features
+                features.validate(merged.get('features', {}))
                 policy = merged.get('policy', {})
                 if type(policy.get('require_ended_submission', False)) is not bool or not isinstance(policy.get('allowed_submission_targets', []), list) or any(not isinstance(target, str) or not target for target in policy.get('allowed_submission_targets', [])):
                     raise ValueError('提交目标授权策略无效')
@@ -968,6 +967,19 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
             return await asyncio.to_thread(competition.import_round, **body.model_dump())
         except (ValueError, compute.ComputeError) as exc:
             raise HTTPException(422, detail={'message': str(exc)}) from exc
+
+    @app.get('/api/v1/features')
+    async def read_features():
+        settings = config.load_settings()
+        return {'features': settings['features'], 'revision': settings['revision']}
+
+    @app.put('/api/v1/features/{name}')
+    async def switch_feature(name: str, request: Request):
+        from . import features
+        body = await request.json()
+        try: return features.switch(name, body.get('enabled'), body.get('expected_revision'))
+        except ValueError as exc:
+            raise HTTPException(409 if '版本冲突' in str(exc) else 422, detail={'message': str(exc)}) from exc
 
     @app.get('/api/v1/rounds')
     async def list_rounds():

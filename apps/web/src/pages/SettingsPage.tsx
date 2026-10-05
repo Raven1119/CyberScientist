@@ -217,6 +217,11 @@ export default function SettingsPage() {
         </button>
       </div>}
       <fieldset className="settings-stack settings-fields" disabled={saving}>
+        <article className="card card-body"><h2>功能开关</h2>
+          <p>关闭后停止对应的新动作；已接受的操作、历史报告与Run数据保留。</p>
+          {Object.entries({ auto_harvest: '自动收割', reviewer: '审查者', scorer_audit: '评分器审计', strategy_cards: '策略卡', deepseek_fallback: 'DeepSeek切换', protocol_drift: '协议检测', await_score: '等待评分', shared_area: '共享区', environment_catalog: '环境目录', system_triage: '系统分诊', local_calculation: '本地计算' }).map(([name, label]) =>
+            <label key={name}><input type="checkbox" checked={settings.features?.[name] ?? true} onChange={e => update(s => ({ ...s, features: { ...s.features, [name]: e.target.checked } }))} />启用{label}</label>)}
+        </article>
         <Preflight />
         <ProtocolDrift />
         <article className="card card-body"><h2>自动收割</h2>

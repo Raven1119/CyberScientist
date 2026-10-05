@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import json
 
-from . import db, local_scoring, runtime_environments
+from . import config, db, local_scoring, runtime_environments
 
 
 def _quote(run_id: str, kind: str) -> dict:
@@ -160,10 +160,11 @@ def facts(run_id: str) -> dict:
             local_packages[name] = version(name)
         except PackageNotFoundError:
             local_packages[name] = None
-    from . import protocol_drift
+    from . import protocol_drift, features
     return {'status': 'observed', 'observed_at': now.isoformat(), 'remaining': remaining, 'gpu_machine_catalog': machine_catalog.facts(),
             'platform_protocol_drift': protocol_drift.facts(),
-            'local_science': {'policy': 'seconds_only_remote_heavy', 'python': sys.executable,
+            'feature_switches': config.load_settings()['features'],
+            'local_science': {'policy': 'seconds_only_remote_heavy' if features.enabled('local_calculation') else 'bohrium_only', 'python': sys.executable,
                               'packages': local_packages, 'evidence_required': ['command', 'output', 'elapsed_seconds', 'artifact_hash']},
             'scoring': scoring, 'environment': environment, 'cpu_prices': quotes,
             'unlimited_resources': unlimited,

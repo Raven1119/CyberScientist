@@ -186,3 +186,20 @@ it('saves a configured DeepSeek fallback wait and roster entry with the settings
   await user.click(screen.getAllByRole('button', { name: '保存设置' })[0])
   await waitFor(() => expect(put.mock.calls[put.mock.calls.length - 1]?.[1].settings.deepseek_fallback).toEqual({ after_minutes: 2, solver_id: 'flash' }))
 })
+
+it('saves every operational switch off and on and retains each value after refresh', async () => {
+  const labels = ['自动收割', '审查者', '评分器审计', '策略卡', 'DeepSeek切换', '协议检测', '等待评分', '共享区', '环境目录', '系统分诊', '本地计算']
+  const user = userEvent.setup(); const view = render(<SettingsPage />)
+  await screen.findByLabelText('启用自动收割')
+  for (const label of labels) await user.click(screen.getByLabelText('启用'+label))
+  await user.click(screen.getAllByRole('button', { name: '保存设置' })[0])
+  await waitFor(() => expect(put).toHaveBeenCalled())
+  expect(Object.values(put.mock.calls[0][1].settings.features)).toEqual(Array(11).fill(false))
+  view.unmount(); render(<SettingsPage />); await screen.findByLabelText('启用自动收割')
+  for (const label of labels) {
+    expect((screen.getByLabelText('启用'+label) as HTMLInputElement).checked).toBe(false)
+    await user.click(screen.getByLabelText('启用'+label))
+  }
+  await user.click(screen.getAllByRole('button', { name: '保存设置' })[0])
+  await waitFor(() => expect(Object.values(put.mock.calls[put.mock.calls.length-1][1].settings.features)).toEqual(Array(11).fill(true)))
+})

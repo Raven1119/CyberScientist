@@ -91,6 +91,12 @@ def main() -> None:
     preflight = sub.add_parser('preflight', help='只读赛前自检（不启动Run或模型turn）')
     preflight.add_argument('--json', action='store_true')
     preflight.add_argument('--port', type=int, default=None)
+    ops = sub.add_parser('ops', help='运维接口')
+    ops_sub = ops.add_subparsers(dest='ops_command', required=True)
+    ops_switch = ops_sub.add_parser('switch', help='随时开关新功能，保留旧数据')
+    ops_switch.add_argument('name')
+    ops_switch.add_argument('state', choices=('on', 'off'))
+    ops_switch.add_argument('--port', type=int, default=None)
     evaluation = sub.add_parser('eval', help='运行或生成本地评测报告')
     evaluation_sub = evaluation.add_subparsers(dest='eval_command', required=True)
     eval_run = evaluation_sub.add_parser('run', help='启动一层评测')
@@ -102,6 +108,18 @@ def main() -> None:
     eval_rescore = evaluation_sub.add_parser('rescore', help='原 Run 封存包的一次受控补评分')
     eval_rescore.add_argument('result_id')
     args = parser.parse_args()
+
+    if args.command == 'ops':
+        from . import config, features, observation
+        if args.name not in features.NAMES: parser.error('未知功能开关：' + args.name)
+        port = args.port or config.load_settings()['app']['port']
+        request = urllib.request.Request(f'http://127.0.0.1:{port}/api/v1/features/{args.name}', data=json.dumps({'enabled': args.state == 'on'}).encode(), headers={'Content-Type': 'application/json'}, method='PUT')
+        try:
+            with urllib.request.urlopen(request, timeout=30) as response: result = json.load(response)
+        except (OSError, ValueError) as exc:
+            print(observation.strip_secrets(str(exc)), file=sys.stderr); raise SystemExit(2)
+        print(observation.strip_secrets(json.dumps(result, ensure_ascii=False)))
+        return
 
     if args.command == 'preflight':
         from . import config, observation

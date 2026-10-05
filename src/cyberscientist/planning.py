@@ -34,7 +34,10 @@ def startup(run_id: str, challenge: dict) -> dict:
     key = 'research_startup:' + run_id
     cached = db.query_one('SELECT value FROM system_state WHERE key=?', (key,))
     if cached:
-        return json.loads(cached['value'])
+        context = json.loads(cached['value'])
+        from . import features
+        if not features.enabled('strategy_cards'): context['strategy_cards'] = []
+        return context
     run = db.query_one('SELECT * FROM runs WHERE id=?', (run_id,))
     origin = db.query_one('SELECT origin FROM challenges WHERE id=?', (run['challenge_id'],))['origin']
     platform = json.loads(challenge.get('platform_snapshot_json') or '{}')

@@ -144,3 +144,39 @@ def test_unlimited_remaining_and_channels_preserve_explicit_gpu_denial(run):
     assert after['effective_job_limits']['allow_gpu'] is False
     assert observation.authority_facts(rid)['authorization']['job_limits']['allow_gpu'] is False
     assert planning.untried_channels(rid) == ['bohrium_job', 'bohrium_sandbox']
+
+
+def test_explicit_competition_admission_bypasses_active_and_session_caps_but_keeps_backoff():
+    from test_competition import challenges
+    from cyberscientist import resource_coordinator
+    from cyberscientist.controller import ControllerError
+    from datetime import datetime,timedelta,timezone
+    challenges(1); ctl=RunController();settings=config.load_settings()
+    settings['run_defaults']['max_active_runs']=1;settings['resources']['provider_sessions']['codex']=1;config.save_settings(settings)
+    old=ctl.create_run('c0','connected')['id']
+    with pytest.raises(ControllerError,match='活跃 Run'): ctl.create_run('c0','connected')
+    with db.transaction() as conn: resource_coordinator.reserve_sessions_tx(conn,old,{'brain':{'runtime':'codex'}})
+    with pytest.raises(resource_coordinator.ResourceWait):
+        with db.transaction() as conn: resource_coordinator.reserve_sessions_tx(conn,'ordinary',{'brain':{'runtime':'codex'}})
+    new=ctl.create_run('c0','connected',competition_resource_unlimited=True)['id']
+    ctl.authorize(new,'fixture',True,0,60,0,'',unlimited_resources=True)
+    with db.transaction() as conn: resource_coordinator.reserve_sessions_tx(conn,new,{'brain':{'runtime':'codex'},'executor':{'runtime':'codex'}})
+    assert len(db.query('SELECT * FROM model_session_leases'))==3
+    until=(datetime.now(timezone.utc)+timedelta(minutes=1)).isoformat();resource_coordinator.throttle('codex',until)
+    with pytest.raises(resource_coordinator.ResourceWait,match='退避'):
+        with db.transaction() as conn: resource_coordinator.reserve_sessions_tx(conn,'round-item',{'brain':{'runtime':'codex'}},unlimited_resources=True)
+    assert not db.query_one("SELECT 1 FROM model_session_leases WHERE owner='round-item'")
+
+
+def test_ten_unlimited_round_items_really_admit_beyond_both_old_caps():
+    import asyncio
+    from test_competition import challenges,template,FakeController
+    from cyberscientist import evaluations
+    settings=config.load_settings();settings['run_defaults']['max_active_runs']=1;settings['resources']['provider_sessions']['codex']=1;config.save_settings(settings)
+    rnd=competition.import_round(challenges(10),mode='demo')
+    competition.confirm(rnd['id'],template())
+    ctl=FakeController();ctl.throttled=True
+    asyncio.run(evaluations.advance(ctl))
+    assert len(ctl.started)==10 and len(db.query('SELECT * FROM model_session_leases'))==20
+    assert all(row['unlimited_resources'] for row in db.query('SELECT * FROM authorizations'))
+    assert not db.query('SELECT * FROM submissions')

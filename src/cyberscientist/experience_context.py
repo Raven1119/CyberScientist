@@ -25,7 +25,9 @@ def terms(text: str) -> set[str]:
 
 def effective(challenge_id: str | None) -> list[dict]:
     result = []
+    from . import features
     for entry in experiences.active_experiences(challenge_id):
+        if entry.get('kind') == 'strategy' and not features.enabled('strategy_cards'): continue
         if entry.get('expires_at'):
             try:
                 expires = datetime.fromisoformat(entry['expires_at'].replace('Z', '+00:00'))

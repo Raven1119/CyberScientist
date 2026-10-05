@@ -14,6 +14,7 @@ export interface SettingsStatus {
 export interface SolverEntry extends ModelChoice { id: string; name: string; note?: string }
 
 export interface Settings {
+  features?: Record<string, boolean>
   schema_version: number
   revision: number
   app: { host: string; port: number; mode: string; data_dir: string }

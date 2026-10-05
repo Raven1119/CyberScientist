@@ -59,6 +59,12 @@ async def review(controller, run_id: str, trial_id: str, operation_id: str,
         raise ValueError('审查包必须在本 Trial 内')
     source_sha = hashlib.sha256(source.read_bytes()).hexdigest()
     previous = db.query_one('SELECT * FROM package_reviews WHERE operation_id=?', (operation_id,))
+    from . import features, run_limits
+    if not features.enabled('reviewer'):
+        if previous and previous['run_id'] == run_id and previous['trial_id'] == trial_id and previous['source_sha256'] == source_sha:
+            return get(operation_id, run_id) | {'feature_disabled': True}
+        if previous: raise ValueError('审查幂等键内容冲突')
+        return {'status': 'disabled', 'operation_id': operation_id, 'notice': '审查者已关闭，保留原报告'}
     if previous:
         if previous['run_id'] != run_id or previous['trial_id'] != trial_id or previous['source_sha256'] != source_sha:
             raise ValueError('审查幂等键内容冲突')
@@ -138,12 +144,13 @@ async def review(controller, run_id: str, trial_id: str, operation_id: str,
         if not conn.execute("UPDATE package_reviews SET status='running',updated_at=? WHERE operation_id=? AND status='pending'", (db.utcnow(), operation_id)).rowcount:
             return get(operation_id, run_id)
     try:
-        resource_coordinator.reserve_auxiliary(owner, settings)
+        resource_coordinator.reserve_auxiliary(owner, settings, unlimited_resources=run_limits.unlimited(run_id))
         brain = controller._make_brain(settings)
         session = await brain.open({'working_directory': str(Path(packet['sealed_package']['path']).parent), 'instructions': packet['instructions']})
         live = controller._require_run(run_id)
         if live['phase'] not in ('running', 'created') or (auth and auth['max_run_minutes'] and run_clock.remaining(live, auth) <= 0):
             raise ValueError('审查启动时原授权已结束，未发起模型 turn')
+        if not features.enabled('reviewer'): raise ValueError('审查者已关闭，尚未发起模型turn')
         started = True
         db.append_event(run_id, 'controller', 'package.review_started', {'operation_id': operation_id, 'sealed_sha256': packet['sealed_package']['sha256']}, trial_id=trial_id)
         result = None

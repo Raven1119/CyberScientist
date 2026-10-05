@@ -4,6 +4,7 @@
 审批请求一律上报事件并以“不支持”应答，不做无边界自动同意。
 """
 from __future__ import annotations
+from .. import features
 
 import asyncio
 import glob
@@ -290,7 +291,7 @@ class CodexBrain:
             )
         return (
             "你是 CyberScientist 的大脑，负责研究方向的判断。\n"
-            "执行器可在本地做秒级小计算并记录真实命令和输出；PI委派并审阅证据，重计算仍用授权的Bohrium Job或沙箱。\n"
+            + features.science_instruction() +
             "以当前用户目标、Run 意图与授权为准。持续提出可检验假设并用真实证据迭代，"
             "不把满分或耗尽预算设为默认停止前提。若用户目标是观察系统闭环，"
             "在真实提交、评分反馈与经验提取完成且观察充分后可以 finish，"

@@ -64,7 +64,8 @@ def _trigger(run, source, params: dict) -> dict | None:
 
 def advance_sync() -> None:
     reconcile_interrupted(include_running=False)
-    if power.shutdown_requested():
+    from . import features
+    if power.shutdown_requested() or not features.enabled('auto_harvest'):
         return
     params = validate(config.load_settings().get('harvest', {}))
     for run in db.query("SELECT * FROM runs WHERE phase IN ('running','waiting_score','finished')"):
@@ -98,7 +99,7 @@ def advance_sync() -> None:
             reason = trigger['reason']
             operation = 'auto-harvest-' + src['id']
             with db.transaction() as conn:
-                if power.shutdown_requested():
+                if power.shutdown_requested() or not features.enabled('auto_harvest'):
                     return
                 try:
                     mailboxes._check_budget(conn, run['id'], terminal_harvest=True)

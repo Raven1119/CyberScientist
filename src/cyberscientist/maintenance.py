@@ -1,5 +1,6 @@
 """Two independent, durable end-of-Run model calls: curation and fresh post-review."""
 from __future__ import annotations
+from . import run_limits
 import asyncio
 import hashlib
 import json
@@ -316,7 +317,7 @@ async def run_post_review(controller, run_id: str, *, review_id: str | None = No
         settings['brain'] = dict(settings.get('post_review') or config.DEFAULT_SETTINGS['post_review'])
         if not settings['brain'].get('executable') and original.get('runtime') == settings['brain']['runtime']:
             settings['brain']['executable'] = original.get('executable', '')
-        resource_coordinator.reserve_auxiliary(owner, settings)
+        resource_coordinator.reserve_auxiliary(owner, settings, unlimited_resources=run_limits.unlimited(run_id))
         reserved = True
         packet = json.loads(grant['packet_json']) if review_id else snapshot(controller, run_id)
         _update_review(run_id, review_id, packet_json=json.dumps(packet, ensure_ascii=False))
