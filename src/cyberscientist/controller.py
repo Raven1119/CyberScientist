@@ -478,7 +478,8 @@ class RunController:
     def create_run(self, challenge_id: str, mode: str | None = None,
                    shadow_enabled: bool | None = None,
                    eval_mode: dict[str, Any] | None = None,
-                   model_config: dict[str, Any] | None = None) -> dict[str, Any]:
+                   model_config: dict[str, Any] | None = None,
+                   solver_projection: dict[str, Any] | None = None) -> dict[str, Any]:
         settings = config.load_settings()
         mode = mode if mode is not None else settings["app"]["mode"]
         if mode not in ("demo", "connected"):
@@ -499,6 +500,14 @@ class RunController:
                             for role in ('brain', 'executor', 'reviewer', 'post_review')}
         except (ValueError, TypeError, KeyError) as exc:
             raise ControllerError("INVALID_ARGUMENT", f"题目模型配置无效：{exc}") from exc
+        from . import model_fallback
+        if solver_projection is None:
+            selected['executor'], fallback = model_fallback.select(selected['executor'], settings)
+        else:
+            fallback = json.loads(json.dumps(solver_projection))
+            expected = fallback.get('selected') or fallback['original']
+            if challenge_models.choose('executor', expected, settings) != selected['executor']:
+                raise ControllerError('INVALID_ARGUMENT', '求解者预检与冻结选择不一致')
         for role, choice in selected.items():
             current = settings[role]
             if current.get("runtime") != choice["runtime"]:
@@ -513,6 +522,7 @@ class RunController:
                     "shadow": shadow_cfg,
                     "challenge_id": challenge_id, "mode": mode,
                     "challenge_platform_id": challenge['platform_challenge_id'],
+                    "solver_fallback": fallback,
                     "automatic_harvest_version": 1,
                     "compute_policy_version": 1, "sparse_brain_version": 1,
                     "lifecycle_version": 2, "submission_prediction_version": 1}
@@ -1248,6 +1258,9 @@ class RunController:
                                      request_id=req["id"], mode="requested")
             return
         self._clear_model_limit(run_id, "brain")
+        if answer and not error_msg:
+            from . import model_fallback
+            model_fallback.recovered(self._runtime_settings(run_id)['brain'], request_id='run:' + run_id + ':brain')
         if answer:
             if ("answer_md" not in answer and isinstance(answer.get("answers"), dict)
                     and answer["answers"]):
@@ -1611,9 +1624,10 @@ class RunController:
         attempts = previous["attempts"] + 1 if previous else 1
         delay = model_limits.retry_delay(attempts, info)
         next_at = model_limits.retry_at(now, delay)
-        from . import resource_coordinator
-        resource_coordinator.throttle(resource_coordinator.provider(
-            self._runtime_settings(run_id).get(role, {})), next_at)
+        from . import resource_coordinator, model_fallback
+        choice = self._runtime_settings(run_id).get(role, {})
+        model_fallback.note(choice, {'code':429, 'message':info.reason}, request_id='run:' + run_id + ':' + role)
+        resource_coordinator.throttle(resource_coordinator.provider(choice), next_at)
         with db.transaction() as conn:
             conn.execute(
                 "INSERT INTO model_rate_limits(run_id,role,first_at,attempts,retry_at,state,trial_id)"
@@ -2020,6 +2034,9 @@ class RunController:
             public.setdefault("detail", "")
             db.append_event(run_id, "prime", f"prime.{etype}",
                             public, trial_id=trial_id)
+            if etype in ('executor.turn_completed', 'trial.completed'):
+                from . import model_fallback
+                model_fallback.recovered(self._runtime_settings(run_id)['executor'], request_id='run:' + run_id + ':executor')
             if etype in ("executor.turn_completed", "trial.completed", "run.aborted",
                          "session.ended"):
                 self._clear_model_limit(run_id, "executor")
@@ -2976,6 +2993,9 @@ class RunController:
                                      request_id=req["id"], mode=mode)
             return
         self._clear_model_limit(run_id, "brain")
+        if result is not None and not error_msg:
+            from . import model_fallback
+            model_fallback.recovered(self._runtime_settings(run_id)['brain'], request_id='run:' + run_id + ':brain')
 
         if error_msg or result is None:
             self._review_failed(run_id, req, mode,

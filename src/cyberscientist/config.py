@@ -64,6 +64,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "post_review": {"runtime": "codex", "provider": "deepseek", "executable": "",
                     "model_id": "deepseek-flash", "reasoning_effort": "high"},
     "solver_roster": [],
+    "deepseek_fallback": {"after_minutes": 5, "solver_id": ""},
     "model_pricing": {"deepseek/deepseek-flash": {
         "currency": "USD", "source": "https://api-docs.deepseek.com/quick_start/pricing/",
         "observed_on": "2026-10-05", "billing_tier": "unknown",

@@ -176,3 +176,13 @@ it('requires one explicit tool-probe authorization and sends the selected role p
   })])
   expect(button.matches(':disabled')).toBe(true)
 })
+
+it('saves a configured DeepSeek fallback wait and roster entry with the settings', async () => {
+  const entry = { id: 'flash', name: '限速后备', runtime: 'codex', provider: 'deepseek', model_id: 'deepseek-flash', reasoning_effort: 'high' }
+  get.mockImplementation(async () => ({ ...structuredClone(stored), solver_roster: [entry], deepseek_fallback: { after_minutes: 5, solver_id: '' } }))
+  const user = userEvent.setup(); render(<SettingsPage />)
+  await user.clear(await screen.findByLabelText('后备等待分钟')); await user.type(screen.getByLabelText('后备等待分钟'), '2')
+  await user.selectOptions(screen.getByLabelText('DeepSeek 后备条目'), 'flash')
+  await user.click(screen.getAllByRole('button', { name: '保存设置' })[0])
+  await waitFor(() => expect(put.mock.calls.at(-1)?.[1].settings.deepseek_fallback).toEqual({ after_minutes: 2, solver_id: 'flash' }))
+})

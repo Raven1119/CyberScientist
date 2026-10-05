@@ -29,6 +29,7 @@ class _Session:
     requests_task: asyncio.Task | None = None
     turn_id: str | None = None
     busy: bool = False
+    rate_generation: int = 0
 
 
 class CodexExecutor:
@@ -91,6 +92,8 @@ class CodexExecutor:
                              operation_id=f"op_{uuid.uuid4().hex[:10]}")
 
     async def _run_turn(self, sess: _Session, text: str) -> None:
+        from .. import model_fallback
+        sess.rate_generation = model_fallback.ticket({'runtime':'codex','provider':self.provider or 'codex','model_id':self.model})
         try:
             params: dict[str, Any] = {
                 "threadId": sess.thread_id,
@@ -228,6 +231,14 @@ class CodexExecutor:
                     # Keep native turn liveness without storing private thought
                     # or high-frequency message fragments in the public trace.
                     await emit({"type": "native.activity"})
+                elif method == 'error':
+                    from .. import model_providers, model_fallback
+                    error = params.get('error') or params.get('message') or '原生错误'
+                    choice = {'runtime':'codex','provider':self.provider or 'codex','model_id':self.model}
+                    model_providers.record_throttle(choice, error, request_id='native:' + sess.thread_id)
+                    if params.get('willRetry'):
+                        model_fallback.note(choice, error, will_retry=True, request_id='native:' + sess.thread_id)
+                        await emit({'type':'execution.progress','detail':'原生错误仍由CLI重试','will_retry':True})
                 elif method == "turn/completed":
                     turn = params.get("turn", {})
                     if sess.turn_id and turn.get("id") != sess.turn_id:
@@ -235,6 +246,8 @@ class CodexExecutor:
                     sess.busy = False
                     sess.turn_id = None
                     if turn.get("status") == "completed":
+                        from .. import model_fallback
+                        model_fallback.recovered({'runtime':'codex','provider':self.provider or 'codex','model_id':self.model}, request_id='native:' + sess.thread_id, started_generation=sess.rate_generation)
                         await emit({"type": "executor.turn_completed",
                                               "stop_reason": "completed",
                                               "detail": "原生 turn 完成；实验交付仍以检查点为准"})

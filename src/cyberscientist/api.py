@@ -501,6 +501,8 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
                 for role in ('brain', 'executor', 'reviewer', 'post_review'):
                     challenge_models.choose(role, None, merged)
                 merged['solver_roster'] = challenge_models.roster(merged)
+                from . import model_fallback
+                merged['deepseek_fallback'] = model_fallback.validate(merged.get('deepseek_fallback', {}), merged)
                 model_usage.validate(merged.get('model_pricing', {}))
                 from . import auto_harvest
                 merged['harvest'] = auto_harvest.validate(merged.get('harvest', {}))

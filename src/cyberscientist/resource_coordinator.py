@@ -83,9 +83,10 @@ def unregister_auxiliary(owner: str) -> None:
 
 
 def throttle(name: str, retry_at: str) -> None:
+    now = db.utcnow()
     db.execute('INSERT INTO model_provider_backoff(provider,retry_at,first_at) VALUES(?,?,?)'
-               ' ON CONFLICT(provider) DO UPDATE SET retry_at=MAX(retry_at,excluded.retry_at)',
-               (name, retry_at, db.utcnow()))
+               ' ON CONFLICT(provider) DO UPDATE SET first_at=CASE WHEN retry_at<=? THEN excluded.first_at ELSE first_at END,'
+               ' retry_at=MAX(retry_at,excluded.retry_at)', (name, retry_at, now, now))
 
 
 def require_compute_slot_tx(conn, kind: str, *, run_id: str | None = None) -> None:
@@ -110,10 +111,13 @@ def require_compute_slot_tx(conn, kind: str, *, run_id: str | None = None) -> No
 
 
 def status() -> dict:
+    from . import model_fallback
     return {'limits': config.load_settings().get('resources', {}),
             'sessions': [dict(r) for r in db.query('SELECT provider,COUNT(*) AS used'
                                                 ' FROM model_session_leases GROUP BY provider')],
-            'rate_limits': [dict(r) for r in db.query('SELECT * FROM model_rate_limits')]}
+            'rate_limits': [dict(r) for r in db.query('SELECT * FROM model_rate_limits')],
+            'provider_backoff': [dict(r) for r in db.query('SELECT * FROM model_provider_backoff')],
+            'native_throttle': model_fallback.facts()}
 
 
 def close_failed(owner: str, exc: BaseException) -> None:

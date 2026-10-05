@@ -149,6 +149,9 @@ class CodexBrain:
         }
         if self.effort:
             turn_params["effort"] = self.effort
+        from .. import model_fallback
+        rate_choice = {'runtime': 'codex', 'provider': self.provider or 'codex', 'model_id': self.model}
+        rate_ticket = model_fallback.ticket(rate_choice)
         try:
             result = await self.rpc.request("turn/start", turn_params, timeout=30)
         except (asyncio.TimeoutError, ProtocolError, OSError) as exc:
@@ -216,6 +219,13 @@ class CodexBrain:
                             error_msg = error_msg or str(t.get("error") or f"turn 终态: {status}")
                         break
                 elif method == "error":
+                    from .. import model_fallback, model_providers
+                    native_error = params.get("error") or params.get("message") or "协议错误"
+                    choice = {'runtime': 'codex', 'provider': self.provider or 'codex', 'model_id': self.model}
+                    model_providers.record_throttle(choice, native_error, request_id='native:' + session.session_id)
+                    if params.get('willRetry'):
+                        model_fallback.note(choice, native_error, will_retry=True, request_id='native:' + session.session_id)
+                        yield BrainEvent('progress', {'detail': '原生错误仍由CLI重试', 'will_retry': True})
                     if not params.get("willRetry"):
                         error_msg = str(params.get("error") or params.get("message") or "协议错误")
                 # 未知通知：跳过但记录
@@ -230,6 +240,8 @@ class CodexBrain:
         if error_msg:
             yield BrainEvent("error", {"message": error_msg, "code": 'NATIVE_TURN_UNKNOWN' if unknown_turn else 'NATIVE_FAILURE'})
             return
+        from .. import model_fallback
+        model_fallback.recovered(rate_choice, request_id='native:' + session.session_id, started_generation=rate_ticket)
         joined = "\n".join(final_text)
         yield structured_output.parse(joined, packet)
 

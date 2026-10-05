@@ -11,7 +11,7 @@ type Item = { id: string; challenge_id: string; title: string; phase: string; pr
   paused: number; run_id: string | null; local_best: number | null; platform_best: { score: number; score_confidence: string } | null;
   triage: { difficulty: string; estimated_minutes: number | null; estimated_cost_cny: number | null; recommended_model: string; reason: string } | null;
   model_cost?: unknown; trace_diagnostic: unknown; usage: unknown[]; cost: unknown; next_action: string | null }
-type Round = { id: string; label: string; status: string; items: Item[]; resources: { sessions: { provider: string; used: number }[]; rate_limits: unknown[] } }
+type Round = { id: string; label: string; status: string; items: Item[]; resources: { sessions: { provider: string; used: number }[]; rate_limits: unknown[]; provider_backoff?: unknown[]; native_throttle?: unknown[] } }
 const choice = (model: string): Choice => ({ runtime: 'codex', model_id: model, reasoning_effort: 'xhigh' })
 function ModelFields({ label, role, value, onChange }: { label: string; role: 'brain' | 'executor'; value: Choice; onChange: (value: Choice) => void }) {
   if (role === 'brain') return <div className="form-grid">
@@ -116,6 +116,7 @@ export default function CompetitionPage() {
       <label>给 PI 的求解者备注<input value={template.solver_note} onChange={e => setTemplate(t => ({ ...t, solver_note: e.target.value }))} /></label>
     </fieldset>
     {round && <><p>轮次 {round.id} · {round.status}</p>
+      <details><summary>提供方速率状态</summary><pre>{JSON.stringify({ provider_backoff: round.resources.provider_backoff ?? [], request_models: round.resources.native_throttle ?? [] }, null, 2)}</pre></details>
       <p>提供方会话 {round.resources.sessions.map(s => `${s.provider}: ${s.used}`).join('，') || '0'} · 限流等待 {round.resources.rate_limits.length}</p>
       <button className="btn" disabled={busy || round.status !== 'draft'} onClick={() => void action(`${url}/triage`, { allow_model_calls: true })}>授权一次题目分诊</button>
       <button className="btn primary" disabled={busy || round.status !== 'draft'} onClick={() => void action(`${url}/confirm`, {

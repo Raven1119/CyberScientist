@@ -88,6 +88,7 @@ export interface Settings {
     max_injected_characters: number
   }
   skills: { always_on: string[] }
+  deepseek_fallback?: { after_minutes: number; solver_id: string }
   resources?: { provider_sessions: Record<string, number>; max_concurrent_jobs: number | null; max_concurrent_sandboxes: number | null }
   _status?: SettingsStatus
 }

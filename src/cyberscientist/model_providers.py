@@ -60,11 +60,13 @@ def verify_provider(result: dict, provider: str | None) -> None:
         raise ValueError('原生会话未确认 DeepSeek 提供方，拒绝静默切换')
 
 
-def record_throttle(choice: dict, error) -> None:
+def record_throttle(choice: dict, error, *, request_id=None) -> None:
     from datetime import datetime, timezone
     from . import model_limits, resource_coordinator
     info = model_limits.classify(error)
     if info:
+        from . import model_fallback
+        if request_id is not None: model_fallback.note(choice, error, request_id=request_id)
         resource_coordinator.throttle(resource_coordinator.provider(choice),
             model_limits.retry_at(datetime.now(timezone.utc), model_limits.retry_delay(1, info)))
 

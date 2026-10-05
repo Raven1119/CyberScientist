@@ -110,3 +110,12 @@ it('uses a concrete roster entry and clears its selection after a manual executo
   expect(post.mock.calls[0][1].template.solver_id).toBeUndefined()
   expect(post.mock.calls[0][1].template.model_config.executor).toMatchObject({ provider: 'codex', model_id: 'gpt-6.1-sol' })
 })
+
+it('shows provider cooldown and native request model throttle facts', async () => {
+  const changed = { ...detail, resources: { ...detail.resources, provider_backoff: [{ provider: 'codex', retry_at: 'future' }], native_throttle: [{ provider: 'codex', model_id: 'gpt-6.1-sol', status: 'waiting' }] } }
+  get.mockImplementation(async (path: string) => path === '/api/v1/rounds' ? { items: [{ id: 'round_one', status: 'draft' }] } : changed)
+  render(<CompetitionPage />); await screen.findByText(/easy · deepseek-flash/)
+  await userEvent.setup().click(screen.getByText('提供方速率状态'))
+  expect(screen.getByText(/"retry_at": "future"/)).toBeTruthy()
+  expect(screen.getByText(/"model_id": "gpt-6.1-sol"/)).toBeTruthy()
+})

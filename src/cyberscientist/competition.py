@@ -327,18 +327,22 @@ async def advance_round(controller, evaluation) -> None:
         template = _template(json.loads(item['template_json']), snapshot['mode'], frozen=True)
         try:
             if run is None:
+                from . import model_fallback
+                selection_settings = config.load_settings(); selection_settings['app']['mode'] = snapshot['mode']
+                effective, fallback = model_fallback.select(template['model_config']['executor'], selection_settings)
+                admission_models = template['model_config'] | {'executor': effective}
                 # Do not create a capacity-consuming Run while its provider is
                 # full. Native startup repeats this check under the writer lock.
                 with db.transaction() as conn:
-                    resource_coordinator.reserve_sessions_tx(conn, item['id'], template['model_config'])
+                    resource_coordinator.reserve_sessions_tx(conn, item['id'], admission_models)
                     conn.execute('DELETE FROM model_session_leases WHERE owner=?', (item['id'],))
                 run = controller.create_run(item['challenge_id'], snapshot['mode'], template['shadow_enabled'],
-                                            model_config=template['model_config'])
+                                            model_config=admission_models, solver_projection=fallback)
                 db.execute("UPDATE eval_results SET run_id=?,status='created' WHERE id=?", (run['id'], item['id']))
                 # Freeze note and round link without creating capability restrictions.
                 state = json.loads(db.query_one('SELECT config_snapshot FROM runs WHERE id=?', (run['id'],))['config_snapshot'])
                 state['competition'] = {'round_id': rid, 'item_id': item['id'], 'solver_note': template['solver_note'],
-                                        'solver_entry': template.get('solver_entry'),
+                                        'solver_entry': fallback.get('solver_entry') or template.get('solver_entry'),
                                         'challenge_snapshot': next(e.get('challenge_snapshot') for e in snapshot['entries'] if e['challenge_id'] == item['challenge_id'])}
                 db.execute('UPDATE runs SET config_snapshot=? WHERE id=?', (_dump(state), run['id']))
             phase = run['phase']

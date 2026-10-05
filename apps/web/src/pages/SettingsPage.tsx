@@ -228,6 +228,13 @@ export default function SettingsPage() {
           <label>赛末收割检查提前小时<input type="number" min="0" step="0.5" value={settings.harvest?.deadline_check_hours ?? 2}
             onChange={e => update(s => ({ ...s, harvest: { ...{ score_threshold: 100, experiments_done_at_leader: true, deadline_check_hours: 2 }, ...s.harvest, deadline_check_hours: Number(e.target.value) } }))} /></label>
         </article>
+        <article className="card card-body"><h2>Codex 限速求解者后备</h2>
+          <p>持续限速后的新 Run 可使用 DeepSeek；已有 Run 和 PI Astra xhigh 保留。提供方退避仍排队，成功回合确认恢复后，新 Run 回到原选择。</p>
+          <label>后备等待分钟<input type="number" min="0" max="1440" value={settings.deepseek_fallback?.after_minutes ?? 5} onChange={e => update(s => ({ ...s, deepseek_fallback: { solver_id: '', ...s.deepseek_fallback, after_minutes: Number(e.target.value) } }))} /></label>
+          <label>DeepSeek 后备条目<select value={settings.deepseek_fallback?.solver_id ?? ''} onChange={e => update(s => ({ ...s, deepseek_fallback: { after_minutes: 5, ...s.deepseek_fallback, solver_id: e.target.value } }))}>
+            <option value="">首个已配置 DeepSeek 条目</option>{(settings.solver_roster ?? []).filter(item => item.provider === 'deepseek').map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
+          </select></label>
+        </article>
         <EnvironmentCatalog />
         <article className="card card-body"><h2>四角色提供方</h2>
           <p>DeepSeek 密钥只读取后端环境变量或根目录 .env。工具探针会消耗一次模型调用。</p>
