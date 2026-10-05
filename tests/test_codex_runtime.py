@@ -57,7 +57,9 @@ class FakeRpc:
             await self.messages.put({'method': method, 'params': {'threadId': 'thread-1', 'item': item}})
         await self.messages.put({'method': 'item/completed', 'params': {
             'threadId': 'thread-1', 'item': {'type': 'agentMessage',
-            'text': json.dumps({'schema_version': 1, 'actions': [{'op': 'wait', 'reason': 'probe'}]})}}})
+            'text': json.dumps({'schema_version': 1, 'decision_id': 'fixture-decision', 'run_id': 'run-1',
+                'observed_state_version': 0, 'summary': 'Protocol fixture', 'evidence_refs': [],
+                'experience_proposals': [], 'actions': [{'op': 'wait', 'reason': 'probe'}]})}}})
         await self.messages.put({'method': 'turn/completed', 'params': {
             'threadId': 'thread-1', 'turn': {'id': 'turn-1', 'status': 'completed'}}})
 

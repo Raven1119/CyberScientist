@@ -151,6 +151,8 @@ async def review(controller, run_id: str, trial_id: str, operation_id: str,
         if auth and auth['max_run_minutes']:
             timeout = min(timeout, max(1, run_clock.remaining(live, auth)))
         async with asyncio.timeout(timeout):
+            from .structured_output import set_budget
+            set_budget(brain, run_id, 'reviewer')
             async for event in brain.review(session, packet):
                 if event.type == 'task_result':
                     result = json.loads(observation.strip_secrets(json.dumps(event.payload['result'], ensure_ascii=False)))

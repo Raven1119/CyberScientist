@@ -58,7 +58,7 @@ async def run(controller, role: str, choice: dict | None = None, *, connectivity
             packet = {'protocol': 'role_task', 'task': 'native_tool_probe',
                       'instructions': '必须实际用 shell 工具读取当前目录 probe.txt，只读此文件。不要打印环境变量。'
                                       '把读取的全文作为 probe_token。不要计算或调用其他 API。',
-                      'output_contract': {'probe_token': 'string'}}
+                      'output_contract': {'type': 'object', 'required': ['probe_token'], 'properties': {'probe_token': {'type': 'string'}}, 'additionalProperties': False}}
             if connectivity:
                 packet['instructions'] = ('这是零科研连接探针。实际用shell读取probe.txt作为probe_token，不打印环境。'
                     f"唯一其它可读本地文件是LKM技能；必须用完整命令cat {skill_path}读取全文，按该技能使用后端受限工具。"
@@ -66,7 +66,8 @@ async def run(controller, role: str, choice: dict | None = None, *, connectivity
                     'research_web_read(url="https://docs.python.org/3/library/json.html")、'
                     'research_lkm(query="scientific knowledge graph retrieval")。研究资料只用于检查接口是否可用，不解科研题、不计算或提交。'
                     '三个工具的回执保持unknown或received原状，返回probe_token和各工具状态。')
-                packet['output_contract'] = {'probe_token': 'string', 'tools': 'object'}
+                packet['output_contract'] = {'type': 'object', 'required': ['probe_token', 'tools'], 'properties': {'probe_token': {'type': 'string'}, 'tools': {'type': 'object'}}, 'additionalProperties': False}
+            brain.allow_format_rewrites = False  # The probe authorizes one native call only.
             receipt = result = usage = skill_receipt = None
             async with asyncio.timeout(300):
                 async for event in brain.review(session, packet):

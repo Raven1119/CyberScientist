@@ -18,8 +18,6 @@ import sys
 from pathlib import Path
 from typing import Any, AsyncIterator
 
-from ..decision_extraction import (extract_decision, extract_question_answer,
-                                   extract_review_result)
 from ..jsonrpc_stdio import JsonRpcStdio, ProtocolError
 from .base import BrainEvent, RuntimeHealth, SessionRef
 
@@ -220,13 +218,21 @@ class KimiBrain:
 
     async def review(self, session: SessionRef,
                      packet: dict[str, Any]) -> AsyncIterator[BrainEvent]:
+        from .. import structured_output
+        async for event in structured_output.review(self, session, packet):
+            yield event
+
+    async def _review_once(self, session: SessionRef,
+                     packet: dict[str, Any]) -> AsyncIterator[BrainEvent]:
         assert self.rpc is not None
-        prompt_text = self._render_prompt(packet)
+        from .. import structured_output
+        prompt_text = structured_output.feedback_prompt(self._render_prompt(packet), packet)
         notif_iter = self.rpc.notifications()
         final_text: list[str] = []
         error_msg: str | None = None
 
         async def watch_turn() -> None:
+            nonlocal error_msg
             try:
                 async for msg in notif_iter:
                     if msg.get("method") != "session/update":
@@ -242,7 +248,7 @@ class KimiBrain:
             except asyncio.CancelledError:
                 raise
             except Exception as exc:  # noqa: BLE001
-                final_text.append(f"[事件流异常: {exc}]")
+                error_msg = f"事件流异常: {exc}"
 
         watcher = asyncio.create_task(watch_turn())
         prompt_task = asyncio.create_task(
@@ -263,6 +269,7 @@ class KimiBrain:
             error_msg = f"prompt 失败: {exc.__class__.__name__}: {str(exc)[:300]}"
         finally:
             watcher.cancel()
+            await asyncio.gather(watcher, return_exceptions=True)
             async for ev in self._drain_requests():
                 yield ev
 
@@ -276,42 +283,7 @@ class KimiBrain:
                   file=sys.stderr)
         if joined.strip():
             yield BrainEvent("raw", {"text": joined})
-        if packet.get("protocol") == "experience_curation":
-            from ..curation import extract
-            result = extract(joined)
-            if result is None:
-                yield BrainEvent("error", {"message": "最终消息中未找到合法 CurationResult JSON"})
-            else:
-                yield BrainEvent("curation_result", {"result": result})
-            return
-        if packet.get("protocol") == "role_task":
-            from ..role_tasks import extract
-            result = extract(joined)
-            yield BrainEvent('task_result' if result is not None else 'error',
-                             {'result': result} if result is not None else {'message': '角色任务未返回 JSON 对象'})
-            return
-        if packet.get("protocol") == "review_result":
-            result = extract_review_result(joined)
-            if result is None:
-                yield BrainEvent("error", {
-                    "message": "最终消息中未找到合法 ReviewResult JSON"})
-                return
-            yield BrainEvent("review_result", {"result": result})
-            return
-        if packet.get("protocol") == "executor_question":
-            answer = extract_question_answer(joined)
-            if answer is None:
-                yield BrainEvent("error", {
-                    "message": "最终消息中未找到合法回答 JSON"})
-                return
-            yield BrainEvent("question_answer", answer)
-            return
-        decision = extract_decision(joined, packet)
-        if decision is None:
-            yield BrainEvent("error",
-                             {"message": "最终消息中未找到合法 Decision JSON"})
-            return
-        yield BrainEvent("decision", {"decision": decision})
+        yield structured_output.parse(joined, packet)
 
     async def _answer_pending(self) -> None:
         """循环内应答权限请求（不产出事件）。"""

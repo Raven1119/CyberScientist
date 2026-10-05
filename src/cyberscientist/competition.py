@@ -139,9 +139,13 @@ async def triage(round_id: str, controller, allow_model_calls: bool = False) -> 
                                       '简单题建议 deepseek-flash；难题建议 gpt-6.1-sol。建议不是授权。',
                       'challenge': next(e.get('challenge_snapshot') for e in snapshot['entries'] if e['challenge_id'] == item['challenge_id']),
                       'public_scores': scores, 'solver_roster': challenge_models.roster(settings),
-                      'output_contract': {'difficulty': 'easy|medium|hard|unknown',
-                                          'estimated_minutes': 'number|null', 'estimated_cost_cny': 'number|null',
-                                          'recommended_model': 'string', 'recommended_solver_id': 'existing roster ID|null', 'reason': 'string'}}
+                      'output_contract': {'type': 'object', 'additionalProperties': False,
+                          'required': ['difficulty', 'estimated_minutes', 'estimated_cost_cny', 'recommended_model', 'recommended_solver_id', 'reason'],
+                          'properties': {'difficulty': {'enum': ['easy', 'medium', 'hard', 'unknown']},
+                              'estimated_minutes': {'type': ['number', 'null'], 'minimum': 0},
+                              'estimated_cost_cny': {'type': ['number', 'null'], 'minimum': 0},
+                              'recommended_model': {'type': 'string'}, 'reason': {'type': 'string'},
+                              'recommended_solver_id': {'enum': [None, *[s['id'] for s in challenge_models.roster(settings)]]}}}}
             result = None
             async with asyncio.timeout(180):
                 async for event in brain.review(session, packet):

@@ -1228,6 +1228,8 @@ class RunController:
         answer: dict[str, Any] | None = None
         error_msg: str | None = None
         try:
+            from .structured_output import set_budget
+            set_budget(brain, run_id, 'brain')
             async for ev in brain.review(b_session, packet):
                 if ev.type == "question_answer":
                     answer = ev.payload
@@ -2926,6 +2928,8 @@ class RunController:
                     "working_directory": str(work)})
             active_brain = maintenance_brain or brain
             active_session = maintenance_session or b_session
+            from .structured_output import set_budget
+            set_budget(active_brain, run_id, 'shadow' if mode == 'shadow' else 'brain')
             async for ev in active_brain.review(active_session, packet):
                 if ev.type == "decision" and mode == "lifecycle":
                     result = {"kind": "decision", "decision": ev.payload["decision"]}
@@ -4308,6 +4312,8 @@ class RunController:
             maintenance.claim_call(row['run_id'], request_id, 'curation')
             started = True
             result = None
+            from .structured_output import set_budget
+            set_budget(brain, row['run_id'], 'maintenance')
             async for event in brain.review(session, packet):
                 if event.type == 'curation_result':
                     result = json.loads(observation.strip_secrets(json.dumps(event.payload['result'], ensure_ascii=False)))

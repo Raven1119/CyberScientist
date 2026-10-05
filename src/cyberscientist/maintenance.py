@@ -175,6 +175,8 @@ async def run_post_review(controller, run_id: str) -> None:
         root = config.WORKSPACE_DIR / 'reviews'
         session = await brain.open({'working_directory': str(root), 'instructions': packet['instruction']})
         claim_call(run_id, owner, 'postreview')
+        from .structured_output import set_budget
+        set_budget(brain, run_id, 'maintenance')
         async for event in brain.review(session, packet):
             if event.type == 'task_result':
                 result = json.loads(strip_secrets(json.dumps(event.payload['result'], ensure_ascii=False)))
@@ -237,6 +239,9 @@ def reconcile_interrupted() -> None:
     """Reconcile both interrupted turns and an interrupted reconciliation."""
     for row in db.query("SELECT * FROM maintenance_calls WHERE status IN ('running','unknown')"):
         now = db.utcnow()
+        if row['kind'] == 'format_rewrite':
+            complete_call(row['operation_id'], 'unknown')
+            continue
         if row['kind'] == 'curation':
             request = db.query_one('SELECT status FROM curation_requests WHERE id=?', (row['operation_id'],))
             if request and request['status'] in ('done', 'failed'):

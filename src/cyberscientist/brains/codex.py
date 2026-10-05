@@ -14,8 +14,6 @@ import re
 from typing import Any, AsyncIterator
 
 from .. import model_providers
-from ..decision_extraction import (extract_decision, extract_question_answer,
-                                   extract_review_result)
 from ..jsonrpc_stdio import JsonRpcStdio, ProtocolError
 from ..codex_protocol import (CLIENT_INFO, deny_requests, initialize, open_thread,
                               native_brain_environment, thread_params,
@@ -136,8 +134,15 @@ class CodexBrain:
 
     async def review(self, session: SessionRef,
                      packet: dict[str, Any]) -> AsyncIterator[BrainEvent]:
+        from .. import structured_output
+        async for event in structured_output.review(self, session, packet):
+            yield event
+
+    async def _review_once(self, session: SessionRef,
+                     packet: dict[str, Any]) -> AsyncIterator[BrainEvent]:
         assert self.rpc is not None
-        prompt = self._render_prompt(packet)
+        from .. import structured_output
+        prompt = structured_output.feedback_prompt(self._render_prompt(packet), packet)
         turn_params: dict[str, Any] = {
             "threadId": session.session_id,
             "input": [{"type": "text", "text": prompt}],
@@ -212,43 +217,7 @@ class CodexBrain:
             yield BrainEvent("error", {"message": error_msg})
             return
         joined = "\n".join(final_text)
-        if packet.get("protocol") == "experience_curation":
-            from ..curation import extract
-            result = extract(joined)
-            if result is None:
-                yield BrainEvent("error", {"message": "最终消息中未找到合法 CurationResult JSON"})
-            else:
-                yield BrainEvent("curation_result", {"result": result})
-            return
-        if packet.get("protocol") == "role_task":
-            from ..role_tasks import extract
-            result = extract(joined)
-            yield BrainEvent("task_result" if result is not None else "error",
-                             {"result": result} if result is not None else
-                             {"message": "角色任务未返回 JSON 对象"})
-            return
-        if packet.get("protocol") == "review_result":
-            result = extract_review_result(joined)
-            if result is None:
-                yield BrainEvent("error", {
-                    "message": "最终消息中未找到合法 ReviewResult JSON"})
-                return
-            yield BrainEvent("review_result", {"result": result})
-            return
-        if packet.get("protocol") == "executor_question":
-            answer = extract_question_answer(joined)
-            if answer is None:
-                yield BrainEvent("error", {
-                    "message": "最终消息中未找到合法回答 JSON"})
-                return
-            yield BrainEvent("question_answer", answer)
-            return
-        decision = extract_decision(joined, packet)
-        if decision is None:
-            yield BrainEvent("error",
-                             {"message": "最终消息中未找到合法 Decision JSON"})
-            return
-        yield BrainEvent("decision", {"decision": decision})
+        yield structured_output.parse(joined, packet)
 
     @staticmethod
     def _render_prompt(packet: dict[str, Any]) -> str:
