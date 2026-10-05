@@ -205,3 +205,67 @@ async def test_both_native_roles_resume_original_thread(monkeypatch):
     assert sid=='original-session'
     assert not any(m=='thread/start' for m,p in solver._sessions[sid].rpc.calls)
     await solver.close(sid)
+
+
+@pytest.mark.parametrize('role', ['brain', 'executor'])
+async def test_archived_thread_restores_same_native_conversation(monkeypatch, role):
+    from cyberscientist.jsonrpc_stdio import ProtocolError
+
+    class ArchivedRpc(FakeRpc):
+        restored = False
+
+        async def request(self, method, params=None, **kwargs):
+            if method in ('thread/resume', 'thread/unarchive'):
+                self.calls.append((method, params))
+                assert params['threadId'] == 'original-session'
+                if method == 'thread/unarchive':
+                    assert params == {'threadId': 'original-session'}
+                    self.restored = True
+                    return {'thread': {'id': 'original-session'}}
+                if not self.restored:
+                    raise ProtocolError(json.dumps({'code': -32600,
+                        'message': 'session original-session is archived. Run `codex unarchive original-session` to unarchive it first.'}))
+                return {'thread': {'id': 'original-session'}, 'model': params['model'],
+                        'reasoningEffort': params['config']['model_reasoning_effort']}
+            return await super().request(method, params, **kwargs)
+
+    monkeypatch.setattr('cyberscientist.brains.codex.JsonRpcStdio', ArchivedRpc)
+    monkeypatch.setattr('cyberscientist.prime.codex_exec.JsonRpcStdio', ArchivedRpc)
+    if role == 'brain':
+        runtime = CodexBrain('/bin/true', 'gpt-6.1-sol', 'xhigh')
+        session = await runtime.open({'resume_thread_id': 'original-session'})
+        rpc = runtime.rpc
+    else:
+        runtime = CodexExecutor('/bin/true', 'gpt-6.1-sol', 'xhigh')
+        session = await runtime.start({'resume_thread_id': 'original-session'})
+        rpc = runtime._sessions[session].rpc
+    try:
+        assert [m for m, _ in rpc.calls] == [
+            'initialize', 'thread/resume', 'thread/unarchive', 'thread/resume']
+    finally:
+        await runtime.close(session)
+
+
+@pytest.mark.parametrize('failure', ['other_error', 'wrong_thread', 'unarchive_error', 'still_archived'])
+async def test_resume_failures_never_create_replacement_or_loop(failure):
+    from cyberscientist.codex_protocol import open_thread
+    from cyberscientist.jsonrpc_stdio import ProtocolError
+
+    class BrokenRpc:
+        calls = []
+
+        async def request(self, method, params, **kwargs):
+            self.calls.append(method)
+            if method == 'thread/unarchive':
+                if failure == 'unarchive_error':
+                    raise ProtocolError('unarchive failed')
+                return {'thread': {'id': 'other' if failure == 'wrong_thread' else 'original'}}
+            message = 'not available' if failure == 'other_error' else 'session original is archived.'
+            raise ProtocolError(json.dumps({'code': -32600, 'message': message}))
+
+    rpc = BrokenRpc()
+    with pytest.raises(ProtocolError):
+        await open_thread(rpc, {'model': 'gpt-6.1-sol'}, 'original')
+    assert 'thread/start' not in rpc.calls
+    assert rpc.calls.count('thread/unarchive') <= 1
+    assert rpc.calls.count('thread/resume') <= 2

@@ -17,7 +17,7 @@ from .. import model_providers
 from ..decision_extraction import (extract_decision, extract_question_answer,
                                    extract_review_result)
 from ..jsonrpc_stdio import JsonRpcStdio, ProtocolError
-from ..codex_protocol import (CLIENT_INFO, deny_requests, initialize,
+from ..codex_protocol import (CLIENT_INFO, deny_requests, initialize, open_thread,
                               native_brain_environment, thread_params,
                               verify_thread_config)
 from .base import BrainEvent, RuntimeHealth, SessionRef
@@ -120,11 +120,7 @@ class CodexBrain:
             await initialize(self.rpc)
             params = thread_params(spec, self.model, self.effort, writable=False)
             model_providers.thread_provider(params, self.provider)
-            method = "thread/start"
-            if spec.get("resume_thread_id"):
-                method = "thread/resume"
-                params["threadId"] = spec["resume_thread_id"]
-            result = await self.rpc.request(method, params, timeout=60)
+            result = await open_thread(self.rpc, params, spec.get("resume_thread_id"))
             model_providers.verify_provider(result, self.provider)
             verify_thread_config(result, self.model, self.effort)
         except BaseException:

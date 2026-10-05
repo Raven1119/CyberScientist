@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from typing import Any, AsyncIterator
 
 from ..brains.codex import CodexBrain, default_executable
-from ..codex_protocol import (deny_requests, initialize, process_environment,
+from ..codex_protocol import (deny_requests, initialize, open_thread, process_environment,
                               thread_params, verify_thread_config)
 from ..jsonrpc_stdio import JsonRpcStdio
 from . import ActionReceipt, PrimeHealth, with_stall_watchdog
@@ -62,11 +62,7 @@ class CodexExecutor:
             await initialize(rpc)
             params = thread_params(spec, self.model, self.effort, writable=True)
             model_providers.thread_provider(params, self.provider)
-            method = "thread/start"
-            if spec.get("resume_thread_id"):
-                method = "thread/resume"
-                params["threadId"] = spec["resume_thread_id"]
-            result = await rpc.request(method, params, timeout=60)
+            result = await open_thread(rpc, params, spec.get("resume_thread_id"))
             model_providers.verify_provider(result, self.provider)
             verify_thread_config(result, self.model, self.effort)
             tid = result["thread"]["id"]

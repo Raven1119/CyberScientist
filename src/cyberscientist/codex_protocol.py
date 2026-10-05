@@ -5,10 +5,11 @@ global config file. Model/effort requests are not silently downgraded.
 """
 from __future__ import annotations
 
+import json
 import os
 from typing import Any, Awaitable, Callable, Mapping
 
-from .jsonrpc_stdio import JsonRpcStdio
+from .jsonrpc_stdio import JsonRpcStdio, ProtocolError
 
 CLIENT_INFO = {"name": "cyberscientist", "version": "0.1.0"}
 COLLAB_TOOLS = (
@@ -45,6 +46,32 @@ async def initialize(rpc: JsonRpcStdio) -> dict[str, Any]:
     result = await rpc.request(
         "initialize", {"clientInfo": CLIENT_INFO, "capabilities": {}}, timeout=30)
     await rpc.notify("initialized")
+    return result
+
+
+async def open_thread(rpc: JsonRpcStdio, params: dict[str, Any],
+                      resume_id: str | None = None) -> dict[str, Any]:
+    """Restore only the requested archived conversation; never create a replacement."""
+    if not resume_id:
+        return await rpc.request("thread/start", params, timeout=60)
+    params = {**params, "threadId": resume_id}
+    try:
+        result = await rpc.request("thread/resume", params, timeout=60)
+    except ProtocolError as exc:
+        try:
+            error = json.loads(str(exc))
+        except (ValueError, TypeError):
+            raise exc
+        if (not isinstance(error, dict) or error.get("code") != -32600
+                or not isinstance(error.get("message"), str)
+                or not error["message"].startswith(f"session {resume_id} is archived.")):
+            raise
+        restored = await rpc.request("thread/unarchive", {"threadId": resume_id}, timeout=30)
+        if restored.get("thread", {}).get("id") != resume_id:
+            raise ProtocolError("Codex 取消归档未确认原会话 ID")
+        result = await rpc.request("thread/resume", params, timeout=60)
+    if result.get("thread", {}).get("id") != resume_id:
+        raise ProtocolError("Codex 恢复未确认原会话 ID")
     return result
 
 
