@@ -349,7 +349,7 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
             yield
         finally:
             stop.set()
-            db.execute("INSERT OR REPLACE INTO system_state VALUES('shutdown_requested','1')")
+            power.begin_shutdown()
             task.cancel()
             clock_task.cancel()
             watch_task.cancel()
@@ -360,6 +360,8 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
             await auto_harvest.drain()
             from . import leaderboards
             await leaderboards.drain()
+            from . import ops
+            await ops.drain()
 
     app = FastAPI(title="CyberScientist", docs_url=None, openapi_url=None,
                   lifespan=lifespan)
@@ -967,6 +969,27 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
             return await asyncio.to_thread(competition.import_round, **body.model_dump())
         except (ValueError, compute.ComputeError) as exc:
             raise HTTPException(422, detail={'message': str(exc)}) from exc
+
+    @app.get('/api/v1/ops/status')
+    async def ops_status():
+        from . import ops
+        return ops.status()
+
+    @app.get('/api/v1/ops/alerts')
+    async def ops_alerts():
+        from . import ops
+        return ops.pending()
+
+    @app.get('/api/v1/ops/events/{run_id}')
+    async def ops_events(run_id: str, tail: int = 20):
+        from . import ops
+        try: return ops.events(run_id, tail)
+        except ValueError as exc: raise HTTPException(422, detail={'message': str(exc)}) from exc
+
+    @app.post('/api/v1/ops/resume')
+    async def ops_resume():
+        from . import ops
+        return await ops.resume(controller)
 
     @app.get('/api/v1/features')
     async def read_features():

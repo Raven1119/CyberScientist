@@ -114,6 +114,8 @@ async def drain_run_maintenance(isolated_workspace):
     await auto_harvest.drain()
     from cyberscientist import leaderboards
     await leaderboards.drain()
+    from cyberscientist import ops
+    await ops.drain()
     while pending := [task for task in maintenance.ACTIVE_TASKS if not task.done()]:
         for task in pending:
             task.cancel()

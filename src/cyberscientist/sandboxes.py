@@ -600,7 +600,7 @@ def expire_due() -> list[dict]:
     return out
 
 
-def reconcile_startup() -> dict:
+def reconcile_startup(*, cleanup_terminal: bool = True) -> dict:
     """One read-only remote list; delete known terminal-Run boxes, report unknown IDs."""
     db.execute("UPDATE compute_sandbox_operations SET status='unknown',completed_at=?"
                " WHERE status='running'",(db.utcnow(),))
@@ -629,7 +629,7 @@ def reconcile_startup() -> dict:
         row=known.get(sid)
         if row is None:
             orphan.append(sid)
-        elif row['phase'] in TERMINAL_RUN and db.query_one(
+        elif cleanup_terminal and row['phase'] in TERMINAL_RUN and db.query_one(
                 "SELECT status FROM compute_sandboxes WHERE sandbox_id=?",(sid,))['status']=='active':
             cleaned.append(delete(row['run_id'],sid))
     if orphan:

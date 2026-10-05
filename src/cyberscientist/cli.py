@@ -97,6 +97,15 @@ def main() -> None:
     ops_switch.add_argument('name')
     ops_switch.add_argument('state', choices=('on', 'off'))
     ops_switch.add_argument('--port', type=int, default=None)
+    ops_status = ops_sub.add_parser('status', help='运行状态和最近错误')
+    ops_status.add_argument('--json', action='store_true')
+    ops_events = ops_sub.add_parser('events', help='Run最近公开事件')
+    ops_events.add_argument('run_id')
+    ops_events.add_argument('--tail', type=int, default=20)
+    ops_alerts = ops_sub.add_parser('alerts', help='未处理提醒和经验审批')
+    ops_shutdown = ops_sub.add_parser('shutdown', help='安全关机屏障和备份')
+    ops_resume = ops_sub.add_parser('resume', help='远程只读对账后恢复安全关机意图')
+    for command in (ops_status, ops_events, ops_alerts, ops_shutdown, ops_resume): command.add_argument('--port', type=int, default=None)
     evaluation = sub.add_parser('eval', help='运行或生成本地评测报告')
     evaluation_sub = evaluation.add_subparsers(dest='eval_command', required=True)
     eval_run = evaluation_sub.add_parser('run', help='启动一层评测')
@@ -111,14 +120,26 @@ def main() -> None:
 
     if args.command == 'ops':
         from . import config, features, observation
-        if args.name not in features.NAMES: parser.error('未知功能开关：' + args.name)
+        import urllib.parse
         port = args.port or config.load_settings()['app']['port']
-        request = urllib.request.Request(f'http://127.0.0.1:{port}/api/v1/features/{args.name}', data=json.dumps({'enabled': args.state == 'on'}).encode(), headers={'Content-Type': 'application/json'}, method='PUT')
+        method = 'GET'; body = None
+        if args.ops_command == 'switch':
+            if args.name not in features.NAMES: parser.error('未知功能开关：' + args.name)
+            path = '/api/v1/features/' + args.name; method = 'PUT'; body = {'enabled': args.state == 'on'}
+        elif args.ops_command == 'events':
+            if not 1 <= args.tail <= 1000: parser.error('tail须为1–1000')
+            path = '/api/v1/ops/events/' + urllib.parse.quote(args.run_id, safe='') + '?tail=' + str(args.tail)
+        elif args.ops_command == 'shutdown': path = '/api/v1/system/safe-shutdown'; method = 'POST'; body = {}
+        elif args.ops_command == 'resume': path = '/api/v1/ops/resume'; method = 'POST'; body = {}
+        else: path = '/api/v1/ops/' + args.ops_command
+        request = urllib.request.Request(f'http://127.0.0.1:{port}' + path, data=json.dumps(body).encode() if body is not None else None, headers={'Content-Type': 'application/json'}, method=method)
         try:
-            with urllib.request.urlopen(request, timeout=30) as response: result = json.load(response)
+            with urllib.request.urlopen(request, timeout=180 if method == 'POST' else 30) as response: result = json.load(response)
         except (OSError, ValueError) as exc:
             print(observation.strip_secrets(str(exc)), file=sys.stderr); raise SystemExit(2)
         print(observation.strip_secrets(json.dumps(result, ensure_ascii=False)))
+        if args.ops_command == 'shutdown' and result.get('can_shutdown') is not True: raise SystemExit(1)
+        if args.ops_command == 'resume' and result.get('status') != 'ready': raise SystemExit(1)
         return
 
     if args.command == 'preflight':

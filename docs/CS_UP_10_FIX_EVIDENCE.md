@@ -252,3 +252,11 @@ Fake覆盖4分钟保持原选择/6分钟切换/旧快照保持/确认恢复切�
 一并补D-50并发漏口：此前资源不限仍被max_active_runs/provider_sessions挡住；新无限比赛10题在两个旧上限都为1时实际进入10Run/20租约，原授权与计数保留。普通有界Run仍被上限挡住，429与关机仍挡住无限比赛。旧10题容量测试显式填写unlimited_resources=false继续覆盖原5Run/10会话限制，未删除或跳过；新增相同队列的无限对照。审查者、整理和复盘的同Run辅助会话也按真实授权判断。
 
 194项组合后端回归通过；前端85项及构建、compileall/diff通过，两轴审查关闭。首轮不存在helper/字段、旧fixture未声明有界及猴补签名问题均留失败日志并修正；共享本地许可与自动发送窗口由审查反例补上。没有新增真实模型、科研Run、Bohrium计算或比赛提交。
+
+### W3h — 监控运维CLI
+
+此前仅独立shutdown/preflight命令。现ops status --json、events <run_id> --tail N、alerts、switch name on/off、shutdown、resume全部连到真实后端，输出统一脱敏。status给出Run阶段/该Run最好确认分/本地正式分、静默提醒、未处理提醒/经验、最近错误、提供方速率、载入/磁盘版本和标签读数状态。各Run成绩不冒用同题其他Run分数；当前平台切换也不抹去旧Run自己的已确认成绩。静默只作疑似提示，不推断科研停滞。
+
+resume先只读远程Job（不允许retry创建）、沙箱（不删除终态Run资源）、提交对账，再按clock_version=1且resume_on_startup=1恢复明确关机意图，手动暂停与旧时钟不恢复。已有恢复遇到资源等待时持久意图可再试，不因全局屏障已清就假装成功；单飞及实际HTTP线程追踪避免丢响应重复。safe_shutdown和服务器退出在任何await前原子写屏障+新epoch，旧恢复不能覆盖新关机；recover末尾不再无条件清屏障。关机仍保留远程计费风险和一致性备份。
+
+75项组合后端28.55秒通过，最后27项ops/power/CLI17.44秒复核通过，compileall/diff通过，两轴审查闭环。六命令路径、unknown非零退出、真实ASGI读取、密钥脱敏、同题两Run分归属、对账顺序、manual/legacy不恢复、首次资源等待后二次恢复、生产退出与实际线程竞争均有fake对照。docs/OPS_CLI.md提供监控说明。本卡未对主数据库执行resume，没有新科研Run/模型/比赛提交；沙箱只读参数保留原有显式清理接口的历史兼容默认值。

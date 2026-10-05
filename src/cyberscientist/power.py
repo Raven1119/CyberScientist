@@ -11,8 +11,14 @@ def shutdown_requested() -> bool:
     return bool(row and row['value'] == '1')
 
 
+def begin_shutdown():
+    with db.transaction() as conn:
+        conn.execute("INSERT OR REPLACE INTO system_state(key,value) VALUES('shutdown_requested','1')")
+        conn.execute("INSERT OR REPLACE INTO system_state(key,value) VALUES('shutdown_epoch',?)", (uuid.uuid4().hex,))
+
+
 async def safe_shutdown(controller, timeout: float = 60) -> dict:
-    db.execute("INSERT OR REPLACE INTO system_state(key,value) VALUES('shutdown_requested','1')")
+    begin_shutdown()
     errors = []
     for row in db.query("SELECT * FROM runs WHERE phase='running'"):
         try:
@@ -65,17 +71,25 @@ async def safe_shutdown(controller, timeout: float = 60) -> dict:
             'message': '可以关机' if not unsettled and not errors else '暂停尚未确认，暂不能关机'}
 
 
-async def recover(controller) -> list[dict]:
+NO_EPOCH = object()
+
+
+async def recover(controller, *, expected_shutdown_epoch=NO_EPOCH) -> list[dict]:
     """Called only after remote reconciliation; manual pauses remain manual."""
-    # Startup reconciliation is complete before this function is invoked.
-    db.execute("INSERT OR REPLACE INTO system_state(key,value) VALUES('shutdown_requested','0')")
+    # A concurrent new shutdown always wins over an earlier explicit resume.
+    def changed():
+        row = db.query_one("SELECT value FROM system_state WHERE key='shutdown_epoch'")
+        return expected_shutdown_epoch is not NO_EPOCH and (row['value'] if row else None) != expected_shutdown_epoch
+    with db.transaction() as conn:
+        if changed(): return []
+        conn.execute("INSERT OR REPLACE INTO system_state(key,value) VALUES('shutdown_requested','0')")
     results = []
     for row in db.query("SELECT id FROM runs WHERE phase='recovering' AND clock_version=1 AND resume_on_startup=1"):
+        if changed(): break
         try:
             result = await controller.control(row['id'], 'resume', None, 'startup-' + uuid.uuid4().hex)
             results.append({'run_id': row['id'], **result})
         except Exception as exc:
             results.append({'run_id': row['id'], 'status': 'unknown', 'error': type(exc).__name__})
             db.append_event(row['id'], 'controller', 'run.recovery_pending', {'error': type(exc).__name__})
-    db.execute("INSERT OR REPLACE INTO system_state(key,value) VALUES('shutdown_requested','0')")
     return results
