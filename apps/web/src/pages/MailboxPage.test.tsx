@@ -96,6 +96,22 @@ function mockData() {
   post.mockResolvedValue({ status: 'submitted' })
 }
 
+it.each([['demo', true], ['bohrium_playground', false]])('shows mailbox binding %s and marks mismatch=%s', async (platform, mismatch) => {
+  mockData(); const original = get.getMockImplementation()!
+  get.mockImplementation(async (path: string) => {
+    const result = await original(path)
+    if (path === '/api/v1/mailboxes') return { ...result, platform: 'bohrium_playground',
+      items: result.items.map((item: { role: string }) => ({ ...item, platform: item.role === 'harvest' ? platform : 'bohrium_playground' })) }
+    return result
+  })
+  render(<MailboxPage />)
+  await screen.findByText('绑定平台')
+  expect(screen.getByText('当前平台')).toBeTruthy()
+  expect(Boolean(screen.queryByText(/收割邮箱绑定平台与当前平台不一致/))).toBe(mismatch)
+  if (mismatch) expect(screen.getByRole('alert').className).toContain('form-error')
+  else expect(screen.queryByText(/收割邮箱绑定平台与当前平台不一致/)).toBeNull()
+})
+
 it('shows challenge by mailbox usage for both roles', async () => {
   mockData()
   render(<MailboxPage />)

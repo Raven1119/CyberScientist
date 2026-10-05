@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import SettingsPage from './SettingsPage'
 
@@ -149,6 +149,17 @@ it('persists separate DeepSeek reviewer choice and a named solver with its PI no
   const value = put.mock.calls[0][1].settings
   expect(value.reviewer).toMatchObject({ provider: 'deepseek', runtime: 'codex', model_id: 'deepseek-flash' })
   expect(value.solver_roster[0]).toMatchObject({ name: '便宜求解者', provider: 'deepseek', note: '写死算法和测试' })
+})
+
+it('sends replacement semantics for an empty full price editor', async () => {
+  const user = userEvent.setup()
+  render(<SettingsPage />)
+  const editor = await screen.findByLabelText('模型价格表（每百万 token，保留来源和日期）')
+  fireEvent.change(editor, { target: { value: '{}' } })
+  await user.click(screen.getAllByRole('button', { name: '保存设置' })[0])
+  await waitFor(() => expect(put).toHaveBeenCalledWith('/api/v1/settings', expect.objectContaining({
+    settings: expect.objectContaining({ model_pricing: {} }), replace_paths: ['model_pricing', 'bohrium.host_overrides'],
+  })))
 })
 
 it('requires one explicit tool-probe authorization and sends the selected role provider', async () => {

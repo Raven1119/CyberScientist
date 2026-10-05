@@ -355,6 +355,10 @@ export default function MailboxPage() {
             {harvest ? (
               <>
                 <div className="meta-row"><span>邮箱</span><span>{harvest.email}</span></div>
+                <div className="meta-row"><span>绑定平台</span><span>{harvest.platform ?? 'unknown'}</span></div>
+                <div className="meta-row"><span>当前平台</span><span>{mailboxes?.platform ?? 'unknown'}</span></div>
+                {harvest.platform && mailboxes?.platform && harvest.platform !== mailboxes.platform &&
+                  <p className="form-error" role="alert">收割邮箱绑定平台与当前平台不一致，请更换到匹配的邮箱。</p>}
                 <div className="meta-row"><span>凭据</span><span>{harvest.secret_configured ? '已配置' : '缺失'}</span></div>
                 <div className="actions" style={{ marginTop: 10 }}>
                   <button type="button" className="btn" disabled={busy}
@@ -408,6 +412,7 @@ export default function MailboxPage() {
                     <span>
                       {m.email}
                       {m.is_demo ? '（演示）' : ''}
+                      <span className="small-text"> · 绑定平台 {m.platform ?? 'unknown'}</span>
                     </span>
                     <span>
                       {STATUS_LABEL[m.status] ?? m.status}

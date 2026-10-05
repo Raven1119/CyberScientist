@@ -49,7 +49,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "revision": 0,
     "app": {"host": "127.0.0.1", "port": 8765, "mode": "demo",
             "data_dir": str(DATA_DIR)},
-    "brain": {"runtime": "codex",
+    "brain": {"runtime": "codex", "provider": "codex",
               "executable": "",
               "auth_mode": "native",
               "model_id": "gpt-6-astra",
@@ -144,17 +144,27 @@ def load_settings() -> dict[str, Any]:
     if not SETTINGS_PATH.exists():
         return json.loads(json.dumps(DEFAULT_SETTINGS))
     data = json.loads(SETTINGS_PATH.read_text(encoding="utf-8"))
-    merged = json.loads(json.dumps(DEFAULT_SETTINGS))
-    for k, v in data.items():
-        if isinstance(v, dict) and isinstance(merged.get(k), dict):
-            merged[k].update(v)
-        else:
-            merged[k] = v
+    merged = merge_settings(DEFAULT_SETTINGS, data)
+    # An explicitly stored price table is authoritative, including {}. Missing
+    # prices remain unknown rather than silently reintroducing deleted defaults.
+    if 'model_pricing' in data:
+        merged['model_pricing'] = json.loads(json.dumps(data['model_pricing']))
     if merged['policy'].get('science_compute') == 'bohrium_only':
         merged['policy']['science_compute'] = 'local_seconds_remote_heavy'
     from .pi_policy import migrated
     merged['brain'] = migrated(merged['brain'])
     return merged
+
+
+def merge_settings(current: dict, changes: dict) -> dict:
+    """Partial writes preserve unrelated pages, including nested settings."""
+    result = json.loads(json.dumps(current))
+    for key, value in changes.items():
+        if isinstance(value, dict) and isinstance(result.get(key), dict):
+            result[key] = merge_settings(result[key], value)
+        else:
+            result[key] = json.loads(json.dumps(value))
+    return result
 
 
 @serialized_mutation

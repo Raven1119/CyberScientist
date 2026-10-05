@@ -31,6 +31,7 @@ CLOCK_HEARTBEAT_SECONDS = 15
 class SettingsPut(BaseModel):
     settings: dict[str, Any]
     base_revision: int
+    replace_paths: list[str] = []
 
 
 class SecretPut(BaseModel):
@@ -465,10 +466,21 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
                     "code": "REVISION_CONFLICT",
                     "message": "设置已被其他修改更新，请刷新后重试",
                     "current_revision": current["revision"]})
-            merged = json.loads(json.dumps(config.DEFAULT_SETTINGS))
             incoming = {k: v for k, v in body.settings.items()
                         if k != "_status"}  # _status 是 GET 响应的瞬态字段，不落盘
-            merged.update(incoming)
+            merged = config.merge_settings(current, incoming)
+            for path in body.replace_paths:
+                if path not in ('model_pricing', 'bohrium.host_overrides'):
+                    raise HTTPException(422, detail={'message': '不支持替换此配置路径'})
+                source, destination = incoming, merged
+                parts = path.split('.')
+                for part in parts[:-1]:
+                    if not isinstance(source.get(part), dict):
+                        raise HTTPException(422, detail={'message': '替换路径缺少完整配置'})
+                    source, destination = source[part], destination[part]
+                if not isinstance(source.get(parts[-1]), dict):
+                    raise HTTPException(422, detail={'message': '替换配置必须是完整字典'})
+                destination[parts[-1]] = json.loads(json.dumps(source[parts[-1]]))
             from . import challenge_models, model_usage
             try:
                 for role in ('brain', 'executor', 'reviewer', 'post_review'):

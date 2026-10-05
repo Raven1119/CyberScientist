@@ -110,7 +110,8 @@ export default function SettingsPage() {
     setSaveError('')
     try {
       const model_pricing = JSON.parse(pricesDraft || '{}')
-      const saved = await api.put<Settings>('/api/v1/settings', { settings: { ...settings, model_pricing }, base_revision: baseRevision })
+      const saved = await api.put<Settings>('/api/v1/settings', { settings: { ...settings, model_pricing }, base_revision: baseRevision,
+        replace_paths: ['model_pricing', 'bohrium.host_overrides'] })
       setSettings({ ...saved, _status: settings._status })
       setBaseRevision(saved.revision)
       toast('设置已保存。')
