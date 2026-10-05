@@ -184,5 +184,5 @@ it('saves a configured DeepSeek fallback wait and roster entry with the settings
   await user.clear(await screen.findByLabelText('后备等待分钟')); await user.type(screen.getByLabelText('后备等待分钟'), '2')
   await user.selectOptions(screen.getByLabelText('DeepSeek 后备条目'), 'flash')
   await user.click(screen.getAllByRole('button', { name: '保存设置' })[0])
-  await waitFor(() => expect(put.mock.calls.at(-1)?.[1].settings.deepseek_fallback).toEqual({ after_minutes: 2, solver_id: 'flash' }))
+  await waitFor(() => expect(put.mock.calls[put.mock.calls.length - 1]?.[1].settings.deepseek_fallback).toEqual({ after_minutes: 2, solver_id: 'flash' }))
 })
