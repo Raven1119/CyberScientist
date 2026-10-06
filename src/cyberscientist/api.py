@@ -1008,6 +1008,12 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
         from . import ops
         return ops.status()
 
+    @app.get('/api/v1/ops/digest')
+    async def ops_digest(since: str | None = None):
+        from . import ops_digest
+        try: return ops_digest.digest(since)
+        except ValueError as exc: raise HTTPException(422,detail={'message':str(exc)}) from exc
+
     @app.get('/api/v1/ops/alerts')
     async def ops_alerts():
         from . import ops

@@ -1,20 +1,20 @@
-# Lightchaser 本地版本回退
+# Lightchaser 比赛中回退：只换代码，保留当前账本
 
-已推送标签：`lightchaser-fallback-0` 指向 `5940418`，`lightchaser-fallback-1` 指向 CS-UP-08 最终版本 `ec5e24b`。比赛应选择最后实际通过彩排的版本；标签存在不表示 CS-UP-09 的真实提交/收割验收已经通过。
+比赛中使用最新实际验证的标签，保留当前 `.cyberscientist/`、`workspace/` 和 `experience/`。恢复比赛前旧数据库会丢失 Run、Attempt、评分、额度及远程任务关联；旧数据库仅用于离线取证或当前账本损坏后的专项恢复，不能作为版本回退的常规步骤。
 
-先在前端点击“安全关机”，或在当前 Linux 项目运行 `.venv/bin/cyberscientist shutdown`。只在回执 `can_shutdown=true` 后停止后端进程。远程 Job/沙箱仍可能运行和计费；本地回退不取消资源、不撤销 Attempt，也不证明未知操作未执行。
+标签起点：fallback-0=`5940418`，fallback-1=`ec5e24b`，fallback-2=`20069d7`；CS-UP-12 完整验收后的 fallback-3 是新赛道功能的回退起点。标签不代表比赛资格、unknown 已解决或真实整轮彩排已通过。
 
-在 `/home/wmywb/CyberScientist` 中检查和另存当前改动、数据库与版本。保留未跟踪经验和任务卡，不使用 reset --hard、clean 或 force push。
+1. 在当前 Linux 后端执行 `.venv/bin/cyberscientist ops shutdown`，等待 `can_shutdown=true`。若原生关闭或远程操作 unknown，保留屏障和句柄，先读 events/status；没有确认前不能强杀再恢复。远程 Job/沙箱可能继续运行和计费。
+2. 停止后端，记录 HEAD、工作区及当前一致性备份。保留未跟踪任务卡、经验和产物；另存跟踪改动，确保切换代码不会覆盖它们。
+3. 在同一仓库目录切到已验证标签，保留当前数据和凭据。无需恢复任何旧 SQLite、settings 或 workspace。
+4. 用本目录 `.venv` 启动所选代码，先检查健康接口的加载 commit、当前账本记录和远程对账结果。unknown 保持 unknown，禁止靠重发创建/提交推断恢复成功。
+5. 只有确认原生关闭、对账、所选版本功能兼容后，才执行 `ops resume` 恢复明确的安全关机意图。手动暂停和历史时钟 Run 不自动恢复。
+
+安全停止后保存当前账本，不复制密钥：
 
 ```bash
 git status --short
 git rev-parse HEAD
-git show --no-patch --oneline lightchaser-fallback-1
-```
-
-以下 Python 在停止后端后，用 SQLite 的备份接口保存当前账本；不复制密钥。
-
-```bash
 .venv/bin/python - <<'PY'
 import sqlite3
 from pathlib import Path
@@ -29,29 +29,23 @@ print(backup)
 PY
 ```
 
-跟踪改动已另存且工作区允许切换后，选择标签，不改 main 远程引用：
+跟踪改动已安全另存且工作区允许切换后，在相同目录操作；不改远程 main，不 force push：
 
 ```bash
-git switch --detach lightchaser-fallback-1
+git show --no-patch --oneline lightchaser-fallback-3
+git switch --detach lightchaser-fallback-3
+.venv/bin/cyberscientist serve
+# 另一个终端先检查，确认后再恢复
+.venv/bin/cyberscientist ops status --json
+.venv/bin/cyberscientist ops resume
 ```
 
-需要保留当前代码目录时，改用一个尚不存在的目录创建 worktree：`git worktree add --detach ../CyberScientist-fallback-1 lightchaser-fallback-1`。新 worktree 的软件和数据默认隔离，不能直接把原目录的可执行入口当作该 worktree 的入口。
+切回开发代码使用 `git switch main`。本步骤保留当前 `.cyberscientist/cyberscientist.db`，不执行旧备份覆盖。独立 worktree 默认数据路径不同，不能把新 worktree 空账本当作当前账本。
 
-CS-UP-08 迁移前备份在 `.package-checks/cs-up-08/pre-migration-20261004T131841Z.db`；CS-UP-09 开工前备份在 `.package-checks/cs-up-09/pre09-20261004T154033Z.sqlite`，其 SHA-256 为 `f7a7d17237b2b9b3714ed6e5b3ac12061a4b8589c43ffa6f75df5bd9dd82d189`。后者是生产账本的一致性副本；三题验证的隔离数据库另在 `.package-checks/lightchaser-validation/state/final-08.sqlite`。生产与隔离验证数据不能混用。
+## CS-UP-12 兼容实测与边界
 
-选择匹配标签的备份，先核对哈希，再恢复到停止中的生产数据库。以下示例只适用 fallback-1 与09开工前备份；08之前的标签应选择08迁移前备份。
+在独立 worktree 载入原始 fallback-2（完整 commit `20069d7b8eda03f1056d9649c84258c0cf4bd133`），独立端口 8872，打开本卡 ADD-only 迁移后主账本的一致性副本。生产后端未启动，生产数据库未恢复旧版本。旧代码完整 lifespan 启动、只读远程对账及当前健康/轮次/Run/提交/收割接口实测记录见 [修复证据](CS_UP_12_FIX_EVIDENCE.md)。维护验证显式禁止科研模型入口、研究派发、自动收割和资源删除；未恢复科研 Run。这证明账本读取和对账兼容，不等同于完整比赛恢复彩排。
 
-```bash
-.venv/bin/python - <<'PY'
-import hashlib, sqlite3
-from pathlib import Path
-root = Path('/home/wmywb/CyberScientist')
-backup = root / '.package-checks/cs-up-09/pre09-20261004T154033Z.sqlite'
-assert hashlib.sha256(backup.read_bytes()).hexdigest() == 'f7a7d17237b2b9b3714ed6e5b3ac12061a4b8589c43ffa6f75df5bd9dd82d189'
-with sqlite3.connect('file:' + str(backup) + '?mode=ro', uri=True) as source, sqlite3.connect(root / '.cyberscientist/cyberscientist.db') as target:
-    source.backup(target)
-    target.execute('PRAGMA wal_checkpoint(TRUNCATE)')
-PY
-```
+fallback-2 没有 CS-UP-12 的用户提示词、独立赛道时钟及赛末收割规则，旧 `run_clock.remaining` 仍只按 `max_run_minutes`。新赛道无上限授权在该旧版本可能立即到期；因此不能直接恢复 CS-UP-12 新赛道 Run。比赛中的新功能应回退到已验收的 fallback-3 或更新的兼容版本；fallback-2 仅作为历史数据读取/诊断选项，须保持暂停。不能因“旧代码能读账本”声称所有新功能也兼容。
 
-保留原后端凭据存储和原生认证，不复制或打印密钥，不改全局 CLI 配置。启动时先看 Job/Attempt 对账结果与 unknown，再决定恢复；旧账本仍可能关联实际存在的远端任务。返回开发分支用 `git switch main`；回退步骤本身没有替用户执行数据库恢复或启动历史 Run。
+原始备份仍保存在 `.package-checks/cs-up-08/`、`.package-checks/cs-up-09/`、`.package-checks/cs-up-12/`，供离线取证。保留原后端密钥存储和原生认证，不复制或打印密钥，不改全局 CLI 配置，不删除已有 Bohrium 资源。

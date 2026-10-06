@@ -127,6 +127,11 @@ class CodexBrain:
             verify_thread_config(result, self.model, self.effort)
             fast=codex_fast.confirmed(fast,result);codex_fast.record(fast)
             if fast['requested'] is not None and self.provider in (None,'codex'): await codex_fast.observe_rates(self.rpc)
+            if spec.get('run_id'):
+                from .. import ops_digest
+                ops_digest.record_session(spec['run_id'],spec.get('ops_role','brain'),result['thread']['id'],
+                                          {'model':result.get('model'),'provider':result.get('modelProvider'),
+                                           'reasoning_effort':result.get('reasoningEffort'),'fast_mode':fast})
         except BaseException:
             await self.rpc.stop()
             self.rpc = None

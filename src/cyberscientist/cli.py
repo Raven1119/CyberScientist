@@ -100,13 +100,15 @@ def main() -> None:
     ops_switch.add_argument('--port', type=int, default=None)
     ops_status = ops_sub.add_parser('status', help='运行状态和最近错误')
     ops_status.add_argument('--json', action='store_true')
+    ops_digest = ops_sub.add_parser('digest', help='不超过60行的低频监控摘要')
+    ops_digest.add_argument('--since', default=None)
     ops_events = ops_sub.add_parser('events', help='Run最近公开事件')
     ops_events.add_argument('run_id')
     ops_events.add_argument('--tail', type=int, default=20)
     ops_alerts = ops_sub.add_parser('alerts', help='未处理提醒和经验审批')
     ops_shutdown = ops_sub.add_parser('shutdown', help='安全关机屏障和备份')
     ops_resume = ops_sub.add_parser('resume', help='远程只读对账后恢复安全关机意图')
-    for command in (ops_status, ops_events, ops_alerts, ops_shutdown, ops_resume): command.add_argument('--port', type=int, default=None)
+    for command in (ops_status, ops_digest, ops_events, ops_alerts, ops_shutdown, ops_resume): command.add_argument('--port', type=int, default=None)
     evaluation = sub.add_parser('eval', help='运行或生成本地评测报告')
     evaluation_sub = evaluation.add_subparsers(dest='eval_command', required=True)
     eval_run = evaluation_sub.add_parser('run', help='启动一层评测')
@@ -129,6 +131,8 @@ def main() -> None:
         elif args.ops_command == 'events':
             if not 1 <= args.tail <= 1000: parser.error('tail须为1–1000')
             path = '/api/v1/ops/events/' + urllib.parse.quote(args.run_id, safe='') + '?tail=' + str(args.tail)
+        elif args.ops_command == 'digest':
+            path='/api/v1/ops/digest'+('?'+urllib.parse.urlencode({'since':args.since}) if args.since else '')
         elif args.ops_command == 'shutdown': path = '/api/v1/system/safe-shutdown'; method = 'POST'; body = {}
         elif args.ops_command == 'resume': path = '/api/v1/ops/resume'; method = 'POST'; body = {}
         else: path = '/api/v1/ops/' + args.ops_command
@@ -137,7 +141,7 @@ def main() -> None:
             with urllib.request.urlopen(request, timeout=180 if method == 'POST' else 30) as response: result = json.load(response)
         except (OSError, ValueError) as exc:
             print(observation.strip_secrets(str(exc)), file=sys.stderr); raise SystemExit(2)
-        print(observation.strip_secrets(json.dumps(result, ensure_ascii=False)))
+        print(observation.strip_secrets(result['text'] if args.ops_command=='digest' else json.dumps(result, ensure_ascii=False)))
         if args.ops_command == 'shutdown' and result.get('can_shutdown') is not True: raise SystemExit(1)
         if args.ops_command == 'resume' and result.get('status') != 'ready': raise SystemExit(1)
         return

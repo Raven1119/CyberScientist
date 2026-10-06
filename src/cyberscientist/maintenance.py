@@ -335,7 +335,7 @@ async def run_post_review(controller, run_id: str, *, review_id: str | None = No
         read_chunks = set()
         brain = controller._make_brain(settings)
         root = config.WORKSPACE_DIR / 'reviews'
-        session = await brain.open({'working_directory': str(root), 'instructions': model_packet['instruction']})
+        session = await brain.open({'run_id':run_id,'ops_role':'post_review','working_directory': str(root), 'instructions': model_packet['instruction']})
         if review_id:
             with db.transaction() as conn:
                 if conn.execute('SELECT phase FROM runs WHERE id=?', (run_id,)).fetchone()['phase'] not in TERMINAL:

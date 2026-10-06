@@ -105,6 +105,8 @@ async def codex_check(settings):
     try:
         await rpc.start(); await initialize(rpc)
         account = await rpc.request('account/read', {'refreshToken': False}, timeout=30)
+        from . import codex_fast
+        await codex_fast.observe_rates(rpc)
         identity = account.get('account')
         authenticated = isinstance(identity, dict) and (identity.get('type') == 'apiKey' or identity.get('type') == 'amazonBedrock' or identity.get('type') == 'chatgpt' and 'email' in identity and isinstance(identity.get('planType'), str))
         identity_unknown = identity is not None and not authenticated
@@ -195,18 +197,29 @@ def cached():
 
 
 def track_checks():
-    from . import track_clock
+    from . import track_clock,competition_prompts
+    settings=config.load_settings()
+    main=db.query_one("SELECT id,platform,secret_ref FROM mailboxes WHERE role='harvest' AND status='active'")
     tracks=[]
     for row in db.query("SELECT id,label,status,config_json FROM eval_runs WHERE suite='competition' ORDER BY created_at DESC"):
         snapshot=json.loads(row['config_json']);clock=track_clock.facts(snapshot)
         transport=snapshot.get('submission_transport',{})
         tracks.append({'id':row['id'],'label':row['label'],'status':row['status'],'clock':clock,
-                       'transport_verified':transport.get('verified') is True,'protocol_version':transport.get('protocol_version')})
+                       'transport_verified':transport.get('verified') is True and bool(transport.get('evidence')),
+                       'protocol_version':transport.get('protocol_version'),
+                       'prompt_filled':bool(competition_prompts.latest(row['id'])['content_md'].strip()),
+                       'unlimited_resources':snapshot.get('template',{}).get('authorization',{}).get('unlimited_resources') is True,
+                       'harvest_mailbox_matches':bool(main and main['platform']==settings['mailbox']['platform']
+                           and config.secret_configured(main['secret_ref'])
+                           and transport.get('base_url')==settings['playground']['base_url'].rstrip('/'))})
     missing=[t['id'] for t in tracks if t['clock']['remaining_seconds'] is None]
     expired=[t['id'] for t in tracks if t['clock']['remaining_seconds'] is not None and t['clock']['remaining_seconds']<=0]
     unverified=[t['id'] for t in tracks if not t['transport_verified']]
-    return _item('tracks','warn' if missing or expired or unverified else 'pass','赛道调度时钟与提交配置（平台资格另行确认）',
-                 tracks=tracks,missing_clock=missing,expired_clock=expired,unverified_transport=unverified)
+    missing_prompt=[t['id'] for t in tracks if not t['prompt_filled']]
+    missing_mailbox=[t['id'] for t in tracks if not t['harvest_mailbox_matches']]
+    return _item('tracks','warn' if not tracks or missing or expired or unverified or missing_prompt or missing_mailbox else 'pass','赛道调度时钟、已探测核对协议、用户提示词、无上限状态和收割邮箱（平台资格另行确认）',
+                 tracks=tracks,missing_clock=missing,expired_clock=expired,unverified_transport=unverified,
+                 missing_prompt=missing_prompt,missing_mailbox=missing_mailbox)
 
 
 def fast_check(settings):
@@ -217,7 +230,7 @@ def fast_check(settings):
     for model in sorted(models):
         row=db.query_one('SELECT payload_json,observed_at FROM runtime_observations WHERE kind=?',('codex_fast:'+model,))
         facts[model]=json.loads(row[0]) | {'observed_at':row[1]} if row else {'status':'not_observed','enabled':False}
-    return _item('codex_fast','pass' if all(v.get('enabled') is True for v in facts.values()) else 'warn',
+    return _item('codex_fast','pass' if facts and all(v.get('enabled') is True for v in facts.values()) else 'warn',
                  'fast原生平台确认事实；未实测或不支持保持可见',models=facts)
 
 

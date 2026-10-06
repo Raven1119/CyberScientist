@@ -24,6 +24,14 @@ def fake_checks(monkeypatch):
         monkeypatch.setattr(preflight.public_research, name, lambda value: {'status':'received','sha256':'a'*64,'body':'private remote body'})
     monkeypatch.setattr(config, 'deepseek_key', lambda: 'fake_deepseek')
     config.update_secret('operator', 'fake_operator'); config.update_secret('bohr', 'fake_bohr')
+    from datetime import datetime,timezone,timedelta
+    from cyberscientist import track_transport
+    now=datetime.now(timezone.utc)
+    snapshot={'track_clock':{'start':now.isoformat(),'end':(now+timedelta(hours=5)).isoformat()},
+              'submission_transport':track_transport.defaults() | {'verified':True,'evidence':{'source':'synthetic_fixture'}},
+              'template':{'authorization':{'unlimited_resources':True}}}
+    db.execute("INSERT OR IGNORE INTO eval_runs(id,suite,repeats,label,status,config_json,created_at,updated_at) VALUES('ready-track','competition',1,'fixture','draft',?,?,?)",(json.dumps(snapshot),db.utcnow(),db.utcnow()))
+    db.execute("INSERT OR IGNORE INTO competition_prompt_versions VALUES('ready-track',1,'fixture user prompt',?,?)",('a'*64,db.utcnow()))
     from cyberscientist import codex_fast
     settings=config.load_settings()
     for role in ('brain','executor','reviewer','post_review'):
@@ -89,6 +97,7 @@ async def test_codex_directory_paginated_native_account_no_login_no_turn(monkeyp
         async def stop(self): calls.append('stop')
         async def request(self,method,params,timeout):
             calls.append((method,params))
+            if method=='account/rateLimits/read': return {'rateLimits':{'primary':{'usedPercent':7,'resetsAt':1791601547}}}
             if method=='account/read': return {'account':{'type':'chatgpt','email':'private@example.invalid','planType':'pro'},'requiresOpenaiAuth':True}
             if params['cursor'] is None: return {'data':[{'model':'gpt-6-astra','supportedReasoningEfforts':[{'reasoningEffort':'xhigh'}]}],'nextCursor':'page2'}
             return {'data':[{'model':'gpt-6.1-sol','supportedReasoningEfforts':[{'reasoningEffort':'high'}]}]}
@@ -99,7 +108,7 @@ async def test_codex_directory_paginated_native_account_no_login_no_turn(monkeyp
     settings=config.load_settings();settings['brain']['executable']='/fake/codex'
     result=await preflight.codex_check(settings)
     assert result['status']=='pass' and result['facts']['model_turns']==0 and 'private@' not in json.dumps(result)
-    assert calls[1]==('account/read',{'refreshToken':False}) and [x[0] for x in calls if isinstance(x,tuple)]==['account/read','model/list','model/list']
+    assert calls[1]==('account/read',{'refreshToken':False}) and [x[0] for x in calls if isinstance(x,tuple)]==['account/read','account/rateLimits/read','model/list','model/list']
     assert calls[-1]=='stop'
 
 

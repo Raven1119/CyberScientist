@@ -72,6 +72,11 @@ class CodexExecutor:
             fast=codex_fast.confirmed(fast,result);codex_fast.record(fast)
             if fast['requested'] is not None and self.provider in (None,'codex'): await codex_fast.observe_rates(rpc)
             tid = result["thread"]["id"]
+            if spec.get('run_id'):
+                from .. import ops_digest
+                ops_digest.record_session(spec['run_id'],'executor',tid,
+                                          {'model':result.get('model'),'provider':result.get('modelProvider'),
+                                           'reasoning_effort':result.get('reasoningEffort'),'fast_mode':fast})
         except BaseException:
             await rpc.stop()
             raise

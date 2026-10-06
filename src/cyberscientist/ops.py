@@ -26,6 +26,7 @@ def pending():
 
 
 def status():
+    from . import ops_digest
     from . import leaderboards
     from .mailboxes import _instant
     now = datetime.now(timezone.utc); settings = config.load_settings(); runs = []
@@ -35,7 +36,11 @@ def status():
         quiet = max(0, (now - stamp).total_seconds()) if stamp else None
         local = db.query_one("SELECT MAX(science_score) FROM local_scores WHERE run_id=? AND score_source IN ('system','executor_verified')", (row['id'],))[0]
         confirmed = db.query_one("SELECT MAX(score) FROM submissions WHERE run_id=? AND status='submitted' AND score_status='scored' AND score_confidence='confirmed' AND (score_anomaly IS NULL OR score_anomaly='')", (row['id'],))[0]
-        runs.append(dict(row) | {'local_best': local, 'platform_best': confirmed,
+        link=db.query_one("SELECT json_extract(config_snapshot,'$.competition.round_id') FROM runs WHERE id=?",(row['id'],))[0]
+        from . import auto_harvest
+        runs.append(dict(row) | {'track_id':link,'sessions':ops_digest.sessions(row['id']),
+                                'harvest_scores':auto_harvest.topic_facts(link,row['challenge_id']),
+                                'local_best': local, 'platform_best': confirmed,
                                 'topic_best_current_platform': leaderboards.own_best(row['challenge_id']),
                                 'last_event': dict(last) if last else None,
                                 'stuck': {'suspected': row['phase'] == 'running' and quiet is not None and quiet > settings['run_defaults']['stall_seconds'],
@@ -48,7 +53,7 @@ def status():
         except (OSError, subprocess.TimeoutExpired): pass
     recent = db.query("SELECT run_id,seq,type,payload,recorded_at FROM events WHERE type LIKE '%.error' OR type LIKE '%.failed' OR type IN ('run.runtime_error','run.needs_attention','submission.unknown') ORDER BY rowid DESC LIMIT 20")
     return safe({'status': 'ok', 'observed_at': db.utcnow(), 'shutdown_requested': power.shutdown_requested(),
-                 'runs': runs, 'pending': pending(), 'recent_errors': [dict(r) | {'payload': json.loads(r['payload'])} for r in recent],
+                 'runs': runs,'tracks':ops_digest.tracks(),'provider_rates':ops_digest.rates(), 'pending': pending(), 'recent_errors': [dict(r) | {'payload': json.loads(r['payload'])} for r in recent],
                  'resources': resource_coordinator.status(), 'native_close_unknowns': resource_coordinator.close_unknowns(),
                  'features': settings['features'], 'code': {'loaded': loaded, 'checkout': checkout, 'matches': loaded == checkout, 'tags': tags, 'tags_status': tags_status}})
 

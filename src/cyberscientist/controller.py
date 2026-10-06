@@ -310,7 +310,7 @@ class RunController:
         app_cfg = settings["app"]
         variables = {"CS_TOOL_TOKEN": token, "CS_TOOL_ROLE": "brain",
                      "CS_API_URL": f"http://{app_cfg['host']}:{app_cfg['port']}"}
-        return {"working_directory": str(brain_dir), "pi_files_readonly": True,
+        return {"run_id": run_id, "ops_role": "brain", "working_directory": str(brain_dir), "pi_files_readonly": True,
                 "env": native_brain_environment() | variables,
                 "mcp_servers": [{"name": "cyberscientist", "command": _sys.executable,
                                  "args": ["-m", "cyberscientist.mcp_bridge"],
@@ -2993,7 +2993,7 @@ class RunController:
                 work = config.WORKSPACE_DIR / "runs" / run_id / "curation" / req["id"]
                 work.mkdir(parents=True, exist_ok=True)
                 maintenance_session = await maintenance_brain.open({
-                    "working_directory": str(work), "pi_files_readonly": True})
+                    "run_id": run_id, "ops_role": "maintenance", "working_directory": str(work), "pi_files_readonly": True})
             active_brain = maintenance_brain or brain
             active_session = maintenance_session or b_session
             from .structured_output import set_budget
@@ -4389,7 +4389,7 @@ class RunController:
             brain = self._make_brain(settings)
             work = config.WORKSPACE_DIR / 'curation' / request_id
             work.mkdir(parents=True, exist_ok=True)
-            session = await brain.open(self._brain_spec(row['run_id'], settings, work))
+            session = await brain.open(self._brain_spec(row['run_id'], settings, work) | {'ops_role':'curation'})
             maintenance.claim_call(row['run_id'], request_id, 'curation')
             started = True
             result = None

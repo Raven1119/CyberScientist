@@ -146,7 +146,7 @@ async def review(controller, run_id: str, trial_id: str, operation_id: str,
     try:
         resource_coordinator.reserve_auxiliary(owner, settings, unlimited_resources=run_limits.unlimited(run_id))
         brain = controller._make_brain(settings)
-        session = await brain.open({'working_directory': str(Path(packet['sealed_package']['path']).parent), 'instructions': packet['instructions']})
+        session = await brain.open({'run_id':run_id,'ops_role':'reviewer','working_directory': str(Path(packet['sealed_package']['path']).parent), 'instructions': packet['instructions']})
         live = controller._require_run(run_id)
         if live['phase'] not in ('running', 'created') or (auth and (auth['max_run_minutes'] or auth['unlimited_resources']) and run_clock.remaining(live, auth) <= 0):
             raise ValueError('审查启动时原授权已结束，未发起模型 turn')
