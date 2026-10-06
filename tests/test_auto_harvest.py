@@ -99,6 +99,7 @@ def test_deadline_check_does_not_bypass_confirmed_score_conditions(monkeypatch):
     snapshot=json.loads(db.query_one('SELECT config_snapshot FROM runs WHERE id=?',(rid,))[0])
     snapshot['competition']={'challenge_snapshot':{'platform':{'roundEndAt':(datetime.now(timezone.utc)+timedelta(minutes=30)).isoformat()}}}
     db.execute('UPDATE runs SET config_snapshot=? WHERE id=?',(json.dumps(snapshot),rid))
+    db.execute("UPDATE submissions SET score_confidence='provisional' WHERE id=?",(src['id'],))
     auto_harvest.advance_sync();auto_harvest.advance_sync()
     assert len(db.query("SELECT * FROM events WHERE type='harvest.deadline_check'"))==1
     assert not db.query('SELECT * FROM automatic_harvests')

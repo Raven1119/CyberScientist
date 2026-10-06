@@ -95,32 +95,56 @@ def list_mailboxes() -> dict[str, Any]:
 def mailbox_usage() -> dict[str, Any]:
     """All registered challenge × mailbox pairs; usage derives from submissions."""
     limit = config.load_settings()["mailbox"]["submission_limit"]
-    rows = db.query("SELECT m.id AS mailbox_id,m.email,m.role,"
-                    " COALESCE(NULLIF(c.platform_challenge_id,''),'local:'||c.id) AS platform_challenge_id,"
-                    " MIN(c.title) AS challenge_title,COUNT(s.id) AS used"
-                    " FROM challenges c CROSS JOIN mailboxes m"
-                    " LEFT JOIN runs r ON r.challenge_id=c.id"
-                    " LEFT JOIN submissions s ON s.run_id=r.id AND s.mailbox_id=m.id"
-                    " AND s.reservation_released=0"
-                    " GROUP BY m.id,COALESCE(NULLIF(c.platform_challenge_id,''),'local:'||c.id)"
-                    " ORDER BY challenge_title,m.role,m.created_at")
-    return {"items": [dict(row) | {"limit": limit} for row in rows], "limit": limit}
+    settings=config.load_settings()
+    targets={}
+    for row in db.query('SELECT r.id AS run_id,c.title,c.platform_challenge_id,c.id AS local_id,'+_target_columns()+" FROM challenges c LEFT JOIN runs r ON r.challenge_id=c.id"):
+        target=[row['target_platform'],row['target_origin'],row['target_topic']]
+        if not row['run_id']:
+            target=[settings['mailbox']['platform'],'demo' if settings['mailbox']['platform']=='demo' else settings['playground']['base_url'].rstrip('/'),row['platform_challenge_id'] or 'local:'+row['local_id']]
+        key=json.dumps(target,separators=(',',':'))
+        targets[key]=min(targets.get(key,row['title']),row['title'])
+    items=[]
+    for key,title in sorted(targets.items(),key=lambda item:item[1]):
+        target=json.loads(key)
+        for mailbox in db.query('SELECT id,email,role FROM mailboxes ORDER BY role,created_at'):
+            items.append({'mailbox_id':mailbox['id'],'email':mailbox['email'],'role':mailbox['role'],
+                          'platform_challenge_id':target[2],'target_platform':target[0],'target_origin':target[1],
+                          'challenge_title':title,'used':_used_for(db.get_db(),mailbox['id'],key),'limit':limit})
+    return {'items':items,'limit':limit}
 
 
 def _challenge_key(conn: sqlite3.Connection, run_id: str) -> str:
-    row = conn.execute("SELECT c.id,c.platform_challenge_id FROM runs r"
-                       " JOIN challenges c ON c.id=r.challenge_id WHERE r.id=?", (run_id,)).fetchone()
+    row = conn.execute('SELECT '+_target_columns()+" FROM runs r JOIN challenges c ON c.id=r.challenge_id WHERE r.id=?", (run_id,)).fetchone()
     if not row:
         raise MailboxError("NOT_FOUND", f"Run 不存在: {run_id}")
-    return row["platform_challenge_id"] or "local:" + row["id"]
+    return json.dumps(list(row), separators=(',', ':'))
+
+
+def _target_columns():
+    # Frozen transport and topic IDs survive imports, settings changes and local aliases.
+    return ("COALESCE(json_extract(r.config_snapshot,'$.settings.mailbox.platform'),'demo') AS target_platform,"
+            "CASE WHEN r.mode='demo' THEN 'demo' ELSE rtrim(COALESCE("
+            "json_extract(r.config_snapshot,'$.competition.submission_transport.base_url'),"
+            "json_extract(r.config_snapshot,'$.settings.playground.base_url'),''),'/') END AS target_origin,"
+            "COALESCE(NULLIF(json_extract(r.config_snapshot,'$.challenge_platform_id'),''),"
+            "NULLIF(c.platform_challenge_id,''),'local:'||c.id) AS target_topic")
+
+
+def _target_submissions(conn, run_id, *, mailbox_id=None, harvest_only=False):
+    target=json.loads(_challenge_key(conn,run_id))
+    query="SELECT s.*,m.role,json_extract(r.config_snapshot,'$.competition.round_id') AS target_round,"+_target_columns()+" FROM submissions s JOIN runs r ON r.id=s.run_id JOIN challenges c ON c.id=r.challenge_id JOIN mailboxes m ON m.id=s.mailbox_id WHERE s.reservation_released=0"
+    args=[]
+    if mailbox_id:
+        query+=" AND (lower(trim(m.email)),m.platform)=(SELECT lower(trim(email)),platform FROM mailboxes WHERE id=?)";args.append(mailbox_id)
+    if harvest_only: query+=" AND m.role='harvest'"
+    return [s for s in conn.execute(query,args).fetchall()
+            if [s['target_platform'],s['target_origin'],s['target_topic']]==target]
 
 
 def _used_for(conn: sqlite3.Connection, mailbox_id: str, challenge_key: str) -> int:
-    return conn.execute("SELECT COUNT(*) AS n FROM submissions s"
-        " JOIN runs r ON r.id=s.run_id JOIN challenges c ON c.id=r.challenge_id"
-        " WHERE s.mailbox_id=? AND s.reservation_released=0"
-        " AND COALESCE(NULLIF(c.platform_challenge_id,''),'local:'||c.id)=?",
-        (mailbox_id, challenge_key)).fetchone()["n"]
+    target=json.loads(challenge_key)
+    rows=conn.execute('SELECT '+_target_columns()+" FROM submissions s JOIN runs r ON r.id=s.run_id JOIN challenges c ON c.id=r.challenge_id JOIN mailboxes m ON m.id=s.mailbox_id WHERE (lower(trim(m.email)),m.platform)=(SELECT lower(trim(email)),platform FROM mailboxes WHERE id=?) AND s.reservation_released=0",(mailbox_id,)).fetchall()
+    return sum(list(s)==target for s in rows)
 
 
 def _instant(value: str | None) -> datetime | None:
@@ -696,6 +720,8 @@ def _automatic_harvest_guard(conn, src, trigger: dict | None = None, *, own_rese
     if src['status'] != 'submitted' or src['score_status'] != 'scored':
         raise MailboxError('UNCONFIRMED_SCORE', '实验提交尚未完成并确认评分')
     if trigger is not None:
+        from . import auto_harvest
+        auto_harvest.automatic_constraints(conn,src,trigger,own_reservation=own_reservation)
         if src['score'] != trigger['score']:
             raise MailboxError('SCORE_CHANGED', '触发评分已更正；重新判断后再收割')
         params = trigger['params']
@@ -706,14 +732,15 @@ def _automatic_harvest_guard(conn, src, trigger: dict | None = None, *, own_rese
             run = conn.execute('SELECT * FROM runs WHERE id=?', (src['run_id'],)).fetchone()
             if not params['experiments_done_at_leader'] or not auto_harvest.experiments_done(conn, run) or src['score'] < trigger['leader']:
                 raise MailboxError('TRIGGER_CHANGED', '同题实验尚未完成或低于当前榜首')
-    own = conn.execute("SELECT s.score,s.score_status,s.score_confidence,s.status FROM submissions s"
-                       " JOIN runs r ON r.id=s.run_id WHERE s.is_harvest=1 AND s.reservation_released=0"
-                       " AND r.challenge_id=(SELECT challenge_id FROM runs WHERE id=?) AND s.id<>?",
-                       (src['run_id'], own_reservation or '')).fetchall()
+    mailbox=conn.execute("SELECT m.id,m.status FROM mailboxes m JOIN submissions s ON s.mailbox_id=m.id WHERE s.id=?",(own_reservation,)).fetchone() if own_reservation else conn.execute("SELECT id,status FROM mailboxes WHERE role='harvest' AND status='active'").fetchone()
+    if not mailbox or mailbox['status']!='active':
+        raise MailboxError('NO_MAILBOX','自动收割的主邮箱缺失或已停用')
+    own = [s for s in _target_submissions(conn,src['run_id'],mailbox_id=mailbox['id']) if s['id']!=(own_reservation or '')]
     if any(row['status'] != 'submitted' or row['score_status'] != 'scored'
-           or row['score_confidence'] != 'confirmed' or row['score'] is None for row in own):
+           or row['score_confidence'] != 'confirmed' or row['score'] is None
+           or row['score_anomaly'] or row['scorecard_consistent']==0 or not math.isfinite(row['score']) for row in own):
         raise MailboxError('HARVEST_PENDING', '已有收割成绩尚未确认，先对账，不自动重交')
-    if any(src['score'] < row['score'] for row in own):
+    if any(src['score'] <= row['score'] for row in own):
         raise MailboxError('LOWER_SCORE', '不自动收割低于本方已收割成绩的结果')
 
 
@@ -723,6 +750,14 @@ def _perform_submission(sid: str, platform: MailboxPlatform, challenge_id: str,
     row = db.query_one("SELECT s.*, m.email, m.secret_ref, m.platform FROM submissions s"
                        " JOIN mailboxes m ON m.id=s.mailbox_id WHERE s.id=?", (sid,))
     def stage(name, attempt_id=None):
+        if name=='create_sent' and row['is_harvest'] and str(row['operation_id']).startswith('auto-harvest-'):
+            try:
+                with db.transaction() as conn:
+                    intent=conn.execute('SELECT result_json FROM automatic_harvests WHERE operation_id=?',(row['operation_id'],)).fetchone()
+                    src=conn.execute('SELECT * FROM submissions WHERE id=?',(row['source_submission_id'],)).fetchone()
+                    _automatic_harvest_guard(conn,src,json.loads(intent['result_json']),own_reservation=sid)
+            except MailboxError as exc:
+                raise PlatformError(str(exc),no_side_effect=True) from exc
         with db.transaction() as conn:
             conn.execute("UPDATE submissions SET stage=?,platform_ref=COALESCE(?,platform_ref) WHERE id=?",
                          (name, str(attempt_id) if attempt_id is not None else None, sid))

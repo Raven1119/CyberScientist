@@ -40,7 +40,7 @@ export interface Settings {
   post_review?: ModelChoice & { executable?: string }
   solver_roster?: SolverEntry[]
   model_pricing?: Record<string, unknown>
-  harvest?: { score_threshold: number; experiments_done_at_leader: boolean; deadline_check_hours: number }
+  harvest?: { score_threshold: number; experiments_done_at_leader: boolean; deadline_check_hours: number; safety_margin_minutes?: number }
   prime: {
     executable: string
     llm_profile_id: string
@@ -406,6 +406,8 @@ export interface MailboxList {
 }
 
 export interface MailboxUsage {
+  target_platform?: string
+  target_origin?: string
   mailbox_id: string
   email: string
   role: 'harvest' | 'experiment'

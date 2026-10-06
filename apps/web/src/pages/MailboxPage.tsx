@@ -437,8 +437,8 @@ export default function MailboxPage() {
               <table aria-label="题目邮箱用量"><thead><tr>
                 <th>题目</th><th>邮箱</th><th>角色</th><th>已用 / 上限</th>
               </tr></thead><tbody>{usage.map((item) => (
-                <tr key={`${item.platform_challenge_id}:${item.mailbox_id}`}>
-                  <td>{item.challenge_title} ({item.platform_challenge_id})</td>
+                <tr key={`${item.target_platform ?? 'unknown'}:${item.target_origin ?? 'unknown'}:${item.platform_challenge_id}:${item.mailbox_id}`}>
+                  <td>{item.challenge_title} ({item.platform_challenge_id}){item.target_origin && <small>{item.target_platform} · {item.target_origin}</small>}</td>
                   <td>{item.email}</td><td>{ROLE_LABEL[item.role]}</td>
                   <td>{item.used} / {item.limit}</td>
                 </tr>

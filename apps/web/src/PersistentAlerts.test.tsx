@@ -43,3 +43,15 @@ test('protocol drift popup shows changed field facts and navigates to settings',
   await waitFor(() => expect(navigation.setPage).toHaveBeenCalledWith('settings'))
   expect(navigation.setFocusedRunId).not.toHaveBeenCalled()
 })
+
+test('deadline summary popup displays each topic and opens competition', async () => {
+  vi.mocked(api.get).mockResolvedValue({ items: [{ id: 'summary', run_id: null, challenge_id: null, kind: 'harvest.summary', title: '赛末成绩汇总',
+    payload: { track: '赛道一', topics: [{ challenge_id: 'A', main_best: 0, experiment_best: 64.8, pending_submission_ids: ['pending-a'], no_confirmed_score: false },
+      { challenge_id: 'B', main_best: null, experiment_best: null, pending_submission_ids: [], no_confirmed_score: true }] } }] })
+  vi.mocked(api.post).mockResolvedValue({ acknowledged_at: 'saved' })
+  render(<PersistentAlerts />); await screen.findByRole('dialog')
+  expect(screen.getByText('64.8')).toBeTruthy(); expect(screen.getByText('0')).toBeTruthy()
+  expect(screen.getByText('pending-a')).toBeTruthy(); expect(screen.getByText('无任何确认成绩')).toBeTruthy()
+  fireEvent.click(screen.getByText('查看比赛'))
+  await waitFor(() => expect(navigation.setPage).toHaveBeenCalledWith('competition'))
+})

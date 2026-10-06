@@ -230,6 +230,8 @@ export default function SettingsPage() {
             onChange={e => update(s => ({ ...s, harvest: { ...{ score_threshold: 100, experiments_done_at_leader: true, deadline_check_hours: 2 }, ...s.harvest, score_threshold: Number(e.target.value) } }))} /></label>
           <label><input type="checkbox" checked={settings.harvest?.experiments_done_at_leader ?? true}
             onChange={e => update(s => ({ ...s, harvest: { ...{ score_threshold: 100, experiments_done_at_leader: true, deadline_check_hours: 2 }, ...s.harvest, experiments_done_at_leader: e.target.checked } }))} />实验做完且不低于榜单最高分时收割</label>
+          <label>赛末收割安全余量（分钟）<input type="number" min="0" value={settings.harvest?.safety_margin_minutes ?? 15}
+            onChange={e => update(s => ({ ...s, harvest: { ...{ score_threshold: 100, experiments_done_at_leader: true, deadline_check_hours: 2 }, ...s.harvest, safety_margin_minutes: Number(e.target.value) } }))} /></label>
           <label>赛末收割检查提前小时<input type="number" min="0" step="0.5" value={settings.harvest?.deadline_check_hours ?? 2}
             onChange={e => update(s => ({ ...s, harvest: { ...{ score_threshold: 100, experiments_done_at_leader: true, deadline_check_hours: 2 }, ...s.harvest, deadline_check_hours: Number(e.target.value) } }))} /></label>
         </article>

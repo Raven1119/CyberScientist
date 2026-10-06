@@ -185,7 +185,7 @@ it('sorts known score gaps descending and leaves unknown last without replacing 
   expect(rows[1].textContent).toContain('小差距题')
   expect(rows[2].textContent).toContain('未知题')
   expect(rows[0].querySelectorAll('td')[4].textContent).toBe('0')
-  expect(rows[2].querySelectorAll('td')[5].textContent).toBe('unknown')
+  expect(rows[2].querySelectorAll('td')[6].textContent).toBe('unknown')
 })
 
 
@@ -282,4 +282,15 @@ it('defaults Sol to high and persists explicit per-role fast choices in the temp
   await user.click(screen.getByLabelText('求解者 fast'))
   await user.click(screen.getByRole('button', { name: '保存当前模板' }))
   expect(put.mock.calls[0][1].template.model_config).toMatchObject({ brain: { fast_mode: true, reasoning_effort: 'xhigh' }, executor: { fast_mode: false, reasoning_effort: 'high' } })
+})
+
+it('shows track harvest countdown and separate main / experiment scores', async () => {
+  const scores = { ...detail, harvest_window: { state: 'active', remaining_seconds: 3600, until_window_seconds: 0 },
+    items: [{ ...detail.items[0], harvest_scores: { main_best: 64.8, experiment_best: 70, pending_submission_ids: ['pending'], no_confirmed_score: false } }] }
+  get.mockImplementation(async (path: string) => path === '/api/v1/rounds' ? { items: [{ id: 'round_one', status: 'draft' }] } : scores)
+  render(<CompetitionPage />)
+  expect(await screen.findByText(/赛末收割窗口：active/)).toBeTruthy()
+  expect(screen.getByText('主邮箱成绩 / 最好实验成绩')).toBeTruthy()
+  expect(screen.getByText('64.8 / 70')).toBeTruthy()
+  expect(screen.getByText('待出分 1')).toBeTruthy()
 })

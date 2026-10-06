@@ -414,7 +414,8 @@ def get_round(round_id: str) -> dict:
         item['blocked_reason'] = run['block_reason'] if run else r['error']
         item['local_best'] = db.query_one('SELECT MAX(science_score) FROM local_scores WHERE challenge_id=?',
                                          (r['challenge_id'],))[0]
-        from . import leaderboards
+        from . import leaderboards, auto_harvest
+        item['harvest_scores']=auto_harvest.topic_facts(round_id,r['challenge_id'])
         item.update(leaderboards.facts(r['challenge_id']))
         item['platform_best'] = {'score': item['our_best'], 'score_confidence': 'confirmed'} if item['our_best'] is not None else None
         item['trace_diagnostic'] = db.query_one("SELECT payload FROM events WHERE run_id=? AND type IN"
@@ -434,10 +435,11 @@ def get_round(round_id: str) -> dict:
                                '等待资源名额' if item['phase'] == 'queued' else item['blocked_reason'])
         items.append(item)
     snapshot = json.loads(row['config_json'])
-    from . import competition_prompts,track_clock
+    from . import competition_prompts,track_clock,auto_harvest
     return {'id': round_id, 'label': row['label'], 'status': row['status'], 'items': items,
             'season':snapshot.get('season'),'round_seq':snapshot.get('round_seq'),
             'track_clock':track_clock.facts(snapshot),'submission_transport':snapshot.get('submission_transport'),
+            'harvest_window':auto_harvest.window(track_clock.from_snapshot(snapshot)),
             'protocol_drift': snapshot.get('protocol_drift', {'status': 'unknown'}),
             'template': snapshot.get('template'), 'user_prompt': competition_prompts.latest(round_id),
             'experience_snapshot_sha256': snapshot.get('experience_snapshot_sha256'),

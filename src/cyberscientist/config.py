@@ -83,7 +83,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
                "allow_formal_submission": False,
                "require_ended_submission": False, "allowed_submission_targets": []},
     "harvest": {"score_threshold": 100, "experiments_done_at_leader": True,
-                "deadline_check_hours": 2},
+                "deadline_check_hours": 2, "safety_margin_minutes": 15},
     "run_defaults": {"max_active_runs": 6, "max_trials": 3,
                      "max_brain_reviews": 20, "max_run_minutes": 30,
                      "max_model_turns": 0, "max_jobs": 3, "max_submissions": 0,

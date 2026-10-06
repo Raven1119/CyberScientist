@@ -153,3 +153,15 @@ it('requires and sends a prediction for a new Run manual experiment', async () =
   await waitFor(() => expect(post).toHaveBeenCalledWith('/api/v1/runs/run-a/submissions',
     expect.objectContaining({ prediction_md: '调整参数，预计 harbor_score 上升' })))
 })
+
+it('distinguishes quota rows for the same topic on different platform origins', async () => {
+  mockData()
+  const original = get.getMockImplementation()!
+  get.mockImplementation((path: string) => path === '/api/v1/mailboxes/usage' ? Promise.resolve({ items: [
+    { mailbox_id: 'harvest-a', email: 'fixture@example.test', role: 'harvest', platform_challenge_id: 'same-topic', challenge_title: '同名题', used: 1, limit: 5, target_platform: 'bohrium_playground', target_origin: 'https://one.example/api' },
+    { mailbox_id: 'harvest-a', email: 'fixture@example.test', role: 'harvest', platform_challenge_id: 'same-topic', challenge_title: '同名题', used: 2, limit: 5, target_platform: 'bohrium_playground', target_origin: 'https://two.example/api' },
+  ] }) : original(path))
+  render(<MailboxPage />)
+  expect(await screen.findByText(/https:\/\/one.example\/api/)).toBeTruthy()
+  expect(screen.getByText(/https:\/\/two.example\/api/)).toBeTruthy()
+})

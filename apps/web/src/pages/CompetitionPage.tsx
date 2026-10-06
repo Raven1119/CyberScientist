@@ -7,7 +7,7 @@ type Choice = { fast_mode?: boolean; provider?: string; note?: string; runtime: 
 type Template = { pi_notes?: string; data_status?: string; solver_id?: string | null; model_config: { brain: Choice; executor: Choice }; authorization: {
   unlimited_resources?: boolean; allow_model_calls: boolean; max_run_minutes: number; max_jobs: number; max_submissions: number;
   max_sandboxes: number; max_environment_saves: number; max_sandbox_minutes: number; allow_data_download: boolean }; solver_note: string }
-type Item = { id: string; challenge_id: string; title: string; phase: string; priority: number;
+type Item = { harvest_scores?: { main_best: number | null; experiment_best: number | null; pending_submission_ids: string[]; no_confirmed_score: boolean }; id: string; challenge_id: string; title: string; phase: string; priority: number;
   launch_state?: 'immediate' | 'deferred' | 'skipped'; data_ready?: number; paused: number; run_id: string | null; local_best: number | null; platform_best: { score: number; score_confidence: string } | null;
   triage: { difficulty: string; estimated_minutes: number | null; estimated_cost_cny: number | null; recommended_model: string; recommended_solver_id?: string; priority?: number; data_complete?: boolean | null; reason: string } | null;
   leaderboard_best?: number | null; our_best?: number | null; score_gap?: number | null;
@@ -16,7 +16,7 @@ type Item = { id: string; challenge_id: string; title: string; phase: string; pr
   model_cost?: unknown; trace_diagnostic: unknown; usage: unknown[]; cost: unknown; next_action: string | null }
 type Clock = { start: string | null; end: string | null; source: string; remaining_seconds: number | null; platform_end: string | null }
 type Transport = { base_url: string; paths: Record<string, string>; bundle_format: string; bundle_field: string; protocol_version: string; topic_link: string; verified: boolean; status?: string }
-type Round = { track_clock?: Clock; submission_transport?: Transport; template?: Template; user_prompt?: { version: number; content_md: string; sha256: string }; id: string; label: string; status: string; items: Item[]; resources: { sessions: { provider: string; used: number }[]; rate_limits: unknown[]; provider_backoff?: unknown[]; native_throttle?: unknown[] } }
+type Round = { harvest_window?: { state: string; remaining_seconds: number | null; until_window_seconds: number | null }; track_clock?: Clock; submission_transport?: Transport; template?: Template; user_prompt?: { version: number; content_md: string; sha256: string }; id: string; label: string; status: string; items: Item[]; resources: { sessions: { provider: string; used: number }[]; rate_limits: unknown[]; provider_backoff?: unknown[]; native_throttle?: unknown[] } }
 const choice = (model: string): Choice => ({ runtime: 'codex', model_id: model, reasoning_effort: model === 'gpt-6.1-sol' ? 'high' : 'xhigh', fast_mode: true })
 function ModelFields({ label, role, value, onChange }: { label: string; role: 'brain' | 'executor'; value: Choice; onChange: (value: Choice) => void }) {
   if (role === 'brain') return <div className="form-grid">
@@ -179,6 +179,7 @@ export default function CompetitionPage() {
       <label>给 PI 的求解者备注<input value={template.solver_note} onChange={e => setTemplate(t => ({ ...t, solver_note: e.target.value }))} /></label>
     </fieldset>
     {round && <><p>赛道 {round.label || round.id} · {round.status}</p>
+      {round.harvest_window && <p>赛末收割窗口：{round.harvest_window.state} · 距窗口 {round.harvest_window.until_window_seconds == null ? 'unknown' : Math.ceil(round.harvest_window.until_window_seconds / 60) + ' 分钟'} · 距结束 {round.harvest_window.remaining_seconds == null ? 'unknown' : Math.max(0, Math.floor(round.harvest_window.remaining_seconds / 60)) + ' 分钟'}</p>}
       {round.track_clock && <fieldset><legend>本赛道时钟</legend>
         <p>开始 {round.track_clock.start ?? 'unknown'} · 结束 {round.track_clock.end ?? 'unknown'} · 剩余 {round.track_clock.remaining_seconds == null ? 'unknown' : Math.max(0, Math.floor(round.track_clock.remaining_seconds / 60)) + ' 分钟'}</p>
         <p>平台结束事实 {round.track_clock.platform_end ?? 'unknown'}；手动时间只影响调度，提交资格仍以平台为准。</p>
@@ -210,7 +211,7 @@ export default function CompetitionPage() {
       <button className="btn" disabled={busy || round.status !== 'draft'} onClick={() => void action(`${url}/triage`, { allow_model_calls: true })}>授权一次题目分诊</button>
       <button className="btn primary" disabled={busy || promptDirty || round.status !== 'draft' || Boolean(transport && (!transport.verified || JSON.stringify(transport) !== JSON.stringify(round.submission_transport)))} onClick={() => void action(`${url}/confirm`, {
         template, overrides })}>确认模板与授权，开始排队</button>
-      <div className="evaluation-table-wrap"><table><thead><tr><th>题目与分诊</th><th>Run</th><th>本地最好分</th><th>榜单最高确认分</th><th>我方确认最好分</th><th>可提升分差</th><th>轨迹诊断</th><th>token / 金额</th><th>状态与下一步</th><th>操作</th></tr></thead>
+      <div className="evaluation-table-wrap"><table><thead><tr><th>题目与分诊</th><th>Run</th><th>本地最好分</th><th>榜单最高确认分</th><th>我方确认最好分</th><th>主邮箱成绩 / 最好实验成绩</th><th>可提升分差</th><th>轨迹诊断</th><th>token / 金额</th><th>状态与下一步</th><th>操作</th></tr></thead>
         <tbody>{rankedItems.map(item => <tr key={item.id}>
           <td>{item.title}{item.triage && <p>{item.triage.difficulty} · {item.triage.recommended_model}<br />预计 {item.triage.estimated_minutes ?? 'unknown'} 分钟 / {item.triage.estimated_cost_cny ?? 'unknown'} 元<br />数据齐全：{item.triage.data_complete == null ? 'unknown' : item.triage.data_complete ? '是（建议）' : '否（建议）'} · 建议优先级 {item.triage.priority ?? 'unknown'}<br />{item.triage.reason}</p>}
             {!item.run_id && <label>{item.title}启动状态<select value={item.launch_state ?? 'immediate'} disabled={busy || round.status !== 'draft'} onChange={e => void action(`${url}/items/${item.id}`, { launch_state: e.target.value }, 'put')}>
@@ -241,7 +242,7 @@ export default function CompetitionPage() {
 
             </details>}</td>
           <td>{item.run_id || '排队中'}</td><td>{item.local_best ?? 'unknown'}</td>
-          <td>{item.leaderboard_best ?? 'unknown'}</td><td>{item.our_best ?? 'unknown'}</td><td>{item.score_gap ?? 'unknown'}</td>
+          <td>{item.leaderboard_best ?? 'unknown'}</td><td>{item.our_best ?? 'unknown'}</td><td>{item.harvest_scores?.main_best ?? 'unknown'} / {item.harvest_scores?.experiment_best ?? 'unknown'}<p>待出分 {item.harvest_scores?.pending_submission_ids.length ?? 0}</p></td><td>{item.score_gap ?? 'unknown'}</td>
           <td>{item.trace_diagnostic ? <details><summary>查看诊断</summary><pre>{JSON.stringify(item.trace_diagnostic, null, 2)}</pre></details> : 'unknown'}</td>
           <td><details><summary>用量与费用</summary><pre>{JSON.stringify({ tokens: item.usage, model_cost: item.model_cost, cost: item.cost }, null, 2)}</pre></details></td>
           <td>{item.phase}<p>{item.next_action}</p></td>
