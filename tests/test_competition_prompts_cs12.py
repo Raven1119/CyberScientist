@@ -165,6 +165,9 @@ def test_public_data_ready_alert_is_real_observation_not_implicit_start(monkeypa
     details={'id':'c0','content':'数据待发布','resources':[],'platform':{},'title':'fixture','source':'current_public_get'}
     monkeypatch.setattr(competition,'_challenge_snapshot',lambda cid:dict(details))
     competition.refresh_data(rid);assert not db.query('SELECT * FROM alerts')
+    details['content']='请使用随题训练集训练模型'
+    competition.refresh_data(rid);assert not db.query('SELECT * FROM alerts')
+    assert db.query_one('SELECT data_ready FROM eval_results WHERE id=?',(item,))[0]==0
     details.update(content='公开资源已发布',resources=[{'role':'task-public-data','url':'https://example.org/fixture.dat'}])
     competition.refresh_data(rid);competition.refresh_data(rid)
     assert len(db.query("SELECT * FROM alerts WHERE kind='competition.data_ready'"))==1
@@ -246,3 +249,51 @@ async def test_cancelled_data_refresh_stays_owned_until_thread_finishes(monkeypa
         release.set();await asyncio.wait_for(task,2)
         assert closed.is_set() and not resource_coordinator.auxiliary_tasks()
     finally:release.set();await asyncio.gather(task,return_exceptions=True)
+
+
+async def test_deferred_preserves_explicit_topic_choice_but_inherits_current_track_defaults():
+    rnd,_=seed(2);rid=rnd['id'];items={i['challenge_id']:i['id'] for i in rnd['items']}
+    for ident in items.values():competition.update_item(rid,ident,launch_state='deferred')
+    prompts.publish(rid,prompt_text(1),0)
+    base=template() | {'pi_notes':'global old','solver_note':'global solver old'}
+    base['authorization']['unlimited_resources']=False
+    choice={'solver_id':'fixture-ds','pi_notes':'topic explicit PI notes','authorization':dict(base['authorization'],max_jobs=7)}
+    competition.confirm(rid,base,{'c0':choice})
+    current=template() | {'pi_notes':'global new','solver_note':'global solver new'}
+    current['authorization'].update(max_jobs=9,unlimited_resources=False)
+    competition.save_template(rid,current);prompts.publish(rid,prompt_text(2),1)
+    db.get_db().close();del db._local.conn;db.init_db()
+    for ident in items.values():competition.start_deferred(rid,ident)
+    ctl=FakeController();ctl.throttled=True;await evaluations.advance(ctl)
+    from cyberscientist import planning
+    for cid,provider,jobs,notes in [('c0','deepseek',7,'topic explicit PI notes'),('c1','codex',9,'global new')]:
+        row=db.query_one('SELECT * FROM runs WHERE challenge_id=?',(cid,));snap=json.loads(row['config_snapshot'])
+        assert snap['settings']['executor']['provider']==provider
+        assert snap['competition']['user_prompt']['version']==2
+        auth=db.query_one('SELECT * FROM authorizations WHERE run_id=?',(row['id'],))
+        assert auth['max_jobs']==jobs
+        brief=planning.startup(row['id'],dict(db.query_one('SELECT * FROM challenges WHERE id=?',(cid,))))
+        assert brief['user_transactional_guidance']['pi_notes']==notes
+        assert snap['competition']['solver_note']=='global solver new'
+
+
+@pytest.mark.parametrize('models,code',[(None,200),({'unrecognized_role':{}},422),('invalid',422)])
+async def test_topic_model_input_is_validated_before_any_confirmation_write(models,code):
+    rnd,_=seed(1);rid=rnd['id']
+    async with AsyncClient(transport=ASGITransport(app=api.create_app()),base_url='http://local') as client:
+        response=await client.post(f'/api/v1/rounds/{rid}/confirm',json={'template':template(),'overrides':{'c0':{'model_config':models}}})
+    assert response.status_code==code
+    if code==422:
+        assert db.query_one('SELECT status FROM eval_runs WHERE id=?',(rid,))[0]=='draft'
+        assert db.query_one('SELECT template_json FROM eval_results WHERE eval_id=?',(rid,))[0] is None
+
+
+@pytest.mark.parametrize('base_auth,topic_auth,code',[(None,{},200),({},None,200),({},'invalid',422),({},[],422)])
+async def test_topic_authorization_input_is_validated_before_confirmation_write(base_auth,topic_auth,code):
+    rnd,_=seed(1);rid=rnd['id'];base=template() | {'authorization':base_auth}
+    async with AsyncClient(transport=ASGITransport(app=api.create_app()),base_url='http://local') as client:
+        response=await client.post(f'/api/v1/rounds/{rid}/confirm',json={'template':base,'overrides':{'c0':{'authorization':topic_auth}}})
+    assert response.status_code==code
+    if code==422:
+        assert db.query_one('SELECT status FROM eval_runs WHERE id=?',(rid,))[0]=='draft'
+        assert db.query_one('SELECT template_json FROM eval_results WHERE eval_id=?',(rid,))[0] is None

@@ -91,12 +91,14 @@ def import_round(challenge_ids: list[str] | None = None, *, season: str = '',
     entries = []
     for slug in dict.fromkeys(slugs):
         cid = _import(slug)
-        entries.append({'challenge_id': cid, 'challenge_snapshot': _challenge_snapshot(cid)})
+        entries.append({'challenge_id': cid,'platform_challenge_id':db.query_one('SELECT platform_challenge_id FROM challenges WHERE id=?',(cid,))[0],
+                        'challenge_snapshot': _challenge_snapshot(cid)})
     rid = 'round_' + uuid.uuid4().hex[:12]
     now = db.utcnow()
     snapshot = {'schema': 'cyberscientist-competition/v1', 'mode': mode, 'entries': entries,
                 'season': season, 'round_seq': round_seq, 'public_round': public,
-                'backend': backend_identity.capture(), 'protocol_drift': drift}
+                'backend': backend_identity.capture(), 'protocol_drift': drift,
+                'mailbox_platform':config.load_settings()['mailbox']['platform']}
     from . import track_clock
     snapshot['track_clock']={name:(value.isoformat() if value else None) for name,value in
                              (('start',track_clock.platform_time(snapshot,'roundStartAt')),
@@ -167,7 +169,10 @@ def _template(template: dict, mode: str, *, frozen: bool = False) -> dict:
     if not isinstance(template, dict) or set(template) - {'model_config', 'authorization', 'shadow_enabled', 'solver_note', 'solver_id', 'pi_notes', 'data_status','solver_entry','triage_source'}:
         raise CompetitionError('模板只接受模型、授权、监督和求解者备注')
     settings = config.load_settings()
-    choices = dict(template.get('model_config') or {})
+    raw_models=template.get('model_config')
+    if raw_models is not None and (not isinstance(raw_models,dict) or set(raw_models)-{'brain','executor'}):
+        raise CompetitionError('模型配置须为brain/executor对象')
+    choices = dict(raw_models or {})
     if frozen and choices.get('brain'):
         from .pi_policy import migrated
         choices['brain'] = migrated(choices['brain'])
@@ -236,6 +241,34 @@ def _require_clock(snapshot, template, *, mode):
         raise CompetitionError('预算无上限须先设置有效赛道结束时间')
 
 
+def _topic_override(patch, selected):
+    """Keep explicit topic choices without freezing inherited track defaults."""
+    from copy import deepcopy
+    value={key:deepcopy(selected[key]) for key in patch if key not in ('model_config','authorization','solver_entry')}
+    if 'model_config' in patch:
+        value['model_config']={role:deepcopy(selected['model_config'][role]) for role in (patch['model_config'] or {})}
+    if 'authorization' in patch: value['authorization']=deepcopy(patch['authorization'])
+    if 'solver_id' in patch:
+        value['solver_entry']=deepcopy(selected['solver_entry'])
+        if patch['solver_id']:
+            value.setdefault('model_config',{})['executor']=deepcopy(selected['model_config']['executor'])
+    return value
+
+
+def _with_topic_override(base, patch):
+    for models in (base.get('model_config'),patch.get('model_config')):
+        if models is not None and (not isinstance(models,dict) or set(models)-{'brain','executor'}):
+            raise CompetitionError('模型配置须为brain/executor对象')
+    for authorization in (base.get('authorization'),patch.get('authorization')):
+        if authorization is not None and not isinstance(authorization,dict):
+            raise CompetitionError('授权模板须为对象')
+    proposed=base | patch | {'model_config':dict(base.get('model_config') or {},**(patch.get('model_config') or {})),
+                            'authorization':dict(base.get('authorization') or {},**(patch.get('authorization') or {}))}
+    if (base.get('authorization') or {}).get('unlimited_resources'):
+        proposed['authorization']['unlimited_resources']=True
+    return proposed
+
+
 @config.serialized_mutation
 def confirm(round_id: str, template: dict, overrides: dict | None = None) -> dict:
     row = _round(round_id)
@@ -249,22 +282,27 @@ def confirm(round_id: str, template: dict, overrides: dict | None = None) -> dic
     choices = {}
     from . import competition_prompts
     frozen_prompts={}
+    topic_overrides={}
     for item in db.query('SELECT * FROM eval_results WHERE eval_id=?',(round_id,)):
         imported=snapshot.get('user_triage',{}).get(item['challenge_id'])
         proposed=dict(template)
+        patch={}
         if imported:
-            proposed.update(solver_id=imported['solver_entry']['id'],pi_notes=imported['pi_notes'],data_status=imported['data_status'])
+            patch.update(solver_id=imported['solver_entry']['id'],pi_notes=imported['pi_notes'],data_status=imported['data_status'])
         adopted=snapshot.get('adopted_suggestions',{}).get(item['challenge_id'])
         if adopted:
-            proposed.update(solver_id=adopted.get('recommended_solver_id'),data_status=str(adopted.get('data_complete','unknown')))
-        proposed.update((overrides or {}).get(item['challenge_id']) or {})
+            patch.update(solver_id=adopted.get('recommended_solver_id'),data_status=str(adopted.get('data_complete','unknown')))
+        patch.update((overrides or {}).get(item['challenge_id']) or {})
+        proposed=_with_topic_override(proposed,patch)
         if base['authorization']['unlimited_resources']:
             proposed['authorization']=dict(proposed.get('authorization') or base['authorization'],unlimited_resources=True)
         selected=_template(proposed,snapshot['mode'])
         if imported: selected['triage_source']='operator_json'
+        topic_overrides[item['challenge_id']]=_topic_override(patch,selected)
         choices[item['id']]=selected
         frozen_prompts[item['id']]=competition_prompts.freeze(round_id,item['challenge_id']) if item['launch_state']=='immediate' else None
     snapshot['template'] = base
+    snapshot['topic_overrides']=topic_overrides
     from . import competition_prompts
     snapshot['confirmed_prompt']=competition_prompts.latest(round_id)
     snapshot['budget_policy']='track-unlimited/v1'
@@ -318,7 +356,10 @@ def start_deferred(round_id,item_id):
     item=db.query_one('SELECT * FROM eval_results WHERE id=? AND eval_id=?',(item_id,round_id))
     if not item or item['run_id'] or item['launch_state']!='deferred' or row['status']=='draft':
         raise CompetitionError('只能启动已确认赛道中尚未启动的暂缓题')
-    current=_template(snapshot.get('template',{}),snapshot['mode'],frozen=True)
+    base=snapshot.get('template',{})
+    patch=snapshot.get('topic_overrides',{}).get(item['challenge_id'],{})
+    proposed=_with_topic_override(base,patch)
+    current=_template(proposed,snapshot['mode'],frozen=True)
     _require_clock(snapshot,current,mode=snapshot['mode'])
     from . import competition_prompts
     prompt=competition_prompts.freeze(round_id,item['challenge_id'])
@@ -334,8 +375,8 @@ def data_ready(details):
     resources=[item for item in details.get('resources',[]) if isinstance(item,dict) and item.get('role')=='task-public-data']
     if resources:
         return all(bool(item.get('url') or item.get('retrieval_ref') or item.get('dataset_id')) for item in resources)
-    import re
-    return not bool(re.search(r'数据.{0,20}(?:待发布|稍后|尚未)|(?:data|dataset).{0,20}(?:pending|not yet|released later)',details.get('content',''),re.I))
+    # Missing a pending phrase does not prove the dataset was published.
+    return False
 
 
 def refresh_data(round_id):
@@ -490,10 +531,15 @@ async def advance_round(controller, evaluation) -> None:
                 db.execute("UPDATE eval_results SET run_id=?,status='created' WHERE id=?", (run['id'], item['id']))
                 # Freeze note and round link without creating capability restrictions.
                 state = json.loads(db.query_one('SELECT config_snapshot FROM runs WHERE id=?', (run['id'],))['config_snapshot'])
+                entry=next(e for e in snapshot['entries'] if e['challenge_id']==item['challenge_id'])
+                if 'platform_challenge_id' in entry:
+                    state['challenge_platform_id']=entry['platform_challenge_id']
+                if snapshot.get('mailbox_platform'):
+                    state['settings']['mailbox']['platform']=snapshot['mailbox_platform']
                 state['competition'] = {'round_id': rid, 'item_id': item['id'], 'solver_note': template['solver_note'],
                                         'solver_entry': fallback.get('solver_entry') or template.get('solver_entry'),
                                         'user_triage': {'source': template.get('triage_source','operator_template'), 'data_status': template.get('data_status',''), 'pi_notes':template.get('pi_notes',''), 'notice':'用户事务性提示，不是已验证事实或新增授权'},
-                                        'challenge_snapshot': next(e.get('challenge_snapshot') for e in snapshot['entries'] if e['challenge_id'] == item['challenge_id'])}
+                                        'challenge_snapshot': entry.get('challenge_snapshot')}
                 from . import competition_prompts
                 state['competition']['user_prompt']=json.loads(item['prompt_json']) if item['prompt_json'] else competition_prompts.freeze(rid,item['challenge_id'])
                 if snapshot.get('submission_transport'):
