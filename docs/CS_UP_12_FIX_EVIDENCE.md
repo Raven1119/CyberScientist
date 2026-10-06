@@ -193,3 +193,5 @@ CUDA在1核2GiB CPU模板CLI90.062秒超时；长HTTP仍返回502/117.951秒，�
 自检外部波动补充：首次Bohrium旧CLI项目列表格式unknown的回执保留；后续同一实际只读连接入口HTTP200、status ok、AccessKey已认证，无登录或配置更改。此项为外部读取恢复，不用真实Job成功替代自检结果。
 
 最终验证证据索引（全部位于本机忽略目录.package-checks/cs-up-12/）：w10-final-green-full-backend-tests.log、w10-final-tested-source-sha.json、w10-warmup-frontend-tests.log、w10-warmup-frontend-build.log、w10-final-green-ledger.log、w9-warmup-preflight-final.log，以及w7-five-browser-verification.log。原失败和中断日志未覆盖。
+
+最终验收提交：等待/预热产品修复66d83cf，五镜像与Lean验收7f5224c，W10完整回归报告00aa9ea；各提交均已按测试通过后提交、推送main的顺序完成。最终交付标签lightchaser-fallback-3绑定随后仅更新本验收索引的提交。
