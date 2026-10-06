@@ -35,6 +35,52 @@ const detail = { id: 'round_one', label: '', status: 'draft', resources: { sessi
     local_best: null, platform_best: null, trace_diagnostic: null, usage: [], cost: null, next_action: '等待资源名额',
     triage: { difficulty: 'easy', recommended_model: 'deepseek-flash', reason: '公开输入较小', estimated_minutes: 10, estimated_cost_cny: null } },
 ] }
+it('imports transactional JSON and preserves solver and notes through manual edits and confirmation', async () => {
+  const entry = { id: 'cheap', name: '便宜条目', runtime: 'codex', provider: 'deepseek', model_id: 'deepseek-flash', reasoning_effort: 'high', note: '明确步骤' }
+  const imported = { platform_challenge_id: 'public-topic', solver_entry: entry, pi_notes: '用户报告数据风险', data_status: '用户报告可下载' }
+  get.mockImplementation(async (path: string) => path === '/api/v1/settings' ? { solver_roster: [entry] } : path === '/api/v1/rounds' ? { items: [{ id: 'round_one', status: 'draft' }] } : detail)
+  post.mockImplementation(async (path: string) => path.endsWith('/triage-import') ? { ...detail, items: [{ ...detail.items[0], user_triage: imported }] } : { ...detail, status: 'running' })
+  render(<CompetitionPage />)
+  await screen.findByText(/easy · deepseek-flash/)
+  const user = userEvent.setup()
+  const items = [{ platform_challenge_id: 'public-topic', priority: 10, solver_entry: 'cheap', data_status: imported.data_status, pi_notes: imported.pi_notes }]
+  await user.click(screen.getByLabelText('事务性分诊 JSON'))
+  await user.paste(JSON.stringify(items))
+  await user.click(screen.getByRole('button', { name: '导入用户分诊' }))
+  expect(post.mock.calls[0]).toEqual(['/api/v1/rounds/round_one/triage-import', { items }])
+  expect((screen.getByLabelText('测试题求解者条目') as HTMLSelectElement).value).toBe('cheap')
+  await user.type(screen.getByLabelText('测试题给 PI 的备注'), '补充环境建议')
+  await user.click(screen.getByRole('button', { name: '确认模板与授权，开始排队' }))
+  expect(post.mock.calls[1][1].overrides.same_challenge).toMatchObject({ solver_id: 'cheap', pi_notes: imported.pi_notes, data_status: imported.data_status, model_config: { executor: { provider: 'deepseek' } } })
+})
+
+it('rejects malformed pasted JSON without calling backend or changing the draft', async () => {
+  get.mockImplementation(async (path: string) => path === '/api/v1/rounds' ? { items: [{ id: 'round_one', status: 'draft' }] } : detail)
+  render(<CompetitionPage />)
+  await screen.findByText(/easy · deepseek-flash/)
+  const user = userEvent.setup()
+  await user.click(screen.getByLabelText('事务性分诊 JSON')); await user.paste('malformed')
+  await user.click(screen.getByRole('button', { name: '导入用户分诊' }))
+  expect(post).not.toHaveBeenCalled(); expect(toast).toHaveBeenCalled()
+  expect(screen.getByText(/轮次 round_one · draft/)).toBeTruthy()
+})
+it('sends an explicit null when manually replacing an imported solver entry', async () => {
+  const entry = { id: 'cheap', name: '便宜条目', runtime: 'codex', provider: 'deepseek', model_id: 'deepseek-flash', reasoning_effort: 'high', note: '明确步骤' }
+  const imported = { platform_challenge_id: 'public-topic', solver_entry: entry, pi_notes: '风险提示', data_status: '待核验' }
+  const draft = { ...detail, items: [{ ...detail.items[0], user_triage: imported }] }
+  get.mockImplementation(async (path: string) => path === '/api/v1/settings' ? { solver_roster: [entry] } : path === '/api/v1/rounds' ? { items: [{ id: 'round_one', status: 'draft' }] } : draft)
+  post.mockResolvedValue({ ...draft, status: 'running' })
+  render(<CompetitionPage />)
+  await screen.findByText(/easy · deepseek-flash/)
+  const user = userEvent.setup()
+  await user.selectOptions(screen.getByLabelText('测试题求解者 提供方'), 'codex')
+  await user.clear(screen.getByLabelText('测试题求解者 模型')); await user.type(screen.getByLabelText('测试题求解者 模型'), 'gpt-6.1-sol')
+  await user.click(screen.getByRole('button', { name: '确认模板与授权，开始排队' }))
+  const override = JSON.parse(JSON.stringify(post.mock.calls[0][1])).overrides.same_challenge
+  expect(override.solver_id).toBeNull()
+  expect(override.model_config.executor).toMatchObject({ provider: 'codex', model_id: 'gpt-6.1-sol' })
+  expect(override.pi_notes).toBe('风险提示')
+})
 it('keeps an explicit topic resource grant visible and independent from the round template', async () => {
   get.mockImplementation(async (path: string) => path === '/api/v1/rounds' ? { items: [{ id: 'round_one', status: 'draft' }] } : detail)
   post.mockResolvedValue({ ...detail, status: 'running' })
@@ -107,7 +153,8 @@ it('uses a concrete roster entry and clears its selection after a manual executo
   await user.clear(screen.getByLabelText('求解者 模型'))
   await user.type(screen.getByLabelText('求解者 模型'), 'gpt-6.1-sol')
   await user.click(screen.getByRole('button', { name: '确认模板与授权，开始排队' }))
-  expect(post.mock.calls[0][1].template.solver_id).toBeUndefined()
+  expect(post.mock.calls[0][1].template.solver_id).toBeNull()
+  expect(JSON.parse(JSON.stringify(post.mock.calls[0][1])).template.solver_id).toBeNull()
   expect(post.mock.calls[0][1].template.model_config.executor).toMatchObject({ provider: 'codex', model_id: 'gpt-6.1-sol' })
 })
 

@@ -51,6 +51,7 @@ def startup(run_id: str, challenge: dict) -> dict:
                'public_score_distribution': scores,
                'strategy_cards': delivered['items'], 'strategy_context_id': delivered['id'],
                'guidance': guidance_level(run_id),
+               'user_transactional_guidance': json.loads(run['config_snapshot']).get('competition',{}).get('user_triage'),
                'brief_fields': ['problem_md', 'science_md', 'ranked_methods', 'traps_md',
                                 'parallel_preparation', 'acceptance_md'],
                'preparation_tracks': ['delivery_contract', 'verifier', 'environment_smoke']}

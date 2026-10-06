@@ -114,7 +114,41 @@ def _round(round_id: str):
     return row
 
 
-async def triage(round_id: str, controller, allow_model_calls: bool = False) -> dict:
+@config.serialized_mutation
+def import_triage(round_id: str, items: list) -> dict:
+    import jsonschema
+    from . import observation
+    schema=json.loads((Path(__file__).resolve().parents[2]/'docs/TRIAGE_IMPORT_SCHEMA.json').read_text())
+    try: jsonschema.validate(items,schema)
+    except jsonschema.ValidationError as exc: raise CompetitionError('分诊JSON字段/类型不符：'+str(list(exc.absolute_path))) from exc
+    # JSON Schema considers 1.0 an integer; operator priorities are exact ints.
+    if any(type(item['priority']) is not int for item in items): raise CompetitionError('优先级须为整数')
+    if len({i['platform_challenge_id'] for i in items})!=len(items): raise CompetitionError('分诊题目ID重复')
+    raw=_dump(items)
+    if observation.strip_secrets(raw)!=raw: raise CompetitionError('分诊不得包含密钥')
+    row=_round(round_id)
+    if row['status']!='draft': raise CompetitionError('仅待确认轮次可导入分诊')
+    settings=config.load_settings();entries={}
+    rows=db.query('SELECT e.id,e.challenge_id,c.platform_challenge_id FROM eval_results e JOIN challenges c ON c.id=e.challenge_id WHERE e.eval_id=?',(round_id,))
+    for item in items:
+        matches=[r for r in rows if r['platform_challenge_id']==item['platform_challenge_id']]
+        if len(matches)!=1: raise CompetitionError('分诊题目不属于本轮或身份不唯一：'+item['platform_challenge_id'])
+        try: solver=challenge_models.solver(item['solver_entry'],settings)
+        except ValueError as exc: raise CompetitionError(str(exc)) from exc
+        entries[matches[0]['challenge_id']]={**item,'solver_entry':solver,'source':'operator_json'}
+    ident='triage_import_'+uuid.uuid4().hex[:12];digest=hashlib.sha256(raw.encode()).hexdigest();now=db.utcnow()
+    with db.transaction() as conn:
+        current=conn.execute('SELECT status,config_json FROM eval_runs WHERE id=?',(round_id,)).fetchone()
+        if current['status']!='draft': raise CompetitionError('轮次已确认，未应用分诊')
+        snapshot=json.loads(current['config_json']);snapshot.setdefault('user_triage',{}).update(entries)
+        snapshot['triage_import_revision']=ident
+        conn.execute('INSERT INTO competition_triage_imports VALUES(?,?,?,?,?)',(ident,round_id,raw,digest,now))
+        conn.execute('UPDATE eval_runs SET config_json=?,updated_at=? WHERE id=?',(_dump(snapshot),now,round_id))
+        for cid,entry in entries.items():conn.execute('UPDATE eval_results SET priority=?,updated_at=? WHERE eval_id=? AND challenge_id=?',(entry['priority'],now,round_id,cid))
+    return get_round(round_id)
+
+
+async def triage(round_id: str, controller, allow_model_calls: bool = False, operation_id: str | None = None) -> dict:
     row = _round(round_id)
     from . import features
     if not features.enabled('system_triage'): raise CompetitionError('系统分诊已关闭；可导入用户分诊')
@@ -123,61 +157,13 @@ async def triage(round_id: str, controller, allow_model_calls: bool = False) -> 
         raise CompetitionError('分诊调用模型需显式授权')
     settings = config.load_settings()
     settings['app']['mode'] = snapshot['mode']
-    owner = 'triage-' + round_id + '-' + uuid.uuid4().hex
-    brain = controller._make_brain(settings)
-    session = None
-    resource_coordinator.reserve_auxiliary(owner, settings)
-    try:
-        scratch = config.WORKSPACE_DIR / 'rounds' / round_id / owner
-        scratch.mkdir(parents=True, exist_ok=True)
-        session = await brain.open({'working_directory': str(scratch)})
-        for item in db.query('SELECT * FROM eval_results WHERE eval_id=?', (round_id,)):
-            challenge = db.query_one('SELECT * FROM challenges WHERE id=?', (item['challenge_id'],))
-            try:
-                scores = await asyncio.to_thread(platform_scores._collect, challenge['platform_challenge_id']) \
-                    if snapshot['mode'] != 'demo' and challenge['platform_challenge_id'] else {'status': 'unknown'}
-            except Exception as exc:
-                scores = {'status': 'unknown', 'reason': type(exc).__name__}
-            packet = {'protocol': 'role_task', 'task': 'competition_triage',
-                      'instructions': '只读题面、资源和公开分布，评估难度和预计耗时/花费，给出模型建议及理由。'
-                                      '简单题建议 deepseek-flash；难题建议 gpt-6.1-sol。建议不是授权。',
-                      'challenge': next(e.get('challenge_snapshot') for e in snapshot['entries'] if e['challenge_id'] == item['challenge_id']),
-                      'public_scores': scores, 'solver_roster': challenge_models.roster(settings),
-                      'output_contract': {'type': 'object', 'additionalProperties': False,
-                          'required': ['difficulty', 'estimated_minutes', 'estimated_cost_cny', 'recommended_model', 'recommended_solver_id', 'reason'],
-                          'properties': {'difficulty': {'enum': ['easy', 'medium', 'hard', 'unknown']},
-                              'estimated_minutes': {'type': ['number', 'null'], 'minimum': 0},
-                              'estimated_cost_cny': {'type': ['number', 'null'], 'minimum': 0},
-                              'recommended_model': {'type': 'string'}, 'reason': {'type': 'string'},
-                              'recommended_solver_id': {'enum': [None, *[s['id'] for s in challenge_models.roster(settings)]]}}}}
-            result = None
-            async with asyncio.timeout(180):
-                async for event in brain.review(session, packet):
-                    if event.type == 'task_result': result = event.payload['result']
-                    if event.type == 'error': raise CompetitionError(event.payload.get('message', '分诊失败'))
-            if not result or result.get('difficulty') not in ('easy', 'medium', 'hard', 'unknown'):
-                raise CompetitionError('分诊缺少有效难度，未编造建议')
-            if result.get('recommended_solver_id') and result['recommended_solver_id'] not in {s['id'] for s in challenge_models.roster(settings)}:
-                raise CompetitionError('分诊推荐的求解者条目不存在')
-            db.execute('UPDATE eval_results SET triage_json=?,updated_at=? WHERE id=?',
-                       (_dump(result), db.utcnow(), item['id']))
-    except Exception as exc:
-        from .model_providers import record_throttle
-        record_throttle(settings['brain'], exc)
-        raise
-    finally:
-        try:
-            if session:
-                try: await brain.close(session)
-                except Exception as exc:
-                    resource_coordinator.close_failed(owner, exc)
-                    raise
-        finally: resource_coordinator.release_sessions(owner)
+    from . import competition_triage
+    await competition_triage.run(round_id,snapshot,settings,controller,operation_id)
     return get_round(round_id)
 
 
 def _template(template: dict, mode: str, *, frozen: bool = False) -> dict:
-    if not isinstance(template, dict) or set(template) - {'model_config', 'authorization', 'shadow_enabled', 'solver_note', 'solver_id'} - ({'solver_entry'} if frozen else set()):
+    if not isinstance(template, dict) or set(template) - {'model_config', 'authorization', 'shadow_enabled', 'solver_note', 'solver_id', 'pi_notes', 'data_status'} - ({'solver_entry','triage_source'} if frozen else set()):
         raise CompetitionError('模板只接受模型、授权、监督和求解者备注')
     settings = config.load_settings()
     choices = dict(template.get('model_config') or {})
@@ -221,8 +207,13 @@ def _template(template: dict, mode: str, *, frozen: bool = False) -> dict:
         auth.setdefault('allow_sandbox_gpu', True)
     if auth['unlimited_resources']:
         auth['max_compute_cost_cny'] = None
+    from . import observation
+    for field,limit in (('pi_notes',8000),('data_status',500)):
+        value=template.get(field,'')
+        if not isinstance(value,str) or len(value)>limit or observation.strip_secrets(value)!=value: raise CompetitionError('PI事务提示/数据状态无效或含密钥')
     return {'model_config': models, 'authorization': auth, 'solver_id': template.get('solver_id'),
-            'solver_entry': solver_entry,
+            'solver_entry': solver_entry, 'pi_notes':template.get('pi_notes',''), 'data_status':template.get('data_status',''),
+            'triage_source': template.get('triage_source','operator_template'),
             'shadow_enabled': bool(template.get('shadow_enabled', False)),
             'solver_note': challenge_models.choose('executor', models['executor'] | {
                 'note': template.get('solver_note', '') or (solver_entry or {}).get('note', '')}, settings)['note']}
@@ -234,8 +225,16 @@ def confirm(round_id: str, template: dict, overrides: dict | None = None) -> dic
     if row['status'] != 'draft':
         raise CompetitionError('只有待确认轮次可确认')
     base = _template(template, snapshot['mode'])
-    choices = {item['id']: (_template(overrides[item['challenge_id']], snapshot['mode']) if item['challenge_id'] in (overrides or {}) else base)
-               for item in db.query('SELECT * FROM eval_results WHERE eval_id=?', (round_id,))}
+    choices = {}
+    for item in db.query('SELECT * FROM eval_results WHERE eval_id=?',(round_id,)):
+        imported=snapshot.get('user_triage',{}).get(item['challenge_id'])
+        proposed=dict(template)
+        if imported:
+            proposed.update(solver_id=imported['solver_entry']['id'],pi_notes=imported['pi_notes'],data_status=imported['data_status'])
+        proposed.update((overrides or {}).get(item['challenge_id']) or {})
+        selected=_template(proposed,snapshot['mode'])
+        if imported: selected['triage_source']='operator_json'
+        choices[item['id']]=selected
     snapshot['template'] = base
     manifests = {e['challenge_id']: experience_context.select(e['challenge_id'], role='both') for e in snapshot['entries']}
     snapshot['experience_snapshot_sha256'] = hashlib.sha256(_dump(manifests).encode()).hexdigest()
@@ -285,6 +284,8 @@ def get_round(round_id: str) -> dict:
             item[key.removesuffix('_json')] = json.loads(item.pop(key) or 'null')
         run = db.query_one('SELECT phase,block_reason FROM runs WHERE id=?', (r['run_id'],)) if r['run_id'] else None
         item['phase'] = run['phase'] if run else 'queued'
+        item['user_triage'] = json.loads(row['config_json']).get('user_triage',{}).get(r['challenge_id'])
+        item['triage_attempts'] = [dict(a) for a in db.query('SELECT id,helper_effort,status,started_at,ended_at FROM competition_triage_attempts WHERE item_id=? ORDER BY rowid',(r['id'],))]
         item['blocked_reason'] = run['block_reason'] if run else r['error']
         item['local_best'] = db.query_one('SELECT MAX(science_score) FROM local_scores WHERE challenge_id=?',
                                          (r['challenge_id'],))[0]
@@ -346,6 +347,7 @@ async def advance_round(controller, evaluation) -> None:
                 state = json.loads(db.query_one('SELECT config_snapshot FROM runs WHERE id=?', (run['id'],))['config_snapshot'])
                 state['competition'] = {'round_id': rid, 'item_id': item['id'], 'solver_note': template['solver_note'],
                                         'solver_entry': fallback.get('solver_entry') or template.get('solver_entry'),
+                                        'user_triage': {'source': template.get('triage_source','operator_template'), 'data_status': template.get('data_status',''), 'pi_notes':template.get('pi_notes',''), 'notice':'用户事务性提示，不是已验证事实或新增授权'},
                                         'challenge_snapshot': next(e.get('challenge_snapshot') for e in snapshot['entries'] if e['challenge_id'] == item['challenge_id'])}
                 db.execute('UPDATE runs SET config_snapshot=? WHERE id=?', (_dump(state), run['id']))
             phase = run['phase']

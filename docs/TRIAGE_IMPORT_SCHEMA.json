@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "array", "minItems": 1, "maxItems": 200,
+  "items": {
+    "type": "object", "additionalProperties": false,
+    "required": ["platform_challenge_id", "priority", "solver_entry", "data_status", "pi_notes"],
+    "properties": {
+      "platform_challenge_id": {"type": "string", "minLength": 1, "maxLength": 300},
+      "priority": {"type": "integer", "minimum": -1000000, "maximum": 1000000},
+      "solver_entry": {"type": "string", "minLength": 1, "maxLength": 100},
+      "data_status": {"type": "string", "minLength": 1, "maxLength": 500},
+      "pi_notes": {"type": "string", "maxLength": 8000, "description": "仅用户报告的数据状态、风险和环境建议；不作为已验证事实或运行授权"}
+    }
+  }
+}

@@ -236,6 +236,15 @@ CREATE TABLE IF NOT EXISTS experience_approvals (
  id INTEGER PRIMARY KEY, experience_id TEXT NOT NULL, revision_id TEXT NOT NULL,
  operator TEXT NOT NULL, created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS competition_triage_imports (
+ id TEXT PRIMARY KEY, eval_id TEXT NOT NULL, payload_json TEXT NOT NULL,
+ sha256 TEXT NOT NULL, created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS competition_triage_attempts (
+ id TEXT PRIMARY KEY, eval_id TEXT NOT NULL, item_id TEXT NOT NULL,
+ helper_effort TEXT NOT NULL, status TEXT NOT NULL, started_at TEXT NOT NULL,
+ ended_at TEXT, output_json TEXT, previous_result_json TEXT
+);
 CREATE TABLE IF NOT EXISTS experience_contexts (
  id TEXT PRIMARY KEY, run_id TEXT NOT NULL, trial_id TEXT, boundary TEXT NOT NULL,
  content_json TEXT NOT NULL, created_at TEXT NOT NULL, UNIQUE(run_id,boundary)

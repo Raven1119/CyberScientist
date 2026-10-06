@@ -36,3 +36,7 @@ Chromium真实浏览器使用.package-checks/cs-up-10/ui/独立演示数据，�
 W3b赛前自检有设置页入口与CLI；报告仅记录只读检查事实/时间/配置修订/平台，读取上次报告不会触发外呼。W3c协议检查入口/持久告警及全部PI事实已接入；开关关闭仍保留历史。后续W3新入口将统一浏览器走查。
 
 W3d新增deepseek_fallback.after_minutes/solver_id设置控件；后端0–1440数字/DeepSeek条目校验，配置保存/其他页写入/重建后保持。比赛页展示提供方退避与请求模型观察事实，PI配置仍固定。
+
+W3最终新增配置：deepseek_fallback.after_minutes/solver_id、features的11项完整开关、用户分诊原文与各题priority/solver_entry/data_status/pi_notes。后备与所有开关按settings修订保存；分诊独立原子修订，用户确认前不授予研究权限。用户手动改选模型用显式null取消条目，避免JSON省略造成旧条目复活。
+
+最终真实Chromium走查11项全关→保存→刷新→实际重启后端→别页独立技能保存→各值保留→全开保存刷新；两个后备字段保持，分诊三项配置及PI事务提示导入→刷新保持。环境目录、自检/协议面板及比赛速率/分差/分诊入口可见；实际模型/评分/变体/共享闭环由对应后端和DOM测试验证，浏览器没有创建科研Run或比赛提交。截图和最终浏览器JSON存在.package-checks/cs-up-10/ui/，原错误脚本日志保留。

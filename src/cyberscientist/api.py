@@ -95,6 +95,7 @@ class RoundItemPut(BaseModel):
 
 class RoundTriage(BaseModel):
     allow_model_calls: bool = False
+    operation_id: str | None = None
 
 
 class ReviewRequestCreate(BaseModel):
@@ -362,6 +363,8 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
             await leaderboards.drain()
             from . import ops
             await ops.drain()
+            from . import competition_triage
+            await competition_triage.drain()
 
     app = FastAPI(title="CyberScientist", docs_url=None, openapi_url=None,
                   lifespan=lifespan)
@@ -1019,10 +1022,17 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
             return result
         except ValueError as exc: raise HTTPException(404, detail={'message': str(exc)}) from exc
 
+    @app.post('/api/v1/rounds/{round_id}/triage-import')
+    async def import_round_triage(round_id: str, request: Request):
+        from . import competition
+        body=await request.json()
+        try: return competition.import_triage(round_id,body.get('items') if isinstance(body,dict) else None)
+        except ValueError as exc: raise HTTPException(422,detail={'message':str(exc)}) from exc
+
     @app.post('/api/v1/rounds/{round_id}/triage')
     async def triage_round(round_id: str, body: RoundTriage):
         from . import competition
-        try: return await competition.triage(round_id, controller, body.allow_model_calls)
+        try: return await competition.triage(round_id, controller, body.allow_model_calls, body.operation_id)
         except ValueError as exc: raise HTTPException(422, detail={'message': str(exc)}) from exc
 
     @app.post('/api/v1/rounds/{round_id}/confirm')

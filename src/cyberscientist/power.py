@@ -46,6 +46,8 @@ async def safe_shutdown(controller, timeout: float = 60) -> dict:
                 errors.append({'error': 'native_process_close_timeout'})
     from . import preflight
     await preflight.retry_closes(timeout=max(0, deadline - asyncio.get_running_loop().time()))
+    from . import competition_triage
+    await competition_triage.retry_closes(timeout=max(0, deadline - asyncio.get_running_loop().time()))
     errors.extend(resource_coordinator.close_unknowns())
     from . import job_recovery
     recovery_tasks = list(job_recovery.ACTIVE.values()) + list(job_recovery.ADVICE_ACTIVE.values())
