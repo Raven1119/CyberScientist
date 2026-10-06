@@ -300,7 +300,7 @@ def _handle(msg: dict) -> dict | None:
             wait = (max(420, requested + 240) if args.get('action') == 'exec'
                     and type(requested) is int and 1 <= requested <= 10800 else
                     375 if args.get('action') in ('files.read', 'files.write') else
-                    600 if args.get('action') == 'create' else 180)
+                    3000 if args.get('action') == 'create' else 180)
             out = _post("/api/v1/tools/sandbox", args, timeout=wait,
                         retry_transient=False)
         elif name == "research_package_check":

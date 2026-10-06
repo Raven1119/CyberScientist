@@ -273,10 +273,18 @@ async def test_review_first_expiry_during_signal_does_not_retry_unknown_close_on
     from types import SimpleNamespace
     from cyberscientist import maintenance
     ctl, rid = near_deadline()
+    # Arm the short deadline after both concurrent waits have actually started;
+    # fixture setup can consume 80 ms on a busy full-suite run.
+    db.execute('UPDATE authorizations SET max_run_minutes=61 WHERE run_id=?', (rid,))
     with db.transaction() as conn:
         collab._enqueue_request_tx(conn, rid, source='requested', blocking=False, trigger='manual')
     review_interrupt = asyncio.Event(); first_close = asyncio.Event(); signal_cancelled = asyncio.Event()
+    review_started = asyncio.Event(); signal_started = asyncio.Event()
     class Brain(HangingBrain):
+        async def review(self, session, packet):
+            review_started.set()
+            async for event in super().review(session, packet):
+                yield event
         async def cancel(self, session):
             review_interrupt.set()
             return await super().cancel(session)
@@ -300,6 +308,7 @@ async def test_review_first_expiry_during_signal_does_not_retry_unknown_close_on
     async def blocked_signal(signal, *args, **kwargs):
         if signal['type'] != 'fixture_block':
             return await original_signal(signal, *args, **kwargs)
+        signal_started.set()
         try: await asyncio.Event().wait()
         finally: signal_cancelled.set()
     brain = Brain(); executor = Executor()
@@ -313,6 +322,12 @@ async def test_review_first_expiry_during_signal_does_not_retry_unknown_close_on
     await queue.put({'type': 'fixture_block'})
     main = asyncio.create_task(ctl._run_loop(rid, queue)); ctl._tasks[rid] = main
     try:
+        await asyncio.wait_for(asyncio.gather(review_started.wait(), signal_started.wait()), 2)
+        now = time.time()
+        with db.transaction() as conn:
+            conn.execute('UPDATE authorizations SET max_run_minutes=60 WHERE run_id=?', (rid,))
+            conn.execute('UPDATE runs SET active_elapsed_seconds=3599.92,clock_active_since=?,clock_heartbeat_at=? WHERE id=?',
+                         (now, now, rid))
         await asyncio.wait_for(first_close.wait(), 2)
         await asyncio.sleep(.05)
         assert signal_cancelled.is_set() and executor.closes == 1

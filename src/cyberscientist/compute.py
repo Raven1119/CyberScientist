@@ -151,6 +151,26 @@ def _native(args: list[str], *, timeout: int = 90, modern: bool = False) -> dict
     if wenyon:
         env['BOHR_API_URL'] = env['OPENAPI_HOST']
         env['BOHR_OPENAPI_HOST'] = env['OPENAPI_HOST']
+    if (args[:2] == ['sandbox', 'create'] and '--image' in args
+            and '--gpu' not in args and '--dry-run' not in args
+            and all(flag in args for flag in ('--request-id','--project-id','--timeout'))
+            and ('--yes' in args or '-y' in args)
+            and Path(executable).name == 'bohr-2.7.8'):
+        # This CLI's internal create HTTP timeout is 90s, independently of
+        # subprocess timeout. Select the verified long transport before POST.
+        from . import sandbox_transport, power, run_clock
+        def before_send():
+            operation_id = args[args.index('--request-id')+1]
+            row = db.query_one('SELECT run_id FROM compute_sandboxes WHERE operation_id=?', (operation_id,))
+            if not row:
+                return True  # Explicit backend maintenance has its independent authorization.
+            current = _run(row['run_id'])
+            auth = db.query_one('SELECT * FROM authorizations WHERE id=?', (current['authorization_id'],))
+            return (current['phase'] == 'running' and current['gate'] == 'open'
+                    and not power.shutdown_requested() and auth is not None
+                    and run_clock.remaining(current, auth) >= int(args[args.index('--timeout')+1])+timeout)
+        return sandbox_transport.create(args, executable, env, key,
+                                        env['OPENAPI_HOST'], timeout, before_send=before_send)
     try:
         result = subprocess.run([executable, *args], env=env, capture_output=True,
                                 text=True, errors='replace', timeout=timeout)

@@ -19,6 +19,22 @@ TERMINAL_RUN = ('finished', 'failed', 'cancelled')
 FORBIDDEN = ('--never-timeout', '--inherit-auth', '--mount-user-storage',
              '--reserve-failed-sandbox', '--parent-sandbox-id')
 RETRY_DELAYS = (2, 4, 8, 16, 30, 30)
+IMAGE_PREPARATION_BUDGET = 45 * 60
+IMAGE_PREPARATION_DELAYS = (2, 4, 8, 16, 30, 60, 120, 180, 240, 300)
+
+
+def reserved_seconds(row) -> float:
+    """Keep one frozen lifetime reserved while preparation/outcome is unknown."""
+    if 'lifetime_version' in row.keys() and row['lifetime_version'] == 2:
+        seconds = json.loads(row['request_json'])['timeout']
+        if row['deleted_at'] and row['lifetime_started_at']:
+            return min(seconds, max(0, (datetime.fromisoformat(row['deleted_at']) -
+                datetime.fromisoformat(row['lifetime_started_at'])).total_seconds()))
+        if row['deleted_at'] and row['status'] == 'failed':
+            return 0
+        return seconds
+    return max(0, (datetime.fromisoformat(row['deleted_at'] or row['expires_at']) -
+                   datetime.fromisoformat(row['created_at'])).total_seconds())
 
 
 def _json(value: Any) -> str:
@@ -120,50 +136,119 @@ def _retry_reason(receipt: dict, action: str) -> str | None:
     return None
 
 
+def _activate_lifetime(conn, run_id: str, operation_id: str, receipt: dict) -> None:
+    """Use authoritative remote times when available; never extend a Run grant."""
+    row = conn.execute('SELECT * FROM compute_sandboxes WHERE operation_id=?', (operation_id,)).fetchone()
+    if row['lifetime_version'] != 2:
+        return
+    node = _data(_body(receipt))
+    if isinstance(node, dict) and isinstance(node.get('sandbox'), dict):
+        node = node['sandbox']
+    started = datetime.fromisoformat(row['created_at'])
+    expires = datetime.fromisoformat(row['expires_at'])
+    observed_start = None
+    try:
+        remote_start = datetime.fromisoformat(node['startedAt'])
+        remote_end = datetime.fromisoformat(node['endAt'])
+        now = datetime.now(timezone.utc)
+        if (remote_start.tzinfo and remote_end.tzinfo and started <= remote_start <= now
+                and remote_start < remote_end):
+            started = remote_start
+            observed_start = started.isoformat()
+            expires = min(remote_end, started + timedelta(seconds=json.loads(row['request_json'])['timeout']))
+    except (KeyError, TypeError, ValueError):
+        # Without confirmed times retain the earlier conservative deadline.
+        pass
+    current = conn.execute('SELECT * FROM runs WHERE id=?', (run_id,)).fetchone()
+    auth = conn.execute('SELECT * FROM authorizations WHERE id=?', (current['authorization_id'],)).fetchone()
+    from . import run_clock
+    if auth:
+        left = run_clock.remaining(current, auth)
+        if math.isfinite(left):
+            expires = min(expires, datetime.now(timezone.utc) + timedelta(seconds=max(0, left)))
+    conn.execute('UPDATE compute_sandboxes SET lifetime_started_at=?,expires_at=? WHERE operation_id=?',
+                 (observed_start, expires.isoformat(), operation_id))
+
+
+def _observe_creation(image, operation_id, sid, receipt):
+    if not image:
+        return
+    from . import sandbox_warmup
+    try:
+        sandbox_warmup.record_success(image, operation_id, sid, receipt)
+    except Exception as exc:
+        import logging
+        logging.getLogger(__name__).warning('Sandbox create observation failed: %s', type(exc).__name__)
+
+
 def _retry_native(run_id: str, op: str, action: str, argv: list[str], *, timeout: int,
                   expires_at: str) -> dict:
     """Bounded retries of explicit pre-mutation failures, with one request ID."""
     started = time.monotonic(); waits = []; receipt = None
     deadline = datetime.fromisoformat(expires_at)
     requested_seconds = int(argv[argv.index('--timeout') + 1])
-    for attempt in range(len(RETRY_DELAYS) + 1):
+    attempt = 0
+    while True:
         from . import power, run_clock
         if attempt:
+            if action == 'create' and time.monotonic() - started >= IMAGE_PREPARATION_BUDGET:
+                break
             current = compute._run(run_id)
             authorization = db.query_one('SELECT * FROM authorizations WHERE id=?', (current['authorization_id'],))
             room = (deadline - datetime.now(timezone.utc)).total_seconds()
             if (current['phase'] != 'running' or current['gate'] != 'open'
                     or power.shutdown_requested() or not authorization
-                    or run_clock.remaining(current, authorization) < requested_seconds
+                    or run_clock.remaining(current, authorization) < requested_seconds + timeout
                     or action == 'exec' and room < requested_seconds):
                 break
-        receipt = compute._native(argv, timeout=timeout)
+        rpc_timeout = min(timeout, IMAGE_PREPARATION_BUDGET-(time.monotonic()-started)) if action == 'create' else timeout
+        receipt = compute._native(argv, timeout=rpc_timeout)
         reason = _retry_reason(receipt, action)
-        if not reason or attempt == len(RETRY_DELAYS):
+        if not reason or reason != 'image_preparation' and attempt == len(RETRY_DELAYS):
             break
-        delay = RETRY_DELAYS[attempt]
+        budget = IMAGE_PREPARATION_BUDGET if reason == 'image_preparation' else 180
+        delay = (IMAGE_PREPARATION_DELAYS[min(attempt, len(IMAGE_PREPARATION_DELAYS)-1)]
+                 if reason == 'image_preparation' else RETRY_DELAYS[attempt])
+        delay = min(delay, max(0, budget - (time.monotonic() - started)))
         run = compute._run(run_id)
         auth = db.query_one('SELECT * FROM authorizations WHERE id=?', (run['authorization_id'],))
         room = (deadline - datetime.now(timezone.utc)).total_seconds()
         if (run['phase'] != 'running' or run['gate'] != 'open' or not auth
-                or room <= delay + 5 or run_clock.remaining(run, auth) <= delay + 5
-                or time.monotonic() - started + delay > 180 or power.shutdown_requested()):
+                or action == 'exec' and room <= delay + requested_seconds
+                or run_clock.remaining(run, auth) <= delay + requested_seconds + timeout
+                or delay <= 0 or power.shutdown_requested()):
             break
         event = db.append_event(run_id, 'controller', 'sandbox.retry_wait',
             {'operation_id': op, 'action': action, 'reason': reason,
              'attempt': attempt + 1, 'wait_seconds': delay,
              'receipt_sha256': hashlib.sha256(_json(_receipt(receipt)).encode()).hexdigest()})
         waits.append({'reason': reason, 'seconds': delay})
-        time.sleep(delay)
+        # Long preparation intervals remain interruptible; no next POST after pause.
+        remaining_wait = delay
+        waited = 0
+        while remaining_wait > 0:
+            step = min(remaining_wait, 5) if delay > 30 else remaining_wait
+            time.sleep(step); remaining_wait -= step; waited += step
+            fresh = compute._run(run_id)
+            authorization = db.query_one('SELECT * FROM authorizations WHERE id=?', (fresh['authorization_id'],))
+            if (fresh['phase'] != 'running' or fresh['gate'] != 'open'
+                    or power.shutdown_requested() or not authorization
+                    or run_clock.remaining(fresh, authorization) < requested_seconds + timeout):
+                break
+        waits[-1]['seconds'] = waited
         # Shutdown or a manual pause during the wait cancels the retry.
         fresh = compute._run(run_id)
-        if fresh['phase'] != 'running' or fresh['gate'] != 'open':
+        if remaining_wait or fresh['phase'] != 'running' or fresh['gate'] != 'open' or power.shutdown_requested():
             break
+        attempt += 1
     if waits:
         fact = {'operation_id': op, 'action': action, 'waits': waits,
                 'wait_seconds': sum(item['seconds'] for item in waits),
                 'elapsed_seconds': round(time.monotonic() - started, 3),
-                'native_ok': bool(receipt.get('ok'))}
+                'native_ok': bool(receipt.get('ok')),
+                'preparation_budget_seconds': IMAGE_PREPARATION_BUDGET if action == 'create' else None,
+                'preparation_duration_seconds': None,
+                'duration_basis': 'observed operation elapsed; exact platform preparation duration unknown'}
         event = db.append_event(run_id, 'controller', 'sandbox.environment_observed', fact)
         from . import environment_facts
         try:
@@ -219,7 +304,10 @@ def list_run(run_id: str) -> dict:
         item['request'] = json.loads(item.pop('request_json'))
         item['receipt'] = json.loads(item.pop('receipt_json'))
         end = datetime.fromisoformat(item['deleted_at']) if item['deleted_at'] else now
-        item['alive_minutes'] = max(0, (end - datetime.fromisoformat(item['created_at'])).total_seconds() / 60)
+        start = item['lifetime_started_at'] if item['lifetime_version'] == 2 else item['created_at']
+        item['alive_minutes'] = max(0, (end - datetime.fromisoformat(start)).total_seconds() / 60) if start else 0
+        item['lifetime_observed'] = bool(start)
+        item['reserved_minutes'] = reserved_seconds(row) / 60
         items.append(item)
     return {'items': items, 'active_or_unknown': sum(row['status'] in LIVE for row in rows),
             'cumulative_minutes': sum(item['alive_minutes'] for item in items)}
@@ -238,12 +326,8 @@ def bounded_lifetime(run_id: str, requested: int) -> int:
         raise compute.ComputeError('SANDBOX_BUDGET', '评分没有有效时长授权')
     from . import run_clock
     run_left = run_clock.remaining(run, auth)
-    reserved = sum((datetime.fromisoformat(row['expires_at']) -
-                    datetime.fromisoformat(row['created_at'])).total_seconds()
-                   if row['deleted_at'] is None else
-                   max(0, (datetime.fromisoformat(row['deleted_at']) -
-                           datetime.fromisoformat(row['created_at'])).total_seconds())
-                   for row in db.query('SELECT * FROM compute_sandboxes WHERE run_id=?', (run_id,)))
+    reserved = sum(reserved_seconds(row) for row in
+                   db.query('SELECT * FROM compute_sandboxes WHERE run_id=?', (run_id,)))
     seconds = math.floor(min(requested, run_left - 5,
                              float('inf') if auth['unlimited_resources'] else auth['max_sandbox_minutes'] * 60 - reserved - 5))
     if seconds < 1:
@@ -333,22 +417,17 @@ def create(run_id: str, operation_id: str, request: dict, *, _session_id: str | 
         run_left = run_clock.remaining(run, auth)
         if not math.isfinite(run_left):
             raise compute.ComputeError('UNBOUNDED_SANDBOX', '资源不限仍须设置赛道结束时间')
-        rows = conn.execute('SELECT status,created_at,expires_at,deleted_at FROM compute_sandboxes'
+        rows = conn.execute('SELECT * FROM compute_sandboxes'
                             ' WHERE run_id=?', (run_id,)).fetchall()
         if not unlimited and sum(row['status'] in LIVE for row in rows) >= auth['max_sandboxes']:
             raise compute.ComputeError('SANDBOX_LIMIT', '已达到同时存在的沙箱上限')
-        reserved = sum((datetime.fromisoformat(row['expires_at']) -
-                        datetime.fromisoformat(row['created_at'])).total_seconds()
-                       if row['deleted_at'] is None else
-                       max(0, (datetime.fromisoformat(row['deleted_at']) -
-                               datetime.fromisoformat(row['created_at'])).total_seconds())
-                       for row in rows)
+        reserved = sum(reserved_seconds(row) for row in rows)
         if timeout > run_left or not unlimited and reserved + timeout > auth['max_sandbox_minutes'] * 60:
             raise compute.ComputeError('SANDBOX_BUDGET', '沙箱时长超过本 Run 剩余额度')
         expires = (datetime.now(timezone.utc) + timedelta(seconds=timeout)).isoformat()
         compute_budget.reserve_tx(conn, run_id, 'sandbox', operation_id, timeout, price)
         conn.execute('INSERT INTO compute_sandboxes(operation_id,run_id,trial_id,request_json,status,'
-                     'created_at,expires_at,updated_at) VALUES(?,?,?,?,?,?,?,?)',
+                     'created_at,expires_at,updated_at,lifetime_version) VALUES(?,?,?,?,?,?,?,?,2)',
                      (operation_id,run_id,run['current_trial_id'],_json(request),'creating',now,expires,now))
         db.append_event_tx(conn,run_id,'controller','sandbox.creating',
                            {'operation_id':operation_id,'expires_at':expires},trial_id=run['current_trial_id'])
@@ -360,7 +439,7 @@ def create(run_id: str, operation_id: str, request: dict, *, _session_id: str | 
     if gpu: argv += ['--gpu',gpu if isinstance(gpu,str) else '4090']
     argv += ['--request-id',operation_id,'--yes','--no-interactive','-o','json']
     receipt = _retry_native(run_id, operation_id, 'create', argv,
-                            timeout=min(240,max(90,timeout)), expires_at=expires)
+                            timeout=240, expires_at=expires)
     sid = _sandbox_id(_body(receipt)) if receipt.get('ok') else None
     error = (_body(receipt) or {}).get('error') if isinstance(_body(receipt),dict) else None
     confirmed_not_started = isinstance(error,dict) and error.get('code') == 'CONFIRMATION_REQUIRED'
@@ -370,19 +449,35 @@ def create(run_id: str, operation_id: str, request: dict, *, _session_id: str | 
     status = ('active' if sid else 'failed' if (receipt.get('not_started')
               or confirmed_not_started or rejected_arguments or local_dns_denied) else 'unknown')
     with db.transaction() as conn:
+        current_row = conn.execute('SELECT * FROM compute_sandboxes WHERE operation_id=?', (operation_id,)).fetchone()
+        if current_row['sandbox_id'] is not None or current_row['status'] not in ('creating','unknown'):
+            db.append_event_tx(conn, run_id, 'controller', 'sandbox.create_late_receipt',
+                {'operation_id': operation_id, 'sandbox_id': sid,
+                 'retained_status': current_row['status'], 'receipt': _receipt(receipt)},
+                trial_id=run['current_trial_id'])
+            return {'operation_id': operation_id, 'sandbox_id': current_row['sandbox_id'],
+                    'status': current_row['status'], 'receipt': _receipt(receipt), 'deduplicated': True}
         conn.execute('UPDATE compute_sandboxes SET sandbox_id=?,status=?,deleted_at=?,receipt_json=?,updated_at=?'
                      ' WHERE operation_id=?', (sid,status,now if status == 'failed' else None,
                                                 _json(_receipt(receipt)),db.utcnow(),operation_id))
         db.append_event_tx(conn,run_id,'controller',f'sandbox.{status}',
                            {'operation_id':operation_id,'sandbox_id':sid,
                             'exit_code':receipt.get('exit_code')},trial_id=run['current_trial_id'])
+        if sid:
+            _activate_lifetime(conn, run_id, operation_id, receipt)
         resources = observed_resources(receipt, sid) if sid else {}
         if resources:
             db.append_event_tx(conn, run_id, 'controller', 'sandbox.resources_observed',
                 {'operation_id': operation_id, 'sandbox_id': sid, 'resources': resources,
                  'source': 'create_receipt'}, trial_id=run['current_trial_id'])
-    if sid and compute._run(run_id)['phase'] in TERMINAL_RUN:
-        status = delete(run_id,sid)['status']
+    if sid:
+        _observe_creation(request.get('image'), operation_id, sid, receipt)
+        from . import power, run_clock
+        current = compute._run(run_id)
+        auth = db.query_one('SELECT * FROM authorizations WHERE id=?', (current['authorization_id'],))
+        if (current['phase'] != 'running' or current['gate'] != 'open'
+                or power.shutdown_requested() or not auth or run_clock.remaining(current, auth) <= 0):
+            status = delete(run_id,sid)['status']
     return {'operation_id':operation_id,'sandbox_id':sid,'status':status,
             'receipt':_receipt(receipt)}
 
@@ -394,6 +489,11 @@ def reconcile_create(run_id: str, operation_id: str) -> dict:
         raise compute.ComputeError('NOT_FOUND','沙箱创建记录不存在')
     if row['status'] not in ('creating','unknown'):
         return {'operation_id':operation_id,'status':row['status'],'sandbox_id':row['sandbox_id']}
+    if row['sandbox_id'] is not None:
+        # An ambiguous delete/liveness observation is not an unknown create.
+        # Do not reactivate it and thereby permit a second delete mutation.
+        return {'operation_id':operation_id,'status':row['status'],'sandbox_id':row['sandbox_id'],
+                'notice':'已有资源ID的unknown不能当作创建对账；保留未知，不重发变更'}
     original_receipt = json.loads(row['receipt_json'] or '{}')
     if row['sandbox_id'] is None and _local_dns_denied(original_receipt):
         db.execute("UPDATE compute_sandboxes SET status='failed',deleted_at=created_at,updated_at=?"
@@ -411,11 +511,23 @@ def reconcile_create(run_id: str, operation_id: str) -> dict:
     fresh = _body(receipt)
     fresh_error = fresh.get('error') if isinstance(fresh,dict) else None
     if sid:
-        db.execute('UPDATE compute_sandboxes SET sandbox_id=?,status=?,receipt_json=?,updated_at=?'
-                   ' WHERE operation_id=?',(sid,'active',_json(_receipt(receipt)),db.utcnow(),operation_id))
+        with db.transaction() as conn:
+            current_row = conn.execute('SELECT * FROM compute_sandboxes WHERE operation_id=?', (operation_id,)).fetchone()
+            if current_row['sandbox_id'] is not None or current_row['status'] not in ('creating','unknown'):
+                return {'operation_id': operation_id, 'status': current_row['status'],
+                        'sandbox_id': current_row['sandbox_id'], 'deduplicated': True}
+            conn.execute('UPDATE compute_sandboxes SET sandbox_id=?,status=?,receipt_json=?,updated_at=?'
+                       ' WHERE operation_id=?',(sid,'active',_json(_receipt(receipt)),db.utcnow(),operation_id))
+            _activate_lifetime(conn, run_id, operation_id, receipt)
         db.append_event(run_id,'controller','sandbox.active',
                         {'operation_id':operation_id,'sandbox_id':sid},trial_id=row['trial_id'])
-        if compute._run(run_id)['phase'] in TERMINAL_RUN:
+        request = json.loads(row['request_json'])
+        _observe_creation(request.get('image'), operation_id, sid, receipt)
+        from . import power, run_clock
+        current = compute._run(run_id)
+        auth = db.query_one('SELECT * FROM authorizations WHERE id=?', (current['authorization_id'],))
+        if (current['phase'] != 'running' or current['gate'] != 'open'
+                or power.shutdown_requested() or not auth or run_clock.remaining(current, auth) <= 0):
             return {'operation_id':operation_id,'status':delete(run_id,sid)['status'],
                     'sandbox_id':sid,'receipt':_receipt(receipt)}
     elif (isinstance(original_error,dict) and original_error.get('code') == 'INVALID_ARGUMENTS'
@@ -433,7 +545,8 @@ def reconcile_create(run_id: str, operation_id: str) -> dict:
                 'receipt':_receipt(receipt)}
     elif row['status'] == 'creating':
         db.execute("UPDATE compute_sandboxes SET status='unknown',receipt_json=?,updated_at=?"
-                   ' WHERE operation_id=?',(_json(_receipt(receipt)),db.utcnow(),operation_id))
+                   " WHERE operation_id=? AND status='creating' AND sandbox_id IS NULL",
+                   (_json(_receipt(receipt)),db.utcnow(),operation_id))
     return {'operation_id':operation_id,'status':'active' if sid else 'unknown','sandbox_id':sid,
             'receipt':_receipt(receipt)}
 

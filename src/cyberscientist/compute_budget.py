@@ -69,8 +69,15 @@ def _amount(conn, row):
         elif row['kind'] == 'sandbox' and resource['deleted_at']:
             end = resource['deleted_at']
         if end:
+            start = resource['created_at']
+            if row['kind'] == 'sandbox' and resource['lifetime_version'] == 2:
+                if resource['status'] == 'failed':
+                    return Decimal(0)
+                if not resource['lifetime_started_at']:
+                    return Decimal(row['hourly_rate_cny']) * Decimal(str(seconds)) / 3600
+                start = resource['lifetime_started_at']
             seconds = min(seconds, max(0, (datetime.fromisoformat(end)
-                - datetime.fromisoformat(resource['created_at'])).total_seconds()))
+                - datetime.fromisoformat(start)).total_seconds()))
     return Decimal(row['hourly_rate_cny']) * Decimal(str(seconds)) / 3600
 
 

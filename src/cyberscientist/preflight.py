@@ -245,6 +245,13 @@ async def _run(connection_checker, health_checker):
     names = ['mailboxes', 'playground', 'bohrium', 'codex', 'deepseek', 'web_search', 'web_read', 'lkm', 'protocol_drift']
     checks.append(asyncio.to_thread(track_checks));names.append('tracks')
     checks.append(asyncio.to_thread(fast_check,settings));names.append('codex_fast')
+    def sandbox_creation_check():
+        from . import sandbox_warmup
+        images = sandbox_warmup.latest()
+        return _item('sandbox_image_warmup',
+            'warn' if any(item['created_success_at'] is None for item in images) else 'pass',
+            '各镜像最近一次沙箱创建成功时间；平台缓存有效期和重新预热周期unknown', images=images)
+    checks.append(asyncio.to_thread(sandbox_creation_check));names.append('sandbox_image_warmup')
     values = await asyncio.gather(*checks, return_exceptions=True)
     items = []
     for name, value in zip(names, values):

@@ -51,11 +51,10 @@ def facts(run_id: str) -> dict:
     from . import run_clock
     elapsed = run_clock.elapsed(run)
     jobs = db.query("SELECT status FROM compute_jobs WHERE run_id=? AND status!='not_started'", (run_id,))
-    sandbox_rows = db.query('SELECT created_at,expires_at,deleted_at,status FROM compute_sandboxes'
+    sandbox_rows = db.query('SELECT * FROM compute_sandboxes'
                            ' WHERE run_id=?', (run_id,))
-    committed_seconds = sum(max(0, (datetime.fromisoformat(r['deleted_at'] or r['expires_at'])
-                                  - datetime.fromisoformat(r['created_at'])).total_seconds())
-                            for r in sandbox_rows)
+    from . import sandboxes
+    committed_seconds = sum(sandboxes.reserved_seconds(r) for r in sandbox_rows)
     import math
     time_left=run_clock.remaining(run,auth) if auth else None
     remaining = {'run_seconds': max(0,time_left) if time_left is not None and math.isfinite(time_left) else None,

@@ -614,6 +614,10 @@ def init_db() -> None:
             'retry_at': 'TEXT', 'retry_count': 'INTEGER NOT NULL DEFAULT 0',
             'queue_paused': 'INTEGER NOT NULL DEFAULT 0'})
         _ensure_columns(conn, 'compute_sandbox_operations', SANDBOX_OPERATION_V3_COLUMNS)
+        _ensure_columns(conn, 'compute_sandboxes', {
+            'lifetime_version': 'INTEGER NOT NULL DEFAULT 1',
+            'lifetime_started_at': 'TEXT',
+        })
         _ensure_columns(conn, "checkpoints", CHECKPOINT_V2_COLUMNS)
         _ensure_columns(conn, "runs", RUN_V2_COLUMNS)
         conn.execute('CREATE TABLE IF NOT EXISTS environment_saves (operation_id TEXT PRIMARY KEY,run_id TEXT NOT NULL,status TEXT NOT NULL,resource_id TEXT,recipe_json TEXT NOT NULL,smoke_command TEXT NOT NULL,recipe_sha256 TEXT NOT NULL,cost_status TEXT NOT NULL,receipt_json TEXT NOT NULL,created_at TEXT NOT NULL,updated_at TEXT NOT NULL)')
