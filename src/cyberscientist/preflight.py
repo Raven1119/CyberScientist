@@ -194,6 +194,21 @@ def cached():
     return json.loads(row['payload_json']) if row else None
 
 
+def track_checks():
+    from . import track_clock
+    tracks=[]
+    for row in db.query("SELECT id,label,status,config_json FROM eval_runs WHERE suite='competition' ORDER BY created_at DESC"):
+        snapshot=json.loads(row['config_json']);clock=track_clock.facts(snapshot)
+        transport=snapshot.get('submission_transport',{})
+        tracks.append({'id':row['id'],'label':row['label'],'status':row['status'],'clock':clock,
+                       'transport_verified':transport.get('verified') is True,'protocol_version':transport.get('protocol_version')})
+    missing=[t['id'] for t in tracks if t['clock']['remaining_seconds'] is None]
+    expired=[t['id'] for t in tracks if t['clock']['remaining_seconds'] is not None and t['clock']['remaining_seconds']<=0]
+    unverified=[t['id'] for t in tracks if not t['transport_verified']]
+    return _item('tracks','warn' if missing or expired or unverified else 'pass','赛道调度时钟与提交配置（平台资格另行确认）',
+                 tracks=tracks,missing_clock=missing,expired_clock=expired,unverified_transport=unverified)
+
+
 async def _run(connection_checker, health_checker):
     settings = config.load_settings()
     async def bohrium_check():
@@ -203,6 +218,7 @@ async def _run(connection_checker, health_checker):
         return _item('bohrium', 'pass' if ready else 'fail' if not config.resolve_secret(settings['bohrium']['access_key_secret_ref']) else 'warn', result.get('detail', '认证未确认'), version=health.get('version'), authenticated=health.get('authenticated'))
     checks = [asyncio.to_thread(mailbox_checks, settings), asyncio.to_thread(playground_check, settings), bohrium_check(), codex_check(settings), asyncio.to_thread(deepseek_check), asyncio.to_thread(research_check, 'web_search', public_research.web_search, 'Bohrium public documentation'), asyncio.to_thread(research_check, 'web_read', public_research.web_read, 'https://play.bohrium.com/api/protocol'), asyncio.to_thread(research_check, 'lkm', public_research.lkm_search, 'water hydrogen bonding'), asyncio.to_thread(drift_check)]
     names = ['mailboxes', 'playground', 'bohrium', 'codex', 'deepseek', 'web_search', 'web_read', 'lkm', 'protocol_drift']
+    checks.append(asyncio.to_thread(track_checks));names.append('tracks')
     values = await asyncio.gather(*checks, return_exceptions=True)
     items = []
     for name, value in zip(names, values):

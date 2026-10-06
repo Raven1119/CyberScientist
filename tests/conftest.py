@@ -76,6 +76,8 @@ def isolated_workspace(tmp_path, monkeypatch):
     def no_live_drift_fetch():
         raise RuntimeError('应用单元测试不访问真实平台；协议探针需显式fixture')
     monkeypatch.setattr(protocol_drift, 'fetch_documents', no_live_drift_fetch)
+    from cyberscientist import track_transport
+    monkeypatch.setattr(track_transport,'probe',lambda mode,snapshot=None:track_transport.defaults() | {'verified':True,'status':'synthetic_fixture','evidence':{}})
     from cyberscientist import leaderboards
     monkeypatch.setattr(leaderboards, 'fetch', lambda slug, base_url: (_ for _ in ()).throw(RuntimeError('公开榜单真实查询需显式fixture')))
     # A connected ledger fixture is not permission to call the developer's

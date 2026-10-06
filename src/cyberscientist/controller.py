@@ -319,6 +319,9 @@ class RunController:
             from . import track_clock
             if track_clock.for_run(run)['end'] is None:
                 raise ControllerError('NEEDS_TRACK_CLOCK','资源不限赛道尚未设置有效结束时间，不能启动原生调用')
+            start=track_clock.for_run(run)['start']
+            if start and start.timestamp()>time.time():
+                raise ControllerError('TRACK_NOT_STARTED','赛道尚未到开始时间，不能启动原生调用')
         if run["mode"] not in ("demo","connected"):
             raise ControllerError("INVALID_ARGUMENT","未知 Run mode")
         if run["mode"] == "connected":

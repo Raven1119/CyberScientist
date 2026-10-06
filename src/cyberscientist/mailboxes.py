@@ -63,6 +63,11 @@ def _platform() -> MailboxPlatform:
     return get_platform(config.load_settings()["mailbox"]["platform"])
 
 
+def _platform_for_run(run_id,platform=None):
+    from . import track_transport
+    return track_transport.bind(platform or _platform(),run_id)
+
+
 def _store_secret(secret_id: str, value: str) -> str:
     config.update_secret(secret_id, value)
     return f"local:{secret_id}"
@@ -852,7 +857,7 @@ def submit_experiment(run_id: str, trial_id: str | None,
     package = _resolve_package(run_id, trial_id, package_path)
     source_content = package.read_bytes()
     source_digest = hashlib.sha256(source_content).hexdigest()
-    platform = _platform()
+    platform = _platform_for_run(run_id)
     challenge_id = _run_challenge_id(run_id)
     fingerprint_input = {"run_id":run_id,"trial_id":trial_id,
         "package_path":str(package),"hash":source_digest,"platform":platform.name,
@@ -1141,7 +1146,7 @@ def submit_exact_replay(source_submission_id: str, operation_id: str,
     digest = hashlib.sha256(frozen).hexdigest()
     if digest != source['package_sha256']:
         raise MailboxError('INVALID_PACKAGE', '来源冻结包哈希不匹配')
-    platform = _platform()
+    platform = _platform_for_run(run_id)
     challenge_id = _run_challenge_id(run_id)
     fingerprint = _request_hash({'replay_of':source_submission_id,'run_id':run_id,
                                  'package_sha256':digest,'prediction_md':prediction,
@@ -1228,6 +1233,7 @@ def poll_scores(run_id: str | None = None,
         attempt = None
         try:
             row_platform = platform if r["platform"] == platform.name else get_platform(r["platform"])
+            row_platform = _platform_for_run(r['run_id'],row_platform)
             secret = config.resolve_secret(r["secret_ref"] or "")
             attempt_query = getattr(row_platform, "fetch_attempt", None)
             if callable(attempt_query):
@@ -1523,7 +1529,7 @@ def harvest_submit(submission_id: str, operation_id: str,
                            "提交包内容已变化（哈希不匹配）；拒绝收割，"
                            "请重新经实验邮箱验证")
 
-    platform = _platform()
+    platform = _platform_for_run(src['run_id'])
     challenge_id = _run_challenge_id(src["run_id"])
     with db.transaction() as conn:
         dup = _duplicate(conn,operation_id,fingerprint)

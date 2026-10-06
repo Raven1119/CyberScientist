@@ -65,7 +65,7 @@ it('publishes one user prompt version and disables confirmation until saved', as
   await user.click(screen.getByRole('button', { name: '保存并发布用户提示词' }))
   expect(put.mock.calls[0]).toEqual(['/api/v1/rounds/round_one/prompt', { content_md: '用户建议', base_version: 0 }])
   expect(await screen.findByText(/版本 1/)).toBeTruthy()
-  expect(screen.getByText(/轮次 round_one · draft/)).toBeTruthy()
+  expect(screen.getByText(/赛道 round_one · draft/)).toBeTruthy()
   expect(post).not.toHaveBeenCalled()
 })
 it('sends an explicit null when manually replacing an imported solver entry', async () => {
@@ -214,4 +214,59 @@ it('rehydrates and persists a saved bounded template', async () => {
   expect((screen.getByLabelText('每 Run Job 数') as HTMLInputElement).value).toBe('8')
   await userEvent.setup().click(screen.getByRole('button', { name: '保存当前模板' }))
   expect(put.mock.calls[0][1].template.authorization).toMatchObject({ unlimited_resources: false, max_jobs: 8, max_run_minutes: 75 })
+})
+
+const fixtureTransport = { base_url: 'https://play.bohrium.com/api', paths: { create: '/challenges/{id}/attempts', bundle: '/attempts/{id}/bundle', submit: '/attempts/{id}/submit', attempt: '/attempts/{id}', score: '/attempts/{id}/score' }, bundle_format: 'arm_zip_multipart', bundle_field: 'bundle', protocol_version: '1.1', topic_link: 'https://play.bohrium.com/challenges/{id}', verified: true, status: 'platform_documented' }
+
+it('imports two grouped tracks with independent clocks and a shared overview', async () => {
+  const tracks = [{ ...detail, label: '材料赛道' }, { ...detail, id: 'round_two', label: '全栈赛道' }]
+  let imported = false
+  get.mockImplementation(async (path: string) => path === '/api/v1/rounds' ? { items: imported ? tracks : [] } : path === '/api/v1/settings' ? {} : tracks[0])
+  post.mockImplementation(async () => { imported = true; return { items: tracks } })
+  render(<CompetitionPage />)
+  const user = userEvent.setup()
+  await user.type(screen.getByLabelText('或题目 ID 列表'), 'material-a material-b')
+  await user.type(screen.getByLabelText('第二条题目 ID 列表'), 'stack-a stack-b')
+  await user.selectOptions(screen.getByLabelText('导入赛道时钟'), 'five')
+  await user.click(screen.getByRole('button', { name: '同时导入两条赛道' }))
+  expect(post.mock.calls[0]).toEqual(['/api/v1/rounds/import-many', [
+    { challenge_ids: ['material-a', 'material-b'], season: '', round_seq: null, label: '赛道一', mode: 'connected', clock: { duration_hours: 5 } },
+    { challenge_ids: ['stack-a', 'stack-b'], season: '', round_seq: null, label: '赛道二', mode: 'connected', clock: { duration_hours: 5 } },
+  ]])
+  await screen.findByRole('button', { name: '材料赛道 · draft' })
+  expect(screen.getByRole('navigation', { name: '跨赛道总览' }).textContent).toContain('材料赛道')
+  expect(screen.getByRole('navigation', { name: '跨赛道总览' }).textContent).toContain('全栈赛道')
+})
+
+it('switches prompts independently and resets a new track template instead of copying the prior track', async () => {
+  const first = { ...detail, label: '材料', user_prompt: { version: 1, content_md: '材料提示词', sha256: 'a' }, template: { model_config: { brain: { runtime: 'codex', model_id: 'gpt-6-astra', reasoning_effort: 'xhigh' }, executor: { runtime: 'codex', model_id: 'gpt-6.1-sol', reasoning_effort: 'high' } }, authorization: { unlimited_resources: false, max_jobs: 7 }, solver_note: '材料备注' } }
+  const second = { ...detail, id: 'round_two', label: '全栈', user_prompt: { version: 1, content_md: '全栈提示词', sha256: 'b' } }
+  get.mockImplementation(async (path: string) => path === '/api/v1/rounds' ? { items: [first, second] } : path === '/api/v1/rounds/round_two' ? second : path === '/api/v1/settings' ? {} : first)
+  render(<CompetitionPage />)
+  await screen.findByText(/赛道 材料/)
+  expect((screen.getByLabelText('赛道用户提示词') as HTMLTextAreaElement).value).toBe('材料提示词')
+  expect((screen.getByLabelText('一键预算无上限') as HTMLInputElement).checked).toBe(false)
+  await userEvent.setup().selectOptions(screen.getByLabelText('选择轮次'), 'round_two')
+  await screen.findByText(/赛道 全栈/)
+  expect((screen.getByLabelText('赛道用户提示词') as HTMLTextAreaElement).value).toBe('全栈提示词')
+  expect((screen.getByLabelText('一键预算无上限') as HTMLInputElement).checked).toBe(true)
+  expect((screen.getByLabelText('给 PI 的求解者备注') as HTMLInputElement).value).toBe('')
+})
+
+it('saves a scheduling-only clock and requires saving a changed submission transport', async () => {
+  const tracked = { ...detail, submission_transport: fixtureTransport, track_clock: { start: '2026-10-06T10:00:00Z', end: '2026-10-06T15:00:00Z', source: 'operator_override', remaining_seconds: 18000, platform_end: '2026-10-01T00:00:00Z' } }
+  get.mockImplementation(async (path: string) => path === '/api/v1/rounds' ? { items: [{ id: 'round_one', status: 'draft' }] } : tracked)
+  put.mockImplementation(async (_path: string, body: Record<string, unknown>) => ({ ...tracked, submission_transport: body.paths ? body : fixtureTransport }))
+  render(<CompetitionPage />)
+  await screen.findByText(/平台结束事实/)
+  const user = userEvent.setup()
+  await user.click(screen.getByRole('button', { name: '本赛道从现在起 5 小时' }))
+  expect(put.mock.calls[0]).toEqual(['/api/v1/rounds/round_one/clock', { duration_hours: 5 }])
+  await user.clear(screen.getByLabelText('提交端点 bundle'))
+  await user.type(screen.getByLabelText('提交端点 bundle'), '/track-b/attempts/{{id}/bundle', { skipClick: true })
+  expect((screen.getByLabelText('已核对本赛道提交方式') as HTMLInputElement).checked).toBe(false)
+  expect((screen.getByRole('button', { name: '确认模板与授权，开始排队' }) as HTMLButtonElement).disabled).toBe(true)
+  await user.click(screen.getByLabelText('已核对本赛道提交方式'))
+  await user.click(screen.getByRole('button', { name: '保存提交方式' }))
+  expect(put.mock.calls[1][1]).toMatchObject({ verified: true, paths: { bundle: '/track-b/attempts/{id}/bundle' } })
 })

@@ -16,7 +16,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
-from . import collab, config, db, datasets, experiences, mailboxes, skills, compute, observation, sandboxes, local_scoring, trace_diagnostics, evaluations, job_recovery
+from . import collab, config, db, datasets, experiences, mailboxes, skills, compute, observation, sandboxes, local_scoring, trace_diagnostics, evaluations, job_recovery, resource_coordinator
 from .brains.codex import CodexBrain
 from .brains.demo import DemoBrain
 from .brains.kimi import KimiBrain
@@ -76,6 +76,7 @@ class RoundImport(BaseModel):
     round_seq: int | None = None
     label: str = ''
     mode: str = 'connected'
+    clock: dict[str, Any] | None = None
 
 
 class RoundConfirm(BaseModel):
@@ -974,9 +975,32 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
     async def import_round(body: RoundImport):
         from . import competition
         try:
-            return await asyncio.to_thread(competition.import_round, **body.model_dump())
+            return await resource_coordinator.tracked_thread(lambda:competition.import_round(**body.model_dump()),owner_prefix='round-import-')
         except (ValueError, compute.ComputeError) as exc:
             raise HTTPException(422, detail={'message': str(exc)}) from exc
+
+    @app.post('/api/v1/rounds/import-many')
+    async def import_tracks(body: list[RoundImport]):
+        from . import competition
+        if not 1<=len(body)<=2: raise HTTPException(422,detail={'message':'一次导入1或2条赛道'})
+        results=[]
+        try:
+            for value in body:
+                results.append(await resource_coordinator.tracked_thread(lambda value=value:competition.import_round(**value.model_dump()),owner_prefix='round-import-'))
+            return {'items':results,'resources':resource_coordinator.status()}
+        except ValueError as exc: raise HTTPException(422,detail={'message':str(exc),'imported_ids':[r['id'] for r in results]}) from exc
+
+    @app.put('/api/v1/rounds/{round_id}/clock')
+    async def update_track_clock(round_id: str,request: Request):
+        from . import competition
+        try: return competition.set_clock(round_id,await request.json())
+        except ValueError as exc: raise HTTPException(422,detail={'message':str(exc)}) from exc
+
+    @app.put('/api/v1/rounds/{round_id}/transport')
+    async def update_track_transport(round_id: str,request: Request):
+        from . import competition
+        try: return competition.set_transport(round_id,await request.json())
+        except ValueError as exc: raise HTTPException(422,detail={'message':str(exc)}) from exc
 
     @app.get('/api/v1/ops/status')
     async def ops_status():
@@ -1014,8 +1038,14 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
 
     @app.get('/api/v1/rounds')
     async def list_rounds():
-        return {'items': [dict(r) for r in db.query("SELECT id,label,status,created_at FROM eval_runs"
-                                                   " WHERE suite='competition' ORDER BY created_at DESC")]}
+        from . import track_clock
+        items=[]
+        for r in db.query("SELECT id,label,status,created_at,config_json FROM eval_runs WHERE suite='competition' ORDER BY created_at DESC"):
+            item=dict(r);snapshot=json.loads(item.pop('config_json'))
+            item['track_clock']=track_clock.facts(snapshot)
+            item['topic_count']=db.query_one('SELECT COUNT(*) FROM eval_results WHERE eval_id=?',(r['id'],))[0]
+            items.append(item)
+        return {'items':items,'resources':resource_coordinator.status()}
 
     @app.get('/api/v1/rounds/{round_id}')
     async def read_round(round_id: str):

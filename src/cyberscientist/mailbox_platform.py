@@ -221,6 +221,9 @@ class BohriumPlaygroundPlatform:
 
     # ---------- HTTP ----------
 
+    def _open_http(self,request,*,timeout):
+        return urllib.request.urlopen(request,timeout=timeout)
+
     def _http(self, method: str, path: str, token: str | None = None,
               json_body: Any = None,
               form: tuple[dict[str, str], list[tuple[str, str, bytes]]]
@@ -237,7 +240,7 @@ class BohriumPlaygroundPlatform:
         req = urllib.request.Request(self.base_url + path, data=data,
                                      headers=headers, method=method)
         try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+            with self._open_http(req, timeout=self.timeout) as resp:
                 raw = resp.read().decode("utf-8", "replace")
         except urllib.error.HTTPError as exc:
             raw_detail = exc.read(65536).decode("utf-8", "replace")

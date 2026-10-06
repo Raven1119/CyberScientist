@@ -75,9 +75,9 @@ def synchronize() -> None:
                             {'provider': rate['provider'], 'retry_at': rate['retry_at']})
         for run in conn.execute("SELECT * FROM runs WHERE phase IN ('running','waiting_score')").fetchall():
             auth = conn.execute('SELECT * FROM authorizations WHERE id=?', (run['authorization_id'],)).fetchone()
-            if auth and auth['max_run_minutes'] and run['started_at']:
+            if auth and (auth['max_run_minutes'] or auth['unlimited_resources']) and run['started_at']:
                 remaining = run_clock.remaining(run, auth)
-                if remaining <= min(300, auth['max_run_minutes'] * 6):
+                if remaining <= (300 if auth['unlimited_resources'] else min(300, auth['max_run_minutes'] * 6)):
                     _insert(conn, 'budget:' + auth['id'], run, 'authorization.near_exhaustion',
                             '本轮时间授权即将耗尽', {'remaining_seconds': remaining})
 

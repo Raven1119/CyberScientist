@@ -75,7 +75,8 @@ def advance_sync() -> None:
         auth = db.query_one('SELECT * FROM authorizations WHERE id=?', (run['authorization_id'],))
         if not auth or auth['max_submissions'] <= 0:
             continue
-        end = mailboxes._round_end(run['config_snapshot'])
+        from . import track_clock
+        end = track_clock.for_run(run)['end']
         if end and end - timedelta(hours=params['deadline_check_hours']) <= datetime.now(timezone.utc):
             key = 'harvest_deadline_checked:' + run['id']
             with db.transaction() as conn:

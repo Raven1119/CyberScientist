@@ -78,7 +78,7 @@ def _challenge_snapshot(cid: str) -> dict:
 
 
 def import_round(challenge_ids: list[str] | None = None, *, season: str = '',
-                 round_seq: int | None = None, label: str = '', mode: str = 'connected') -> dict:
+                 round_seq: int | None = None, label: str = '', mode: str = 'connected', clock: dict | None = None) -> dict:
     if mode not in ('connected', 'demo'):
         raise CompetitionError('mode 必须为 connected 或 demo')
     from . import protocol_drift
@@ -101,6 +101,9 @@ def import_round(challenge_ids: list[str] | None = None, *, season: str = '',
     snapshot['track_clock']={name:(value.isoformat() if value else None) for name,value in
                              (('start',track_clock.platform_time(snapshot,'roundStartAt')),
                               ('end',track_clock.platform_time(snapshot,'roundEndAt')))} | {'source':'platform'}
+    if clock is not None: snapshot['track_clock']=track_clock.override(snapshot,clock)
+    from . import track_transport
+    snapshot['submission_transport']=track_transport.probe(mode,snapshot)
     with db.transaction() as conn:
         conn.execute('INSERT INTO eval_runs(id,suite,repeats,label,status,config_json,created_at,updated_at)'
                      " VALUES(?,'competition',1,?,'draft',?,?,?)", (rid, label, _dump(snapshot), now, now))
@@ -116,6 +119,30 @@ def _round(round_id: str):
     if not row:
         raise CompetitionError('轮次不存在')
     return row
+
+
+@config.serialized_mutation
+def set_clock(round_id,values):
+    from . import track_clock
+    row=_round(round_id);snapshot=json.loads(row['config_json'])
+    new=track_clock.override(snapshot,values)
+    if row['status']!='draft' and snapshot.get('budget_policy')=='track-unlimited/v1' and not track_clock.instant(new.get('end')):
+        raise CompetitionError('已确认赛道不能清空截止时间；请保留有效结束时间')
+    snapshot['track_clock']=new
+    db.execute('UPDATE eval_runs SET config_json=?,updated_at=? WHERE id=?',(_dump(snapshot),db.utcnow(),round_id))
+    return get_round(round_id)
+
+
+@config.serialized_mutation
+def set_transport(round_id,value):
+    from . import track_transport
+    snapshot=json.loads(_round(round_id)['config_json'])
+    transport=track_transport.validate(value)
+    transport['status']='operator_reviewed' if transport.get('verified') else 'needs_review'
+    transport['reviewed_at']=db.utcnow()
+    snapshot['submission_transport']=transport
+    db.execute('UPDATE eval_runs SET config_json=?,updated_at=? WHERE id=?',(_dump(snapshot),db.utcnow(),round_id))
+    return get_round(round_id)
 
 
 def import_triage(round_id: str, items: list) -> dict:
@@ -212,6 +239,8 @@ def confirm(round_id: str, template: dict, overrides: dict | None = None) -> dic
     if row['status'] != 'draft':
         raise CompetitionError('只有待确认轮次可确认')
     base = _template(template, snapshot['mode'])
+    if snapshot['mode']=='connected' and snapshot.get('submission_transport',{}).get('verified') is not True:
+        raise CompetitionError('赛道提交协议尚未核对，请先检查端点、bundle和协议版本')
     _require_clock(snapshot | {'budget_policy':'track-unlimited/v1'},base,mode=snapshot['mode'])
     choices = {}
     from . import competition_prompts
@@ -401,8 +430,10 @@ def get_round(round_id: str) -> dict:
                                '等待资源名额' if item['phase'] == 'queued' else item['blocked_reason'])
         items.append(item)
     snapshot = json.loads(row['config_json'])
-    from . import competition_prompts
+    from . import competition_prompts,track_clock
     return {'id': round_id, 'label': row['label'], 'status': row['status'], 'items': items,
+            'season':snapshot.get('season'),'round_seq':snapshot.get('round_seq'),
+            'track_clock':track_clock.facts(snapshot),'submission_transport':snapshot.get('submission_transport'),
             'protocol_drift': snapshot.get('protocol_drift', {'status': 'unknown'}),
             'template': snapshot.get('template'), 'user_prompt': competition_prompts.latest(round_id),
             'experience_snapshot_sha256': snapshot.get('experience_snapshot_sha256'),
@@ -414,7 +445,8 @@ async def advance_round(controller, evaluation) -> None:
     snapshot = json.loads(evaluation['config_json'])
     from . import track_clock
     from datetime import datetime,timezone
-    end=track_clock.instant(snapshot.get('track_clock',{}).get('end')) or track_clock.platform_time(snapshot,'roundEndAt')
+    clock=track_clock.from_snapshot(snapshot);end=clock['end']
+    if clock['start'] and clock['start']>datetime.now(timezone.utc): return
     expired=snapshot.get('budget_policy')=='track-unlimited/v1' and end is not None and end<=datetime.now(timezone.utc)
     for item in db.query('SELECT * FROM eval_results WHERE eval_id=? ORDER BY priority DESC,rowid', (rid,)):
         if item['status'] in ('complete', 'failed'): continue
@@ -458,6 +490,8 @@ async def advance_round(controller, evaluation) -> None:
                                         'challenge_snapshot': next(e.get('challenge_snapshot') for e in snapshot['entries'] if e['challenge_id'] == item['challenge_id'])}
                 from . import competition_prompts
                 state['competition']['user_prompt']=json.loads(item['prompt_json']) if item['prompt_json'] else competition_prompts.freeze(rid,item['challenge_id'])
+                if snapshot.get('submission_transport'):
+                    state['competition']['submission_transport']=snapshot['submission_transport']
                 if snapshot.get('budget_policy'):
                     state['competition']['budget_policy']=snapshot['budget_policy']
                 db.execute('UPDATE runs SET config_snapshot=? WHERE id=?', (_dump(state), run['id']))

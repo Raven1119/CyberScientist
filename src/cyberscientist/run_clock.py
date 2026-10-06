@@ -1,6 +1,7 @@
 """Persisted active time; remote resource lifetimes remain wall-clock time."""
 from __future__ import annotations
 import time
+import json
 from datetime import datetime
 from . import db
 
@@ -26,7 +27,11 @@ def remaining(run, auth, now: float | None = None) -> float:
     if 'unlimited_resources' in auth.keys() and run_limits.track_unlimited(run,auth):
         from . import track_clock
         return track_clock.remaining(run,time.time() if now is None else now)
-    return auth['max_run_minutes'] * 60 - elapsed(run, now)
+    remaining=auth['max_run_minutes'] * 60 - elapsed(run, now)
+    if 'config_snapshot' in run.keys() and json.loads(run['config_snapshot']).get('competition',{}).get('budget_policy')=='track-unlimited/v1':
+        from . import track_clock
+        remaining=min(remaining,track_clock.remaining(run,time.time() if now is None else now))
+    return remaining
 
 
 def start(run_id: str, now: float | None = None) -> None:
