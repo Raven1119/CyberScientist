@@ -7,8 +7,8 @@
 1. 在当前 Linux 后端执行 `.venv/bin/cyberscientist ops shutdown`，等待 `can_shutdown=true`。若原生关闭或远程操作 unknown，保留屏障和句柄，先读 events/status；没有确认前不能强杀再恢复。远程 Job/沙箱可能继续运行和计费。
 2. 停止后端，记录 HEAD、工作区及当前一致性备份。保留未跟踪任务卡、经验和产物；另存跟踪改动，确保切换代码不会覆盖它们。
 3. 在同一仓库目录切到已验证标签，保留当前数据和凭据。无需恢复任何旧 SQLite、settings 或 workspace。
-4. 用本目录 `.venv` 启动所选代码，先检查健康接口的加载 commit、当前账本记录和远程对账结果。unknown 保持 unknown，禁止靠重发创建/提交推断恢复成功。
-5. 只有确认原生关闭、对账、所选版本功能兼容后，才执行 `ops resume` 恢复明确的安全关机意图。手动暂停和历史时钟 Run 不自动恢复。
+4. **普通 `serve` 会在启动对账后自动恢复明确的安全关机意图，并非只读启动。** 启动生产账本前，先用一致性副本和禁止派发的维护守卫核查所选代码的加载commit、账本记录与对账；本卡的副本验证记录见下文。确认兼容、原生关闭和恢复授权后，再启动当前账本，这一步同时允许科研恢复。不能先普通启动再决定是否恢复。
+5. 启动实际先对账再恢复 `clock_version=1 && resume_on_startup=1` 的意图，手动暂停和历史时钟Run不自动恢复。unknown保持unknown，禁止靠重发创建/提交推断恢复成功。`ops resume`用于核查后重试仍持久的恢复意图；不是普通启动的必经人工闸门。
 
 安全停止后保存当前账本，不复制密钥：
 
@@ -34,9 +34,11 @@ PY
 ```bash
 git show --no-patch --oneline lightchaser-fallback-3
 git switch --detach lightchaser-fallback-3
+# 已在禁止派发的一致性副本上核查兼容，并明确允许立即恢复后才执行
 .venv/bin/cyberscientist serve
-# 另一个终端先检查，确认后再恢复
+# 另一个终端核查实际自动恢复结果
 .venv/bin/cyberscientist ops status --json
+# 对账无异常、恢复意图仍待处理时，可显式重试
 .venv/bin/cyberscientist ops resume
 ```
 
@@ -46,6 +48,6 @@ git switch --detach lightchaser-fallback-3
 
 在独立 worktree 载入原始 fallback-2（完整 commit `20069d7b8eda03f1056d9649c84258c0cf4bd133`），独立端口 8872，打开本卡 ADD-only 迁移后主账本的一致性副本。生产后端未启动，生产数据库未恢复旧版本。旧代码完整 lifespan 启动、只读远程对账及当前健康/轮次/Run/提交/收割接口实测记录见 [修复证据](CS_UP_12_FIX_EVIDENCE.md)。维护验证显式禁止科研模型入口、研究派发、自动收割和资源删除；未恢复科研 Run。这证明账本读取和对账兼容，不等同于完整比赛恢复彩排。
 
-fallback-2 没有 CS-UP-12 的用户提示词、独立赛道时钟及赛末收割规则，旧 `run_clock.remaining` 仍只按 `max_run_minutes`。新赛道无上限授权在该旧版本可能立即到期；因此不能直接恢复 CS-UP-12 新赛道 Run。比赛中的新功能应回退到已验收的 fallback-3 或更新的兼容版本；fallback-2 仅作为历史数据读取/诊断选项，须保持暂停。不能因“旧代码能读账本”声称所有新功能也兼容。
+fallback-2 没有 CS-UP-12 的用户提示词、独立赛道时钟及赛末收割规则，旧 `run_clock.remaining` 仍只按 `max_run_minutes`。新赛道无上限授权在该旧版本可能立即到期；因此不能直接恢复 CS-UP-12 新赛道 Run。比赛中的新功能应回退到已验收的 fallback-3 或更新的兼容版本；fallback-2 仅作为历史数据读取/诊断选项，只在一致性副本及禁止科研入口/派发/删除的维护守卫下启动；普通serve会自动恢复，不能用于这个诊断步骤。不能因“旧代码能读账本”声称所有新功能也兼容。
 
 原始备份仍保存在 `.package-checks/cs-up-08/`、`.package-checks/cs-up-09/`、`.package-checks/cs-up-12/`，供离线取证。保留原后端密钥存储和原生认证，不复制或打印密钥，不改全局 CLI 配置，不删除已有 Bohrium 资源。

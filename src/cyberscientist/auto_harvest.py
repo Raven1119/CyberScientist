@@ -51,10 +51,26 @@ def topic_runs(conn, run):
     return [r for r in rows if [r['target_platform'],r['target_origin'],r['target_topic']]==target]
 
 
+def _unstarted_topic_target(conn, round_id, challenge_id):
+    row=conn.execute("SELECT json_extract(t.config_json,'$.mode') AS mode,"
+        "json_extract(t.config_json,'$.mailbox_platform') AS platform,"
+        "json_extract(t.config_json,'$.submission_transport.base_url') AS origin,"
+        "COALESCE(NULLIF(json_extract(e.value,'$.platform_challenge_id'),''),NULLIF(c.platform_challenge_id,''),'local:'||c.id) AS topic"
+        " FROM eval_runs t JOIN json_each(t.config_json,'$.entries') e JOIN challenges c ON c.id=json_extract(e.value,'$.challenge_id')"
+        " WHERE t.id=? AND c.id=? LIMIT 1",(round_id,challenge_id)).fetchone()
+    if not row:return None
+    settings=config.load_settings()
+    return [row['platform'] or settings['mailbox']['platform'],
+            'demo' if row['mode']=='demo' else (row['origin'] or settings['playground']['base_url']).rstrip('/'),row['topic']]
+
+
 def topic_facts(round_id, challenge_id, *, conn=None):
     conn = conn or db.get_db()
     participant=conn.execute("SELECT id FROM runs WHERE challenge_id=? AND json_extract(config_snapshot,'$.competition.round_id') IS ? LIMIT 1",(challenge_id,round_id)).fetchone()
-    rows=[s for s in mailboxes._target_submissions(conn,participant['id']) if s['target_round']==round_id] if participant else []
+    target=None if participant else _unstarted_topic_target(conn,round_id,challenge_id)
+    run_id=participant['id'] if participant else None
+    all_rows=mailboxes._target_submissions(conn,run_id,target=target) if participant or target else []
+    rows=[s for s in all_rows if s['target_round']==round_id]
     def confirmed(s):
         return (s['status']=='submitted' and s['score_status']=='scored' and s['score_confidence']=='confirmed'
                 and not s['score_anomaly'] and s['scorecard_consistent']!=0
@@ -62,7 +78,7 @@ def topic_facts(round_id, challenge_id, *, conn=None):
     exp = sorted((s for s in rows if s['role']=='experiment' and not s['is_harvest'] and confirmed(s)),
                  key=lambda s:(s['score'],s['created_at']), reverse=True)
     mailbox=conn.execute("SELECT id FROM mailboxes WHERE role='harvest' AND status='active'").fetchone()
-    mains=mailboxes._target_submissions(conn,participant['id'],mailbox_id=mailbox['id']) if participant and mailbox else []
+    mains=mailboxes._target_submissions(conn,run_id,mailbox_id=mailbox['id'],target=target) if (participant or target) and mailbox else []
     main = [s['score'] for s in mains if confirmed(s)]
     return {'main_best': max(main) if main else None, 'experiment_best': exp[0]['score'] if exp else None,
             'best_submission_id': exp[0]['id'] if exp else None,

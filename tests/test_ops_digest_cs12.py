@@ -160,3 +160,58 @@ def test_track_selfcheck_exposes_prompt_confirmation_budget_and_mailbox(monkeypa
     row=result['facts']['tracks'][0]
     assert not any(row[key] for key in ['transport_verified','prompt_filled','unlimited_resources','harvest_mailbox_matches'])
     assert result['facts']['missing_prompt']==['ready-track'] and result['facts']['missing_mailbox']==['ready-track']
+
+
+def test_topics_without_runs_are_projected_for_deferred_and_skipped_tracks():
+    from test_triage_import_cs10 import seed
+    from cyberscientist import competition
+    rnd,_=seed(3);rid=rnd['id']
+    competition.update_item(rid,rnd['items'][1]['id'],launch_state='deferred')
+    competition.update_item(rid,rnd['items'][2]['id'],launch_state='skipped')
+    data=ops.status();topics=next(t for t in data['tracks'] if t['id']==rid)['topics']
+    assert len(topics)==3 and {t['launch_state'] for t in topics}=={'immediate','deferred','skipped'}
+    assert all(t['harvest_scores']['main_best'] is None and t['harvest_scores']['experiment_best'] is None for t in topics)
+    text=ops_digest.digest()['text']
+    assert all(t['challenge_id'] in text for t in topics) and 'deferred no_run' in text and 'skipped no_run' in text
+    old=(datetime.now(timezone.utc)-timedelta(hours=1)).isoformat()
+    db.execute('UPDATE eval_runs SET updated_at=?',(old,));db.execute('UPDATE eval_results SET updated_at=?',(old,))
+    cutoff=(datetime.now(timezone.utc)-timedelta(minutes=5)).isoformat()
+    assert rid not in ops_digest.digest(cutoff)['text']
+    db.execute('UPDATE eval_results SET updated_at=? WHERE id=?',(db.utcnow(),topics[1]['id']))
+    text=ops_digest.digest(cutoff)['text'];assert topics[1]['challenge_id'] in text and topics[2]['challenge_id'] not in text
+
+
+@pytest.mark.asyncio
+async def test_unstarted_topic_reads_frozen_target_main_history_and_unknown():
+    from test_auto_harvest import seed
+    from test_mailboxes import _set_scored
+    from cyberscientist import competition,mailboxes,auto_harvest
+    rid,source=seed(64.8,limit=10)
+    main=mailboxes.harvest_submit(source['id'],'old-confirmed-main',True);_set_scored(main['id'],64.8)
+    db.execute("INSERT INTO submissions(id,run_id,mailbox_id,package_path,package_sha256,status,score_status,is_harvest,created_at) VALUES('older-main-unknown',?,?,?,'fixture-hash','unknown','unknown',1,?)",(rid,main['mailbox_id'],'fixture-path',db.utcnow()))
+    rnd=competition.import_round(['MB_CH'],mode='demo');item=rnd['items'][0]
+    competition.update_item(rnd['id'],item['id'],launch_state='deferred')
+    # Import refresh cannot move the new track's frozen slug.
+    db.execute("UPDATE challenges SET platform_challenge_id='changed-alias' WHERE id='MB_CH'")
+    facts=auto_harvest.topic_facts(rnd['id'],'MB_CH')
+    assert facts['main_best']==64.8 and facts['experiment_best'] is None
+    assert 'older-main-unknown' in facts['pending_submission_ids']
+    topics=next(t for t in ops.status()['tracks'] if t['id']==rnd['id'])['topics']
+    assert topics[0]['harvest_scores']==facts and 'deferred no_run local=None main=64.8' in ops_digest.digest()['text']
+    raw=json.loads(db.query_one('SELECT config_json FROM eval_runs WHERE id=?',(rnd['id'],))[0]);raw['mode']='connected';raw['submission_transport']['base_url']='https://different-origin.example/api'
+    db.execute('UPDATE eval_runs SET config_json=? WHERE id=?',(json.dumps(raw),rnd['id']))
+    isolated=auto_harvest.topic_facts(rnd['id'],'MB_CH')
+    assert isolated['main_best'] is None and not isolated['pending_submission_ids']
+    raw['mode']='demo';db.execute('UPDATE eval_runs SET config_json=? WHERE id=?',(json.dumps(raw),rnd['id']))
+    from test_competition import FakeController
+    from test_triage_import_cs10 import template
+    from cyberscientist import evaluations
+    competition.confirm(rnd['id'],template());competition.start_deferred(rnd['id'],item['id'])
+    ctl=FakeController();ctl.throttled=True;await evaluations.advance(ctl)
+    started=competition.get_round(rnd['id'])['items'][0]
+    snapshot=json.loads(db.query_one('SELECT config_snapshot FROM runs WHERE id=?',(started['run_id'],))[0])
+    assert snapshot['challenge_platform_id']==raw['entries'][0]['platform_challenge_id']=='MB'
+    assert snapshot['settings']['mailbox']['platform']==raw['mailbox_platform']
+    assert db.query_one('SELECT phase FROM runs WHERE id=?',(started['run_id'],))[0]=='running'
+    after=auto_harvest.topic_facts(rnd['id'],'MB_CH')
+    assert after==facts

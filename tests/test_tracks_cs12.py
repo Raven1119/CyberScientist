@@ -114,6 +114,15 @@ async def test_confirmed_clock_cannot_clear_deadline_and_preflight_reads_overrid
     assert db.query_one('SELECT config_json FROM eval_runs WHERE id=?',(rid,))[0]==before
     auth=db.query_one('SELECT * FROM authorizations WHERE run_id=?',(run['id'],))
     assert 4.9*3600<run_clock.remaining(run,auth)<5.1*3600
+    # W9 readiness requires prompt, protocol evidence and matching main account
+    # as well as the W3 clock. Supply those facts without relaxing clock checks.
+    from cyberscientist import competition_prompts,mailboxes,config
+    competition_prompts.publish(rid,'fixture user prompt',0)
+    snapshot=json.loads(db.query_one('SELECT config_json FROM eval_runs WHERE id=?',(rid,))[0])
+    snapshot['submission_transport']=track_transport.defaults(config.load_settings()['playground']['base_url']) | {'verified':True,'evidence':{'source':'synthetic_fixture'}}
+    db.execute('UPDATE eval_runs SET config_json=? WHERE id=?',(json.dumps(snapshot),rid))
+    config.update_secret('clock-fixture-main','clock-fixture-only')
+    db.execute("INSERT INTO mailboxes(id,role,email,platform,secret_ref,status,created_at) VALUES('clock-main','harvest','clock@example.test',?,'local:clock-fixture-main','active',?)",(config.load_settings()['mailbox']['platform'],db.utcnow()))
     facts=preflight.track_checks();assert facts['status']=='pass'
     assert facts['facts']['tracks'][0]['clock']['source']=='operator_override'
     assert facts['facts']['tracks'][0]['clock']['platform_end'] is None

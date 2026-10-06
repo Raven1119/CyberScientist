@@ -130,8 +130,8 @@ def _target_columns():
             "NULLIF(c.platform_challenge_id,''),'local:'||c.id) AS target_topic")
 
 
-def _target_submissions(conn, run_id, *, mailbox_id=None, harvest_only=False):
-    target=json.loads(_challenge_key(conn,run_id))
+def _target_submissions(conn, run_id, *, mailbox_id=None, harvest_only=False, target=None):
+    target=json.loads(_challenge_key(conn,run_id)) if target is None else target
     query="SELECT s.*,m.role,json_extract(r.config_snapshot,'$.competition.round_id') AS target_round,"+_target_columns()+" FROM submissions s JOIN runs r ON r.id=s.run_id JOIN challenges c ON c.id=r.challenge_id JOIN mailboxes m ON m.id=s.mailbox_id WHERE s.reservation_released=0"
     args=[]
     if mailbox_id:

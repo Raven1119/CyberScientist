@@ -18,12 +18,14 @@ def tracks():
         clock['end']=clock.get('end') or row['platform_end']
         transport=json.loads(row['transport'] or '{}')
         prompt=db.query_one('SELECT version,sha256 FROM competition_prompt_versions WHERE eval_id=? ORDER BY version DESC LIMIT 1',(row['id'],))
+        topics=[dict(item) | {'harvest_scores':auto_harvest.topic_facts(row['id'],item['challenge_id'])}
+                for item in db.query('SELECT id,challenge_id,launch_state,status,run_id,updated_at FROM eval_results WHERE eval_id=? ORDER BY priority DESC,repeat_index',(row['id'],))]
         result.append({k:row[k] for k in ('id','label','status','updated_at')} | {
             'clock':track_clock.facts({'track_clock':clock}), 'harvest_window':auto_harvest.window(clock),
             'prompt_version':prompt['version'] if prompt else 0,'prompt_sha256':prompt['sha256'] if prompt else None,
             'unlimited_resources':row['unlimited']==1,
             'transport_verified':transport.get('verified') is True,
-            'transport_status':transport.get('status','unknown')})
+            'transport_status':transport.get('status','unknown'),'topics':topics})
     return result
 
 
@@ -95,9 +97,16 @@ def digest(since=None):
         lines.append(f"  {row['challenge_id']} {row['id']} {row['phase']} quiet_s={max(0,int(quiet))} local={row['local_best']} main={scores['main_best']} exp={scores['experiment_best']} score_pending={len(scores['pending_submission_ids'])}")
     # Deferred/skipped tracks still have clock/prompt information without a Run.
     for tid,track in track_map.items():
-        if tid in shown_tracks or cutoff and (track_clock.instant(track['updated_at']) or now)<cutoff:continue
-        if len(lines)>=43:omitted+=1;continue
-        w=track['harvest_window'];lines.append(f"track {tid} {track['label']} no_changed_runs prompt=v{track['prompt_version']} end_s={w['remaining_seconds']} window={w['state']}")
+        track_changed=not cutoff or (track_clock.instant(track['updated_at']) or now)>=cutoff
+        topics=[item for item in track['topics'] if not item['run_id'] and
+                (track_changed or (track_clock.instant(item['updated_at']) or now)>=cutoff)]
+        if tid not in shown_tracks and (track_changed or topics):
+            if len(lines)>=43:omitted+=1+len(topics);continue
+            w=track['harvest_window'];lines.append(f"track {tid} {track['label']} no_changed_runs prompt=v{track['prompt_version']} end_s={w['remaining_seconds']} window={w['state']}")
+        for item in topics:
+            if len(lines)>=43:omitted+=1;continue
+            scores=item['harvest_scores']
+            lines.append(f"  {item['challenge_id']} {item['launch_state']} no_run local=None main={scores['main_best']} exp={scores['experiment_best']} score_pending={len(scores['pending_submission_ids'])}")
     if omitted:lines.append(f'additional run/track rows={omitted}; use targeted ops events/status for detail')
     errors=db.query("SELECT type,json_extract(payload,'$.error') AS error,json_extract(payload,'$.message') AS message FROM events WHERE (type LIKE '%.error' OR type LIKE '%.failed' OR type IN ('run.runtime_error','submission.unknown'))"+(" AND julianday(recorded_at)>=julianday(?)" if stamp else '')+' ORDER BY rowid DESC LIMIT 1000',(stamp,) if stamp else ())
     counts=Counter((e['type'],observation.strip_secrets(str(e['error'] or e['message'] or ''))[:120]) for e in errors)
