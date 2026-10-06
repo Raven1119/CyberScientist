@@ -7,6 +7,7 @@ import subprocess
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -120,7 +121,6 @@ def main() -> None:
 
     if args.command == 'ops':
         from . import config, features, observation
-        import urllib.parse
         port = args.port or config.load_settings()['app']['port']
         method = 'GET'; body = None
         if args.ops_command == 'switch':

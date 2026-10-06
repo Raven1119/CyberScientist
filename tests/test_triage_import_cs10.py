@@ -115,7 +115,7 @@ async def test_helpers_parallel_three_and_lower_effort_only_after_timeout(monkey
     assert peak==3 and active==0 and len(opened)==len(closed)==12
     assert config.load_settings()['brain']['reasoning_effort']=='xhigh'
     for row in competition.get_round(rnd['id'])['items']:
-        assert row['triage']['attempts']==[{'status':'timeout','helper_effort':'xhigh'},{'status':'done','helper_effort':'high'}]
+        assert [{key:a[key] for key in ('status','helper_effort')} for a in row['triage_attempts']]==[{'status':'timeout','helper_effort':'xhigh'},{'status':'done','helper_effort':'high'}]
         assert row['triage']['difficulty']=='easy'
     assert not db.query('SELECT * FROM model_session_leases')
 
@@ -135,7 +135,7 @@ async def test_close_unknown_holds_lease_and_blocks_timeout_retry_until_reconcil
     await competition.triage(rnd['id'],ctl,True)
     assert calls==['open'] and len(db.query('SELECT * FROM model_session_leases'))==1
     assert resource_coordinator.close_unknowns()
-    assert competition.get_round(rnd['id'])['items'][0]['triage']['attempts'][-1]['status']=='close_unknown'
+    assert competition.get_round(rnd['id'])['items'][0]['triage_attempts'][-1]['status']=='close_unknown'
     fail=False;await helpers.retry_closes(timeout=1)
     assert not db.query('SELECT * FROM model_session_leases') and not resource_coordinator.close_unknowns()
 
@@ -172,7 +172,7 @@ async def test_429_does_not_downgrade_or_replay_helper(monkeypatch):
     monkeypatch.setattr(ctl,'_make_brain',make)
     await competition.triage(rnd['id'],ctl)
     assert efforts==['xhigh']
-    assert competition.get_round(rnd['id'])['items'][0]['triage']['attempts'][0]['status']=='unknown'
+    assert competition.get_round(rnd['id'])['items'][0]['triage_attempts'][0]['status']=='unknown'
 
 
 @pytest.mark.asyncio

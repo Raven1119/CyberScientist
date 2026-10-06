@@ -33,10 +33,13 @@ def test_v2_brain_decision_extracted_from_fenced_final_message():
 
 def _bundle(steps: list[dict] | None = None, *, artifacts: list[dict] | None = None,
             log_text: str = "validated long execution line\n") -> bytes:
-    manifest = {"arm_version": "1.1", "entrypoint": "src/reproduce.py",
+    manifest = {"arm_version": "1.1", "paper": {"title": "Synthetic EV fixture"}, "entrypoint": "src/reproduce.py",
                 "execution": {"log_path": "results/run.log", "ran_at": "2026-09-25T00:00:00Z",
-                              "wall_time_s": 20, "artifacts": artifacts or []},
+                              "wall_time_s": 20, "artifacts": artifacts if artifacts is not None else [
+                                  {"id":"unproduced-fixture", "path":"results/not-produced.txt", "type":"data"}]},
                 "trace": {"files": ["traces/trace.jsonl"]}}
+    # ARM 1.1 requires a nonempty declaration. Deliberately absent file keeps
+    # these trace fixtures from acquiring extra artifact evidence at sealing.
     out = io.BytesIO()
     with zipfile.ZipFile(out, "w") as archive:
         archive.writestr("arm_manifest.json", json.dumps(manifest))
@@ -301,7 +304,9 @@ def test_blocked_trace_is_visible_advice_for_authorized_submission():
     trial = 'blocked-trial'
     base = config.WORKSPACE_DIR / 'runs' / rid / 'trials' / trial
     base.mkdir(parents=True)
-    (base / 'result_package.zip').write_bytes(_bundle([{'checkpoint': 'old', 'event': 'untyped'}]))
+    # Valid public schema, but no tool pair or artifact evidence: trace admission
+    # remains advisory independently of the mandatory W2j schema gate.
+    (base / 'result_package.zip').write_bytes(_bundle([{'step_type':'observation','title':'Fixture without tool evidence'}]))
     db.execute("INSERT INTO trials(id,run_id,goal,success_check,created_at)"
                " VALUES(?,?,?,?,?)", (trial, rid, 'g', 's', db.utcnow()))
     report = mailboxes.preflight_submission(rid, trial, None)
@@ -317,7 +322,8 @@ def test_blocked_trace_is_visible_advice_for_authorized_submission():
 
 def test_platform_bundle_blocked_keeps_draft_and_skips_submit(tmp_path):
     pkg = tmp_path / 'bundle.zip'; pkg.write_bytes(_bundle())
-    platform = BohriumPlaygroundPlatform('https://fixture.invalid')
+    # Use the checked-in schema origin; _http below remains a complete fake.
+    platform = BohriumPlaygroundPlatform('https://play.bohrium.com/api')
     calls = []; stages = []
     def fake_http(method, path, **kwargs):
         calls.append(path)

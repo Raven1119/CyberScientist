@@ -1,13 +1,13 @@
-# CS-UP-10 修复证据（分工作包追加）
+# CS-UP-10 修复证据
 
-W0 已提交并推送。W1 的真实投递、镜像验证和最终源码回归通过。
-现代 Job 使用 bohr 2.7.8；未知创建按名称对账，只有完整查询确认不存在才重交原冻结输入。
-27 个最小 Job 均拿到 ID、完成并取回证明；其中 20 个极小输入、5 个约24 MiB输入。
-私有镜像通过 v4 构建，并在 Job 和沙箱启动；旧 v2 的业务148888仍存在。
-历史科学失败与运输失败分别记录；缺少日志的案例保持 unknown。
-W2a–f及W2m已验收；W2g–l、W3、W4、W5继续施工，逐项追加验收。
-本卡没有新科研 Run、比赛提交或整轮彩排；没有执行 CS-UP-11。
-原始回执、资源身份、完整轨迹、SQLite及账号材料只保存在本机忽略目录。
+W0–W5针对性验收已完成：最终后端1338项、前端88项与生产构建通过。
+Job上传与调度拆开，超时按唯一名称完整对账；27个CPU机制探针全部完成并取回证明。
+私有镜像已用v4构建并在Job/沙箱启动；旧v2的148888仍存在，已验证替代路线可用。
+比赛能力显式放开，科研PI固定Astra xhigh；GPU、本地秒级计算、环境起点与四份完整复盘有实际证据。
+配置保存、赛前自检、漂移提醒、11开关、审批队列、运维CLI和事务性分诊已接通并完成对应回归。
+ABC退档源于放弃已知纪录保底；科学10与平台通用ARM6.43分别确认。
+重型环境内容、真实比赛稳定性和最终账单仍待后续验证；没有新科研Run、比赛提交、整轮彩排或CS-UP-11。
+原始回执、完整轨迹、截图、账号材料和SQLite只保存在本机忽略目录。
 
 ## W0：决定与基线
 
@@ -101,9 +101,9 @@ H01–H03 的日志中有内嵌ZIP：先验证原ARTIFACT_RECEIPT声明SHA再读
 
 两轴只读审查确认父ID竞态、冻结清单/权限、分页完整性、取消线程、费用来源等边界；标准审查追加的同缓冲区SHA修正有独立回归。现有测试没有删除或跳过；旧未知身份和付费最终账单仍待平台核验。
 
-当前本卡真实额度消耗：CPU27/40、GPU0/3、sandbox2/20（一次400也保守计入）、镜像构建2/6、环境包存储0/1；四角色零科研探针0/4、旧Run完整复盘0/4。比赛模板无限预算不能扩大这些施工额度。
+W1结束时累计额度：CPU27/40、GPU0/3、sandbox2/20（一次400也保守计入）、镜像构建2/6、环境包存储0/1；四角色零科研探针0/4、旧Run完整复盘0/4。最终累计见W5。比赛模板无限预算不能扩大这些施工额度。
 
-W1最终源码完整回归 `.venv/bin/pytest -q`：1057 passed，586.78秒；最后边界回归60 passed／29.29秒，真实脱敏回执离线重放27 passed／22.95秒，原代码前后对照5 passed／3.11秒。前端50 passed及构建通过，compileall和diff检查通过。数据库副本两次初始化后71条原Job的状态、ID、回执完整保留，integrity_check=ok。此前失败/中间回归日志保留，没有删除或跳过既有测试。W2–W4目前尚未验收。
+W1最终源码完整回归 `.venv/bin/pytest -q`：1057 passed，586.78秒；最后边界回归60 passed／29.29秒，真实脱敏回执离线重放27 passed／22.95秒，原代码前后对照5 passed／3.11秒。前端50 passed及构建通过，compileall和diff检查通过。数据库副本两次初始化后71条原Job的状态、ID、回执完整保留，integrity_check=ok。此前失败/中间回归日志保留，没有删除或跳过既有测试。该1057项是W1阶段记录，最终全套结果见W5。
 
 W1实现提交 `db03b89d1acdb310b73cfece2012c4d9ee5fadd6` 已推送到 main；进度行在随后元数据提交记录该实际实现身份。
 
@@ -113,7 +113,7 @@ W1实现提交 `db03b89d1acdb310b73cfece2012c4d9ee5fadd6` 已推送到 main；�
 
 对照证据：`tests/test_competition_unlimited_cs10.py`逐项先证实旧拒绝，再实际调用同一控制器或网关通过；第4Trial进入执行器、第21次PI答复写入轨迹，维护调用去重仍拒绝。剩余额度和授权事实用null表示不限，不能投影成0；显式GPU拒绝仍是false。前端整轮及逐题开关、确认载荷和独立override有DOM回归。后端相关149项初查和72项扩展回归通过，前端53项全部通过，TypeScript及生产构建通过。两轴有界审查完成，原剩余额度/权限/逐题显示问题已修复，最终测试全部保留。没有真实计算或模型调用。
 
-剩余：W2b–W2m尚待实施和真实探针，资源不限本身不代表任何平台配额或费用成功。
+资源不限不代表任何平台配额或费用成功；W2其余机制与真实探针逐项列于下文。
 
 ## W2b：远程 GPU
 
@@ -207,7 +207,7 @@ Fake恒定100分的宽松评分器被交付完整源码，审查返回缺维度/
 
 修复前：部分PUT从默认设置重建，别页保存会清空连接/模型/技能；嵌套字典会丢失兄弟字段。修复后：当前修订深合并、冲突409不写入；完整价格JSON和主机映射显式替换，删除/清空经刷新与重启不复活，缺价为unknown。配置清单见FRONTEND_CONFIG_AUDIT_CS_UP_10.md。邮箱页显示收割与实验邮箱绑定平台，收割平台不符红色提示。
 
-38项相关pytest、73项前端测试/构建、compileall/diff通过，两轴审查关闭。实际Chromium在独立演示空数据库完成设置保存→刷新→真实后端重启→独立技能写入→保留值，并实测完整价格编辑器{}刷新保持；五页面截图与browser.json留忽略目录，没有启动科研Run、模型调用或提交。Linux测试浏览器缺中文字体时仅以其私有fontconfig引用既有Windows字体，未改全局配置。W3后续自检/开关/分诊等新入口仍需对应小项及最终统一浏览器走查。
+38项相关pytest、73项前端测试/构建、compileall/diff通过，两轴审查关闭。实际Chromium在独立演示空数据库完成设置保存→刷新→真实后端重启→独立技能写入→保留值，并实测完整价格编辑器{}刷新保持；五页面截图与browser.json留忽略目录，没有启动科研Run、模型调用或提交。Linux测试浏览器缺中文字体时仅以其私有fontconfig引用既有Windows字体，未改全局配置。W3新增入口的最终统一Chromium往返已完成，结果见W3i。
 
 ### W3c — 公开协议与接口漂移
 
@@ -219,7 +219,7 @@ Fake改变protocol.schemas.arm_manifest且新引用404，仍检出路径变化�
 
 修复前没有统一检查；连接“已配置”或RPC接受不能证明可参赛。现在设置页一键自检及`cyberscientist preflight --json`只读调用实际后端，按通过/警告/失败呈现收割/实验邮箱启用、身份与平台绑定，Playground auth/me、Bohrium项目认证，Codex原生account/read和分页model/list（Astra xhigh、Sol high），DeepSeek models、WEB搜索/读取、LKM、协议漂移、磁盘、代码/标签和健康。原profile、邮件身份、搜索正文和令牌不进报告。缺失/错归属/共享账号明确失败；未知身份格式或网络不可确认警告，不伪造通过。
 
-实际Linux隔离副本最终十三项全部通过，邮箱身份匹配；model_turns=0，原41Run、41授权、6提交、71Job行保持，未运行启动恢复lifespan。真实回执仅留忽略目录。Fake临时停用收割邮箱、错归属、重复账号、空/未知原生账户均正确检出；CLI确实调用只读自检路由且失败退出1。
+实际Linux隔离副本最终十三项全部通过，邮箱身份匹配；model_turns=0，原41Run、41授权、6提交、71Job行保持，未运行启动恢复lifespan。真实回执仅留忽略目录。Fake临时停用收割邮箱、错归属、重复账号、空/未知原生账户均正确检出；CLI确实调用只读自检路由且失败退出1。最终又在真实配置一致性副本只停用收割邮箱，完整实际POST自检明确harvest_mailbox=fail，其余12项pass、model_turns=0，41Run/41授权/6提交/71Job原行逐一保持；主库邮箱未停用，证据见preflight-disabled.log。
 
 自检HTTP线程和原生进程纳入辅助任务/关机屏障；取消等待者不丢后台工作，重复取消等待真实关闭。失败句柄、租约和unknown保留；并行关闭共用单任务，关机按剩余预算有界等待、后续成功才清理。70项相关pytest33.16秒通过，前端79项/构建、compileall/diff通过，两轴审查闭环；首次前端泛用旧fixture响应暴露items缺失崩溃，已补未知响应防护且原测试全保留。自检不是科学评分/账单/正式参赛有效性的证明。
 
@@ -291,3 +291,36 @@ W3最终全量回归暴露旧交付提示测试：动态本地许可仍保留重
 五份旧包均逐一读取实际ZIP并核验SHA与原local_scores匹配，科学产物都明确是已知纪录，不是新纪录；三元组JSON的键序等字节差异并不改变科学内容。09则交付了独立有限枚举后的非控制候选。其完整搜索报告的best_including_supplied_controls就是纪录(q=q0)，但best_excluding_supplied_controls选择q≈1.488865；源码明确把题面纪录和第二阈值控制例排除出最终交付。**因此本次确实没有把已知纪录作为计分保底，造成已验证的题面档位从20降到10。**没有证据说明旧20分科学包会得到何种当前通用ARM分，也不从该差异推断模型能力下降。
 
 只读核查断言通过：09最终ZIP/三元组/10档对应，v1–v3五个已评分ZIP全绑定20；摘要与源码控制例排除一致。原始摘要及哈希清单留.package-checks/cs-up-10/w4-abc-readonly-audit.json和w4-historical-triples.json。结论是候选选择与目标区分问题，未修改科研结果或评分器；后续PI应保留规则允许的已知候选，并明确区分计分保底、独立搜索结果与突破目标，由实际规则决定交付。
+
+## W5：最终检查与交付
+
+主数据库迁移前一致性备份SHA `04a71c62ae44613979dd229818548f60b0557a4674af11a86c57ee5391428c40`。两次初始化完全保留46张原表的35695行及全部原列字节投影，integrity_check=ok；只新增5张表和native_call_limit列，无DROP/RENAME。旧recovering Run仍clock_version=0/resume_on_startup=0，没有启动主库lifespan或恢复科研。实际两条环境目录起点已在主库，现代bohr路径及Astra/xhigh配置保持。
+
+最终额度账本：CPU27/40、GPU2/3、沙箱6/20、镜像构建2/6、环境存储0/1；四角色零科研探针各1/1；完整复盘4个逻辑任务完成。复盘共6个已接受native turn（其中2个失败保留）以及4个参数超限的派发前RPC拒绝，不把失败尝试抹去或说成只有4次模型调用。全部额度预约都有回执，未留下未完成预约，没有新增科研Run或比赛提交。
+
+第一轮最终全套1329通过/9失败（822.79秒）：旧提示两个词句、CLI局部urllib绑定、旧EV夹具schema及原分诊结果相等契约均准确失败。修复CLI、保留原提示契约、给有效ARM夹具补paper及声明但未产出的artifact（不添加真实artifact证据），无工具证据的合法observation保持blocked/advisory，平台fake绑定正确缓存origin。模型分诊结果保持原六字段，助手source/attempts只存在独立账本，不改原生结果schema。原测试断言保留；相关126项回归49.18秒全部通过。一轮重跑因进程中断只到10%、没有最终结果，日志单独保留，确认进程不存在后才重启；最终全套`.venv/bin/pytest -q`已通过：1338 passed、0 skipped、退出码0、737.99秒，两条警告均为既有测试依赖弃用提示。264个受测源码文件SHA保持；没有删除或跳过既有测试。前端88项与TypeScript/Vite生产构建通过，compileall及暂存diff检查通过；9个明确暂存文件的密钥/大文件/私有路径扫描通过。
+
+最终只读主库复核再次匹配全部46张原表35695行的原列哈希，并核验备份SHA：41Run、41授权、6提交、71Job、6轮次、30队列项、10题保持，旧恢复标记未开启。私有复盘远端main已确认dafc0499affde07f9873494a8b8b215be3e8291b。W5代码及完整证据遵循测试通过→提交→推送；本卡最终版本以lightchaser-fallback-2标签定位。两轴只读完成审查均未发现剩余阻断或重大问题。
+
+### 待用户处理与开赛前风险
+
+- 五份既有全局配方候选仍需用户在前端逐版本批准；施工没有替代审批。环境事实的自动生效仍只依据系统真实回执。
+- 具体Lean/Mathlib、CUDA、量化环境内容须S4审计后整理；本卡两条Python目录起点和私有镜像机制已通过，不声称重型依赖已经准备。
+- 旧无ID资源是否产生费用、币种/计费单位及最终模型/算力账单需要平台确认；旧失败和unknown保留。本卡27/27只证明这批CPU机制探针，不证明长科研任务或未来平台永不故障。
+- 可向bohrium@dp.tech反馈旧镜像路由：同一公共基础镜像最小Dockerfile（仅RUN echo ok），纯小写名、整数projectId、device=container、desc、buildType=1、base64 Dockerfile齐全，v2/image/private仍HTTP200加148888/rpc error，无确认ID；同内容v4/sandbox_work/image/build已构建并通过Job和沙箱。请平台核实v2路由是否仍受支持及原unknown的最终状态。未发送邮件，当前v4路线已可用。
+- CS-UP-11和整轮彩排须用户另行启动；本卡没有新科研Run或比赛提交，也未启动主后端lifespan恢复旧Run。开赛前须用现有自检和平台题目查询复查当时的模型、题目、契约及运行状态。FigQA的404为题目下架事实；已确认的通用ARM6.43与题面科学10、旧科学20分开保留。
+
+### 本机证据索引
+
+原始文件均在忽略目录，以下路径供本机复核，不随公开Git交付：
+
+| 检查 | 本机证据 |
+|---|---|
+| 首次全套失败及中断现场 | .package-checks/cs-up-10/final-pytest.log、final-pytest-interrupted-20261006.log |
+| 最后126项回归 / 最终全套 | .package-checks/cs-up-10/final-backward-contracts.log、final-pytest-rerun.log、final-pytest-rerun.exit |
+| 前端88项 / 生产构建 | .package-checks/cs-up-10/w3i-front-corrected.log、w3i-build-corrected.log |
+| 实际主库两次迁移 / 最终行哈希复核 | .package-checks/cs-up-10/final-migration.json、w5-final-primary-readonly-audit.json |
+| Chromium真实重启往返 / 截图 | .package-checks/cs-up-10/ui/w3-final-browser.json及同目录PNG |
+| 实际自检通过 / 停用邮箱负例 | .package-checks/cs-up-10/preflight/result.json、preflight-disabled.log |
+| 真实调用额度和回执索引 | .package-checks/cs-up-10/authorized-calls.json |
+| ABC只读包与历史五包核验 | .package-checks/cs-up-10/w4-abc-readonly-audit.json、w4-historical-triples.json |

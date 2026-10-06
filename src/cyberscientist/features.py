@@ -29,7 +29,7 @@ def switch(name, enabled_value, expected_revision=None):
 
 
 def science_instruction():
-    return ('执行器可在本地做秒级小计算；命令、输出、耗时与local来源必须留在真实轨迹中，PI委派并审阅证据；重计算、批量分析和科学作图仍用已授权Bohrium Job 或沙箱。\n'
+    return ('秒级小计算允许本地执行；执行器的命令、输出、耗时与local来源必须留在真实轨迹中，PI委派并审阅证据；重计算使用已授权Bohrium Job 或沙箱，批量分析和科学作图也走该通道。\n'
             if enabled('local_calculation') else
             '本地计算功能已关闭；新的科学计算、统计分析和科学作图必须使用已授权Bohrium Job 或沙箱，PI只读审阅证据。\n')
 

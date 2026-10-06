@@ -71,11 +71,12 @@ async def _scores(slug):
 
 def _persist(owner, item_id, result, attempts):
     output=result or {'difficulty':'unknown','estimated_minutes':None,'estimated_cost_cny':None,'recommended_model':'unknown','recommended_solver_id':None,'reason':'分诊未确认；请查看助手尝试状态或导入用户事务性分诊'}
-    output=observation.strip_secrets(json.dumps({**output,'source':'system_helper','attempts':attempts},ensure_ascii=False))
+    metadata=observation.strip_secrets(json.dumps({**output,'source':'system_helper','attempts':attempts},ensure_ascii=False))
+    output=observation.strip_secrets(json.dumps(output,ensure_ascii=False))
     now=db.utcnow()
     with db.transaction() as conn:
         conn.execute('UPDATE competition_triage_attempts SET status=?,ended_at=?,output_json=? WHERE id=?',
-                     (attempts[-1]['status'] if attempts else 'unknown',now,output,owner))
+                     (attempts[-1]['status'] if attempts else 'unknown',now,metadata,owner))
         conn.execute('UPDATE eval_results SET triage_json=?,updated_at=? WHERE id=?',(output,now,item_id))
 
 
