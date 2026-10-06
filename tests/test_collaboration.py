@@ -149,6 +149,8 @@ class ScriptableBrain:
                 yield BrainEvent("question_answer", r["question_answer"])
             elif "decision" in r:
                 yield BrainEvent("decision", {"decision": r["decision"]})
+            elif 'curation_result' in r:
+                yield BrainEvent('curation_result', {'result': r['curation_result']})
             else:
                 yield BrainEvent("review_result", {"result": r["review_result"]})
         return gen()
@@ -1850,7 +1852,8 @@ async def test_finish_defers_to_curation_then_finalizes():
     c, brain, ex = _rig(shadow=False)
     rid = c.create_run("COLLAB_CH", shadow_enabled=False)["id"]
     await _start(c, brain, rid)
-    proposal = _proposal("challenge", "收尾总结")
+    from test_review_defects_cs12 import reviewed
+    proposal = reviewed(_proposal("challenge", "收尾总结"))
     # The fake must cite real snapshot evidence, just like a native curation.
     refs = [f"event:{rid}:{r['seq']}" for r in db.query("SELECT seq FROM events WHERE run_id=? AND type='trial.created'", (rid,))]
     proposal['evidence_refs'] = refs
@@ -1886,9 +1889,9 @@ async def test_curate_global_experience_runless_session():
     assert packet["trigger"] == "global_curation"
     assert packet["challenges"][0]["challenge_id"] == "COLLAB_CH"
     assert "usage" in packet["challenges"][0]
-    dec = _decision([{"op": "wait", "reason": "仅整理"}], sv=0)
-    dec["experience_proposals"] = [_proposal("global", "全局整理产出")]
-    await brain.results.put({"decision": dec})
+    from test_review_defects_cs12 import reviewed
+    await brain.results.put({'curation_result':{'schema_version':1,'message_type':'curation_result',
+        'summary':'仅整理','experience_proposals':[reviewed(_proposal('global','全局整理产出'))]}})
     ok = await _wait(lambda: c.global_curation_status().get("state") == "done")
     assert ok
     assert c.global_curation_status()["proposals_applied"] == 1

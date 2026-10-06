@@ -18,17 +18,37 @@ class PreflightError(Exception):
         self.details = details or {}
 
 
-_PYTHON = re.compile(r"(?:^|\s)(?:python(?:[0-9.]+)?|/usr/bin/python(?:[0-9.]+)?)\s+([^\s;&|]+)")
 _INSTALL = re.compile(r"\b(?:pip\s+install|uv\s+pip|conda\s+install|mamba\s+install)\b")
 
 
 def _entry(command: str, declared: str | None) -> str | None:
     if declared:
         return declared
-    match = _PYTHON.search(command)
-    if not match:
+    try:
+        tokens = shlex.split(command)
+        if tokens and Path(tokens[0]).name in ('bash', 'sh') and '-lc' in tokens:
+            tokens = shlex.split(tokens[tokens.index('-lc') + 1])
+    except (ValueError, IndexError):
         return None
-    entry = match[1].strip("'\"")
+    position = next((i for i, token in enumerate(tokens)
+                     if re.fullmatch(r'python(?:[0-9.]+)?', Path(token).name)), None)
+    if position is None:
+        return None
+    args = iter(tokens[position + 1:]); entry = None
+    for token in args:
+        if token in ('-c', '-m', '-') or re.fullmatch(r'-[IBEsSuOPqivx]*[cm]', token):
+            return None  # Inline code/modules need an explicitly declared source.
+        if token in ('-W', '-X', '--check-hash-based-pycs'):
+            next(args, None); continue
+        if token == '--':
+            entry = next(args, None); break
+        if token.startswith('-'):
+            continue
+        if token in ('&&', ';', '|'):
+            return None
+        entry = token; break
+    if not entry:
+        return None
     cd = re.search(r"(?:^|[;&|]\s*)cd\s+([^\s;&|]+)\s*(?:&&|;)", command)
     return (str(Path(cd[1].strip("'\"")) / entry) if cd and not Path(entry).is_absolute()
             else entry)
@@ -123,7 +143,9 @@ def check_sources(files: dict[str, bytes], command: str = "", entry: str | None 
                     missing.add(module.replace("/", ".") + ".py")
                 elif top in sys.stdlib_module_names:
                     continue
-                elif top.lower().replace("-", "_") in requirements:
+                elif top.lower().replace("-", "_") in requirements or {
+                        'PIL':'pillow','sklearn':'scikit_learn','yaml':'pyyaml',
+                        'cv2':'opencv_python'}.get(top) in requirements:
                     third_party.add(top)
                 elif importlib.util.find_spec(top) is not None:
                     third_party.add(top)

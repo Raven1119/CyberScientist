@@ -231,6 +231,7 @@ def submit_checkpoint(run_id: str, msg: dict[str, Any], *,
                         replay.append(item)
                 return {"checkpoint_id": existing["id"], "review_id": receipt.get("review_id") or (review["id"] if review else None),
                         "next_action": next_action, "deduplicated": True,
+                        "experience_adoption_rejections": receipt.get('experience_adoption_rejections', []),
                         "guidance": replay if next_action == "continue" else []}
             raise CollabError(
                 "CONFLICT",
@@ -253,11 +254,17 @@ def submit_checkpoint(run_id: str, msg: dict[str, Any], *,
             {"checkpoint_id": cp_id, "checkpoint_key": key,
              "stage": msg["stage"], "review": msg["review"],
              "report_excerpt": msg["report_md"][:300]}, trial_id=trial_id)
-        try:
-            experience_context.adopt_tx(conn,run_id,trial_id,msg.get("experience_uses",[]),
-                                       source,f"checkpoint:{cp_id}")
-        except ValueError as exc:
-            raise CollabError("INVALID_MESSAGE",str(exc)) from exc
+        adoption_rejections = []
+        for index, declaration in enumerate(msg.get('experience_uses', [])):
+            try:
+                experience_context.adopt_tx(conn,run_id,trial_id,[declaration],source,f'checkpoint:{cp_id}')
+            except ValueError as exc:
+                # Adoption is an independently checked claim. Its rejection
+                # must not erase the checkpoint's research evidence or valid claims.
+                rejected = {'index':index,'reason':str(exc)}
+                adoption_rejections.append(rejected)
+                db.append_event_tx(conn,run_id,'controller','experience.adoption_rejected',
+                    {'checkpoint_id':cp_id,**rejected},trial_id=trial_id)
         # 检查点是已登记科学证据：提升证据版本
         conn.execute(
             "UPDATE supervision SET evidence_revision=evidence_revision+1,"
@@ -309,12 +316,14 @@ def submit_checkpoint(run_id: str, msg: dict[str, Any], *,
         from . import datasets
         evidence_class = datasets.evidence_class(conn, run_id, trial_id)
         conn.execute("UPDATE checkpoints SET receipt_json=? WHERE id=?",
-                     (json.dumps({"review_id":review_id,"guidance":delivered,
+            (json.dumps({"review_id":review_id,"guidance":delivered,
+                                  'experience_adoption_rejections':adoption_rejections,
                                   "evidence_class":evidence_class},ensure_ascii=False),cp_id))
 
     if notify:
         notify(run_id)  # 唤醒已排队请求；sparse shadow 仅由研究级事件触发
     return {"checkpoint_id": cp_id, "review_id": review_id,
+            'experience_adoption_rejections':adoption_rejections,
             "next_action": next_action, "deduplicated": False,
             "guidance": delivered, "evidence_class": evidence_class}
 

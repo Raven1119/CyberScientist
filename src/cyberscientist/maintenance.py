@@ -10,7 +10,7 @@ from pathlib import Path
 
 import jsonschema
 
-from . import config, curation, db, resource_coordinator, trial_notes
+from . import config, curation, db, resource_coordinator, trial_notes, review_policy
 from .observation import strip_secrets
 
 CALL_LIMIT = 2
@@ -146,12 +146,14 @@ def _snapshot_locked(controller, run_id: str) -> dict:
                              'through_seq': through, 'steps': len(steps), 'truncated': False},
             'full_public_trace_jsonl': raw,
             'run_evidence': evidence, 'environment_receipts': environment,
+            'design_decisions': review_policy.decisions(),
             'full_evidence_refs': full_refs, 'hash_reference_sources': hash_refs, 'artifact_inventory': inventory,
             'instruction': '在全新上下文中通读full_public_trace_jsonl提供的完整公开轨迹，不只依赖摘要；文件保留原文供核对。'
                 '先写可照做的步骤、不要做的事和关键数值；不确定性一两句话说明，并引用真实证据。'
                 '提议只能引用full_evidence_refs中的精确字符串；sha256引用只是轨迹内可见记录，不代表科学验证。'
                 '完整材料已提供，无需工具；禁止计算、联网和提交，只分析已有轨迹。'
-                '系统缺陷写给开发者，策略教训写经验候选；环境文字是建议，只有真实回执代码可生效为环境事实。',
+                '系统缺陷写给开发者，策略教训写经验候选；环境文字是建议，只有真实回执代码可生效为环境事实。'
+                + review_policy.INSTRUCTION,
             'output_contract': output_contract()}
     packet = json.loads(strip_secrets(json.dumps(packet, ensure_ascii=False)))
     packet['snapshot_sha256'] = hashlib.sha256(json.dumps(packet, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
@@ -169,6 +171,7 @@ def write_report(run_id: str, packet: dict | None, result: dict | None, error: s
             '完整轨迹交付证据：' + json.dumps(result.get('trace_delivery_evidence', {}), ensure_ascii=False) + '\n\n' +
             '## 系统缺陷\n\n' + result.get('system_defects_md', 'unknown；未得到模型分析') +
             '\n\n## 策略教训候选\n\n' + json.dumps(result.get('strategy_lessons', []), ensure_ascii=False, indent=2) +
+            '\n\n## 冲突或缺证据教训（不进入经验）\n\n' + json.dumps(result.get('excluded_lessons', []), ensure_ascii=False, indent=2) +
             '\n\n## 环境事实\n\n' + json.dumps((packet or {}).get('environment_receipts', []), ensure_ascii=False, indent=2) +
             '\n\n复盘的环境建议（不升级为事实）：\n' + result.get('environment_notes_md', 'unknown') + '\n')
     target = config.WORKSPACE_DIR / 'reviews' / (('repeat-postreview-' + review_id if review_id else run_id) + '.md')
@@ -188,6 +191,11 @@ def _update_review(run_id, review_id, *, conn=None, **fields):
 def native_materials(packet: dict) -> tuple[dict, dict[str, str]]:
     """Use verified file chunks when the native RPC cannot carry a full trace."""
     from .role_tasks import prompt
+    # Pending historical reviews keep their frozen trace/cutoff. Their old
+    # output schema must not force new policy fields back into prose.
+    packet = {**packet, 'output_contract': output_contract(), 'design_decisions': review_policy.decisions()}
+    if review_policy.INSTRUCTION not in packet['instruction']:
+        packet['instruction'] += review_policy.INSTRUCTION
     if len(prompt(packet)) <= 900_000: return packet, {}
     raw = packet['full_public_trace_jsonl']
     root = Path(packet['public_trace']['path']).parent / ('chunks-' + packet['public_trace']['sha256'])
@@ -205,7 +213,7 @@ def native_materials(packet: dict) -> tuple[dict, dict[str, str]]:
     small = {key: value for key, value in packet.items() if key != 'full_public_trace_jsonl'}
     small['trace_delivery'] = {'mode': 'verified_file_chunks', 'chunks': descriptors,
         'complete_characters': len(raw), 'complete_sha256': packet['public_trace']['sha256'], 'truncated': False}
-    small['instruction'] = ('原生单次输入有限，完整公开轨迹已分块到trace_delivery.chunks。'
+    small['instruction'] = (packet['instruction'] + '\n原生单次输入有限，完整公开轨迹已分块到trace_delivery.chunks。'
         '必须按顺序逐个用cat读取每一个绝对路径，每条shell命令只cat一个分块，max_output_tokens至少16000。'
         '不要用循环/合并cat/摘要/head/tail代替；每个分块约10000字符，可完整读取。'
         '全部读取完成后再分析；后台核对每个已完成工具回执的全文，缺块不会通过。'
@@ -382,8 +390,15 @@ async def run_post_review(controller, run_id: str, *, review_id: str | None = No
         result['trace_delivery_evidence'] = {'mode': 'verified_file_chunks' if chunks else 'complete_native_input',
             'chunks_read': len(read_chunks), 'chunks_required': len(chunks), 'sha256': packet['public_trace']['sha256'],
             'truncated': False}
+        result['review_policy_materialization'] = {
+            'frozen_snapshot_sha256': packet['snapshot_sha256'],
+            'decision_sha256': model_packet['design_decisions']['sha256'],
+            'output_contract_sha256': hashlib.sha256(json.dumps(model_packet['output_contract'], sort_keys=True).encode()).hexdigest()}
         ids = []
-        for proposal in result['strategy_lessons']:
+        accepted, excluded = review_policy.split(result['strategy_lessons'])
+        result['strategy_lessons'] = accepted
+        result['excluded_lessons'] = excluded
+        for proposal in accepted:
             candidate = {**proposal, 'evidence_status': 'hypothesis'}
             # A post-review candidate cannot demote or overwrite an active
             # recipe or another Run's strategy. PI adoption is separate.

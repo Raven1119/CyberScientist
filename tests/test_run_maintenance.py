@@ -128,6 +128,8 @@ async def test_post_review_accepts_complete_trace_refs_but_saves_only_candidate(
                 assert middle not in packet['run_evidence']['evidence_refs']
                 p = _proposal('challenge', '独立复盘候选')
                 p['evidence_refs'] = [middle]
+                from test_review_defects_cs12 import reviewed
+                p = reviewed(p)
                 yield BrainEvent('task_result', {'result': {'system_defects_md': 'Full public trace read in fake',
                     'strategy_lessons': [p], 'environment_notes_md': 'No actual receipt'}})
     monkeypatch.setattr(ctl, '_make_brain', lambda _: Brain())

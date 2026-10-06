@@ -145,7 +145,8 @@ async def test_real_triage_contract_rejects_wrong_fields_on_native_path(monkeypa
     from test_competition import challenges
     challenges(1); rnd = competition.import_round(['c0'], mode='demo')
     good = {'difficulty': 'easy', 'estimated_minutes': 1, 'estimated_cost_cny': None,
-        'recommended_model': 'gpt-6.1-sol', 'recommended_solver_id': None, 'reason': 'fixture'}
+        'recommended_model': 'gpt-6.1-sol', 'recommended_solver_id': None, 'reason': 'fixture',
+        'priority':0,'data_complete':None}
     bad = {**good, 'estimated_minutes': 'wrong'}
     class NativeBrain(CodexBrain):
         async def open(self, spec): return SessionRef('codex', 'same-session')

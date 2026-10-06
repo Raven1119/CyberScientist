@@ -6,7 +6,7 @@ from typing import Any
 
 import jsonschema
 
-from . import db, decision, observation, submission_predictions
+from . import db, decision, observation, submission_predictions, review_policy
 from .decision_extraction import _extract_json
 
 
@@ -16,7 +16,7 @@ def schema() -> dict:
             'properties': {'schema_version': {'const': 1},
                            'message_type': {'const': 'curation_result'},
                            'summary': {'type': 'string', 'minLength': 1, 'maxLength': 4000},
-                           'experience_proposals': decision.load_schema()['properties']['experience_proposals']}}
+                           'experience_proposals': review_policy.proposals_schema(decision.load_schema()['properties']['experience_proposals'])}}
 
 
 def extract(text: str) -> dict | None:
@@ -39,6 +39,7 @@ def prompt(packet: dict) -> str:
         '每条提议给出 audience=brain/executor/both；未给时按 both。环境事实只能由真实回执代码生成，不可提议。'
         '如素材含提交预测与已确认评分，区分预测成立、被否定或证据不清，不臆造分量变化。'
         '全局经验仅为 candidate；本次推导仍是 hypothesis。'
+        + review_policy.INSTRUCTION +
         '仅输出以下 JSON 格式，不含 run_id、状态版本或 actions：\n'
         '{"schema_version":1,"message_type":"curation_result","summary":"...",'
         '"experience_proposals":[]}\n'

@@ -32,6 +32,8 @@ async def test_visible_hash_reference_previously_outside_snapshot_is_accepted_as
     assert 'sha256:' + digest in packet['full_evidence_refs']
     assert packet['hash_reference_sources']['sha256:' + digest] == [f"event:{rid}:{event['seq']}"]
     proposal = _proposal('challenge', 'Hash backed lesson'); proposal['evidence_refs'] = ['sha256:' + digest]
+    from test_review_defects_cs12 import reviewed
+    proposal = reviewed(proposal)
     calls = []; monkeypatch.setattr(ctl, '_make_brain', lambda settings: fake_brain({'system_defects_md': 'ok', 'strategy_lessons': [proposal], 'environment_notes_md': 'unknown'}, calls))
     maintenance.grant_post_review(ctl, rid, 'repeat-one', allow_model_calls=True, reason='Explicit single-call review')
     await maintenance.run_post_review(ctl, rid, review_id='repeat-one')

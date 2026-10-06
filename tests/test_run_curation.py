@@ -25,6 +25,9 @@ async def test_run_curation_freezes_evidence_deduplicates_and_keeps_hypotheses(m
             assert any(e['type'] == 'job.unknown' for e in ev['events'])
             p = _proposal('global', 'Do not repeat an unknown create')
             p['evidence_refs'] = ['invented:missing'] if invalid else ev['evidence_refs']
+            from test_review_defects_cs12 import reviewed
+            p['title'] = '核对未知回执后改用新操作'
+            p = reviewed(p)
             yield BrainEvent('curation_result', {'result': dict(schema_version=1, message_type='curation_result', summary='Source-grounded fixture', experience_proposals=[p])})
     monkeypatch.setattr(c, '_make_brain', lambda _: Brain())
     first = await c.curate_run_experience(rid, 'stable-op')

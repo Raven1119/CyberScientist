@@ -67,6 +67,14 @@ def _objective_evidence_exists(run_id: str, ref: object) -> bool:
     if checkpoint:
         return bool(db.query_one('SELECT 1 FROM checkpoints WHERE run_id=? AND id=?',
                                  (run_id, checkpoint.group(1))))
+    score = re.fullmatch(r'local_score:([A-Za-z0-9_-]+)', ref)
+    if score:
+        return bool(db.query_one('SELECT 1 FROM local_scores WHERE run_id=? AND id=?',
+                                 (run_id, score.group(1))))
+    review = ref.removeprefix('package_review:')
+    if db.query_one("SELECT 1 FROM package_reviews WHERE run_id=? AND operation_id=? AND status='done'",
+                    (run_id, review)):
+        return True
     numbered = re.fullmatch(r'([^#]+)#([0-9]+)', ref)
     if numbered:
         return numbered.group(1) == run_id and bool(db.query_one(
@@ -894,6 +902,8 @@ class RunController:
             if (run_id, 'brain_interrupt') in self._session_restarts or db.query_one(
                     "SELECT 1 FROM system_state WHERE key=?", ('native_close_unknown:' + run_id,)):
                 raise ControllerError('RECOVERABLE', '大脑原生会话停止仍在核对；不能恢复并重叠调用')
+            if db.query_one('SELECT 1 FROM system_state WHERE key=?', ('native_close_unknown:executor-pause:' + run_id,)):
+                raise ControllerError('RECOVERABLE', '执行器原生会话停止仍在核对；不能恢复并重叠调用')
             self._require_model_authorization(run_id)
             if run["phase"] == "recovering":
                 from . import resource_coordinator
@@ -1850,16 +1860,20 @@ class RunController:
                     receipt = await self._prime_instances[run_id].abort(
                         self._prime_sessions[run_id])
                     confirmed = receipt.status == 'confirmed'
-                    if not confirmed and self._require_run(run_id)['pending_end_reason']:
+                    if not confirmed or db.query_one('SELECT 1 FROM system_state WHERE key=?', ('native_close_unknown:executor-pause:' + run_id,)):
+                        confirmed = False  # An idle turn cannot clear a failed process close.
                         try:
                             await asyncio.wait_for(self._prime_instances[run_id].close(self._prime_sessions[run_id]), 15)
                             confirmed = True
                             self._prime_instances[run_id] = None
+                            self._executor_busy[run_id] = False
+                            db.execute('DELETE FROM system_state WHERE key=?', ('native_close_unknown:executor-pause:' + run_id,))
                             db.append_event(run_id, 'controller', 'run.native_session_closed', {
                                 'abort_status': receipt.status, 'notice': '本地会话关闭已确认；远程任务仍独立对账'})
                         except Exception as exc:
                             from . import resource_coordinator, maintenance
-                            resource_coordinator.close_failed(run_id, exc)
+                            ending = self._require_run(run_id)['pending_end_reason']
+                            resource_coordinator.close_failed(run_id if ending else 'executor-pause:' + run_id, exc)
                             maintenance.queue_end(self, run_id, self._require_run(run_id)['pending_end_reason'])
                     if confirmed:
                         db.execute("UPDATE runs SET phase='paused' WHERE id=?",
@@ -1949,7 +1963,8 @@ class RunController:
                 # The Run-level flag aggregates both native roles. Clear it
                 # only after ALL original sessions are confirmed closed;
                 # historical failure events remain in the audit ledger.
-                db.execute('DELETE FROM system_state WHERE key=?', ('native_close_unknown:' + run_id,))
+                db.execute('DELETE FROM system_state WHERE key IN (?,?)',
+                    ('native_close_unknown:' + run_id, 'native_close_unknown:executor-pause:' + run_id))
             with db.transaction() as conn:
                 collab.revoke_run_tokens(conn,run_id)
                 conn.execute('DELETE FROM model_session_leases WHERE owner=?', (run_id,))
@@ -2071,6 +2086,8 @@ class RunController:
             if self._handle_signal_guarded_pause(run_id):
                 if run["phase"] == "pausing" and etype in ("run.aborted","executor.turn_completed","trial.completed","session.ended"):
                     self._executor_busy[run_id] = False
+                    if db.query_one('SELECT 1 FROM system_state WHERE key=?', ('native_close_unknown:executor-pause:' + run_id,)):
+                        return  # The loop retries original close after this boundary.
                     db.execute("UPDATE runs SET phase='paused' WHERE id=? AND phase='pausing'",(run_id,))
                     from . import run_clock
                     run_clock.freeze(run_id)
@@ -2140,6 +2157,12 @@ class RunController:
             # 恢复：重新挂接执行器。若仍有活跃 Trial 且执行器空闲，
             # 重新下发任务让其继续（远程 Job 的实际状态核对属阶段 2）。
             run = self._require_run(run_id)
+            if self._prime_instances.get(run_id) is None:
+                if not await self._restart_prime_session(run_id):
+                    self._pause_needs_attention(run_id, '执行器原会话恢复失败；未启动新回合')
+                    return
+                ctx['prime'] = self._prime_instances[run_id]
+                ctx['prime_sid'] = self._prime_sessions[run_id]
             trial_id = run["current_trial_id"]
             if trial_id and run["gate"] == "open":
                 trial = db.query_one("SELECT * FROM trials WHERE id=?", (trial_id,))
@@ -2242,13 +2265,16 @@ class RunController:
             runtime = self._make_prime(self._runtime_settings(run_id))
             if isinstance(runtime, KimiExecutor):
                 runtime.ask_handler = lambda _sid, question: self._answer_executor_question(run_id,question)
-            new_session = await asyncio.wait_for(runtime.start(
-                self._prime_spec(run_id, self._runtime_settings(run_id))), timeout=60)
+            spec = self._prime_spec(run_id, self._runtime_settings(run_id))
+            if old is None and isinstance(runtime, CodexExecutor):
+                spec['resume_thread_id'] = self._require_run(run_id)['executor_thread_id']
+            new_session = await asyncio.wait_for(runtime.start(spec), timeout=60)
         except Exception:
             log.exception("Run %s executor session restart failed", run_id)
             return False
         self._prime_instances[run_id] = runtime
         self._prime_sessions[run_id] = new_session
+        db.execute('UPDATE runs SET executor_thread_id=? WHERE id=?', (new_session, run_id))
         self._executor_busy[run_id] = False
         self._native_arrival_at.pop(run_id, None)
         self._last_native_marker_at.pop(run_id, None)
@@ -4225,9 +4251,11 @@ class RunController:
             work.mkdir(parents=True, exist_ok=True)
             session = await brain.open({"working_directory": str(work), "pi_files_readonly": True})
             listing = experiences.list_experiences(scope="global")
+            from . import review_policy
             packet = {
                 "trigger": "global_curation",
                 "protocol": "experience_curation",
+                "design_decisions": review_policy.decisions(),
                 "instruction": "整理全局经验库：阅读下列全局条目（含待审批与驳回"
                                "批注）与入选题目的题内经验及使用结果，决定新建/"
                                "更新(target_id)/不变。全局产出落 candidate，由用户"
@@ -4264,12 +4292,15 @@ class RunController:
             for proposal in decision.get("experience_proposals", []):
                 if proposal["scope"] != "global":
                     raise ControllerError("INVALID_CURATION", "全局整理只能提议全局候选")
+            accepted, excluded = review_policy.split(decision.get('experience_proposals', []))
+            for proposal in accepted:
                 proposal = {**proposal, "evidence_status": "hypothesis"}
                 applied += bool(self._apply_experience_proposal(None, "curation", proposal))
             self._global_curation = {
                 "state": "done", "finished_at": db.utcnow(),
                 "challenge_ids": challenge_ids,
                 "summary": decision.get("summary", "")[:500],
+                "excluded_lessons": excluded,
                 "proposals_applied": applied}
         except asyncio.CancelledError:
             self._global_curation = {'state': 'failed', 'finished_at': db.utcnow(), 'error': '安全关机中断整理；不会自动重复调用模型'}
@@ -4310,8 +4341,10 @@ class RunController:
         # Filesystem experience reconciliation can commit, so perform it
         # before the atomic request insertion.
         evidence = run_evidence(run_id)
+        from . import review_policy
         packet = {'protocol': 'experience_curation', 'trigger': 'run_curation',
-                  'run_evidence': evidence, 'curation': self._curation_payload(run)}
+                  'run_evidence': evidence, 'curation': self._curation_payload(run),
+                  'design_decisions': review_policy.decisions()}
         with db.transaction() as conn:
             old = conn.execute('SELECT * FROM curation_requests WHERE operation_id=?', (operation_id,)).fetchone()
             if old:
@@ -4379,7 +4412,11 @@ class RunController:
                     raise ControllerError('INVALID_EVIDENCE', '经验必须引用本次整理快照中存在的证据')
                 if proposal['scope'] == 'challenge' and proposal['challenge_id'] != packet['run_evidence']['challenge_id']:
                     raise ControllerError('INVALID_EVIDENCE', '题内经验不能指向其他题目')
-            for proposal in result['experience_proposals']:
+            from . import review_policy
+            accepted, excluded = review_policy.split(result['experience_proposals'])
+            result['excluded_lessons'] = excluded
+            result['experience_proposals'] = accepted
+            for proposal in accepted:
                 eid = self._apply_experience_proposal(row['run_id'], request_id, {**proposal, 'evidence_status': 'hypothesis'})
                 if eid:
                     ids.append(eid)

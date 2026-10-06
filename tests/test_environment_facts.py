@@ -100,4 +100,6 @@ def test_curation_protocol_rejects_environment_proposal():
             'experience_proposals':[proposal]}
     assert curation.extract(json.dumps(result)) is None
     proposal['kind']='heuristic'
+    from test_review_defects_cs12 import reviewed
+    result['experience_proposals']=[reviewed(proposal)]
     assert curation.extract(json.dumps(result)) is not None
