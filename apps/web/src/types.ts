@@ -14,11 +14,13 @@ export interface SettingsStatus {
 export interface SolverEntry extends ModelChoice { id: string; name: string; note?: string }
 
 export interface Settings {
+  codex_fast_mode?: boolean
   features?: Record<string, boolean>
   schema_version: number
   revision: number
   app: { host: string; port: number; mode: string; data_dir: string }
   brain: {
+    fast_mode?: boolean
     provider?: string
     runtime: string
     executable: string
@@ -27,6 +29,7 @@ export interface Settings {
     auth_mode: string
   }
   executor: {
+    fast_mode?: boolean
     provider?: string
     runtime: string
     executable: string
@@ -139,6 +142,7 @@ export interface ChallengeDetail extends ChallengeSummary {
 }
 
 export interface ModelChoice {
+  fast_mode?: boolean
   provider?: string
   note?: string
   runtime: string

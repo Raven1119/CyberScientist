@@ -44,6 +44,7 @@ def update_secret(secret_id: str, value: str | None) -> None:
         save_secrets(secrets)
 
 DEFAULT_SETTINGS: dict[str, Any] = {
+    'codex_fast_mode': True,
     'features': {'auto_harvest': True, 'reviewer': True, 'strategy_cards': True, 'deepseek_fallback': True, 'system_triage': True, 'local_calculation': True, 'environment_catalog': True, 'scorer_audit': True, 'await_score': True, 'shared_area': True, 'protocol_drift': True},
     "schema_version": 1,
     "revision": 0,
@@ -57,7 +58,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
               "custom_profile_id": None},
     "executor": {"runtime": "codex",
                  "executable": "",
-                 "model_id": "gpt-6-sol",
+                 "model_id": "gpt-6.1-sol",
                  "reasoning_effort": "high"},
     "reviewer": {"runtime": "codex", "provider": "codex", "executable": "",
                  "model_id": "gpt-6.1-sol", "reasoning_effort": "high"},

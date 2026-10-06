@@ -270,3 +270,16 @@ it('saves a scheduling-only clock and requires saving a changed submission trans
   await user.click(screen.getByRole('button', { name: '保存提交方式' }))
   expect(put.mock.calls[1][1]).toMatchObject({ verified: true, paths: { bundle: '/track-b/attempts/{id}/bundle' } })
 })
+
+it('defaults Sol to high and persists explicit per-role fast choices in the template', async () => {
+  get.mockImplementation(async (path: string) => path === '/api/v1/rounds' ? { items: [{ id: 'round_one', status: 'draft' }] } : detail)
+  put.mockResolvedValue(detail)
+  render(<CompetitionPage />)
+  await screen.findByText(/easy · deepseek-flash/)
+  expect((screen.getByLabelText('求解者 思考强度') as HTMLSelectElement).value).toBe('high')
+  expect((screen.getByLabelText('PI fast') as HTMLInputElement).checked).toBe(true)
+  const user = userEvent.setup()
+  await user.click(screen.getByLabelText('求解者 fast'))
+  await user.click(screen.getByRole('button', { name: '保存当前模板' }))
+  expect(put.mock.calls[0][1].template.model_config).toMatchObject({ brain: { fast_mode: true, reasoning_effort: 'xhigh' }, executor: { fast_mode: false, reasoning_effort: 'high' } })
+})

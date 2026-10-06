@@ -51,6 +51,9 @@ def choose(role: str, supplied: dict[str, Any] | None,
     result = {"runtime": runtime, "model_id": model.strip(),
               "reasoning_effort": effort}
     result['provider'] = provider
+    if 'fast_mode' in source:
+        if type(source['fast_mode']) is not bool: raise ValueError('fast模式须为布尔值')
+        result['fast_mode']=source['fast_mode']
     if 'note' in source:
         if not isinstance(source['note'], str) or len(source['note']) > 2000:
             raise ValueError('求解者备注必须是最多 2000 字的文本')

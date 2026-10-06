@@ -24,6 +24,12 @@ def fake_checks(monkeypatch):
         monkeypatch.setattr(preflight.public_research, name, lambda value: {'status':'received','sha256':'a'*64,'body':'private remote body'})
     monkeypatch.setattr(config, 'deepseek_key', lambda: 'fake_deepseek')
     config.update_secret('operator', 'fake_operator'); config.update_secret('bohr', 'fake_bohr')
+    from cyberscientist import codex_fast
+    settings=config.load_settings()
+    for role in ('brain','executor','reviewer','post_review'):
+        choice=settings[role]
+        if choice.get('provider',choice['runtime'])=='codex':
+            codex_fast.record({'model':choice['model_id'],'requested':True,'enabled':True,'tier':'priority','status':'enabled','source':'synthetic_fixture'})
 
 
 async def execute():

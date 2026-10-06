@@ -255,6 +255,7 @@ export default function SettingsPage() {
                 {role === 'executor' && <option value="prime">Prime Agent</option>}
               </select></label>
               <label>{label}模型 ID<input readOnly={role === 'brain'} value={role === 'brain' ? 'gpt-6-astra' : current.model_id} onChange={e => setRole({ ...current, model_id: e.target.value })} /></label>
+              <label><input type="checkbox" disabled={(current.provider ?? current.runtime) !== 'codex'} checked={(current.provider ?? current.runtime) === 'codex' && (current.fast_mode ?? settings.codex_fast_mode ?? true)} onChange={e => setRole({ ...current, fast_mode: e.target.checked })} />{label} fast模式</label>
               <label>{label}可执行文件<input value={current.executable ?? ''} onChange={e => update(s => ({ ...s, [role]: { ...s[role], ...current, executable: e.target.value } }))} /></label>
               <label>{label}推理强度<select disabled={role === 'brain'} value={role === 'brain' ? 'xhigh' : current.reasoning_effort} onChange={e => setRole({ ...current, reasoning_effort: e.target.value as ReasoningEffort })}>
                 {(role === 'brain' ? ['xhigh'] : current.provider === 'deepseek' ? ['low', 'high', 'max'] : ['low', 'medium', 'high', 'xhigh', 'max']).map(e => <option key={e}>{e}</option>)}
@@ -279,6 +280,7 @@ export default function SettingsPage() {
                 {['codex', 'deepseek', 'kimi', 'prime'].map(p => <option key={p}>{p}</option>)}
               </select></label>
               <label>条目模型<input value={item.model_id} onChange={e => change({ ...item, model_id: e.target.value })} /></label>
+              <label><input type="checkbox" disabled={(item.provider ?? item.runtime) !== 'codex'} checked={(item.provider ?? item.runtime) === 'codex' && item.fast_mode !== false} onChange={e => change({ ...item, fast_mode: e.target.checked })} />条目 fast模式</label>
               <label>条目思考强度<select value={item.reasoning_effort} onChange={e => change({ ...item, reasoning_effort: e.target.value as ReasoningEffort })}>
                 {(item.provider === 'deepseek' ? ['low', 'high', 'max'] : ['low', 'medium', 'high', 'xhigh', 'max']).map(e => <option key={e}>{e}</option>)}
               </select></label>

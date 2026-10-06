@@ -172,6 +172,8 @@ def _template(template: dict, mode: str, *, frozen: bool = False) -> dict:
         from .pi_policy import migrated
         choices['brain'] = migrated(choices['brain'])
     solver_entry = None
+    if template.get('solver_entry') is not None and (not isinstance(template['solver_entry'],dict) or set(template['solver_entry'])-{'id','name','runtime','provider','model_id','reasoning_effort','note','fast_mode'}):
+        raise CompetitionError('求解者派生条目字段不符')
     if template.get('solver_id'):
         solver_entry = template.get('solver_entry') if frozen else challenge_models.solver(template['solver_id'], settings)
         if solver_entry.get('id') != template['solver_id']:
@@ -179,6 +181,8 @@ def _template(template: dict, mode: str, *, frozen: bool = False) -> dict:
         solver_entry = challenge_models.roster({**settings, 'solver_roster': [solver_entry]})[0]
         choices['executor'] = solver_entry
     models = {role: challenge_models.choose(role, choices.get(role), settings) for role in ('brain', 'executor')}
+    if not frozen:
+        for role in models: models[role].setdefault('fast_mode',True)
     auth = template.get('authorization') or {}
     allowed = {'max_run_minutes', 'max_jobs', 'max_submissions', 'max_model_turns', 'max_sandboxes',
                'max_sandbox_minutes', 'allow_sandbox_gpu', 'allow_data_download', 'job_limits', 'max_environment_saves',

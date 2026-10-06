@@ -37,11 +37,12 @@ class CodexExecutor:
 
     def __init__(self, executable: str | None = None, model: str | None = None,
                  effort: str | None = None, stall_timeout: float = 240.0,
-                 provider: str | None = None):
+                 provider: str | None = None,fast_mode: bool | None = None):
         self.executable = executable or default_executable() or ""
         self.model = model
         self.effort = effort
         self.provider = provider
+        self.fast_mode = fast_mode
         self.stall_timeout = stall_timeout
         self._sessions: dict[str, _Session] = {}
 
@@ -63,9 +64,13 @@ class CodexExecutor:
             await initialize(rpc)
             params = thread_params(spec, self.model, self.effort, writable=True)
             model_providers.thread_provider(params, self.provider)
-            result = await open_thread(rpc, params, spec.get("resume_thread_id"))
+            from .. import codex_fast
+            fast=await codex_fast.prepare(rpc,params,self.model,self.provider,spec.get('fast_mode',self.fast_mode))
+            result,fast = await codex_fast.open_negotiated(rpc,params,fast,spec.get("resume_thread_id"))
             model_providers.verify_provider(result, self.provider)
             verify_thread_config(result, self.model, self.effort)
+            fast=codex_fast.confirmed(fast,result);codex_fast.record(fast)
+            if fast['requested'] is not None and self.provider in (None,'codex'): await codex_fast.observe_rates(rpc)
             tid = result["thread"]["id"]
         except BaseException:
             await rpc.stop()

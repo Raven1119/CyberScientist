@@ -274,6 +274,9 @@ class RunController:
         settings["run_defaults"] = config.load_settings()["run_defaults"]
         from .pi_policy import migrated
         settings['brain'] = migrated(settings['brain'])  # Historical snapshots remain immutable.
+        if snapshot.get('competition'):
+            for role in ('brain','executor','reviewer','post_review'):
+                if isinstance(settings.get(role),dict): settings[role].setdefault('fast_mode',True)
         return settings
 
     @staticmethod
@@ -339,7 +342,7 @@ class RunController:
             return CodexBrain(executable=brain_cfg.get("executable") or None,
                               model=brain_cfg.get("model_id"),
                               effort=brain_cfg.get("reasoning_effort"),
-                              provider=brain_cfg.get("provider"))
+                              provider=brain_cfg.get("provider"),fast_mode=brain_cfg.get('fast_mode',settings.get('codex_fast_mode')))
         return KimiBrain(executable=brain_cfg.get("executable") or None,
                          model=brain_cfg.get("model_id"),
                          effort=brain_cfg.get("reasoning_effort"))
@@ -359,7 +362,7 @@ class RunController:
             return CodexExecutor(
                 executable=exec_cfg.get("executable") or None,
                 model=exec_cfg.get("model_id"),
-                effort=exec_cfg.get("reasoning_effort"), provider=exec_cfg.get("provider"))
+                effort=exec_cfg.get("reasoning_effort"), provider=exec_cfg.get("provider"),fast_mode=exec_cfg.get('fast_mode',settings.get('codex_fast_mode')))
         return KimiExecutor(executable=exec_cfg.get("executable") or None,
                             model=exec_cfg.get("model_id"),
                             effort=exec_cfg.get("reasoning_effort"))

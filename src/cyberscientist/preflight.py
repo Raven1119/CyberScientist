@@ -209,6 +209,18 @@ def track_checks():
                  tracks=tracks,missing_clock=missing,expired_clock=expired,unverified_transport=unverified)
 
 
+def fast_check(settings):
+    models={settings[role].get('model_id') for role in ('brain','executor','reviewer','post_review')
+            if settings.get(role,{}).get('runtime')=='codex' and settings[role].get('provider','codex')=='codex'
+            and settings[role].get('fast_mode',settings.get('codex_fast_mode',True))}
+    facts={}
+    for model in sorted(models):
+        row=db.query_one('SELECT payload_json,observed_at FROM runtime_observations WHERE kind=?',('codex_fast:'+model,))
+        facts[model]=json.loads(row[0]) | {'observed_at':row[1]} if row else {'status':'not_observed','enabled':False}
+    return _item('codex_fast','pass' if all(v.get('enabled') is True for v in facts.values()) else 'warn',
+                 'fast原生平台确认事实；未实测或不支持保持可见',models=facts)
+
+
 async def _run(connection_checker, health_checker):
     settings = config.load_settings()
     async def bohrium_check():
@@ -219,6 +231,7 @@ async def _run(connection_checker, health_checker):
     checks = [asyncio.to_thread(mailbox_checks, settings), asyncio.to_thread(playground_check, settings), bohrium_check(), codex_check(settings), asyncio.to_thread(deepseek_check), asyncio.to_thread(research_check, 'web_search', public_research.web_search, 'Bohrium public documentation'), asyncio.to_thread(research_check, 'web_read', public_research.web_read, 'https://play.bohrium.com/api/protocol'), asyncio.to_thread(research_check, 'lkm', public_research.lkm_search, 'water hydrogen bonding'), asyncio.to_thread(drift_check)]
     names = ['mailboxes', 'playground', 'bohrium', 'codex', 'deepseek', 'web_search', 'web_read', 'lkm', 'protocol_drift']
     checks.append(asyncio.to_thread(track_checks));names.append('tracks')
+    checks.append(asyncio.to_thread(fast_check,settings));names.append('codex_fast')
     values = await asyncio.gather(*checks, return_exceptions=True)
     items = []
     for name, value in zip(names, values):

@@ -3,7 +3,7 @@ import { api } from '../api'
 import { useApp } from '../app-context'
 import type { SolverEntry } from '../types'
 
-type Choice = { provider?: string; note?: string; runtime: string; model_id: string; reasoning_effort: string }
+type Choice = { fast_mode?: boolean; provider?: string; note?: string; runtime: string; model_id: string; reasoning_effort: string }
 type Template = { pi_notes?: string; data_status?: string; solver_id?: string | null; model_config: { brain: Choice; executor: Choice }; authorization: {
   unlimited_resources?: boolean; allow_model_calls: boolean; max_run_minutes: number; max_jobs: number; max_submissions: number;
   max_sandboxes: number; max_environment_saves: number; max_sandbox_minutes: number; allow_data_download: boolean }; solver_note: string }
@@ -17,14 +17,16 @@ type Item = { id: string; challenge_id: string; title: string; phase: string; pr
 type Clock = { start: string | null; end: string | null; source: string; remaining_seconds: number | null; platform_end: string | null }
 type Transport = { base_url: string; paths: Record<string, string>; bundle_format: string; bundle_field: string; protocol_version: string; topic_link: string; verified: boolean; status?: string }
 type Round = { track_clock?: Clock; submission_transport?: Transport; template?: Template; user_prompt?: { version: number; content_md: string; sha256: string }; id: string; label: string; status: string; items: Item[]; resources: { sessions: { provider: string; used: number }[]; rate_limits: unknown[]; provider_backoff?: unknown[]; native_throttle?: unknown[] } }
-const choice = (model: string): Choice => ({ runtime: 'codex', model_id: model, reasoning_effort: 'xhigh' })
+const choice = (model: string): Choice => ({ runtime: 'codex', model_id: model, reasoning_effort: model === 'gpt-6.1-sol' ? 'high' : 'xhigh', fast_mode: true })
 function ModelFields({ label, role, value, onChange }: { label: string; role: 'brain' | 'executor'; value: Choice; onChange: (value: Choice) => void }) {
   if (role === 'brain') return <div className="form-grid">
     <label>{label}提供方<select value="codex" disabled><option value="codex">Codex</option></select></label>
     <label>{label}模型<input value="gpt-6-astra" readOnly /></label>
     <label>{label}思考强度<select value="xhigh" disabled><option>xhigh</option></select></label>
+    <label><input type="checkbox" checked={value.fast_mode !== false} onChange={e => onChange({ ...value, fast_mode: e.target.checked })} />{label}fast</label>
   </div>
   return <div className="form-grid">
+    <label><input type="checkbox" disabled={(value.provider ?? value.runtime) !== 'codex'} checked={(value.provider ?? value.runtime) === 'codex' && value.fast_mode !== false} onChange={e => onChange({ ...value, fast_mode: e.target.checked })} />{label}fast</label>
     <label>{label}提供方<select value={value.provider ?? value.runtime} onChange={e => onChange({ ...value, provider: e.target.value, runtime: e.target.value === 'deepseek' ? 'codex' : e.target.value, model_id: e.target.value === 'deepseek' ? 'deepseek-flash' : value.model_id, reasoning_effort: 'high' })}>
       <option value="codex">Codex</option><option value="deepseek">DeepSeek</option><option value="kimi">Kimi Code</option>{role === 'executor' && <option value="prime">Prime Agent</option>}
     </select></label>

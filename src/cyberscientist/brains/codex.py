@@ -47,11 +47,12 @@ class CodexBrain:
     kind = "codex"
 
     def __init__(self, executable: str | None = None, model: str | None = None,
-                 effort: str | None = None, provider: str | None = None):
+                 effort: str | None = None, provider: str | None = None,fast_mode: bool | None = None):
         self.executable = executable or default_executable() or ""
         self.model = model
         self.effort = effort
         self.provider = provider
+        self.fast_mode = fast_mode
         self.rpc: JsonRpcStdio | None = None
         self.server_version: str | None = None
         self._turn_id: str | None = None
@@ -119,9 +120,13 @@ class CodexBrain:
             await initialize(self.rpc)
             params = thread_params(spec, self.model, self.effort, writable=False)
             model_providers.thread_provider(params, self.provider)
-            result = await open_thread(self.rpc, params, spec.get("resume_thread_id"))
+            from .. import codex_fast
+            fast=await codex_fast.prepare(self.rpc,params,self.model,self.provider,spec.get('fast_mode',self.fast_mode))
+            result,fast = await codex_fast.open_negotiated(self.rpc,params,fast,spec.get("resume_thread_id"))
             model_providers.verify_provider(result, self.provider)
             verify_thread_config(result, self.model, self.effort)
+            fast=codex_fast.confirmed(fast,result);codex_fast.record(fast)
+            if fast['requested'] is not None and self.provider in (None,'codex'): await codex_fast.observe_rates(self.rpc)
         except BaseException:
             await self.rpc.stop()
             self.rpc = None
@@ -131,7 +136,7 @@ class CodexBrain:
         thread = result.get("thread", result)
         return SessionRef(runtime="codex", session_id=thread["id"],
                           raw={"thread": thread, "model": result.get("model"), "provider": result.get("modelProvider"),
-                               "reasoning_effort": result.get("reasoningEffort")})
+                               "reasoning_effort": result.get("reasoningEffort"),'fast_mode':fast})
 
     async def review(self, session: SessionRef,
                      packet: dict[str, Any]) -> AsyncIterator[BrainEvent]:

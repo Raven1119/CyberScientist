@@ -511,6 +511,7 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
                 destination[parts[-1]] = json.loads(json.dumps(source[parts[-1]]))
             from . import challenge_models, model_usage
             try:
+                if type(merged.get('codex_fast_mode',True)) is not bool: raise ValueError('Codex fast默认开关须为布尔值')
                 for role in ('brain', 'executor', 'reviewer', 'post_review'):
                     challenge_models.choose(role, None, merged)
                 merged['solver_roster'] = challenge_models.roster(merged)
