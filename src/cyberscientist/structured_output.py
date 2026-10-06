@@ -90,7 +90,7 @@ def claim_rewrite(runtime):
         auth = conn.execute('SELECT * FROM authorizations WHERE id=? AND run_id=?', (run['authorization_id'], rid)).fetchone()
         if not auth or not auth['allow_model_calls'] or run['phase'] not in ('created', 'running'):
             raise ValueError('当前状态未授权新的格式重写')
-        if auth['max_run_minutes'] and run_clock.remaining(run, auth) <= 0:
+        if (auth['max_run_minutes'] or auth['unlimited_resources']) and run_clock.remaining(run, auth) <= 0:
             raise ValueError('原Run时间授权已用尽')
         snapshot = json.loads(run['config_snapshot'])
         settings = snapshot['settings']

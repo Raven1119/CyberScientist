@@ -129,3 +129,36 @@ def close_failed(owner: str, exc: BaseException) -> None:
 
 def close_unknowns() -> list[dict]:
     return [json.loads(row['value']) for row in db.query("SELECT value FROM system_state WHERE key LIKE 'native_close_unknown:%'")]
+
+
+_THREAD_TASKS = {}
+
+
+async def tracked_thread(function,*args,owner_prefix='worker-'):
+    """A cancelled caller never detaches a real HTTP/file worker from shutdown."""
+    import uuid
+    from . import power
+    if power.shutdown_requested(): raise ValueError('安全关机已关闭新的后台读取')
+    owner=owner_prefix+uuid.uuid4().hex
+    async def run():
+        worker=asyncio.create_task(asyncio.to_thread(function,*args))
+        try: return await asyncio.shield(worker)
+        except asyncio.CancelledError:
+            while not worker.done():
+                try: await asyncio.shield(worker)
+                except asyncio.CancelledError: continue
+                except Exception: break
+            if not worker.cancelled(): worker.exception()
+            raise
+        finally:
+            unregister_auxiliary(owner);_THREAD_TASKS.pop(owner,None)
+    task=asyncio.create_task(run());_THREAD_TASKS[owner]=task
+    register_auxiliary(owner,task)
+    task.add_done_callback(lambda finished: None if finished.cancelled() else finished.exception())
+    return await asyncio.shield(task)
+
+
+async def drain_threads(*,prefix=''):
+    tasks=[task for owner,task in _THREAD_TASKS.items() if owner.startswith(prefix) and not task.done()]
+    for task in tasks: task.cancel()
+    if tasks: await asyncio.gather(*tasks,return_exceptions=True)

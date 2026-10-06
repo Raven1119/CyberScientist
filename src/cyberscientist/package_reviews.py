@@ -130,7 +130,7 @@ async def review(controller, run_id: str, trial_id: str, operation_id: str,
     controller._require_model_authorization(run_id)
     auth = db.query_one('SELECT * FROM authorizations WHERE id=?', (run['authorization_id'],))
     from . import run_clock
-    if run['phase'] not in ('running', 'created') or (auth and auth['max_run_minutes'] and run_clock.remaining(run, auth) <= 0):
+    if run['phase'] not in ('running', 'created') or (auth and (auth['max_run_minutes'] or auth['unlimited_resources']) and run_clock.remaining(run, auth) <= 0):
         raise ValueError('当前 Run 未授权新的审查调用')
     settings = controller._runtime_settings(run_id)
     original = settings['brain']
@@ -148,7 +148,7 @@ async def review(controller, run_id: str, trial_id: str, operation_id: str,
         brain = controller._make_brain(settings)
         session = await brain.open({'working_directory': str(Path(packet['sealed_package']['path']).parent), 'instructions': packet['instructions']})
         live = controller._require_run(run_id)
-        if live['phase'] not in ('running', 'created') or (auth and auth['max_run_minutes'] and run_clock.remaining(live, auth) <= 0):
+        if live['phase'] not in ('running', 'created') or (auth and (auth['max_run_minutes'] or auth['unlimited_resources']) and run_clock.remaining(live, auth) <= 0):
             raise ValueError('审查启动时原授权已结束，未发起模型 turn')
         if not features.enabled('reviewer'): raise ValueError('审查者已关闭，尚未发起模型turn')
         started = True

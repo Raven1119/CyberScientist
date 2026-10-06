@@ -20,14 +20,28 @@ def seed(n=10, mode='demo'):
     return rnd,items
 
 
+def historical_import(round_id,items):
+    from cyberscientist import challenge_models
+    snapshot=json.loads(db.query_one('SELECT config_json FROM eval_runs WHERE id=?',(round_id,))[0])
+    settings=config.load_settings()
+    snapshot['user_triage']={f'c{i}':{**item,'solver_entry':challenge_models.solver(item['solver_entry'],settings),'source':'operator_json'} for i,item in enumerate(items)}
+    raw=json.dumps(items)
+    with db.transaction() as conn:
+        import uuid,hashlib
+        conn.execute('INSERT INTO competition_triage_imports VALUES(?,?,?,?,?)',('historical_'+uuid.uuid4().hex,round_id,raw,hashlib.sha256(raw.encode()).hexdigest(),db.utcnow()))
+        conn.execute('UPDATE eval_runs SET config_json=? WHERE id=?',(json.dumps(snapshot),round_id))
+        for i,item in enumerate(items):conn.execute('UPDATE eval_results SET priority=? WHERE eval_id=? AND challenge_id=?',(item['priority'],round_id,f'c{i}'))
+
+
 @pytest.mark.asyncio
 async def test_ten_imports_atomic_queue_frozen_user_guidance_and_no_implicit_authorization():
     from cyberscientist.api import create_app
     rnd,items=seed()
     async with AsyncClient(transport=ASGITransport(app=create_app()),base_url='http://t') as client:
         response=await client.post(f"/api/v1/rounds/{rnd['id']}/triage-import",json={'items':items})
-        assert response.status_code==200
-        assert [i['priority'] for i in response.json()['items']]==list(range(9,-1,-1))
+        assert response.status_code==422 and '已停用' in response.text
+    historical_import(rnd['id'],items)
+    assert [i['priority'] for i in competition.get_round(rnd['id'])['items']]==list(range(9,-1,-1))
     assert not db.query('SELECT * FROM runs') and not db.query('SELECT * FROM authorizations')
     before=dict(db.query_one('SELECT * FROM competition_triage_imports'))
     db.init_db();db.init_db()
@@ -72,17 +86,17 @@ def test_invalid_last_item_cannot_partially_write(mutation):
 
 
 def test_import_revisions_retained_override_explicit_and_confirmed_round_rejects():
-    rnd,items=seed(1);competition.import_triage(rnd['id'],items)
-    items[0]['pi_notes']='第二版事务提示';competition.import_triage(rnd['id'],items)
+    rnd,items=seed(1);historical_import(rnd['id'],items)
+    items[0]['pi_notes']='第二版事务提示';historical_import(rnd['id'],items)
     assert len(db.query('SELECT * FROM competition_triage_imports'))==2
     result=competition.confirm(rnd['id'],template(),{'c0':{'pi_notes':'明确用户覆盖','authorization':template()['authorization']}})
     assert result['items'][0]['template']['pi_notes']=='明确用户覆盖'
     assert result['items'][0]['template']['solver_id']=='fixture-ds'
-    with pytest.raises(competition.CompetitionError,match='待确认'):competition.import_triage(rnd['id'],items)
+    with pytest.raises(competition.CompetitionError,match='已停用'):competition.import_triage(rnd['id'],items)
 
 
 def test_imported_solver_can_be_explicitly_cleared_for_manual_executor():
-    rnd,items=seed(1);competition.import_triage(rnd['id'],items)
+    rnd,items=seed(1);historical_import(rnd['id'],items)
     override={'solver_id':None,'model_config':{'executor':{'runtime':'codex','provider':'codex','model_id':'gpt-6.1-sol','reasoning_effort':'xhigh'}}}
     result=competition.confirm(rnd['id'],template(),{'c0':override})['items'][0]['template']
     assert result['solver_id'] is None and result['solver_entry'] is None

@@ -620,6 +620,14 @@ def init_db() -> None:
         conn.execute('CREATE TABLE IF NOT EXISTS environment_catalog_entries (id TEXT PRIMARY KEY,descriptor_json TEXT NOT NULL,sha256 TEXT NOT NULL,registered_at TEXT NOT NULL)')
         _ensure_columns(conn, 'authorizations', {'max_environment_saves': 'INTEGER NOT NULL DEFAULT 0'})
         _ensure_columns(conn, 'authorizations', {'unlimited_resources': 'INTEGER NOT NULL DEFAULT 0'})
+        conn.executescript('''CREATE TABLE IF NOT EXISTS competition_prompt_versions (
+            eval_id TEXT NOT NULL, version INTEGER NOT NULL, content_md TEXT NOT NULL,
+            sha256 TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY(eval_id,version));
+            CREATE TABLE IF NOT EXISTS competition_prompt_deliveries (
+            run_id TEXT PRIMARY KEY, version INTEGER NOT NULL, content_md TEXT NOT NULL,
+            received_at TEXT NOT NULL);''')
+        _ensure_columns(conn, 'eval_results', {'launch_state': "TEXT NOT NULL DEFAULT 'immediate'",
+                                             'data_ready': 'INTEGER NOT NULL DEFAULT 0','prompt_json':'TEXT'})
         conn.execute('CREATE TABLE IF NOT EXISTS job_score_receipts (operation_id TEXT PRIMARY KEY,run_id TEXT NOT NULL,job_operation_id TEXT NOT NULL,receipt_json TEXT NOT NULL,receipt_sha256 TEXT NOT NULL,created_at TEXT NOT NULL)')
         _ensure_columns(conn, 'compute_jobs', {'unknown_since': 'TEXT', 'input_bytes': 'INTEGER', 'concurrency_released': 'INTEGER NOT NULL DEFAULT 0'})
         _ensure_columns(conn, 'compute_jobs', {'bohr_job_id': 'INTEGER', 'retry_of': 'TEXT', 'retry_operation_id': 'TEXT', 'retry_at': 'TEXT', 'retry_error': 'TEXT', 'frozen_manifest_sha256': 'TEXT'})

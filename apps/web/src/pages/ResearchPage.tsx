@@ -1562,7 +1562,6 @@ function StartDialog({
   const [maxSandboxMinutes, setMaxSandboxMinutes] = useState(0)
   const [allowSandboxGpu, setAllowSandboxGpu] = useState(false)
   const [note, setNote] = useState('')
-  const [objective, setObjective] = useState('')
   const [allowDataDownload, setAllowDataDownload] = useState(false)
   const [busy, setBusy] = useState(false)
   const pendingRun = useRef<string | null>(null)
@@ -1578,7 +1577,6 @@ function StartDialog({
       setAllowModelCalls(false)
       setShadowEnabled(false)
       setNote('')
-      setObjective('')
       setAllowDataDownload(false)
       setMaxSandboxes(0)
       setMaxSandboxMinutes(0)
@@ -1638,7 +1636,6 @@ function StartDialog({
         allow_sandbox_gpu: allowSandboxGpu,
         job_limits: { max_concurrent_jobs: 2, max_cpu: 16, max_memory_gb: 16, max_disk_gb: 10, allow_gpu: false },
         note: note.trim() || undefined,
-        objective: objective.trim() || note.trim() || undefined,
         allow_data_download: allowDataDownload,
       })
       stage = 'start'
@@ -1771,10 +1768,6 @@ function StartDialog({
         <input id="auth-data-download" type="checkbox" checked={allowDataDownload}
           onChange={(e) => setAllowDataDownload(e.target.checked)} />
         <label htmlFor="auth-data-download">允许用本账号下载题目公开数据</label>
-      </div>
-      <div className="field">
-        <label htmlFor="auth-objective">本 Run 的用户目标</label>
-        <textarea id="auth-objective" value={objective} onChange={(e) => setObjective(e.target.value)} />
       </div>
       <div className="field">
         <label htmlFor="auth-note">备注（可选）</label>

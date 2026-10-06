@@ -1,5 +1,14 @@
 """Explicit competition authorization; existing bounded grants stay bounded."""
 from . import db
+import json
+
+
+def track_unlimited(run, auth=None):
+    """New confirmed track policy; never broaden historical/standalone grants."""
+    if auth is None:
+        auth=db.query_one('SELECT unlimited_resources FROM authorizations WHERE id=?',(run['authorization_id'],))
+    return bool(auth and auth['unlimited_resources'] and
+                json.loads(run['config_snapshot']).get('competition',{}).get('budget_policy')=='track-unlimited/v1')
 
 
 def unlimited(run_id: str, *, conn=None) -> bool:

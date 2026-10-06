@@ -155,7 +155,7 @@ def bounded_lifetime(run_id: str, requested: int) -> int:
     reserve their full lifetime, as in ordinary sandbox admission.
     """
     run = compute._run(run_id)
-    auth = db.query_one('SELECT max_run_minutes,max_sandbox_minutes,unlimited_resources FROM authorizations WHERE id=?',
+    auth = db.query_one('SELECT * FROM authorizations WHERE id=?',
                         (run['authorization_id'],))
     if not auth or not run['started_at']:
         raise compute.ComputeError('SANDBOX_BUDGET', '评分没有有效时长授权')
@@ -187,9 +187,9 @@ def bounded_execution_timeout(run_id: str, sandbox_id: str, requested: int) -> i
         raise compute.ComputeError('SANDBOX_NOT_ACTIVE', '评分沙箱未处于 active')
     seconds = min(requested, _seconds_left(row) - 5)
     run = compute._run(run_id)
-    auth = db.query_one('SELECT max_run_minutes FROM authorizations WHERE id=?',
+    auth = db.query_one('SELECT * FROM authorizations WHERE id=?',
                         (run['authorization_id'],))
-    if auth and run['started_at'] and auth['max_run_minutes'] > 0:
+    if auth and run['started_at'] and (auth['max_run_minutes'] > 0 or auth['unlimited_resources']):
         from . import run_clock
         remaining = run_clock.remaining(run, auth)
         seconds = min(seconds, math.floor(remaining) - 5)
@@ -250,10 +250,12 @@ def create(run_id: str, operation_id: str, request: dict, *, _session_id: str | 
         limits = compute.validate_limits(json.loads(auth['job_limits_json']))
         if not unlimited and request.get('cpu') and int(request['cpu'].split('c')[0]) > limits['max_cpu']:
             raise compute.ComputeError('RESOURCE_LIMIT', '沙箱CPU核心数超出本Run的机器授权')
-        if not run['started_at'] or auth['max_run_minutes'] <= 0:
+        if not run['started_at'] or not unlimited and auth['max_run_minutes'] <= 0:
             raise compute.ComputeError('UNBOUNDED_SANDBOX', '沙箱需要本 Run 的时长上限')
         from . import run_clock
         run_left = run_clock.remaining(run, auth)
+        if not math.isfinite(run_left):
+            raise compute.ComputeError('UNBOUNDED_SANDBOX', '资源不限仍须设置赛道结束时间')
         rows = conn.execute('SELECT status,created_at,expires_at,deleted_at FROM compute_sandboxes'
                             ' WHERE run_id=?', (run_id,)).fetchall()
         if not unlimited and sum(row['status'] in LIVE for row in rows) >= auth['max_sandboxes']:

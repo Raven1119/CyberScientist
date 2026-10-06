@@ -56,7 +56,9 @@ def facts(run_id: str) -> dict:
     committed_seconds = sum(max(0, (datetime.fromisoformat(r['deleted_at'] or r['expires_at'])
                                   - datetime.fromisoformat(r['created_at'])).total_seconds())
                             for r in sandbox_rows)
-    remaining = {'run_seconds': max(0, auth['max_run_minutes'] * 60 - elapsed) if auth else None,
+    import math
+    time_left=run_clock.remaining(run,auth) if auth else None
+    remaining = {'run_seconds': max(0,time_left) if time_left is not None and math.isfinite(time_left) else None,
                  'jobs': max(0, auth['max_jobs'] - len(jobs)) if auth else None,
                  'sandbox_minutes': max(0, auth['max_sandbox_minutes'] - committed_seconds / 60) if auth else None,
                  'sandbox_concurrent_slots': max(0, auth['max_sandboxes'] - sum(

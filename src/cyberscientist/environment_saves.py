@@ -86,12 +86,20 @@ def save(run_id, operation_id, dockerfile, recipe, smoke_command):
         auth = conn.execute('SELECT * FROM authorizations WHERE id=?', (run['authorization_id'],)).fetchone() if run else None
         if not run or run['phase'] != 'running' or run['gate'] != 'open':
             raise compute.ComputeError('RUN_NOT_RUNNING', '环境保存需要运行中的授权 Run')
-        if not auth or auth['max_environment_saves'] <= 0:
+        from . import run_limits
+        unlimited=run_limits.track_unlimited(run,auth) if run else False
+        if auth:
+            from . import run_clock
+            import math
+            remaining=run_clock.remaining(run,auth)
+            if remaining<=0 or unlimited and not math.isfinite(remaining):
+                raise compute.ComputeError('AUTH_EXPIRED','环境保存须在有效赛道或授权时长内')
+        if not auth or not unlimited and auth['max_environment_saves'] <= 0:
             raise compute.ComputeError('NOT_AUTHORIZED', '未授权环境保存数量')
         if auth['max_compute_cost_cny'] is not None:
             raise compute.ComputeError('ENVIRONMENT_PRICE_UNKNOWN', '环境构建单价尚未核实，不能保证本 Run 金额上限')
         used = conn.execute('SELECT COUNT(*) FROM environment_saves WHERE run_id=?', (run_id,)).fetchone()[0]
-        if used >= auth['max_environment_saves']:
+        if not unlimited and used >= auth['max_environment_saves']:
             raise compute.ComputeError('ENVIRONMENT_LIMIT', '环境保存数量已用尽，unknown 计入数量')
         conn.execute('INSERT INTO environment_saves VALUES(?,?,?,?,?,?,?,?,?,?,?)',
                      (operation_id, run_id, 'creating', None, request, smoke_command, digest, 'unknown', '{}', db.utcnow(), db.utcnow()))

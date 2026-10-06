@@ -5,6 +5,7 @@ import uuid
 import jsonschema
 from . import challenge_models, config, db, features, observation, platform_scores, power, resource_coordinator
 from .brains.base import SessionRef
+from . import competition_prompts
 
 PARALLEL = 3
 TIMEOUT = 900
@@ -20,6 +21,8 @@ def contract(settings):
                           'estimated_minutes':{'type':['number','null'],'minimum':0},
                           'estimated_cost_cny':{'type':['number','null'],'minimum':0},
                           'recommended_model':{'type':'string'},'reason':{'type':'string'},
+                          'priority':{'type':'integer','minimum':-1000,'maximum':1000},
+                          'data_complete':{'type':['boolean','null']},
                           'recommended_solver_id':{'enum':[None,*[s['id'] for s in challenge_models.roster(settings)]]}}}
 
 
@@ -104,13 +107,18 @@ async def _item(round_id, item, snapshot, settings, controller, semaphore, first
                     if power.shutdown_requested() or not features.enabled('system_triage'):
                         attempts.append({'status':'not_dispatched','helper_effort':projected['brain']['reasoning_effort']});return
                     packet={'protocol':'role_task','task':'competition_triage',
-                            'instructions':'你是事务性分诊助手，不是科研PI。只读题面/资源/公开分布，估计难度、耗时、费用及推荐条目；判断标为建议，不推断已验证数据或授予运行权限。',
+                            'instructions':'你是分诊助手，只读题面/资源/公开分布和用户提示词。给出难度、推荐条目、优先级priority、公开数据是否齐全data_complete及理由；简单题默认建议DeepSeek条目。所有输出只是建议，不自动配置、启动或授权。数据可获取不等于实际验证。',
+                            'user_prompt':competition_prompts.freeze(round_id,item['challenge_id']),
                             'challenge':next(e.get('challenge_snapshot') for e in snapshot['entries'] if e['challenge_id']==item['challenge_id']),
                             'public_scores':scores,'solver_roster':challenge_models.roster(projected),'output_contract':contract(projected)}
                     async for event in brain.review(session,packet):
                         if event.type=='task_result': result=event.payload['result']
                         if event.type=='error': raise ValueError(event.payload.get('message','分诊失败'))
                     jsonschema.validate(result,packet['output_contract'])
+                    result.setdefault('priority',0);result.setdefault('data_complete',None)
+                    cheap=next((entry for entry in challenge_models.roster(projected) if entry.get('provider')=='deepseek'),None)
+                    if result['difficulty']=='easy' and cheap:
+                        result.update(recommended_solver_id=cheap['id'],recommended_model=cheap['model_id'])
                 attempts.append({'status':'done','helper_effort':projected['brain']['reasoning_effort']})
             except TimeoutError:
                 result=None;timed_out=True;attempts.append({'status':'timeout','helper_effort':projected['brain']['reasoning_effort']})

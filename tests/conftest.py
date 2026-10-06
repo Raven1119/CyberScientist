@@ -120,6 +120,8 @@ async def drain_run_maintenance(isolated_workspace):
     await competition_triage.drain()
     from cyberscientist import pi_files
     await pi_files.drain()
+    from cyberscientist import resource_coordinator
+    await resource_coordinator.drain_threads()
     while pending := [task for task in maintenance.ACTIVE_TASKS if not task.done()]:
         for task in pending:
             task.cancel()

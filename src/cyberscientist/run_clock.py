@@ -22,6 +22,10 @@ def elapsed(run, now: float | None = None) -> float:
 
 
 def remaining(run, auth, now: float | None = None) -> float:
+    from . import run_limits
+    if 'unlimited_resources' in auth.keys() and run_limits.track_unlimited(run,auth):
+        from . import track_clock
+        return track_clock.remaining(run,time.time() if now is None else now)
     return auth['max_run_minutes'] * 60 - elapsed(run, now)
 
 

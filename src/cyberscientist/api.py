@@ -91,6 +91,7 @@ class RoundAppend(BaseModel):
 class RoundItemPut(BaseModel):
     priority: int | None = None
     paused: bool | None = None
+    launch_state: str | None = None
 
 
 class RoundTriage(BaseModel):
@@ -367,6 +368,8 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
             await competition_triage.drain()
             from . import pi_files
             await pi_files.drain()
+            from . import resource_coordinator
+            await resource_coordinator.drain_threads()
 
     app = FastAPI(title="CyberScientist", docs_url=None, openapi_url=None,
                   lifespan=lifespan)
@@ -1037,6 +1040,45 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
         try: return await competition.triage(round_id, controller, body.allow_model_calls, body.operation_id)
         except ValueError as exc: raise HTTPException(422, detail={'message': str(exc)}) from exc
 
+    @app.put('/api/v1/rounds/{round_id}/prompt')
+    async def put_round_prompt(round_id: str, request: Request):
+        from . import competition, competition_prompts
+        body=await request.json()
+        if not isinstance(body,dict): raise HTTPException(422,detail={'message':'请求必须为对象'})
+        try:
+            competition_prompts.publish(round_id,body.get('content_md'),body.get('base_version'))
+            return competition.get_round(round_id)
+        except ValueError as exc:
+            raise HTTPException(409 if '版本冲突' in str(exc) else 422,detail={'message':str(exc)}) from exc
+
+    @app.put('/api/v1/rounds/{round_id}/template')
+    async def put_round_template(round_id: str, request: Request):
+        from . import competition
+        body=await request.json()
+        if not isinstance(body,dict): raise HTTPException(422,detail={'message':'请求必须为对象'})
+        try: return competition.save_template(round_id,body.get('template'))
+        except ValueError as exc: raise HTTPException(422,detail={'message':str(exc)}) from exc
+
+    @app.post('/api/v1/rounds/{round_id}/adopt-suggestions')
+    async def adopt_round_suggestions(round_id: str, request: Request):
+        from . import competition
+        body=await request.json()
+        if not isinstance(body,dict): raise HTTPException(422,detail={'message':'请求必须为对象'})
+        try: return competition.adopt_suggestions(round_id,body.get('item_ids'))
+        except ValueError as exc: raise HTTPException(422,detail={'message':str(exc)}) from exc
+
+    @app.post('/api/v1/rounds/{round_id}/items/{item_id}/start')
+    async def start_round_deferred(round_id: str,item_id: str):
+        from . import competition
+        try: return competition.start_deferred(round_id,item_id)
+        except ValueError as exc: raise HTTPException(422,detail={'message':str(exc)}) from exc
+
+    @app.post('/api/v1/rounds/{round_id}/refresh-data')
+    async def refresh_round_data(round_id: str):
+        from . import competition,resource_coordinator
+        try: return await resource_coordinator.tracked_thread(competition.refresh_data,round_id,owner_prefix='round-data-')
+        except ValueError as exc: raise HTTPException(422,detail={'message':str(exc)}) from exc
+
     @app.post('/api/v1/rounds/{round_id}/confirm')
     async def confirm_round(round_id: str, body: RoundConfirm):
         from . import competition
@@ -1103,6 +1145,8 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
 
     @app.post("/api/v1/runs/{run_id}/authorize")
     async def authorize(run_id: str, body: AuthorizeBody) -> dict[str, Any]:
+        if body.objective is not None:
+            raise HTTPException(410,detail={'message':'Run级用户目标输入已停用，请编辑赛道用户提示词；研究目标自动使用题面'})
         return controller.authorize(run_id, body.scope, body.allow_model_calls,
                                     body.max_model_turns, body.max_run_minutes,
                                     body.max_submissions, body.note,
@@ -1114,7 +1158,7 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
                                     max_compute_cost_cny=body.max_compute_cost_cny,
                                     max_environment_saves=body.max_environment_saves,
                                     unlimited_resources=body.unlimited_resources,
-                                    objective=body.objective)
+                                    objective=controller._challenge_for_run(controller._require_run(run_id))['content'])
 
     @app.put("/api/v1/runs/{run_id}/budget")
     async def update_budget(run_id: str, body: BudgetBody) -> dict[str, Any]:

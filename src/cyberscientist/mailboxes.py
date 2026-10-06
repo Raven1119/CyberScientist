@@ -403,7 +403,7 @@ def _check_budget(conn, run_id: str, *, terminal_harvest: bool = False,
         raise MailboxError("INVALID_STATE", "当前 Run 不允许新增提交")
     auth = conn.execute("SELECT * FROM authorizations WHERE id=? AND run_id=?",
                         (run["authorization_id"], run_id)).fetchone()
-    if auth and auth["max_run_minutes"] and run["started_at"]:
+    if auth and (auth["max_run_minutes"] or auth['unlimited_resources']) and run["started_at"]:
         from . import run_clock
         if run_clock.remaining(run, auth) <= 0:
             raise MailboxError("NEEDS_AUTHORIZATION","本轮授权时长已用尽")
@@ -411,7 +411,8 @@ def _check_budget(conn, run_id: str, *, terminal_harvest: bool = False,
     used = conn.execute("SELECT COUNT(*) AS n FROM submissions WHERE run_id=?"
                         " AND reservation_released=0 AND id!=?",
                         (run_id, existing_submission_id or '')).fetchone()["n"]
-    if used >= limit:
+    from . import run_limits
+    if not run_limits.track_unlimited(run,auth) and used >= limit:
         raise MailboxError("NEEDS_AUTHORIZATION", f"提交授权已用尽（{used}/{limit}）")
 
 

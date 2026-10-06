@@ -10,8 +10,9 @@ from cyberscientist.controller import RunController
 
 def challenges(n=10):
     for i in range(n):
-        db.execute('INSERT INTO challenges(id,origin,title,content,content_hash,imported_at,is_demo) VALUES(?,?,?,?,?,?,1)',
-                   (f'c{i}', 'fixture', f'题目{i}', '合成测试题', f'h{i}', db.utcnow()))
+        end=(datetime.now(timezone.utc)+timedelta(hours=6)).isoformat()
+        db.execute('INSERT INTO challenges(id,origin,title,content,content_hash,imported_at,is_demo,platform_snapshot_json) VALUES(?,?,?,?,?,?,1,?)',
+                   (f'c{i}', 'fixture', f'题目{i}', '合成测试题', f'h{i}', db.utcnow(),json.dumps({'roundEndAt':end})))
     return [f'c{i}' for i in range(n)]
 
 

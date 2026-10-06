@@ -12,7 +12,7 @@ it('shows unlimited resources and preserves explicit authorization through confi
   post.mockResolvedValue({ ...detail, status: 'running' })
   render(<CompetitionPage />)
   await screen.findByText(/easy · deepseek-flash/)
-  expect((screen.getByLabelText('比赛资源不限') as HTMLInputElement).checked).toBe(true)
+  expect((screen.getByLabelText('一键预算无上限') as HTMLInputElement).checked).toBe(true)
   expect(screen.getAllByText('不限').length).toBeGreaterThanOrEqual(3)
   const user = userEvent.setup()
   await user.click(screen.getByRole('button', { name: '确认模板与授权，开始排队' }))
@@ -25,7 +25,7 @@ it('keeps bounded template values when unlimited authorization is switched off',
   render(<CompetitionPage />)
   await screen.findByText(/easy · deepseek-flash/)
   const user = userEvent.setup()
-  await user.click(screen.getByLabelText('比赛资源不限'))
+  await user.click(screen.getByLabelText('一键预算无上限'))
   expect((screen.getByLabelText('每 Run Job 数') as HTMLInputElement).value).toBe('2')
   await user.click(screen.getByRole('button', { name: '确认模板与授权，开始排队' }))
   expect(post.mock.calls[0][1].template.authorization).toMatchObject({ unlimited_resources: false, max_jobs: 2, max_submissions: 0 })
@@ -35,34 +35,38 @@ const detail = { id: 'round_one', label: '', status: 'draft', resources: { sessi
     local_best: null, platform_best: null, trace_diagnostic: null, usage: [], cost: null, next_action: '等待资源名额',
     triage: { difficulty: 'easy', recommended_model: 'deepseek-flash', reason: '公开输入较小', estimated_minutes: 10, estimated_cost_cny: null } },
 ] }
-it('imports transactional JSON and preserves solver and notes through manual edits and confirmation', async () => {
+it('adopts recommendations visibly and preserves a later manual model edit', async () => {
   const entry = { id: 'cheap', name: '便宜条目', runtime: 'codex', provider: 'deepseek', model_id: 'deepseek-flash', reasoning_effort: 'high', note: '明确步骤' }
-  const imported = { platform_challenge_id: 'public-topic', solver_entry: entry, pi_notes: '用户报告数据风险', data_status: '用户报告可下载' }
+  const adopted = { ...detail, items: [{ ...detail.items[0], adopted_suggestion: { recommended_solver_id: 'cheap', data_complete: true } }] }
   get.mockImplementation(async (path: string) => path === '/api/v1/settings' ? { solver_roster: [entry] } : path === '/api/v1/rounds' ? { items: [{ id: 'round_one', status: 'draft' }] } : detail)
-  post.mockImplementation(async (path: string) => path.endsWith('/triage-import') ? { ...detail, items: [{ ...detail.items[0], user_triage: imported }] } : { ...detail, status: 'running' })
+  post.mockImplementation(async (path: string) => path.endsWith('/adopt-suggestions') ? adopted : { ...adopted, status: 'running' })
   render(<CompetitionPage />)
   await screen.findByText(/easy · deepseek-flash/)
   const user = userEvent.setup()
-  const items = [{ platform_challenge_id: 'public-topic', priority: 10, solver_entry: 'cheap', data_status: imported.data_status, pi_notes: imported.pi_notes }]
-  await user.click(screen.getByLabelText('事务性分诊 JSON'))
-  await user.paste(JSON.stringify(items))
-  await user.click(screen.getByRole('button', { name: '导入用户分诊' }))
-  expect(post.mock.calls[0]).toEqual(['/api/v1/rounds/round_one/triage-import', { items }])
+  expect(screen.queryByLabelText('事务性分诊 JSON')).toBeNull()
+  await user.click(screen.getByRole('button', { name: '采纳全部分诊建议' }))
+  expect(post.mock.calls[0]).toEqual(['/api/v1/rounds/round_one/adopt-suggestions', {}])
   expect((screen.getByLabelText('测试题求解者条目') as HTMLSelectElement).value).toBe('cheap')
-  await user.type(screen.getByLabelText('测试题给 PI 的备注'), '补充环境建议')
+  expect((screen.getByLabelText('测试题求解者 模型') as HTMLInputElement).value).toBe('deepseek-flash')
+  await user.selectOptions(screen.getByLabelText('测试题求解者 提供方'), 'codex')
+  await user.clear(screen.getByLabelText('测试题求解者 模型')); await user.type(screen.getByLabelText('测试题求解者 模型'), 'gpt-6.1-sol')
   await user.click(screen.getByRole('button', { name: '确认模板与授权，开始排队' }))
-  expect(post.mock.calls[1][1].overrides.same_challenge).toMatchObject({ solver_id: 'cheap', pi_notes: imported.pi_notes, data_status: imported.data_status, model_config: { executor: { provider: 'deepseek' } } })
+  expect(post.mock.calls[1][1].overrides.same_challenge).toMatchObject({ solver_id: null, model_config: { executor: { provider: 'codex', model_id: 'gpt-6.1-sol' } } })
 })
 
-it('rejects malformed pasted JSON without calling backend or changing the draft', async () => {
+it('publishes one user prompt version and disables confirmation until saved', async () => {
   get.mockImplementation(async (path: string) => path === '/api/v1/rounds' ? { items: [{ id: 'round_one', status: 'draft' }] } : detail)
+  put.mockResolvedValue({ ...detail, user_prompt: { version: 1, content_md: '用户建议', sha256: 'fixture-hash' } })
   render(<CompetitionPage />)
   await screen.findByText(/easy · deepseek-flash/)
   const user = userEvent.setup()
-  await user.click(screen.getByLabelText('事务性分诊 JSON')); await user.paste('malformed')
-  await user.click(screen.getByRole('button', { name: '导入用户分诊' }))
-  expect(post).not.toHaveBeenCalled(); expect(toast).toHaveBeenCalled()
+  await user.type(screen.getByLabelText('赛道用户提示词'), '用户建议')
+  expect((screen.getByRole('button', { name: '确认模板与授权，开始排队' }) as HTMLButtonElement).disabled).toBe(true)
+  await user.click(screen.getByRole('button', { name: '保存并发布用户提示词' }))
+  expect(put.mock.calls[0]).toEqual(['/api/v1/rounds/round_one/prompt', { content_md: '用户建议', base_version: 0 }])
+  expect(await screen.findByText(/版本 1/)).toBeTruthy()
   expect(screen.getByText(/轮次 round_one · draft/)).toBeTruthy()
+  expect(post).not.toHaveBeenCalled()
 })
 it('sends an explicit null when manually replacing an imported solver entry', async () => {
   const entry = { id: 'cheap', name: '便宜条目', runtime: 'codex', provider: 'deepseek', model_id: 'deepseek-flash', reasoning_effort: 'high', note: '明确步骤' }
@@ -88,7 +92,7 @@ it('keeps an explicit topic resource grant visible and independent from the roun
   await screen.findByText(/easy · deepseek-flash/)
   const user = userEvent.setup()
   await user.type(screen.getByLabelText('测试题给 PI 的备注'), '显式题目授权')
-  await user.click(screen.getByLabelText('比赛资源不限'))
+  await user.click(screen.getByLabelText('一键预算无上限'))
   expect((screen.getByLabelText('测试题资源不限') as HTMLInputElement).checked).toBe(true)
   expect(screen.queryByLabelText('测试题Job 数')).toBeNull()
   await user.click(screen.getByLabelText('测试题资源不限'))
@@ -182,4 +186,32 @@ it('sorts known score gaps descending and leaves unknown last without replacing 
   expect(rows[2].textContent).toContain('未知题')
   expect(rows[0].querySelectorAll('td')[4].textContent).toBe('0')
   expect(rows[2].querySelectorAll('td')[5].textContent).toBe('unknown')
+})
+
+
+it('shows data readiness and starts a deferred topic explicitly', async () => {
+  const pending = { ...detail, status: 'running', items: [{ ...detail.items[0], launch_state: 'deferred', phase: 'deferred', data_ready: 1 }] }
+  get.mockImplementation(async (path: string) => path === '/api/v1/rounds' ? { items: [{ id: 'round_one', status: 'running' }] } : pending)
+  post.mockResolvedValue({ ...pending, items: [{ ...pending.items[0], launch_state: 'immediate' }] })
+  render(<CompetitionPage />)
+  await screen.findByText(/公开数据已可获取/)
+  const user = userEvent.setup()
+  expect(screen.getByRole('option', { name: '立即运行' })).toBeTruthy()
+  expect(screen.getByRole('option', { name: '跳过' })).toBeTruthy()
+  expect((screen.getByLabelText('测试题启动状态') as HTMLSelectElement).disabled).toBe(true)
+  await user.click(screen.getByRole('button', { name: '启动暂缓题' }))
+  expect(post.mock.calls[0]).toEqual(['/api/v1/rounds/round_one/items/ri_one/start', {}])
+})
+
+it('rehydrates and persists a saved bounded template', async () => {
+  const template = { model_config: { brain: { runtime: 'codex', model_id: 'gpt-6-astra', reasoning_effort: 'xhigh' }, executor: { runtime: 'codex', model_id: 'gpt-6.1-sol', reasoning_effort: 'high' } }, authorization: { unlimited_resources: false, allow_model_calls: true, max_run_minutes: 75, max_jobs: 8, max_submissions: 1, max_sandboxes: 2, max_sandbox_minutes: 15, max_environment_saves: 4, allow_data_download: true }, solver_note: '持久备注' }
+  const saved = { ...detail, template }
+  get.mockImplementation(async (path: string) => path === '/api/v1/rounds' ? { items: [{ id: 'round_one', status: 'draft' }] } : saved)
+  put.mockResolvedValue(saved)
+  render(<CompetitionPage />)
+  await screen.findByText(/easy · deepseek-flash/)
+  expect((screen.getByLabelText('一键预算无上限') as HTMLInputElement).checked).toBe(false)
+  expect((screen.getByLabelText('每 Run Job 数') as HTMLInputElement).value).toBe('8')
+  await userEvent.setup().click(screen.getByRole('button', { name: '保存当前模板' }))
+  expect(put.mock.calls[0][1].template.authorization).toMatchObject({ unlimited_resources: false, max_jobs: 8, max_run_minutes: 75 })
 })

@@ -97,6 +97,10 @@ def import_round(challenge_ids: list[str] | None = None, *, season: str = '',
     snapshot = {'schema': 'cyberscientist-competition/v1', 'mode': mode, 'entries': entries,
                 'season': season, 'round_seq': round_seq, 'public_round': public,
                 'backend': backend_identity.capture(), 'protocol_drift': drift}
+    from . import track_clock
+    snapshot['track_clock']={name:(value.isoformat() if value else None) for name,value in
+                             (('start',track_clock.platform_time(snapshot,'roundStartAt')),
+                              ('end',track_clock.platform_time(snapshot,'roundEndAt')))} | {'source':'platform'}
     with db.transaction() as conn:
         conn.execute('INSERT INTO eval_runs(id,suite,repeats,label,status,config_json,created_at,updated_at)'
                      " VALUES(?,'competition',1,?,'draft',?,?,?)", (rid, label, _dump(snapshot), now, now))
@@ -114,44 +118,14 @@ def _round(round_id: str):
     return row
 
 
-@config.serialized_mutation
 def import_triage(round_id: str, items: list) -> dict:
-    import jsonschema
-    from . import observation
-    schema=json.loads((Path(__file__).resolve().parents[2]/'docs/TRIAGE_IMPORT_SCHEMA.json').read_text())
-    try: jsonschema.validate(items,schema)
-    except jsonschema.ValidationError as exc: raise CompetitionError('分诊JSON字段/类型不符：'+str(list(exc.absolute_path))) from exc
-    # JSON Schema considers 1.0 an integer; operator priorities are exact ints.
-    if any(type(item['priority']) is not int for item in items): raise CompetitionError('优先级须为整数')
-    if len({i['platform_challenge_id'] for i in items})!=len(items): raise CompetitionError('分诊题目ID重复')
-    raw=_dump(items)
-    if observation.strip_secrets(raw)!=raw: raise CompetitionError('分诊不得包含密钥')
-    row=_round(round_id)
-    if row['status']!='draft': raise CompetitionError('仅待确认轮次可导入分诊')
-    settings=config.load_settings();entries={}
-    rows=db.query('SELECT e.id,e.challenge_id,c.platform_challenge_id FROM eval_results e JOIN challenges c ON c.id=e.challenge_id WHERE e.eval_id=?',(round_id,))
-    for item in items:
-        matches=[r for r in rows if r['platform_challenge_id']==item['platform_challenge_id']]
-        if len(matches)!=1: raise CompetitionError('分诊题目不属于本轮或身份不唯一：'+item['platform_challenge_id'])
-        try: solver=challenge_models.solver(item['solver_entry'],settings)
-        except ValueError as exc: raise CompetitionError(str(exc)) from exc
-        entries[matches[0]['challenge_id']]={**item,'solver_entry':solver,'source':'operator_json'}
-    ident='triage_import_'+uuid.uuid4().hex[:12];digest=hashlib.sha256(raw.encode()).hexdigest();now=db.utcnow()
-    with db.transaction() as conn:
-        current=conn.execute('SELECT status,config_json FROM eval_runs WHERE id=?',(round_id,)).fetchone()
-        if current['status']!='draft': raise CompetitionError('轮次已确认，未应用分诊')
-        snapshot=json.loads(current['config_json']);snapshot.setdefault('user_triage',{}).update(entries)
-        snapshot['triage_import_revision']=ident
-        conn.execute('INSERT INTO competition_triage_imports VALUES(?,?,?,?,?)',(ident,round_id,raw,digest,now))
-        conn.execute('UPDATE eval_runs SET config_json=?,updated_at=? WHERE id=?',(_dump(snapshot),now,round_id))
-        for cid,entry in entries.items():conn.execute('UPDATE eval_results SET priority=?,updated_at=? WHERE eval_id=? AND challenge_id=?',(entry['priority'],now,round_id,cid))
-    return get_round(round_id)
+    raise CompetitionError('分诊JSON导入已停用；请编辑赛道用户提示词，并显式采纳分诊建议')
 
 
 async def triage(round_id: str, controller, allow_model_calls: bool = False, operation_id: str | None = None) -> dict:
     row = _round(round_id)
     from . import features
-    if not features.enabled('system_triage'): raise CompetitionError('系统分诊已关闭；可导入用户分诊')
+    if not features.enabled('system_triage'): raise CompetitionError('系统分诊已关闭；请编辑用户提示词与逐题配置')
     snapshot = json.loads(row['config_json'])
     if snapshot['mode'] == 'connected' and not allow_model_calls:
         raise CompetitionError('分诊调用模型需显式授权')
@@ -163,7 +137,7 @@ async def triage(round_id: str, controller, allow_model_calls: bool = False, ope
 
 
 def _template(template: dict, mode: str, *, frozen: bool = False) -> dict:
-    if not isinstance(template, dict) or set(template) - {'model_config', 'authorization', 'shadow_enabled', 'solver_note', 'solver_id', 'pi_notes', 'data_status'} - ({'solver_entry','triage_source'} if frozen else set()):
+    if not isinstance(template, dict) or set(template) - {'model_config', 'authorization', 'shadow_enabled', 'solver_note', 'solver_id', 'pi_notes', 'data_status','solver_entry','triage_source'}:
         raise CompetitionError('模板只接受模型、授权、监督和求解者备注')
     settings = config.load_settings()
     choices = dict(template.get('model_config') or {})
@@ -188,7 +162,8 @@ def _template(template: dict, mode: str, *, frozen: bool = False) -> dict:
         value = auth.get(key, 0)
         if type(value) is not int or value < 0:
             raise CompetitionError('额度必须是非负整数')
-    if mode == 'connected' and (auth.get('allow_model_calls') is not True or auth.get('max_run_minutes', 0) <= 0):
+    if mode == 'connected' and (auth.get('allow_model_calls') is not True or
+                              auth.get('unlimited_resources') is not True and auth.get('max_run_minutes', 0) <= 0):
         raise CompetitionError('真实轮次须授权模型调用和有界时长')
     if (auth.get('max_sandboxes', 0) == 0) != (auth.get('max_sandbox_minutes', 0) == 0):
         raise CompetitionError('沙箱数量与累计分钟数须同时授权')
@@ -213,29 +188,53 @@ def _template(template: dict, mode: str, *, frozen: bool = False) -> dict:
         if not isinstance(value,str) or len(value)>limit or observation.strip_secrets(value)!=value: raise CompetitionError('PI事务提示/数据状态无效或含密钥')
     return {'model_config': models, 'authorization': auth, 'solver_id': template.get('solver_id'),
             'solver_entry': solver_entry, 'pi_notes':template.get('pi_notes',''), 'data_status':template.get('data_status',''),
-            'triage_source': template.get('triage_source','operator_template'),
+            'triage_source': template.get('triage_source','operator_template') if frozen else 'operator_template',
             'shadow_enabled': bool(template.get('shadow_enabled', False)),
             'solver_note': challenge_models.choose('executor', models['executor'] | {
                 'note': template.get('solver_note', '') or (solver_entry or {}).get('note', '')}, settings)['note']}
 
 
+def _require_clock(snapshot, template, *, mode):
+    if snapshot.get('budget_policy')!='track-unlimited/v1': return
+    from . import track_clock
+    from datetime import datetime,timezone
+    clock=snapshot.get('track_clock',{})
+    end=track_clock.instant(clock.get('end')) or track_clock.platform_time(snapshot,'roundEndAt')
+    if end and end<=datetime.now(timezone.utc): raise CompetitionError('赛道已到结束时间，不能启动新Run')
+    if mode=='connected' and template['authorization'].get('unlimited_resources') and end is None:
+        raise CompetitionError('预算无上限须先设置有效赛道结束时间')
+
+
+@config.serialized_mutation
 def confirm(round_id: str, template: dict, overrides: dict | None = None) -> dict:
     row = _round(round_id)
     snapshot = json.loads(row['config_json'])
     if row['status'] != 'draft':
         raise CompetitionError('只有待确认轮次可确认')
     base = _template(template, snapshot['mode'])
+    _require_clock(snapshot | {'budget_policy':'track-unlimited/v1'},base,mode=snapshot['mode'])
     choices = {}
+    from . import competition_prompts
+    frozen_prompts={}
     for item in db.query('SELECT * FROM eval_results WHERE eval_id=?',(round_id,)):
         imported=snapshot.get('user_triage',{}).get(item['challenge_id'])
         proposed=dict(template)
         if imported:
             proposed.update(solver_id=imported['solver_entry']['id'],pi_notes=imported['pi_notes'],data_status=imported['data_status'])
+        adopted=snapshot.get('adopted_suggestions',{}).get(item['challenge_id'])
+        if adopted:
+            proposed.update(solver_id=adopted.get('recommended_solver_id'),data_status=str(adopted.get('data_complete','unknown')))
         proposed.update((overrides or {}).get(item['challenge_id']) or {})
+        if base['authorization']['unlimited_resources']:
+            proposed['authorization']=dict(proposed.get('authorization') or base['authorization'],unlimited_resources=True)
         selected=_template(proposed,snapshot['mode'])
         if imported: selected['triage_source']='operator_json'
         choices[item['id']]=selected
+        frozen_prompts[item['id']]=competition_prompts.freeze(round_id,item['challenge_id']) if item['launch_state']=='immediate' else None
     snapshot['template'] = base
+    from . import competition_prompts
+    snapshot['confirmed_prompt']=competition_prompts.latest(round_id)
+    snapshot['budget_policy']='track-unlimited/v1'
     manifests = {e['challenge_id']: experience_context.select(e['challenge_id'], role='both') for e in snapshot['entries']}
     snapshot['experience_snapshot_sha256'] = hashlib.sha256(_dump(manifests).encode()).hexdigest()
     with db.transaction() as conn:
@@ -243,34 +242,126 @@ def confirm(round_id: str, template: dict, overrides: dict | None = None) -> dic
                                " WHERE id=? AND status='draft'", (_dump(snapshot), db.utcnow(), round_id))
         if changed.rowcount != 1: raise CompetitionError('轮次状态已变化')
         for ident, choice in choices.items():
-            conn.execute('UPDATE eval_results SET template_json=? WHERE id=?', (_dump(choice), ident))
+            conn.execute('UPDATE eval_results SET template_json=?,prompt_json=? WHERE id=?',
+                         (_dump(choice),_dump(frozen_prompts[ident]) if frozen_prompts[ident] is not None else None,ident))
+    return get_round(round_id)
+
+
+@config.serialized_mutation
+def save_template(round_id, template):
+    row=_round(round_id);snapshot=json.loads(row['config_json'])
+    snapshot['template']=_template(template,snapshot['mode'])
+    db.execute('UPDATE eval_runs SET config_json=?,updated_at=? WHERE id=?',(_dump(snapshot),db.utcnow(),round_id))
+    return get_round(round_id)
+
+
+@config.serialized_mutation
+def adopt_suggestions(round_id, item_ids=None):
+    row=_round(round_id)
+    if row['status']!='draft': raise CompetitionError('建议只能在确认前采纳；已启动Run配置保持冻结')
+    snapshot=json.loads(row['config_json'])
+    rows=db.query('SELECT * FROM eval_results WHERE eval_id=?',(round_id,))
+    if item_ids is not None and (not isinstance(item_ids,list) or any(not isinstance(value,str) for value in item_ids)
+                                or not set(item_ids)<={item['id'] for item in rows}):
+        raise CompetitionError('建议条目不属于本赛道')
+    with db.transaction() as conn:
+        for item in rows:
+            if item_ids is not None and item['id'] not in item_ids: continue
+            advice=json.loads(item['triage_json'] or 'null')
+            if not advice: continue
+            solver_id=advice.get('recommended_solver_id')
+            if solver_id: challenge_models.solver(solver_id,config.load_settings())
+            priority=advice.get('priority',0)
+            if type(priority) is not int or not -1000<=priority<=1000: raise CompetitionError('建议优先级无效')
+            snapshot.setdefault('adopted_suggestions',{})[item['challenge_id']]=advice
+            conn.execute('UPDATE eval_results SET priority=?,updated_at=? WHERE id=?',(priority,db.utcnow(),item['id']))
+        conn.execute('UPDATE eval_runs SET config_json=?,updated_at=? WHERE id=?',(_dump(snapshot),db.utcnow(),round_id))
+    return get_round(round_id)
+
+
+@config.serialized_mutation
+def start_deferred(round_id,item_id):
+    row=_round(round_id);snapshot=json.loads(row['config_json'])
+    item=db.query_one('SELECT * FROM eval_results WHERE id=? AND eval_id=?',(item_id,round_id))
+    if not item or item['run_id'] or item['launch_state']!='deferred' or row['status']=='draft':
+        raise CompetitionError('只能启动已确认赛道中尚未启动的暂缓题')
+    current=_template(snapshot.get('template',{}),snapshot['mode'],frozen=True)
+    _require_clock(snapshot,current,mode=snapshot['mode'])
+    from . import competition_prompts
+    prompt=competition_prompts.freeze(round_id,item['challenge_id'])
+    with db.transaction() as conn:
+        changed=conn.execute("UPDATE eval_results SET launch_state='immediate',paused=0,template_json=?,prompt_json=?,updated_at=? WHERE id=? AND run_id IS NULL AND launch_state='deferred'",
+                             (_dump(current),_dump(prompt),db.utcnow(),item_id))
+        if changed.rowcount!=1: raise CompetitionError('暂缓题状态已改变，请重新读取')
+        conn.execute("UPDATE eval_runs SET status='running',ended_at=NULL,updated_at=? WHERE id=?",(db.utcnow(),round_id))
+    return get_round(round_id)
+
+
+def data_ready(details):
+    resources=[item for item in details.get('resources',[]) if isinstance(item,dict) and item.get('role')=='task-public-data']
+    if resources:
+        return all(bool(item.get('url') or item.get('retrieval_ref') or item.get('dataset_id')) for item in resources)
+    import re
+    return not bool(re.search(r'数据.{0,20}(?:待发布|稍后|尚未)|(?:data|dataset).{0,20}(?:pending|not yet|released later)',details.get('content',''),re.I))
+
+
+def refresh_data(round_id):
+    original=json.loads(_round(round_id)['config_json'])
+    fresh={entry['challenge_id']:_challenge_snapshot(entry['challenge_id']) for entry in original['entries']}
+    # HTTP waits never hold the settings lock. Merge with the current snapshot.
+    with config.mutation_lock, db.transaction() as conn:
+        snapshot=json.loads(_round(round_id)['config_json'])
+        for entry in snapshot['entries']:
+            details=fresh.get(entry['challenge_id'])
+            if not details or details.get('refresh_error'): continue
+            entry['challenge_snapshot']=details
+            ready=data_ready(details)
+            for item in conn.execute("SELECT * FROM eval_results WHERE eval_id=? AND challenge_id=? AND launch_state='deferred'",(round_id,entry['challenge_id'])).fetchall():
+                if ready and not item['data_ready']:
+                    from . import alerts
+                    alerts._insert(conn,'data-ready:'+item['id'],{'id':item['run_id'],'challenge_id':item['challenge_id']},'competition.data_ready','暂缓题的公开数据已可获取',{'round_id':round_id,'item_id':item['id'],'availability':'public_resources_available','verification':'not_materialized_or_scientifically_verified'})
+                conn.execute('UPDATE eval_results SET data_ready=?,updated_at=? WHERE id=?',(int(ready),db.utcnow(),item['id']))
+        conn.execute('UPDATE eval_runs SET config_json=?,updated_at=? WHERE id=?',(_dump(snapshot),db.utcnow(),round_id))
     return get_round(round_id)
 
 
 def append_run(round_id: str, challenge_id: str, template: dict | None = None) -> dict:
     row = _round(round_id)
     snapshot = json.loads(row['config_json'])
+    if row['status']=='draft': raise CompetitionError('先确认赛道模板，才能追加Run')
     if challenge_id not in {e['challenge_id'] for e in snapshot['entries']}:
         raise CompetitionError('追加 Run 须复用本轮题目 ID')
     chosen = _template(template or snapshot.get('template', {}), snapshot['mode'], frozen=not bool(template))
+    _require_clock(snapshot,chosen,mode=snapshot['mode'])
+    from . import competition_prompts
+    prompt=competition_prompts.freeze(round_id,challenge_id)
     with db.transaction() as conn:
         index = conn.execute('SELECT COALESCE(MAX(repeat_index),0)+1 FROM eval_results'
                              ' WHERE eval_id=? AND challenge_id=?', (round_id, challenge_id)).fetchone()[0]
-        conn.execute('INSERT INTO eval_results(id,eval_id,challenge_id,repeat_index,status,template_json,created_at,updated_at)'
-                     " VALUES(?,?,?,?,'pending',?,?,?)", ('ri_' + uuid.uuid4().hex[:12], round_id,
-                     challenge_id, index, _dump(chosen), db.utcnow(), db.utcnow()))
+        conn.execute('INSERT INTO eval_results(id,eval_id,challenge_id,repeat_index,status,template_json,prompt_json,created_at,updated_at)'
+                     " VALUES(?,?,?,?,'pending',?,?,?,?)", ('ri_' + uuid.uuid4().hex[:12], round_id,
+                     challenge_id, index, _dump(chosen),_dump(prompt),db.utcnow(), db.utcnow()))
         conn.execute("UPDATE eval_runs SET status='running',ended_at=NULL WHERE id=?", (round_id,))
     return get_round(round_id)
 
 
-def update_item(round_id: str, item_id: str, *, priority: int | None = None, paused: bool | None = None) -> dict:
-    _round(round_id)
-    if not db.query_one('SELECT id FROM eval_results WHERE id=? AND eval_id=?', (item_id, round_id)):
-        raise CompetitionError('轮次条目不存在')
-    if priority is not None:
-        if type(priority) is not int or not -1000 <= priority <= 1000: raise CompetitionError('优先级范围 -1000–1000')
-        db.execute('UPDATE eval_results SET priority=? WHERE id=?', (priority, item_id))
-    if paused is not None: db.execute('UPDATE eval_results SET paused=? WHERE id=?', (int(paused), item_id))
+@config.serialized_mutation
+def update_item(round_id: str,item_id: str,*,priority=None,paused=None,launch_state=None):
+    round_row=_round(round_id)
+    if priority is not None and (type(priority) is not int or not -1000<=priority<=1000):
+        raise CompetitionError('优先级范围 -1000–1000')
+    if paused is not None and type(paused) is not bool: raise CompetitionError('暂停状态须为布尔值')
+    if launch_state is not None and launch_state not in ('immediate','deferred','skipped'):
+        raise CompetitionError('启动状态须为立即运行、暂缓或跳过')
+    with db.transaction() as conn:
+        item=conn.execute('SELECT * FROM eval_results WHERE id=? AND eval_id=?',(item_id,round_id)).fetchone()
+        if not item: raise CompetitionError('轮次条目不存在')
+        if launch_state is not None and item['run_id']: raise CompetitionError('此题已启动，请用Run暂停/恢复操作')
+        if launch_state is not None and launch_state!=item['launch_state'] and round_row['status']!='draft':
+            raise CompetitionError('确认后的启动状态已冻结；请用启动暂缓题按钮绑定当前模板和提示词')
+        updates={key:value for key,value in {'priority':priority,'paused':int(paused) if paused is not None else None,'launch_state':launch_state}.items() if value is not None}
+        if updates:
+            conn.execute('UPDATE eval_results SET '+','.join(key+'=?' for key in updates)+',updated_at=? WHERE id=?',(*updates.values(),db.utcnow(),item_id))
     return get_round(round_id)
 
 
@@ -280,11 +371,12 @@ def get_round(round_id: str) -> dict:
     for r in db.query('SELECT e.*,c.title FROM eval_results e JOIN challenges c ON c.id=e.challenge_id'
                       ' WHERE eval_id=? ORDER BY priority DESC,e.rowid', (round_id,)):
         item = dict(r)
-        for key in ('template_json', 'triage_json', 'result_json'):
+        for key in ('template_json', 'triage_json', 'result_json','prompt_json'):
             item[key.removesuffix('_json')] = json.loads(item.pop(key) or 'null')
         run = db.query_one('SELECT phase,block_reason FROM runs WHERE id=?', (r['run_id'],)) if r['run_id'] else None
-        item['phase'] = run['phase'] if run else 'queued'
+        item['phase'] = run['phase'] if run else (r['launch_state'] if r['launch_state']!='immediate' else 'queued')
         item['user_triage'] = json.loads(row['config_json']).get('user_triage',{}).get(r['challenge_id'])
+        item['adopted_suggestion'] = json.loads(row['config_json']).get('adopted_suggestions',{}).get(r['challenge_id'])
         item['triage_attempts'] = [dict(a) for a in db.query('SELECT id,helper_effort,status,started_at,ended_at FROM competition_triage_attempts WHERE item_id=? ORDER BY rowid',(r['id'],))]
         item['blocked_reason'] = run['block_reason'] if run else r['error']
         item['local_best'] = db.query_one('SELECT MAX(science_score) FROM local_scores WHERE challenge_id=?',
@@ -309,17 +401,27 @@ def get_round(round_id: str) -> dict:
                                '等待资源名额' if item['phase'] == 'queued' else item['blocked_reason'])
         items.append(item)
     snapshot = json.loads(row['config_json'])
+    from . import competition_prompts
     return {'id': round_id, 'label': row['label'], 'status': row['status'], 'items': items,
             'protocol_drift': snapshot.get('protocol_drift', {'status': 'unknown'}),
-            'template': snapshot.get('template'), 'experience_snapshot_sha256': snapshot.get('experience_snapshot_sha256'),
+            'template': snapshot.get('template'), 'user_prompt': competition_prompts.latest(round_id),
+            'experience_snapshot_sha256': snapshot.get('experience_snapshot_sha256'),
             'resources': resource_coordinator.status()}
 
 
 async def advance_round(controller, evaluation) -> None:
     rid = evaluation['id']
     snapshot = json.loads(evaluation['config_json'])
+    from . import track_clock
+    from datetime import datetime,timezone
+    end=track_clock.instant(snapshot.get('track_clock',{}).get('end')) or track_clock.platform_time(snapshot,'roundEndAt')
+    expired=snapshot.get('budget_policy')=='track-unlimited/v1' and end is not None and end<=datetime.now(timezone.utc)
     for item in db.query('SELECT * FROM eval_results WHERE eval_id=? ORDER BY priority DESC,rowid', (rid,)):
         if item['status'] in ('complete', 'failed'): continue
+        if expired and not item['run_id'] and item['launch_state']!='skipped':
+            db.execute("UPDATE eval_results SET status='failed',error='赛道已结束，未启动',updated_at=? WHERE id=?",(db.utcnow(),item['id']))
+            continue
+        if item['launch_state'] in ('deferred','skipped'): continue
         if item['retry_at'] and item['retry_at'] > db.utcnow(): continue
         run = db.query_one('SELECT * FROM runs WHERE id=?', (item['run_id'],)) if item['run_id'] else None
         if item['paused']:
@@ -328,6 +430,11 @@ async def advance_round(controller, evaluation) -> None:
                 db.execute('UPDATE eval_results SET queue_paused=1 WHERE id=?', (item['id'],))
             continue
         template = _template(json.loads(item['template_json']), snapshot['mode'], frozen=True)
+        if run is None:
+            try: _require_clock(snapshot,template,mode=snapshot['mode'])
+            except CompetitionError as exc:
+                db.execute("UPDATE eval_results SET status='failed',error=?,updated_at=? WHERE id=?",(str(exc),db.utcnow(),item['id']))
+                continue
         try:
             if run is None:
                 from . import model_fallback
@@ -349,6 +456,10 @@ async def advance_round(controller, evaluation) -> None:
                                         'solver_entry': fallback.get('solver_entry') or template.get('solver_entry'),
                                         'user_triage': {'source': template.get('triage_source','operator_template'), 'data_status': template.get('data_status',''), 'pi_notes':template.get('pi_notes',''), 'notice':'用户事务性提示，不是已验证事实或新增授权'},
                                         'challenge_snapshot': next(e.get('challenge_snapshot') for e in snapshot['entries'] if e['challenge_id'] == item['challenge_id'])}
+                from . import competition_prompts
+                state['competition']['user_prompt']=json.loads(item['prompt_json']) if item['prompt_json'] else competition_prompts.freeze(rid,item['challenge_id'])
+                if snapshot.get('budget_policy'):
+                    state['competition']['budget_policy']=snapshot['budget_policy']
                 db.execute('UPDATE runs SET config_snapshot=? WHERE id=?', (_dump(state), run['id']))
             phase = run['phase']
             if phase == 'created':
@@ -396,5 +507,5 @@ async def advance_round(controller, evaluation) -> None:
             if run and run['phase'] == 'created':
                 db.execute("UPDATE runs SET phase='failed',ended_at=?,block_reason=? WHERE id=?"
                            " AND phase IN ('created','blocked')", (db.utcnow(), type(exc).__name__, run['id']))
-    if not db.query_one("SELECT 1 FROM eval_results WHERE eval_id=? AND status NOT IN ('complete','failed')", (rid,)):
+    if not db.query_one("SELECT 1 FROM eval_results WHERE eval_id=? AND launch_state!='skipped' AND status NOT IN ('complete','failed')", (rid,)):
         db.execute("UPDATE eval_runs SET status='complete',ended_at=?,updated_at=? WHERE id=?", (db.utcnow(), db.utcnow(), rid))

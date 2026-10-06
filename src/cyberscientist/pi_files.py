@@ -12,7 +12,6 @@ from . import config, db, observation, skills
 
 PAGE_BYTES = 12000
 LIST_LIMIT = 100
-_READERS = set()
 _PRIVATE_NAMES = {'.env', 'secrets.json', 'auth.json', 'credentials.json', 'config.toml',
                   'id_rsa', 'id_ed25519', '.git', '.cyberscientist', 'sessions', 'brain'}
 
@@ -173,49 +172,14 @@ def access(run_id, args):
     return result
 
 
-async def tracked_access(run_id, args):
-    """Keep a cancelled HTTP reader owned until its actual thread has finished."""
-    import asyncio
-    import uuid
-    from . import power, resource_coordinator
-    if power.shutdown_requested():
-        raise ValueError('安全关机已关闭新的文件读取')
-    owner = 'pi-file-' + uuid.uuid4().hex
-
-    async def drain():
-        worker = asyncio.create_task(asyncio.to_thread(access, run_id, args))
-        try:
-            return await asyncio.shield(worker)
-        except asyncio.CancelledError:
-            while not worker.done():
-                try:
-                    await asyncio.shield(worker)
-                except asyncio.CancelledError:
-                    continue
-                except Exception:
-                    break
-            if not worker.cancelled():
-                worker.exception()  # Retrieve errors after the caller disappeared.
-            raise
-        finally:
-            resource_coordinator.unregister_auxiliary(owner)
-
-    task = asyncio.create_task(drain())
-    _READERS.add(task)
-    resource_coordinator.register_auxiliary(owner, task)
-    task.add_done_callback(_READERS.discard)
-    task.add_done_callback(lambda finished: None if finished.cancelled() else finished.exception())
-    return await asyncio.shield(task)
+async def tracked_access(run_id,args):
+    from . import resource_coordinator
+    return await resource_coordinator.tracked_thread(access,run_id,args,owner_prefix='pi-file-')
 
 
 async def drain():
-    """Production lifespan closes readers before the event loop can close."""
-    import asyncio
-    tasks = [task for task in _READERS if not task.done()]
-    for task in tasks:
-        task.cancel()
-    if tasks:
-        await asyncio.gather(*tasks, return_exceptions=True)
+    from . import resource_coordinator
+    await resource_coordinator.drain_threads(prefix='pi-file-')
 
 
 class _Directory:

@@ -315,6 +315,10 @@ class RunController:
 
     def _require_model_authorization(self, run_id: str) -> None:
         run = self._require_run(run_id)
+        if run['mode']=='connected' and run_limits.track_unlimited(run):
+            from . import track_clock
+            if track_clock.for_run(run)['end'] is None:
+                raise ControllerError('NEEDS_TRACK_CLOCK','资源不限赛道尚未设置有效结束时间，不能启动原生调用')
         if run["mode"] not in ("demo","connected"):
             raise ControllerError("INVALID_ARGUMENT","未知 Run mode")
         if run["mode"] == "connected":
@@ -581,6 +585,8 @@ class RunController:
             raise ControllerError('INVALID_ARGUMENT', '资源不限授权必须是布尔值')
         if unlimited_resources:
             max_compute_cost_cny = None
+            if json.loads(run['config_snapshot']).get('competition',{}).get('budget_policy')=='track-unlimited/v1':
+                max_run_minutes = 0
         cost_cap = compute_budget.validate_cap(max_compute_cost_cny)
         if any(type(v) is not int or v < 0 for v in (max_jobs, max_run_minutes,
                 max_submissions, max_model_turns, max_sandboxes, max_sandbox_minutes, max_environment_saves)):
@@ -700,6 +706,8 @@ class RunController:
                                   "先保存本轮有界授权（POST /runs/{id}/authorize）")
         self._require_model_authorization(run_id)
         settings = self._runtime_settings(run_id)
+        if run_limits.track_unlimited(run) and self._run_minutes_exceeded(run):
+            raise ControllerError('AUTH_EXPIRED','赛道已结束，不能启动新的Run')
         prime = self._make_prime(settings)
         p_health = await prime.inspect()
         brain = self._make_brain(settings)
@@ -1199,6 +1207,8 @@ class RunController:
                 - run["brain_reviews_used"] - 1)},
             "question": question,
         }
+        from . import competition_prompts
+        packet['user_prompt']=competition_prompts.packet(run)
         if self._lifecycle_v2(run):
             packet.pop("current_intention", None)
             packet["run_objective"] = run["objective_md"]
@@ -1261,6 +1271,8 @@ class RunController:
             return
         self._clear_model_limit(run_id, "brain")
         if answer and not error_msg:
+            from . import competition_prompts
+            competition_prompts.received(run_id,packet.get('user_prompt'))
             from . import model_fallback
             model_fallback.recovered(self._runtime_settings(run_id)['brain'], request_id='run:' + run_id + ':brain')
         if answer:
@@ -2896,6 +2908,8 @@ class RunController:
                     sparse=self._sparse_brain(run))
                 packet["protocol"] = "review_result"
                 packet["sparse_brain_version"] = 1 if self._sparse_brain(run) else 0
+            from . import competition_prompts
+            packet['user_prompt']=competition_prompts.packet(run)
         except Exception as exc:  # noqa: BLE001
             self._finish_request(req["id"], "error",
                                  error=f"frame 构建失败: {exc}"[:300])
@@ -2947,7 +2961,7 @@ class RunController:
                 work = config.WORKSPACE_DIR / "runs" / run_id / "curation" / req["id"]
                 work.mkdir(parents=True, exist_ok=True)
                 maintenance_session = await maintenance_brain.open({
-                    "working_directory": str(work)})
+                    "working_directory": str(work), "pi_files_readonly": True})
             active_brain = maintenance_brain or brain
             active_session = maintenance_session or b_session
             from .structured_output import set_budget
@@ -2996,6 +3010,8 @@ class RunController:
             return
         self._clear_model_limit(run_id, "brain")
         if result is not None and not error_msg:
+            from . import competition_prompts
+            competition_prompts.received(run_id,packet.get('user_prompt'))
             from . import model_fallback
             model_fallback.recovered(self._runtime_settings(run_id)['brain'], request_id='run:' + run_id + ':brain')
 
@@ -3466,7 +3482,8 @@ class RunController:
         packet["feedback"] = feedback
         packet["experience_manifest"] = feedback["experiences"]
         packet["experience_context_id"] = feedback["experience_context_id"]
-        return packet
+        from . import competition_prompts
+        return {'user_prompt':competition_prompts.packet(run),**packet}
 
     def _last_seq(self, run_id: str) -> int:
         row = db.query_one("SELECT COALESCE(MAX(seq),0) AS s FROM events WHERE run_id=?",
@@ -4493,6 +4510,9 @@ class RunController:
         auth = db.query_one("SELECT * FROM authorizations WHERE id=?",
                             (run["authorization_id"],)) if run["authorization_id"] else None
         minutes = auth["max_run_minutes"] if auth else 0
+        if auth and auth['unlimited_resources']:
+            from . import run_clock
+            return run_clock.remaining(run,auth)
         if not minutes or not run["started_at"]:
             return float("inf")
         started = _parse_ts(run["started_at"])
@@ -4646,7 +4666,7 @@ class RunController:
                                         (run["id"],))),
             "max_trials": (auth["max_trials"] if self._lifecycle_v2(run) and auth and auth["max_trials"]
                            else defaults["max_trials"]) if not run_limits.unlimited(run["id"]) else None,
-            "run_minutes_limit": auth["max_run_minutes"] if auth else 0,
+            "run_minutes_limit": None if run_limits.track_unlimited(run,auth) else auth["max_run_minutes"] if auth else 0,
             "run_minutes_exceeded": self._run_minutes_exceeded(run),
             "unlimited_resources": run_limits.unlimited(run["id"]),
             "model_turns": {"limit": run_limits.displayed(run["id"], auth["max_model_turns"] if auth else 0),
@@ -4654,7 +4674,9 @@ class RunController:
                             "known_cost": None, "unknown_cost": True,
                             "enforced": False,
                             "note": "原生代理内部调用量尚未完整计量；不能将未知用量视为零"},
-            "max_submissions": auth["max_submissions"] if auth else 0,
+            "max_submissions": None if run_limits.track_unlimited(run,auth) else auth["max_submissions"] if auth else 0,
+            "max_environment_saves": None if run_limits.track_unlimited(run,auth) else auth['max_environment_saves'] if auth else 0,
+            "max_compute_cost_cny": auth['max_compute_cost_cny'] if auth else None,
             "max_jobs": run_limits.displayed(run["id"], auth["max_jobs"] if auth else 0),
             "max_sandboxes": run_limits.displayed(run["id"], auth["max_sandboxes"] if auth else 0),
             "max_sandbox_minutes": run_limits.displayed(run["id"], auth["max_sandbox_minutes"] if auth else 0),
