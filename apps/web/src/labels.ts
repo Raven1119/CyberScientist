@@ -96,6 +96,7 @@ const EVENT_LABELS: Record<string, string> = {
 }
 
 export function eventLabel(type: string): string {
+  if (type === 'brain.file_read') return 'PI 读取文件'
   return EVENT_LABELS[type] ?? type
 }
 
@@ -114,6 +115,8 @@ export function eventText(event: {
   const trigger = typeof p.trigger === 'string' ? p.trigger : null
 
   switch (event.type) {
+    case 'brain.file_read':
+      return `${p.scope}/${p.path} · ${p.bytes} 字节 · SHA ${String(p.sha256).slice(0, 12)}`
     case 'brain.decision':
       return summary ?? detail ?? '大脑给出决策。'
     case 'brain.review_started':

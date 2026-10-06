@@ -80,7 +80,10 @@ async def test_safe_shutdown_persists_curation_interruption_and_unknown_close(mo
     db.execute("UPDATE runs SET phase='paused' WHERE id=?",(rid,))
     entered=asyncio.Event()
     class Brain:
-        async def open(self,spec):return SessionRef('fixture','auxiliary')
+        async def open(self,spec):
+            assert spec['pi_files_readonly']
+            if not global_scope: assert spec['mcp_servers']
+            return SessionRef('fixture','auxiliary')
         async def review(self,session,packet):
             entered.set();await asyncio.Event().wait()
             yield BrainEvent('message',{'text':'never'})

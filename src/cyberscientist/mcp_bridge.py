@@ -169,6 +169,13 @@ _SCORES_TOOL = {
     "inputSchema": {"type": "object", "additionalProperties": False,
                     "properties": {}, "required": []}}
 
+_FILES_TOOL = {'name': 'research_files', 'description': '仅PI只读：列全部skills、本Run trials、题目resources目录并分页读文件；拒绝越界、符号链接和密钥，无shell或写入。返回原文件SHA、来源与下一页。',
+    'inputSchema': {'type': 'object', 'additionalProperties': False, 'properties': {
+        'action': {'enum': ['list', 'read']}, 'scope': {'enum': ['skills', 'trials', 'resources']},
+        'path': {'type': 'string'}, 'offset': {'type': 'integer', 'minimum': 0},
+        'limit': {'type': 'integer', 'minimum': 1, 'maximum': 12000}, 'expected_sha256': {'type': 'string'}},
+        'required': ['action', 'scope']}}
+
 
 _SHARED_TOOL = {'name': 'research_shared',
     'description': '查看本题追加式共享版本/正式验证器；执行器可发布本Trial文件并引用真实来源事件，或复制版本到本Trial。科学是否正确仍需验证；不能覆盖版本或改评分器。',
@@ -255,7 +262,7 @@ def _handle(msg: dict) -> dict | None:
         role = os.environ.get("CS_TOOL_ROLE", "executor")
         return {"jsonrpc": "2.0", "id": mid, "result": {
             "tools": _PUBLIC_TOOLS if os.environ.get('CS_PUBLIC_RESEARCH_PROBE') else
-                [_SHARED_TOOL, _VARIANT_TOOL, _REVIEW_TOOL, _TRACE_TOOL, _DATA_TOOL, _SCORES_TOOL, _NARRATIVE_TOOL, _FACTS_TOOL, _EXPERIENCE_TOOL, *_PUBLIC_TOOLS] if role == "brain" else _TOOLS}}
+                [_FILES_TOOL, _SHARED_TOOL, _VARIANT_TOOL, _REVIEW_TOOL, _TRACE_TOOL, _DATA_TOOL, _SCORES_TOOL, _NARRATIVE_TOOL, _FACTS_TOOL, _EXPERIENCE_TOOL, *_PUBLIC_TOOLS] if role == "brain" else _TOOLS}}
     if method == "tools/call":
         params = msg.get("params", {})
         name = params.get("name")
@@ -263,6 +270,9 @@ def _handle(msg: dict) -> dict | None:
         if os.environ.get('CS_PUBLIC_RESEARCH_PROBE'):
             from . import connectivity_probe
             out = connectivity_probe.call(name, args)
+        elif name == 'research_files':
+            out = ({'error': '此工具仅PI可用'} if os.environ.get('CS_TOOL_ROLE') != 'brain' else
+                   _post('/api/v1/tools/files', args, retry_transient=False))
         elif name in ('research_web_search', 'research_web_read', 'research_lkm'):
             out = _post('/api/v1/tools/public_research', {'tool': name, **args}, timeout=120, retry_transient=False)
         elif name == 'research_shared':

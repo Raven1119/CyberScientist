@@ -365,6 +365,8 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
             await ops.drain()
             from . import competition_triage
             await competition_triage.drain()
+            from . import pi_files
+            await pi_files.drain()
 
     app = FastAPI(title="CyberScientist", docs_url=None, openapi_url=None,
                   lifespan=lifespan)
@@ -1590,6 +1592,16 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
         body["schema_version"] = 1
         body["message_type"] = "guidance_ack"
         return collab.ack_guidance(identity["run_id"], body)
+
+    @app.post('/api/v1/tools/files')
+    async def tool_files(request: Request):
+        identity = _tool_auth(request, role='brain')
+        from . import pi_files
+        body = await request.json()
+        try:
+            return await pi_files.tracked_access(identity['run_id'], body)
+        except ValueError as exc:
+            raise HTTPException(409, detail={'code': 'PI_FILE_UNAVAILABLE', 'message': str(exc)}) from exc
 
     @app.post("/api/v1/tools/trace")
     async def tool_trace(request: Request) -> dict[str, Any]:

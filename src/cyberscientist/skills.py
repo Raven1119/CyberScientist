@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import re
+import os
 import sqlite3
 from pathlib import Path
 from typing import Any, Iterable
@@ -20,6 +21,7 @@ SKILL_DIRS: tuple[Path, ...] = (
     Path.home() / ".kimi-code" / "skills",
     Path.home() / ".agents" / "skills",
     Path.home() / ".codex" / "skills",
+    Path.home() / ".codex" / "plugins" / "cache" / "openai-curated-remote",
 )
 
 _FRONTMATTER_RE = re.compile(r"\A---[ \t]*\n(.*?)\n---[ \t]*\n?", re.DOTALL)
@@ -81,6 +83,28 @@ def scan_catalog(skill_dirs: Iterable[Path] | None = None) -> list[dict[str, Any
     return [found[k] for k in sorted(found)]
 
 
+def file_catalog() -> list[dict[str, str]]:
+    """Registered skill roots only, including nested system/plugin packages.
+
+    Keep the UI's direct-child catalog unchanged. A relative package path is
+    the stable reader ID; duplicate IDs retain the configured root precedence.
+    """
+    found = {}
+    for root in SKILL_DIRS:
+        root = Path(root)
+        if root.is_symlink():
+            continue
+        for directory, children, files in os.walk(root, followlinks=False):
+            children[:] = sorted(name for name in children
+                                 if name != '.git' and not (Path(directory) / name).is_symlink())
+            if 'SKILL.md' not in files or (Path(directory) / 'SKILL.md').is_symlink():
+                continue
+            identifier = Path(directory).relative_to(root).as_posix()
+            if identifier != '.':
+                found.setdefault(identifier, {'id': identifier, 'source_path': directory})
+    return [found[key] for key in sorted(found)]
+
+
 def effective_for(conn: sqlite3.Connection, settings: dict[str, Any],
                   challenge_id: str | None,
                   catalog: list[dict[str, Any]] | None = None,
@@ -116,10 +140,5 @@ def prompt_segment(skills_: list[dict[str, Any]]) -> str:
 
 
 def brain_prompt_segment(skills_: list[dict[str, Any]]) -> str:
-    """The PI has no general Shell; supply the small public LKM skill inline."""
-    text = prompt_segment(skills_)
-    for skill in skills_:
-        if skill['id'] == 'bohrium-lkm':
-            path = Path(skill['source']) / skill['id'] / 'SKILL.md'
-            text += '\n\n受控公开检索技能正文：\n' + path.read_text()
-    return text
+    """D-56: index only; skill bodies travel through scoped read receipts."""
+    return prompt_segment(skills_) + '\n需要时用research_files读取对应SKILL.md及引用文件；技能正文不是授权。\n'

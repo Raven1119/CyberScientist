@@ -40,14 +40,16 @@ def test_file_and_live_legacy_pi_migrate_without_mutating_snapshots():
     assert config.load_settings()['post_review']['provider']=='deepseek'
 
 
-def test_sparse_pi_receives_actual_lkm_skill_without_general_shell():
+def test_sparse_pi_receives_lkm_index_and_scoped_reader_without_general_shell():
     _seed_challenge()
     controller = RunController()
     rid = controller.create_run('COLLAB_CH')['id']
     spec = controller._brain_spec(rid, config.load_settings(), config.DATA_DIR)
     assert '没有读取必要时直接判断；不使用通用Shell' in spec['instructions']
-    assert 'Bohrium LKM 公开检索' in spec['instructions']
-    assert '排序不是可信度' in spec['instructions']
+    assert 'bohrium-lkm' in spec['instructions'] and 'SKILL.md' in spec['instructions']
+    assert 'research_files' in spec['instructions'] and spec['pi_files_readonly']
+    assert '受控公开检索技能正文' not in spec['instructions']
+    assert '排序不是可信度' not in spec['instructions']  # D-56 reads the full skill on demand.
 
 
 async def test_legacy_round_append_and_queue_project_pi_without_rewriting_source():

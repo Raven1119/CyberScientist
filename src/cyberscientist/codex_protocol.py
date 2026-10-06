@@ -19,7 +19,7 @@ COLLAB_TOOLS = (
     "research_operating_facts", "research_environment", "research_experience",
     'research_web_search', 'research_web_read', 'research_lkm',
 )
-BRAIN_TOOLS = ("research_shared", "research_trace_variant", "research_review_package", "research_trace", "platform_scores", "research_operating_facts", "research_experience", 'research_web_search', 'research_web_read', 'research_lkm')
+BRAIN_TOOLS = ("research_files", "research_shared", "research_trace_variant", "research_review_package", "research_trace", "platform_scores", "research_operating_facts", "research_experience", 'research_web_search', 'research_web_read', 'research_lkm')
 
 
 # Native authentication stays in Codex's own HOME/CODEX_HOME. This allowlist
@@ -101,6 +101,11 @@ def thread_params(spec: dict[str, Any], model: str | None,
         # never copied into thread config, prompts or protocol metadata.
         cfg["shell_environment_policy.include_only"] = list(NATIVE_BRAIN_SHELL_ENV_KEYS)
         cfg["shell_environment_policy.ignore_default_excludes"] = False
+        if spec.get('pi_files_readonly'):
+            cfg['features.shell_tool'] = False
+            cfg['features.unified_exec'] = False
+            cfg['features.multi_agent'] = False
+            cfg['features.multi_agent_v2'] = False
     if writable and spec.get("network_access") is True:
         cfg["sandbox_workspace_write.network_access"] = True
     if writable and spec.get("writable_roots"):
