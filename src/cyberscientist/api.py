@@ -1337,7 +1337,7 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
         if isinstance(args, list) and '--cs-operation-id' in args:
             index = args.index('--cs-operation-id')
             request.state.operation_id = args[index + 1] if index + 1 < len(args) else None
-        result = await asyncio.to_thread(compute.cli, identity["run_id"], body.get("args"), body.get("cwd", ""))
+        result = await resource_coordinator.tracked_thread(compute.cli, identity["run_id"], body.get("args"), body.get("cwd", ""), owner_prefix='bohr-tool-')
         controller.notify_run_change(identity["run_id"])
         from . import tool_feedback
         return tool_feedback.attach(identity['run_id'], 'bohr', result)
@@ -1345,7 +1345,7 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
     @app.post('/api/v1/tools/sandbox')
     async def tool_sandbox(request: Request) -> dict:
         identity = _tool_auth(request)
-        result = await asyncio.to_thread(sandboxes.dispatch, identity['run_id'], await request.json())
+        result = await resource_coordinator.tracked_thread(sandboxes.dispatch, identity['run_id'], await request.json(), owner_prefix='sandbox-tool-')
         controller.notify_run_change(identity['run_id'])
         from . import tool_feedback
         return tool_feedback.attach(identity['run_id'], 'sandbox', result)
@@ -1356,7 +1356,7 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
 
     @app.post('/api/v1/runs/{run_id}/sandboxes/{sandbox_id}/delete')
     async def run_sandbox_delete(run_id: str, sandbox_id: str) -> dict:
-        result = await asyncio.to_thread(sandboxes.delete, run_id, sandbox_id)
+        result = await resource_coordinator.tracked_thread(sandboxes.delete, run_id, sandbox_id, owner_prefix='sandbox-delete-')
         controller.notify_run_change(run_id)
         return result
 

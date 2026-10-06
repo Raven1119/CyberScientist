@@ -25,7 +25,7 @@ SKILL_DIRS: tuple[Path, ...] = (
 )
 
 _FRONTMATTER_RE = re.compile(r"\A---[ \t]*\n(.*?)\n---[ \t]*\n?", re.DOTALL)
-BUILTIN_EXECUTOR_SKILLS = ('cyberscientist-sandbox', 'cyberscientist-clean-rerun', 'bohrium-lkm')
+BUILTIN_EXECUTOR_SKILLS = ('cyberscientist-sandbox', 'cyberscientist-clean-rerun', 'cyberscientist-job-spec', 'bohrium-lkm')
 
 
 def _parse_skill_md(path: Path) -> dict[str, str]:

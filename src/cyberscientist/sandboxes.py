@@ -18,6 +18,7 @@ LIVE = ('creating', 'active', 'unknown', 'deleting')
 TERMINAL_RUN = ('finished', 'failed', 'cancelled')
 FORBIDDEN = ('--never-timeout', '--inherit-auth', '--mount-user-storage',
              '--reserve-failed-sandbox', '--parent-sandbox-id')
+RETRY_DELAYS = (2, 4, 8, 16, 30, 30)
 
 
 def _json(value: Any) -> str:
@@ -95,6 +96,82 @@ def _local_dns_denied(value: dict) -> bool:
     return (error.get('code') == 'NETWORK_ERROR' if isinstance(error, dict) else False) and (
         isinstance(message, str) and 'lookup open.bohrium.com' in message
         and 'socket: operation not permitted' in message)
+
+
+def _retry_reason(receipt: dict, action: str) -> str | None:
+    body = _body(receipt)
+    if (receipt.get('ok') or receipt.get('unknown') or receipt.get('truncated')
+            or not isinstance(body, dict) or body.get('ok') is not False
+            or body.get('data') is not None):
+        return None
+    error = body.get('error')
+    if not isinstance(error, dict) or _sandbox_id(body):
+        return None
+    message = error.get('message', '')
+    # These native refusals precede the remote mutation. A command exit,
+    # generic timeout or lost reply is never evidence that execution did not start.
+    if action == 'create' and error.get('http') == 400 and (
+            error.get('code') == 'IMAGE_PREPARATION_IN_PROGRESS' or
+            isinstance(message, str) and message.startswith('IMAGE_PREPARATION_IN_PROGRESS:')):
+        return 'image_preparation'
+    if action == 'exec' and error.get('code') in ('NETWORK_ERROR', 'COMMAND_FAILED') and (
+            isinstance(message, str) and message.startswith('net/http: TLS handshake timeout')):
+        return 'tls_handshake'
+    return None
+
+
+def _retry_native(run_id: str, op: str, action: str, argv: list[str], *, timeout: int,
+                  expires_at: str) -> dict:
+    """Bounded retries of explicit pre-mutation failures, with one request ID."""
+    started = time.monotonic(); waits = []; receipt = None
+    deadline = datetime.fromisoformat(expires_at)
+    requested_seconds = int(argv[argv.index('--timeout') + 1])
+    for attempt in range(len(RETRY_DELAYS) + 1):
+        from . import power, run_clock
+        if attempt:
+            current = compute._run(run_id)
+            authorization = db.query_one('SELECT * FROM authorizations WHERE id=?', (current['authorization_id'],))
+            room = (deadline - datetime.now(timezone.utc)).total_seconds()
+            if (current['phase'] != 'running' or current['gate'] != 'open'
+                    or power.shutdown_requested() or not authorization
+                    or run_clock.remaining(current, authorization) < requested_seconds
+                    or action == 'exec' and room < requested_seconds):
+                break
+        receipt = compute._native(argv, timeout=timeout)
+        reason = _retry_reason(receipt, action)
+        if not reason or attempt == len(RETRY_DELAYS):
+            break
+        delay = RETRY_DELAYS[attempt]
+        run = compute._run(run_id)
+        auth = db.query_one('SELECT * FROM authorizations WHERE id=?', (run['authorization_id'],))
+        room = (deadline - datetime.now(timezone.utc)).total_seconds()
+        if (run['phase'] != 'running' or run['gate'] != 'open' or not auth
+                or room <= delay + 5 or run_clock.remaining(run, auth) <= delay + 5
+                or time.monotonic() - started + delay > 180 or power.shutdown_requested()):
+            break
+        event = db.append_event(run_id, 'controller', 'sandbox.retry_wait',
+            {'operation_id': op, 'action': action, 'reason': reason,
+             'attempt': attempt + 1, 'wait_seconds': delay,
+             'receipt_sha256': hashlib.sha256(_json(_receipt(receipt)).encode()).hexdigest()})
+        waits.append({'reason': reason, 'seconds': delay})
+        time.sleep(delay)
+        # Shutdown or a manual pause during the wait cancels the retry.
+        fresh = compute._run(run_id)
+        if fresh['phase'] != 'running' or fresh['gate'] != 'open':
+            break
+    if waits:
+        fact = {'operation_id': op, 'action': action, 'waits': waits,
+                'wait_seconds': sum(item['seconds'] for item in waits),
+                'elapsed_seconds': round(time.monotonic() - started, 3),
+                'native_ok': bool(receipt.get('ok'))}
+        event = db.append_event(run_id, 'controller', 'sandbox.environment_observed', fact)
+        from . import environment_facts
+        try:
+            environment_facts.record('sandbox:retry:' + action, 'Bohrium 沙箱自动退避', fact, event)
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).warning('Sandbox retry fact write failed: %s', type(exc).__name__)
+    return receipt
 
 
 def _remote_items(value: Any) -> list[dict]:
@@ -282,7 +359,8 @@ def create(run_id: str, operation_id: str, request: dict, *, _session_id: str | 
     if request.get('cpu'): argv += ['--cpu',request['cpu']]
     if gpu: argv += ['--gpu',gpu if isinstance(gpu,str) else '4090']
     argv += ['--request-id',operation_id,'--yes','--no-interactive','-o','json']
-    receipt = compute._native(argv, timeout=min(240,max(90,timeout)))
+    receipt = _retry_native(run_id, operation_id, 'create', argv,
+                            timeout=min(240,max(90,timeout)), expires_at=expires)
     sid = _sandbox_id(_body(receipt)) if receipt.get('ok') else None
     error = (_body(receipt) or {}).get('error') if isinstance(_body(receipt),dict) else None
     confirmed_not_started = isinstance(error,dict) and error.get('code') == 'CONFIRMATION_REQUIRED'
@@ -386,8 +464,10 @@ def execute(run_id: str, sandbox_id: str, command: str, timeout: int,
                            trial_id=row['trial_id'])
     started = time.monotonic()
     try:
-        receipt = compute._native(['sandbox','exec',sandbox_id,'--command',command,'--timeout',
-                                   str(timeout),'--no-interactive','-o','json'],timeout=timeout+30)
+        receipt = _retry_native(run_id, op, 'exec',
+            ['sandbox','exec',sandbox_id,'--command',command,'--timeout',str(timeout),
+             '--request-id',op,'--no-interactive','-o','json'],
+            timeout=timeout+30, expires_at=row['expires_at'])
     except Exception as exc:
         receipt = {'ok': False, 'unknown': True, 'exit_code': None,
                    'stdout': '', 'stderr': '沙箱执行回执未确认: ' + type(exc).__name__}

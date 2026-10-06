@@ -297,9 +297,10 @@ def _handle(msg: dict) -> dict | None:
                             retry_transient=action not in ("submit", "stop"))
         elif name == "research_sandbox":
             requested = args.get('timeout')
-            wait = (max(180, requested + 45) if args.get('action') == 'exec'
+            wait = (max(420, requested + 240) if args.get('action') == 'exec'
                     and type(requested) is int and 1 <= requested <= 10800 else
-                    375 if args.get('action') in ('files.read', 'files.write') else 180)
+                    375 if args.get('action') in ('files.read', 'files.write') else
+                    600 if args.get('action') == 'create' else 180)
             out = _post("/api/v1/tools/sandbox", args, timeout=wait,
                         retry_transient=False)
         elif name == "research_package_check":

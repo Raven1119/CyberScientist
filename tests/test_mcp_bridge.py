@@ -82,4 +82,4 @@ def test_sandbox_wait_matches_bounded_execution_and_transfer_without_replay(monk
         assert result['result']['isError']
         feedback = json.loads(result['result']['content'][0]['text'])['failure_feedback']
         assert feedback['possible_remote_effect'] == 'unknown' and not feedback['automatic_resend']
-    assert calls == [1245, 375]
+    assert calls == [1440, 375]
