@@ -1,6 +1,7 @@
 """Acquisition provenance and observed model usage; no prompts or credentials."""
 import json
 from collections import Counter,defaultdict
+from pathlib import Path
 
 from .common import DEFAULT_DATA,utcnow,write_json
 from .dataset import read_table,truth
@@ -39,11 +40,16 @@ def analysis_coverage(root):
         sem=json.loads(semantics.read_text()) if semantics.exists() else {}
         report=json.loads(v6.read_text()) if v6.exists() else {}
         checks=json.loads(truncation.read_text()).get('checks',[]) if truncation.exists() else []
+        archive_provenance=root/'scorer/sealed_input_provenance'/(aid+'.json');archive_steps=None
+        if archive_provenance.exists():
+            source=json.loads(archive_provenance.read_text());converted=Path(source['converted_path'])
+            if converted.exists():archive_steps=sum(bool(line.strip()) for line in converted.read_bytes().splitlines())
         output.append({'attempt_id':aid,'challenge_id':item['challenge_id'],'ours':item['ours'],
           'trace_retrieved':trace.exists() or local.exists(),'trace_storage':'private' if trace.exists() else 'local_only' if local.exists() else 'unknown_not_retrieved',
           'public_trace_status':features.get(aid,{}).get('public_trace_status','unknown_no_features_yet'),
           'feature_present':aid in features,'semantic_required':aid in semantic,
           'semantic_status':sem.get('status','unknown_no_extraction') if aid in semantic else 'not_required',
+          'semantic_input_surface':'public_api_trace','downloaded_archive_selected_trace_steps':archive_steps,
           'v6_status':report.get('status','unknown_not_prepared'),
           'missing_evidence_statements':claims[aid],'truncation_checks':len(checks),
           'truncation_assessed_checks':sum(c.get('status') in ['present','partially_present','not_observed_in_complete_fetched_trace','not_assessable_from_public_trace'] for c in checks),
@@ -52,6 +58,7 @@ def analysis_coverage(root):
     summary={'generated_at':utcnow(),'selected_attempts':len(output),'selected_ours':sum(truth(r['ours']) for r in output),
       'trace_retrieved':sum(r['trace_retrieved'] for r in output),'features':sum(r['feature_present'] for r in output),
       'semantic_required':len(semantic),'semantic_statuses':dict(Counter(r['semantic_status'] for r in output if r['semantic_required'])),
+      'public_semantic_empty_with_nonempty_archive':sum(r['semantic_status']=='unknown_public_trace_empty' and (r['downloaded_archive_selected_trace_steps'] or 0)>0 for r in output),
       'public_trace_statuses':dict(Counter(r['public_trace_status'] for r in output)),
       'v6_statuses':dict(Counter(r['v6_status'] for r in output)),
       'interpretation':'Acquisition and annotation coverage only; empty public traces or unavailable fields do not prove absence of original research.'}
