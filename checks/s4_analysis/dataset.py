@@ -25,7 +25,11 @@ def read_table(name, columns=None, root=DEFAULT_DATA):
         duckdb=duckdb_module()
         with duckdb.connect() as connection:
             connection.execute("SET threads=2")
-            projection=','.join('"'+key.replace('"','""')+'"' for key in columns) if columns else '*'
+            available={r[0] for r in connection.execute('DESCRIBE SELECT * FROM read_parquet(?)',[str(path)]).fetchall()}
+            def project(key):
+                quoted='"'+key.replace('"','""')+'"'
+                return quoted if key in available else 'NULL AS '+quoted
+            projection=','.join(project(key) for key in columns) if columns else '*'
             result=connection.execute('SELECT '+projection+' FROM read_parquet(?)',[str(path)])
             fields=[c[0] for c in result.description]
             while batch:=result.fetchmany(1000):

@@ -73,7 +73,7 @@ def main():
             lines.append('')
     taxonomy=root/'data/missing_evidence_taxonomy.json'
     if taxonomy.exists():lines.extend(['## Frozen missing-evidence taxonomy','', '```json',taxonomy.read_text().strip(),'```',''])
-    atomic(root/'DATA_DICTIONARY.md',('\n'.join(lines)+'\n').encode())
+    atomic(root/'DATA_DICTIONARY.md',('\n'.join(lines).rstrip()+'\n').encode())
     write_json(root/'data/table_schema.json',schema)
     print(json.dumps({'datasets':len({r['dataset'] for r in schema}),'columns':len(schema)}))
 

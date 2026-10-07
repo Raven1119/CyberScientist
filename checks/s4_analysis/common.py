@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import fcntl
 import hashlib
+import io
 import json
 import os
 import re
@@ -11,6 +12,8 @@ import sqlite3
 import subprocess
 import tempfile
 import time
+import sys
+from functools import lru_cache
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
@@ -77,7 +80,7 @@ class Redactor:
             ('provider_key', re.compile(r'\b(?:sk-(?:proj-)?[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|(?:AKIA|ASIA)[A-Z0-9]{16})\b')),
             ('bearer', re.compile(r'(?i)\bBearer\s+[A-Za-z0-9._~+/=-]{12,}')),
             ('jwt', re.compile(r'\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b')),
-            ('credential_assignment', re.compile(r'(?i)(?:(?<![A-Za-z0-9])(?:api[_-]?key|access[_-]?(?:key(?:[_-]?id)?|token)|refresh[_-]?token|id[_-]?token|session[_-]?(?:id|token)|private[_-]?key|secret|password|passwd|token|key|cookie|sig|Signature|X-Amz-Credential)["\x27]?\s*[:=]\s*["\x27]?)[A-Za-z0-9_./+%~=-]{12,}')),
+            ('credential_assignment', re.compile(r'(?i)(?:(?<![A-Za-z0-9])(?:api[_-]?key|envd[_-]?(?:access[_-]?)?token|access[_-]?(?:key(?:[_-]?id)?|token)|refresh[_-]?token|id[_-]?token|session[_-]?(?:id|token)|private[_-]?key|secret|password|passwd|token|key|cookie|sig|Signature|X-Amz-Credential)["\x27]?\s*[:=]\s*["\x27]?)[A-Za-z0-9_./+%~=-]{12,}')),
             ('email', re.compile(r'(?<![A-Za-z0-9.!#$%&\x27*+/=?^_`{|}~-])[A-Za-z0-9.!#$%&\x27*+/=?^_`{|}~-]{1,64}@[A-Za-z0-9.-]{1,253}\.[A-Za-z]{2,63}\b')),
         ]
 
@@ -148,12 +151,24 @@ def write_json(path, value):
     atomic(path, (json.dumps(value, ensure_ascii=False, indent=2) + '\n').encode())
 
 
+@lru_cache(maxsize=1)
+def compression_engine():
+    isolated=Path(__file__).resolve().parents[2]/'.package-checks/s4_analysis/deps'
+    if isolated.exists():sys.path.insert(0,str(isolated))
+    try:import zstandard
+    except ImportError:return None
+    return zstandard
+
+
 def zstd(raw):
+    if engine:=compression_engine():return engine.ZstdCompressor(level=3).compress(raw)
     return subprocess.run([ZSTD, '-q', '-c', '-3'], input=raw,
                           stdout=subprocess.PIPE, check=True).stdout
 
 
 def unzstd(raw):
+    if engine:=compression_engine():
+        with engine.ZstdDecompressor().stream_reader(io.BytesIO(raw)) as reader:return reader.read()
     return subprocess.run([ZSTD, '-q', '-d', '-c'], input=raw,
                           stdout=subprocess.PIPE, check=True).stdout
 
@@ -195,6 +210,7 @@ class PublicClient:
                 write_json(meta_path,metadata)
             return clean
         redactor = self.redactor.fork()
+        missing_retries = 0
         for retry in range(7):
             try:
                 self.rate()
@@ -229,7 +245,8 @@ class PublicClient:
                 return clean
             except (httpx.TransportError, httpx.HTTPStatusError) as exc:
                 status = getattr(getattr(exc, 'response', None), 'status_code', None)
-                if status==404 and retry==0:
+                if status==404 and missing_retries==0 and retry<6:
+                    missing_retries += 1
                     time.sleep(1)
                     continue
                 if retry == 6 or status is not None and status < 500 and status != 429:

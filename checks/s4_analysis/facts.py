@@ -1,5 +1,6 @@
 """P0 scoring and within-round timing facts; no semantic or causal guesses."""
 import json
+import re
 import statistics
 from collections import Counter,defaultdict
 from pathlib import Path
@@ -15,7 +16,9 @@ FIELDS=['attempt_id','challenge_id','round_seq','topic_type','author_id','ours',
  'raw.scoringDetails.source','raw.scoringDetails.trace_factor','raw.scoringState.zeroReason',
  'raw.scoringState.overrideInEffect','raw.resultsJson.scored_by','raw.scorecard.harbor_reward',
  'raw.scorecard.executability','raw.scorecard.packaging','raw.scorecard.output_coverage',
- 'raw.scorecard.result_fidelity','raw.scorecard.harbor_replay_executed']
+ 'raw.scorecard.result_fidelity','raw.scorecard.harbor_replay_executed','raw.status',
+ 'raw.scoringDetails.reasoning_bonus.points','raw.scoringDetails.reasoning_bonus.applied',
+ 'raw.scoringDetails.zero_reason','raw.scoringDetails.counts_toward_season']
 
 
 def median(values):return statistics.median(values) if values else None
@@ -34,11 +37,18 @@ def scorer_facts(rows,root):
         factor=1 if decision=='accept' else trace/100 if decision=='review' and trace is not None else 0 if decision=='block' else None
         if display is not None and harbor is not None and factor is not None:
             expected=harbor*factor;residual=display-expected
+            receipt_factor=number(row['raw.scoringDetails.trace_factor'])
+            bonus=number(row['raw.scoringDetails.reasoning_bonus.points'])
+            with_bonus=expected+(bonus or 0)
+            receipt_expected=harbor*receipt_factor+(bonus or 0) if receipt_factor is not None else None
+            kind='matches_simple_formula' if abs(residual)<=.001 else 'negative_display_sentinel' if display<0 else 'explicit_override' if truth(row['raw.scoringState.overrideInEffect']) else 'explicit_zero_reason' if display==0 and (row['raw.scoringState.zeroReason'] or row['raw.scoringDetails.zero_reason']) else 'reasoning_bonus_explains' if abs(display-with_bonus)<=.001 else 'receipt_factor_explains' if receipt_expected is not None and abs(display-receipt_expected)<=.001 else 'unexplained'
             item={'attempt_id':row['attempt_id'],'challenge_id':row['challenge_id'],'ours':row['ours'],
                   'display_score':display,'harbor_score':harbor,'trace_score':trace,'trace_decision':decision,
                   'predicted_display_score':expected,'residual':residual,'within_tolerance':abs(residual)<=.001,
                   'score_is_final':row['score_is_final'],'override_in_effect':row['raw.scoringState.overrideInEffect'],
-                  'zero_reason':row['raw.scoringState.zeroReason'],'engine':row['trace_engine']}
+                  'zero_reason':row['raw.scoringState.zeroReason'] or row['raw.scoringDetails.zero_reason'],'engine':row['trace_engine'],
+                  'receipt_trace_factor':receipt_factor,'reasoning_bonus_points':bonus,'predicted_with_receipt_factor_bonus':receipt_expected,
+                  'exception_class':kind,'raw_status':row['raw.status']}
             formula.append(item)
             if abs(residual)>.001:exceptions.append(item)
         reward=number(row['raw.scorecard.harbor_reward'])
@@ -54,7 +64,7 @@ def scorer_facts(rows,root):
     write_csv(root/'scorer/trace_score_histogram.csv',[{'trace_score':s,'count':n} for s,n in sorted(scores.items())])
     codes=defaultdict(list)
     for item in read_table('data/deductions.csv'):codes[item.get('raw.code') or 'unknown'].append(item)
-    source=Path('/home/wmywb/CyberScientist/.package-checks/trace-score-source-20260928/upstream/src/index.ts').read_text()
+    source=(Path(__file__).resolve().parents[2]/'src/cyberscientist/vendor/trace_score_cli_v6/index.ts').read_text()
     code_rows=[]
     for code,items in sorted(codes.items()):
         counts=Counter(item.get('raw.score_effect') for item in items)
@@ -62,7 +72,7 @@ def scorer_facts(rows,root):
             'effects_json':json.dumps(dict(counts),ensure_ascii=False),
             'titles_json':json.dumps(sorted({r.get('raw.title') or '' for r in items}),ensure_ascii=False),
             'sample_attempt_ids':';'.join(sorted({r['attempt_id'] for r in items},key=int)[:10]),
-            'present_in_pinned_v6_source':code in source,
+            'present_in_pinned_v6_source':code!='unknown' and '"'+code+'"' in source,
             'explanations_json':json.dumps(sorted({r.get('raw.description') or r.get('raw.explanation') or '' for r in items}),ensure_ascii=False)})
     write_csv(root/'scorer/code_table.csv',code_rows)
     timelines=[]
@@ -74,6 +84,21 @@ def scorer_facts(rows,root):
                 'count':len(items),'attempt_id_min':min(int(r['attempt_id']) for r in items),
                 'attempt_id_max':max(int(r['attempt_id']) for r in items),'actual_scored_at_observable':False})
     write_csv(root/'scorer/engine_timeline.csv',timelines)
+    v8=[r for r in rows if 'v8-process-evidence-sufficiency' in (r['trace_engine'] or '')]
+    v8_hist=Counter(number(r['trace_score']) for r in v8 if number(r['trace_score']) is not None)
+    v8_ranges={}
+    for decision in sorted({r['trace_decision'] or 'unknown' for r in v8}):
+        values=[number(r['trace_score']) for r in v8 if (r['trace_decision'] or 'unknown')==decision and number(r['trace_score']) is not None]
+        v8_ranges[decision]={'count':len(values),'min':min(values,default=None),'max':max(values,default=None)}
+    by_id={r['attempt_id']:r for r in rows};cooccurrence=[]
+    for code,items in codes.items():
+        subset=[by_id[item['attempt_id']] for item in items if item['attempt_id'] in by_id and 'v8-process-evidence-sufficiency' in (by_id[item['attempt_id']]['trace_engine'] or '')]
+        values=[number(r['trace_score']) for r in subset if number(r['trace_score']) is not None]
+        cooccurrence.append({'code':code,'v8_attempts':len(subset),'min_trace_score':min(values,default=None),'max_trace_score':max(values,default=None),
+           'decision_counts_json':json.dumps(dict(Counter(r['trace_decision'] for r in subset))),
+           'spike_counts_json':json.dumps({str(cap):sum(value==cap for value in values) for cap in [20,29,49,59,69]}),
+           'interpretation':'co-occurrence only; does not identify hidden trigger or causality'})
+    write_csv(root/'scorer/cap_cooccurrence.csv',cooccurrence)
     rules={'generated_at':utcnow(),'source_snapshot_phase':json.loads((root/'data/coverage.json').read_text())['phase'],
        'attempts':len(rows),'trace_score_observations':sum(scores.values()),'grid_step_tested':.025,
        'grid_exception_count':len(grid),'trace_decisions':dict(Counter(r['trace_decision'] or 'unknown' for r in rows)),
@@ -82,7 +107,14 @@ def scorer_facts(rows,root):
        'display_formula':{'accept':'harbor_score','review':'harbor_score * trace_score/100','block':'0',
                           'tolerance':.001,'tested':len(formula),'exceptions':len(exceptions),
                           'final_tested':sum(truth(r['score_is_final']) for r in formula),
-                          'final_exceptions':sum(truth(r['score_is_final']) for r in exceptions)},
+                          'final_exceptions':sum(truth(r['score_is_final']) for r in exceptions),
+                          'exception_classes':dict(Counter(r['exception_class'] for r in exceptions))},
+       'v8_only':{'attempts':len(v8),'trace_score_observations':sum(v8_hist.values()),'decision_score_ranges':v8_ranges,
+          'grid_exceptions':sum(abs(value/.025-round(value/.025))>1e-6 for value in v8_hist.elements()),
+          'score_spikes':[{'score':value,'count':n} for value,n in v8_hist.most_common(20)]},
+       'grading_time_evidence':{'actual_timestamp_observable':False,'public_status_counts':dict(Counter(r['raw.status'] or 'unknown' for r in rows)),
+          'late_scored_status_attempts':sum(r['raw.status']=='late_scored' for r in rows),
+          'created_within_round_is_not_scored_within_round':True},
        'engine_counts':{key:len(value) for key,value in engines.items()},
        'unobservable':['actual_scored_at','private judge P/H','server-normalized final trace','worker integrity receipts'],
        'inference_boundary':'spikes and absence of cap violations do not identify hidden cap triggers or v8 fusion weights',

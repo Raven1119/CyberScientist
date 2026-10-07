@@ -33,7 +33,10 @@ class ModelClient:
                   'max_tokens':max_tokens,'thinking':thinking,'temperature':0}
         digest=sha(json.dumps(settings,sort_keys=True,ensure_ascii=False).encode())
         path=self.cache/(digest+'.json')
-        if path.exists():return json.loads(path.read_text())
+        if path.exists():
+            previous=json.loads(path.read_text());clean=self.redactor.fork().obj(previous)
+            if clean!=previous:write_json(path,clean)
+            return clean
         started=time.monotonic();last=None
         for attempt in range(9):
             try:
@@ -90,5 +93,7 @@ class ModelClient:
         if forbidden:raise ValueError('Codex_judge_used_tools_rejected')
         if result.returncode or not messages:raise ValueError('Codex_native_turn_failed')
         completed=next((e for e in reversed(events) if e.get('type')=='turn.completed'),{})
-        return {'content':messages[-1],'provider_model':self.model,'usage':completed.get('usage'),
-                'finish_reason':'native_turn_completed','native_cli_version':'0.148.0-alpha.15'}
+        return {'content':messages[-1],'provider_model':None,'usage':completed.get('usage'),
+                'finish_reason':'native_turn_completed','native_cli_version':'0.148.0-alpha.15',
+                'identity_evidence':'requested native CLI model flag and live account catalog; exec JSON does not expose actual provider model',
+                'native_output_token_limit':'provider_default; max_tokens applies to DeepSeek only'}

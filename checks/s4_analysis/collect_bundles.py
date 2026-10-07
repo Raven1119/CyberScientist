@@ -1,6 +1,7 @@
 """Bound public ZIP downloads, sanitize in memory, publish inventories/docs only."""
 import io
 import json
+import re
 import time
 import zipfile
 import threading
@@ -39,6 +40,7 @@ def redact_member(original,redactor):
 
 
 def download(client,aid):
+    missing_retries=0
     for retry in range(7):
         try:
             client.rate()
@@ -54,7 +56,8 @@ def download(client,aid):
             return bytes(raw)
         except (httpx.TransportError,httpx.HTTPStatusError) as exc:
             code=getattr(getattr(exc,'response',None),'status_code',None)
-            if code==404 and retry==0:
+            if code==404 and missing_retries==0 and retry<6:
+                missing_retries+=1
                 time.sleep(1)
                 continue
             if retry==6 or code is not None and code<500 and code!=429:
@@ -115,7 +118,14 @@ def _fetch_bundle(client,item):
         atomic(root/base['local_archive_path'],cleaned)
         write_json(metadata,{'index':base,'redactions':dict(local.counts),'files':inventory})
         write_json(root/'data/bundle_docs'/(aid+'.json'),{'attempt_id':aid,'ours':item['ours'],'documents':docs})
-    except Exception as exc:base.update(status='skipped' if isinstance(exc,ValueError) else 'failed',reason=str(exc))
+    except Exception as exc:
+        # zipfile errors can include an unsanitized member name, before read()
+        # returns. Persist only our fixed validation/download diagnostics.
+        message=str(exc)
+        fixed={'bundle_over_50MB_content_length','bundle_over_50MB_stream','archive_expansion_safety_bound',
+               'unsafe_archive_member_path','archive_member_over_100MB_expansion_bound','redacted_archive_path_collision'}
+        safe=message if message in fixed or re.fullmatch(r'bundle_GET_failed status=(?:None|\d+) kind=\w+ request_attempts=\d+',message) else 'bundle_processing_failed:'+type(exc).__name__
+        base.update(status='skipped' if isinstance(exc,ValueError) else 'failed',reason=safe)
     return base
 
 def main():

@@ -32,6 +32,13 @@ def test_nested_credentials_and_emails_are_removed(redactor):
     assert result['author_name'] == 'Author kept' and result['trace_score'] == 92.125
 
 
+@pytest.mark.parametrize('name',['envdAccessToken','envd_access_token','envd-token'])
+def test_embedded_sandbox_tokens_in_trace_or_model_text_are_redacted(redactor,name):
+    value='opaque-'+'q'*32
+    cleaned=redactor.obj({'body':json.dumps({name:value}),'extraction':{'text':name+'='+value}})
+    assert value not in json.dumps(cleaned)
+
+
 def test_multiline_pem_and_truncated_pem_are_redacted(redactor):
     for end in ['-----END PRIVATE KEY-----', '']:
         value = '-----BEGIN PRIVATE KEY-----\n' + 'c' * 200 + '\n' + end
@@ -99,7 +106,7 @@ def test_long_scientific_or_binary_runs_do_not_trigger_quadratic_email_search(re
     assert time.monotonic()-started<10
 
 
-@pytest.mark.parametrize('codes',[(404,200),(404,404)])
+@pytest.mark.parametrize('codes',[(404,200),(404,404),(429,404,200),(500,404,404)])
 def test_public_404_is_retried_once_then_resolved_or_reported(tmp_path,monkeypatch,codes):
     import httpx
     calls=[];original=httpx.Client
@@ -113,7 +120,7 @@ def test_public_404_is_retried_once_then_resolved_or_reported(tmp_path,monkeypat
     if codes[-1]==200:assert client.get('/api/protocol')=={'ok':True}
     else:
         with pytest.raises(RuntimeError,match='status=404'):client.get('/api/protocol')
-    assert len(calls)==2
+    assert len(calls)==len(codes)
 
 
 def test_atomic_concurrent_writers_leave_one_complete_value(tmp_path):

@@ -14,6 +14,9 @@ def main():
     parser.add_argument('--private-byte-budget',type=int,default=700_000_000)
     args=parser.parse_args();client=PublicClient();root=DEFAULT_DATA
     selected=list(read_table('data/selected.csv'))
+    if (root/'data/selection_additions.csv').exists():
+        selected+=list(read_table('data/selection_additions.csv'))
+    selected=list({row['attempt_id']:row for row in selected}.values())
     selected.sort(key=lambda r:('calibration' not in r['selection_reasons'],
                                not truth(r['ours']),'head_top10' not in r['selection_reasons'],int(r['attempt_id'])))
     directory=root/'data/traces';directory.mkdir(parents=True,exist_ok=True)

@@ -31,3 +31,25 @@ character regression case runs with the other analysis tests. Public 404s retry
 once before recording failure; bundle selection can then advance in rank under
 the user's explicit instruction. Actual API coverage is recorded in the private
 dataset, independently of these fake regression tests.
+
+## Incremental extraction and replica review
+
+Two independent read-only reviews covered semantic/features/forms extraction,
+pinned v6 packet reconstruction, frozen calibration and privacy persistence.
+Fixed findings: digest-isolated archive extraction with the same hash/read buffer;
+ZIP errors cannot persist raw member names; embedded envd token assignments are
+scrubbed; model-cache hits are scrubbed again; all holdout predictions are required
+for acceptance; only complete training cohorts can enter model selection; single
+input CLI loads the frozen selected mapping; empty or malformed missing-evidence
+arrays retain v6 behavior; decimal rounding matches JS binary toFixed boundaries.
+
+The revision-3 data rescan found 20 credential-shaped assignment occurrences across
+12 persisted files (three public traces and their cached/prepared derivatives).
+Current copies were corrected. Two affected trace files also existed in an earlier
+private commit; its history requires owner follow-up. No force push, credential
+validation or credential use was performed. A malformed nested archive cannot be
+fully inspected as a ZIP and remains an explicit evidence limitation.
+
+46 analysis tests passed after these fixes; compileall and diff whitespace checks
+passed. Fake privacy/policy regressions do not establish real platform input parity
+or eliminate the recorded private-history follow-up.
