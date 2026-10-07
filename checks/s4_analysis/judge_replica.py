@@ -10,6 +10,7 @@ import math
 import os
 import subprocess
 import tempfile
+import fcntl
 from decimal import Decimal,ROUND_HALF_UP
 from concurrent.futures import ThreadPoolExecutor,as_completed
 from pathlib import Path
@@ -19,6 +20,7 @@ from .common import DEFAULT_DATA,PublicClient,Redactor,atomic,sha,unzstd,utcnow,
 from .dataset import read_table
 from .models import ModelClient
 from .prepare_v6 import HERE,unpack_bundle
+from . import sealed_inputs
 from .tables import number,write_csv
 
 CONFIG={'schema_version':'cs-s4-judge-replica/v1','prompts':'exact pinned v6 primary + adversarial critic',
@@ -61,7 +63,7 @@ def combine(packet,judges):
     return {'checklist_score':C,'provenance_sufficiency':P,'hack_risk':H,'judge_disagreement':disagreement,
       'pre_cap_score':.55*C+.25*P+.20*(100-H),'score_cap':cap,'predicted_score':round(score,6),
       'conditional_decision':conditional,'strict_decision':strict,'worker_context_status':'unknown',
-      'missing_evidence':[str(x) for j in judges for x in (j.get('missing_evidence') if isinstance(j.get('missing_evidence'),list) else [])][:10]}
+      'missing_evidence':[x for j in judges for x in (j.get('missing_evidence') if isinstance(j.get('missing_evidence'),list) else [])][:10]}
 
 
 def fit_mapping(rows):
@@ -124,10 +126,21 @@ def predict(packet,provider):
     return result
 
 
-def prepare_calibration(root,calibration):
+def prepare_calibration(root,calibration,packet_directory,sealed):
     client=PublicClient(root);manifest=[]
     for row in calibration:
         aid=row['attempt_id'];path=root/'data/traces'/(aid+'.jsonl.zst')
+        if sealed:
+            try:
+                provenance=sealed_inputs.prepare(root,aid,metadata=row)
+                topic=json.loads((root/'data/topics'/(row['challenge_id']+'.json')).read_text())
+                taskp=root/'.raw/v6_inputs'/(row['challenge_id']+'.txt')
+                atomic(taskp,'\n\n'.join(str(topic[k]) for k in ['title','topicContent','content'] if topic.get(k)).encode())
+                manifest.append({'attempt_id':aid,'trace':provenance['converted_path'],'trace_sha256':provenance['converted_trace_sha256'],
+                  'task':str(taskp),'outputs':provenance['output_directory'],'out':str(packet_directory/(aid+'.json')),
+                  'input_provenance':provenance})
+            except Exception as exc:write_json(packet_directory/(aid+'.json'),{'attempt_id':aid,'status':'unknown_sealed_input_failed','error_kind':type(exc).__name__})
+            continue
         if not path.exists():
             body=client.get('/api/attempts/'+aid+'/trace')
             if not isinstance(body,list) or any(not isinstance(step,dict) for step in body):raise ValueError('Trace schema changed')
@@ -135,13 +148,13 @@ def prepare_calibration(root,calibration):
         raw=unzstd(path.read_bytes())
         if not raw.strip():
             # Public API sometimes returns []. Do not call a judge on fabricated events.
-            write_json(root/'.raw/v6_reports'/(aid+'.json'),{'attempt_id':aid,'status':'unknown_public_trace_empty'});continue
+            write_json(packet_directory/(aid+'.json'),{'attempt_id':aid,'status':'unknown_public_trace_empty'});continue
         topic=json.loads((root/'data/topics'/(row['challenge_id']+'.json')).read_text())
         directory=root/'.raw/v6_inputs';tp=directory/(aid+'.jsonl');taskp=directory/(row['challenge_id']+'.txt')
         atomic(tp,raw);atomic(taskp,'\n\n'.join(str(topic[k]) for k in ['title','topicContent','content'] if topic.get(k)).encode())
         unpacked,_=unpack_bundle(root,aid)
         manifest.append({'attempt_id':aid,'trace':str(tp),'trace_sha256':sha(raw),'task':str(taskp),'outputs':unpacked,
-                         'out':str(root/'.raw/v6_reports'/(aid+'.json'))})
+                         'out':str(packet_directory/(aid+'.json'))})
     run_offline(manifest,root)
 
 
@@ -154,23 +167,53 @@ def run_offline(manifest,root):
     if completed.returncode:raise RuntimeError('Pinned offline packet creation failed')
 
 
-def calibrate(root,workers):
+def register_packets(staging,destination,manifest_path,rows):
+    manifest=[{'attempt_id':r['attempt_id'],'packet_sha256':sha((staging/(r['attempt_id']+'.json')).read_bytes())} for r in rows]
+    if manifest_path.exists():
+        if json.loads(manifest_path.read_text())!=manifest:raise ValueError('Frozen judge input changed')
+        for row in manifest:
+            path=destination/(row['attempt_id']+'.json')
+            if not path.exists() or sha(path.read_bytes())!=row['packet_sha256']:raise ValueError('Frozen packet bytes changed')
+        return manifest
+    if destination.exists() and any(destination.iterdir()):raise ValueError('Unregistered packet directory requires review')
+    for row in manifest:atomic(destination/(row['attempt_id']+'.json'),(staging/(row['attempt_id']+'.json')).read_bytes())
+    write_json(manifest_path,manifest)
+    return manifest
+
+
+def calibrate(root,workers,run_name='sealed-protocol-v3'):
+    directory=root/'scorer/judge_replica_runs'/run_name;directory.mkdir(parents=True,exist_ok=True)
+    with (directory/'.calibration.lock').open('a') as lock:
+        fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+        return _calibrate_locked(root,workers,run_name)
+
+
+def _calibrate_locked(root,workers,run_name):
     freeze=json.loads((root/'scorer/calibration_freeze.json').read_text());csvp=root/'scorer/calibration.csv'
     if freeze.get('status')!='final_frozen_before_any_live_judge_call' or sha(csvp.read_bytes())!=freeze['calibration_csv_sha256']:
         raise ValueError('Final calibration freeze required')
     rows=list(read_table('scorer/calibration.csv',root=root));train_topics={r['challenge_id'] for r in rows if r['split']=='train'}
     if train_topics & {r['challenge_id'] for r in rows if r['split']=='holdout'}:raise ValueError('Topic leakage')
-    config={**CONFIG,'calibration_csv_sha256':sha(csvp.read_bytes()),'frozen_at':utcnow()}
-    configp=root/'scorer/judge_config.json'
+    sealed=run_name!='public-snapshot-v1';result_root=root/'scorer/judge_replica_runs'/run_name
+    packet_directory=root/'.raw/judge_packets'/run_name;packet_directory.mkdir(parents=True,exist_ok=True)
+    config={**CONFIG,'calibration_csv_sha256':sha(csvp.read_bytes()),'frozen_at':utcnow(),'input_view':run_name}
+    configp=result_root/'judge_config.json'
     if configp.exists():
         previous=json.loads(configp.read_text());config['frozen_at']=previous['frozen_at']
         if previous!=config:raise ValueError('Judge configuration changed after freezing')
     else:write_json(configp,config)
-    prepare_calibration(root,rows)
+    input_manifest_path=result_root/'input_manifest.json'
+    staging_root=root/'.raw/judge_packet_staging';staging_root.mkdir(parents=True,exist_ok=True)
+    with tempfile.TemporaryDirectory(dir=staging_root) as staging:
+        prepare_calibration(root,rows,Path(staging),sealed)
+        input_manifest=register_packets(Path(staging),packet_directory,input_manifest_path,rows)
+    frozen_hashes={r['attempt_id']:r['packet_sha256'] for r in input_manifest}
     predictions=[];failures=[]
     def one(row,provider):
-        path=root/'scorer/judge_runs'/provider/(row['attempt_id']+'.json')
-        packet=json.loads((root/'.raw/v6_reports'/(row['attempt_id']+'.json')).read_text())
+        path=result_root/'judge_runs'/provider/(row['attempt_id']+'.json')
+        raw=(packet_directory/(row['attempt_id']+'.json')).read_bytes()
+        if sha(raw)!=frozen_hashes[row['attempt_id']]:raise ValueError('Frozen packet changed before judge call')
+        packet=json.loads(raw)
         if packet.get('status')!='ok':return None,{'attempt_id':row['attempt_id'],'provider':provider,'reason':packet.get('status')}
         try:
             result=predict(packet,provider);write_json(path,result)
@@ -183,7 +226,7 @@ def calibrate(root,workers):
             row,failure=f.result()
             if row:predictions.append(row)
             if failure:failures.append(failure)
-            write_csv(root/'scorer/judge_predictions.csv',predictions);write_json(root/'scorer/judge_failures.json',failures)
+            write_csv(result_root/'judge_predictions.csv',predictions);write_json(result_root/'judge_failures.json',failures)
             print(json.dumps({'judge_pairs':i,'expected':len(futures),'successes':len(predictions),'failures':len(failures),'time':utcnow()}),flush=True)
     fitted={};training={}
     for provider in CONFIG['models']:
@@ -210,11 +253,13 @@ def calibrate(root,workers):
     chosen=held[winner[0]][winner[1]] if winner else None
     conditional_pass=bool(chosen and coverage[winner[0]]['holdout']==expected_holdout and chosen['accept_accuracy']>=.85
                           and chosen['blocked_recall'] is not None and chosen['blocked_recall']>=.8)
-    write_csv(root/'scorer/judge_predictions.csv',predictions)
-    write_json(root/'scorer/judge_calibration.json',{'config':config,'mapping':fitted,'training':training,'holdout':held,
+    write_csv(result_root/'judge_predictions.csv',predictions)
+    report={'config':config,'mapping':fitted,'training':training,'holdout':held,
       'selected_using_train_only':winner,'conditional_acceptance_line_passed':conditional_pass,
       'deployment_verdict':'只能作提示','reason':'Original platform worker receipts/input parity unknown; strict v6 decisions retained',
-      'missing_predictions':failures,'coverage':coverage,'calibration_size':len(rows),'successful_pairs':len(predictions),'observed_at':utcnow()})
+      'missing_predictions':failures,'coverage':coverage,'calibration_size':len(rows),'successful_pairs':len(predictions),'observed_at':utcnow(),
+      'input_manifest_sha256':sha(input_manifest_path.read_bytes()),'run_path':str(result_root.relative_to(root))}
+    write_json(result_root/'judge_calibration.json',report);write_json(root/'scorer/judge_calibration.json',report)
 
 
 def single_inputs(bundle,trace,task,root):
@@ -225,23 +270,47 @@ def single_inputs(bundle,trace,task,root):
     if not isinstance(body,list) or not body:raise ValueError('Nonempty JSON/JSONL event list required')
     clean,_,_=sanitize_archive(Path(bundle).read_bytes(),redactor)
     temp=root/'.raw/single_inputs'/sha(clean+json.dumps(body,sort_keys=True).encode());temp.mkdir(parents=True,exist_ok=True)
-    atomic(temp/'.raw/bundles/single.zip',clean);out,_=unpack_bundle(temp,'single')
+    atomic(temp/'.raw/bundles/single.zip',clean)
+    provenance=sealed_inputs.prepare(temp,'single',trace_override=body)
+    out=provenance['output_directory']
     tp=temp/'trace.jsonl';taskp=temp/'task.txt';packetp=temp/'packet.json'
     traw=''.join(json.dumps(s,ensure_ascii=False)+'\n' for s in body).encode()
     atomic(tp,traw);atomic(taskp,redactor.text(Path(task).read_text()).encode())
-    run_offline([{'attempt_id':'single','trace':str(tp),'trace_sha256':sha(traw),'task':str(taskp),'outputs':out,'out':str(packetp)}],temp)
+    run_offline([{'attempt_id':'single','trace':provenance['converted_path'],'trace_sha256':provenance['converted_trace_sha256'],
+                 'task':str(taskp),'outputs':out,'out':str(packetp),'input_provenance':provenance}],temp)
     return json.loads(packetp.read_text())
+
+
+def correct_selection(root):
+    original=root/'scorer/judge_replica_runs/sealed-protocol-v3/judge_calibration.json'
+    report=json.loads(original.read_text())
+    candidates=[(m['mae'],1-m['accept_accuracy'],provider,variant)
+        for provider,variants in report['training'].items() for variant,m in variants.items()
+        if report['coverage'][provider]['train']==report['coverage'][provider]['expected_train']]
+    winner=list(min(candidates)[2:]) if candidates else None
+    correction={'selected_using_train_mae':winner,'selection_basis':'training MAE, then training accept error, then stable lexical tie break',
+      'original_selected_using_train_only':report['selected_using_train_only'],'original_report_sha256':sha(original.read_bytes()),
+      'holdout_already_exposed':True,'holdout_status':'descriptive comparison only; not a new blind validation',
+      'no_new_model_calls':True,'unchanged_split_prompts_predictions_and_mappings':True,
+      'deployment_verdict':'只能作提示','observed_at':utcnow()}
+    write_json(root/'scorer/judge_selection_correction.json',correction)
+    return correction
 
 
 def main():
     p=argparse.ArgumentParser();p.add_argument('--calibrate',action='store_true');p.add_argument('--workers',type=int,default=6)
+    p.add_argument('--run-name',choices=['sealed-protocol-v3','sealed-protocol-v2','public-snapshot-v1'],default='sealed-protocol-v3')
     p.add_argument('--provider',choices=list(CONFIG['models']));p.add_argument('--packet');p.add_argument('--baseline',action='store_true')
+    p.add_argument('--correct-selection',action='store_true')
     p.add_argument('--bundle');p.add_argument('--trace');p.add_argument('--task');p.add_argument('--out',type=Path)
     args=p.parse_args();root=DEFAULT_DATA
-    if args.calibrate:calibrate(root,args.workers);return
+    if args.correct_selection:correct_selection(root);return
+    if args.calibrate:calibrate(root,args.workers,args.run_name);return
     packet=json.loads(Path(args.packet).read_text()) if args.packet else single_inputs(args.bundle,args.trace,args.task,root)
     fitted_path=root/'scorer/judge_calibration.json';fitted=json.loads(fitted_path.read_text()) if fitted_path.exists() else {}
-    winner=fitted.get('selected_using_train_only');provider=args.provider or (winner[0] if winner else 'deepseek')
+    correction=root/'scorer/judge_selection_correction.json'
+    winner=json.loads(correction.read_text()).get('selected_using_train_mae') if correction.exists() else fitted.get('selected_using_train_only')
+    provider=args.provider or (winner[0] if winner else 'deepseek')
     result=predict(packet,provider)
     if not args.baseline and winner and provider==winner[0] and winner[1]=='mapped':
         result['raw_v6_predicted_score']=result['predicted_score']

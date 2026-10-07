@@ -55,3 +55,17 @@ def test_binary_rounding_matches_pinned_js_at_provenance_cap_boundary():
     result=combine(packet(),[{'hack_risk':0,'provenance_sufficiency':29.9},
                             {'hack_risk':0,'provenance_sufficiency':30}])
     assert result['provenance_sufficiency']==29.9 and result['score_cap']==59
+
+
+def test_frozen_packet_change_rejected_without_overwriting_original_bytes(tmp_path):
+    from .judge_replica import register_packets
+    from .common import atomic
+    staging=tmp_path/'staging';destination=tmp_path/'frozen';manifest=tmp_path/'manifest.json'
+    rows=[{'attempt_id':'1'}]
+    atomic(staging/'1.json',b'{"original":true}')
+    register_packets(staging,destination,manifest,rows)
+    original=(destination/'1.json').read_bytes();frozen=manifest.read_bytes()
+    atomic(staging/'1.json',b'{"changed":true}')
+    with pytest.raises(ValueError,match='Frozen judge input changed'):
+        register_packets(staging,destination,manifest,rows)
+    assert (destination/'1.json').read_bytes()==original and manifest.read_bytes()==frozen

@@ -10,6 +10,7 @@ from pathlib import Path,PurePosixPath
 
 from .common import DEFAULT_DATA,atomic,sha,unzstd,utcnow,write_json
 from .dataset import read_table
+from . import sealed_inputs
 
 HERE=Path(__file__).resolve().parent
 
@@ -54,7 +55,7 @@ def main():
             if not path.exists():path=root/'.raw/traces'/(aid+'.jsonl.zst')
             if not path.exists():continue
             raw=unzstd(path.read_bytes())
-            if not raw.strip():
+            if not raw.strip() and not (root/'.raw/bundles'/(aid+'.zip')).exists():
                 write_json(outputs/(aid+'.json'),{'attempt_id':aid,'status':'unknown_public_trace_empty'})
                 processed[aid]=('empty',None);continue
             archive=root/'.raw/bundles'/(aid+'.zip')
@@ -64,12 +65,16 @@ def main():
             topic=json.loads((root/'data/topics'/(item['challenge_id']+'.json')).read_text())
             task='\n\n'.join(str(topic[k]) for k in ['title','topicContent','content'] if topic.get(k))
             task_path=prepared/(item['challenge_id']+'.txt');atomic(task_path,task.encode())
-            trace_path=prepared/(aid+'.jsonl');atomic(trace_path,raw)
-            try:unpacked,_=unpack_bundle(root,aid)
+            trace_path=prepared/(aid+'.jsonl');atomic(trace_path,raw);provenance=None
+            try:
+                if archive.exists():
+                    provenance=sealed_inputs.prepare(root,aid,metadata=item)
+                    trace_path=Path(provenance['converted_path']);raw=trace_path.read_bytes();unpacked=provenance['output_directory']
+                else:unpacked=None
             except Exception as exc:
                 write_json(outputs/(aid+'.json'),{'attempt_id':aid,'status':'failed','error_kind':type(exc).__name__});continue
             manifest.append({'attempt_id':aid,'trace':str(trace_path),'trace_sha256':sha(raw),
-                             'task':str(task_path),'outputs':unpacked,'out':str(outputs/(aid+'.json'))})
+                             'task':str(task_path),'outputs':unpacked,'out':str(outputs/(aid+'.json')),'input_provenance':provenance})
             processed[aid]=pair
         if manifest:
             manifest_path=prepared/'manifest.json';write_json(manifest_path,manifest)

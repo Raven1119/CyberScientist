@@ -53,3 +53,7 @@ fully inspected as a ZIP and remains an explicit evidence limitation.
 46 analysis tests passed after these fixes; compileall and diff whitespace checks
 passed. Fake privacy/policy regressions do not establish real platform input parity
 or eliminate the recorded private-history follow-up.
+
+## 输入冻结与截断复核补充
+
+修复重复校准先覆盖 packet 后检查哈希的问题：暂存比较、冻结字节复核、单运行互斥；未重新执行历史校准。截断缓存绑定轨迹来源、完整正文、声明、题面和 v6 packet，源变化保留旧版；仅 packet 变化重算偏移而不新增模型调用。每个 chunk/声明必须恰好一个有效答复，缺漏/重复保持 unknown，原生 content/item/parts 正文完整保留。新增反例后本地测试 53 passed。校准选择规格偏差及留出暴露限制另见校准报告。

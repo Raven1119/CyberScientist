@@ -8,11 +8,32 @@ from .common import DEFAULT_DATA,Redactor,unzstd
 from .dataset import duckdb_module
 
 
+def audit_value(value):
+    """Restore two typed public JSON columns before signature checking.
+
+    Resource keys and scientific answer tokens are public identifiers. Flattening
+    them into strings must not erase the existing narrowly scoped exceptions.
+    Provider-key/Bearer/JWT patterns inside their values remain checked.
+    """
+    if isinstance(value,list):return [audit_value(v) for v in value]
+    if not isinstance(value,dict):return value
+    result={}
+    for key,item in value.items():
+        if key in ('resources','raw.resultsJson.answers') and isinstance(item,str):
+            try:parsed=json.loads(item)
+            except ValueError:parsed=None
+            if isinstance(parsed,list):
+                item={'resources':parsed} if key=='resources' else {'resultsJson':{'answers':parsed}}
+        result[key]=audit_value(item)
+    return result
+
+
 def main():
     root=DEFAULT_DATA;redactor=Redactor();total=0;files=0;issues=[]
     paths=[p for p in root.rglob('*') if p.is_file() and '.git' not in p.relative_to(root).parts
            and '.raw' not in p.relative_to(root).parts and '.local' not in p.relative_to(root).parts]
     def inspect(value,path):
+        value=audit_value(value)
         text=json.dumps(value,ensure_ascii=False)
         if any(s in text for s in redactor.known) or any(e in text.lower() for e in redactor.ours):
             issues.append({'path':str(path.relative_to(root)),'kind':'configured_credential_or_mailbox'})
@@ -25,9 +46,10 @@ def main():
         if path.suffix=='.parquet':
             with duckdb_module().connect() as connection:
                 result=connection.execute('SELECT * FROM read_parquet(?)',[str(path)])
+                fields=[r[0] for r in result.description]
+                inspect(fields,path)
                 while rows:=result.fetchmany(500):
-                    fields=[r[0] for r in result.description]
-                    inspect([dict(zip(fields,row)) for row in rows],path)
+                    inspect([{key:value for key,value in zip(fields,row) if value is not None} for row in rows],path)
         else:
             raw=unzstd(path.read_bytes()) if path.suffix=='.zst' else path.read_bytes()
             text=raw.decode('utf-8',errors='replace')
