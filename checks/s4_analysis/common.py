@@ -211,7 +211,9 @@ class PublicClient:
             return clean
         redactor = self.redactor.fork()
         missing_retries = 0
-        for retry in range(7):
+        # The one explicit 404 retry has its own slot, even when the first 404
+        # follows six transient failures. Other failures keep the seven-call cap.
+        for retry in range(8):
             try:
                 self.rate()
                 with httpx.Client(timeout=60, follow_redirects=False) as client:
@@ -245,11 +247,11 @@ class PublicClient:
                 return clean
             except (httpx.TransportError, httpx.HTTPStatusError) as exc:
                 status = getattr(getattr(exc, 'response', None), 'status_code', None)
-                if status==404 and missing_retries==0 and retry<6:
+                if status==404 and missing_retries==0:
                     missing_retries += 1
                     time.sleep(1)
                     continue
-                if retry == 6 or status is not None and status < 500 and status != 429:
+                if retry >= 6+missing_retries or status is not None and status < 500 and status != 429:
                     raise RuntimeError(f'Public GET failed: {parsed.path}, status={status}, kind={type(exc).__name__}') from None
-                time.sleep(min(60, 2 ** retry))
+                time.sleep(min(60, 2 ** (retry-missing_retries)))
         raise AssertionError('unreachable')

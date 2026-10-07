@@ -106,7 +106,8 @@ def test_long_scientific_or_binary_runs_do_not_trigger_quadratic_email_search(re
     assert time.monotonic()-started<10
 
 
-@pytest.mark.parametrize('codes',[(404,200),(404,404),(429,404,200),(500,404,404)])
+@pytest.mark.parametrize('codes',[(404,200),(404,404),(429,404,200),(500,404,404),
+                                 (429,)*6+(404,200),(500,)*6+(404,404),(429,)*7])
 def test_public_404_is_retried_once_then_resolved_or_reported(tmp_path,monkeypatch,codes):
     import httpx
     calls=[];original=httpx.Client
@@ -119,7 +120,7 @@ def test_public_404_is_retried_once_then_resolved_or_reported(tmp_path,monkeypat
     client=common.PublicClient(tmp_path)
     if codes[-1]==200:assert client.get('/api/protocol')=={'ok':True}
     else:
-        with pytest.raises(RuntimeError,match='status=404'):client.get('/api/protocol')
+        with pytest.raises(RuntimeError,match='status='+str(codes[-1])):client.get('/api/protocol')
     assert len(calls)==len(codes)
 
 
