@@ -460,7 +460,8 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
     @app.get("/api/v1/health")
     async def health() -> dict[str, Any]:
         return {"ok": True, "mode": config.load_settings()["app"]["mode"],
-                "time": db.utcnow(), 'backend': backend_identity.loaded()}
+                "time": db.utcnow(), 'backend': backend_identity.loaded(),
+                'process_id': __import__('os').getpid(), 'workspace_root': str(config.WORKSPACE_ROOT.resolve())}
 
     @app.get('/api/v1/preflight')
     async def get_preflight():

@@ -234,6 +234,21 @@ def fast_check(settings):
                  'fast原生平台确认事实；未实测或不支持保持可见',models=facts)
 
 
+def content_checks(settings):
+    from . import features, skills
+    state = features.enabled('auto_submission')
+    active = {row['experience_id'] for row in db.query('SELECT experience_id FROM experience_heads WHERE active_revision_id IS NOT NULL')}
+    expected = {path.stem for path in (config.EXPERIENCE_DIR / 'global').glob('lc_*.md')}
+    missing = sorted(expected - active)
+    effective = skills.effective_for(db.get_db(), settings, None, role='executor')
+    identifiers = [item['id'] if isinstance(item, dict) else item for item in effective]
+    required = {'cyberscientist-trace-writing', 'cyberscientist-clean-rerun', 'cyberscientist-submission-gate', 'cyberscientist-local-scorer'}
+    missing_skills = sorted(required - set(identifiers))
+    return [_item('auto_submission', 'pass' if state else 'warn', '自动提交已启用' if state else '自动提交已暂停；科研可继续', enabled=state),
+            _item('experiences_loaded', 'pass' if not missing else 'warn', '本次lc经验有效修订', expected=len(expected), missing=missing),
+            _item('skills_loaded', 'pass' if not missing_skills else 'warn', '执行器必需技能已加载', loaded=len(identifiers), missing=missing_skills)]
+
+
 async def _run(connection_checker, health_checker):
     settings = config.load_settings()
     async def bohrium_check():
@@ -252,6 +267,7 @@ async def _run(connection_checker, health_checker):
             'warn' if any(item['created_success_at'] is None for item in images) else 'pass',
             '各镜像最近一次沙箱创建成功时间；平台缓存有效期和重新预热周期unknown', images=images)
     checks.append(asyncio.to_thread(sandbox_creation_check));names.append('sandbox_image_warmup')
+    checks.append(asyncio.to_thread(content_checks, settings));names.append('loaded_content')
     values = await asyncio.gather(*checks, return_exceptions=True)
     items = []
     for name, value in zip(names, values):
@@ -268,7 +284,7 @@ async def _run(connection_checker, health_checker):
     if config.load_settings()['revision'] != settings['revision']:
         items.append(_item('configuration', 'warn', '检查期间配置变化，请重新检查'))
     result = {'observed_at': db.utcnow(), 'status': 'fail' if any(item['status'] == 'fail' for item in items) else 'warn' if any(item['status'] == 'warn' for item in items) else 'pass', 'items': items, 'checked_revision': settings['revision'], 'platform': settings['mailbox']['platform'], 'model_turns': 0, 'notice': '只读检查不等于科学结果、评分或参赛有效性验收。'}
-    result = json.loads(observation.strip_secrets(json.dumps(result, ensure_ascii=False)))
+    result = observation.redact_structure(result)
     db.execute('INSERT OR REPLACE INTO runtime_observations VALUES(?,?,?)', ('preflight', json.dumps(result, ensure_ascii=False), result['observed_at']))
     return result
 

@@ -108,7 +108,10 @@ def main() -> None:
     ops_alerts = ops_sub.add_parser('alerts', help='未处理提醒和经验审批')
     ops_shutdown = ops_sub.add_parser('shutdown', help='安全关机屏障和备份')
     ops_resume = ops_sub.add_parser('resume', help='远程只读对账后恢复安全关机意图')
-    for command in (ops_status, ops_digest, ops_events, ops_alerts, ops_shutdown, ops_resume): command.add_argument('--port', type=int, default=None)
+    ops_redeploy = ops_sub.add_parser('redeploy', help='安全关机、只换代码、对账恢复和自检')
+    ops_redeploy.add_argument('--commit', default=None)
+    ops_redeploy.add_argument('--timeout', type=float, default=180)
+    for command in (ops_redeploy, ops_status, ops_digest, ops_events, ops_alerts, ops_shutdown, ops_resume): command.add_argument('--port', type=int, default=None)
     evaluation = sub.add_parser('eval', help='运行或生成本地评测报告')
     evaluation_sub = evaluation.add_subparsers(dest='eval_command', required=True)
     eval_run = evaluation_sub.add_parser('run', help='启动一层评测')
@@ -124,6 +127,11 @@ def main() -> None:
     if args.command == 'ops':
         from . import config, features, observation
         port = args.port or config.load_settings()['app']['port']
+        if args.ops_command == 'redeploy':
+            from .redeploy import redeploy
+            result = redeploy(port, args.commit, timeout=args.timeout)
+            print(json.dumps(result, ensure_ascii=False))
+            raise SystemExit(0 if result['status'] == 'completed' else 1)
         method = 'GET'; body = None
         if args.ops_command == 'switch':
             if args.name not in features.NAMES: parser.error('未知功能开关：' + args.name)

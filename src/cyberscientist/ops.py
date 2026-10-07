@@ -9,7 +9,7 @@ RESUME_TASK = None
 
 
 def safe(value):
-    return json.loads(observation.strip_secrets(json.dumps(value, ensure_ascii=False)))
+    return observation.redact_structure(value)
 
 
 def events(run_id, tail=20):

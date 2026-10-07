@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { api } from './api'
 interface Report { observed_at: string; status: string; items: { name: string; status: string; detail: string; facts: unknown }[] }
-const names: Record<string, string> = { harvest_mailbox: '收割邮箱', experiment_mailbox: '实验邮箱', playground: 'Playground 凭据', bohrium: 'Bohrium 凭据', codex: 'Codex 原生模型', deepseek: 'DeepSeek', web_search: '联网搜索', web_read: '网页读取', lkm: 'LKM', protocol_drift: '协议漂移', disk: '磁盘', backend: '后端健康', code: '代码版本与标签', sandbox_image_warmup: '各镜像沙箱创建时间' }
+const names: Record<string, string> = { auto_submission: '自动提交状态', experiences_loaded: '新经验加载', skills_loaded: '必需技能加载', harvest_mailbox: '收割邮箱', experiment_mailbox: '实验邮箱', playground: 'Playground 凭据', bohrium: 'Bohrium 凭据', codex: 'Codex 原生模型', deepseek: 'DeepSeek', web_search: '联网搜索', web_read: '网页读取', lkm: 'LKM', protocol_drift: '协议漂移', disk: '磁盘', backend: '后端健康', code: '代码版本与标签', sandbox_image_warmup: '各镜像沙箱创建时间' }
 const labels: Record<string, string> = { pass: '通过', warn: '警告', fail: '失败' }
 export default function Preflight() {
   const [report, setReport] = useState<Report | null>(null)

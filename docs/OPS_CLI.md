@@ -21,3 +21,11 @@ shutdown不会停止或删除远程Job/沙箱，远程可能继续计费。先�
 会话fast字段来自原生thread握手回执，未观察的历史会话保持unknown，不从配置推断已生效。会话观察写库失败只报通用警告，不关闭已握手的原生进程。`provider_rates.native_throttle`包括原生willRetry的waiting/recovered事实，provider-wide可用性仍未知。
 
 赛前可用前端自检或 `POST /api/v1/preflight`：只读认证/模型目录/公开工具，不开科研Run或提交。tracks逐项显示调度时钟、协议确认及证据、用户提示词、无上限状态和收割邮箱匹配；旧轮次资料不足为warn，不能当作已就绪。
+
+## 安全重部署（CS-UP-13）
+
+`cyberscientist ops redeploy --commit <hash或标签> --port 8765` 先验证目标与干净的跟踪文件，再安全关机等待can_shutdown，核对Linux PID/启动时间/cwd后SIGTERM，确认退出、切换代码、启动并核对目标commit，然后resume只读对账、自检、digest。任一步失败退出1并保留当前状态；不强杀、不自动回退、不跨失败继续。自检warn可完成并明确输出，fail停止；外部unknown不能被当成通过。每步回执和停机时间写入本机.package-checks/redeploy/。
+
+只换代码保留SQLite、秘密存储、workspace和经验账本。目标会改变experience跟踪文件时拒绝回退，需使用包含当前经验的兼容提交。无目标参数表示当前HEAD。旧后端未提供PID时需先安全关机，再人工识别Linux进程完成一次迁移；不能猜PID。不同commit切换为detached HEAD，后续开发应回到main。
+
+自检显示自动提交状态、新lc经验有效修订、执行器技能和每个镜像创建成功时间。创建时间不代表缓存寿命。设置页可持久保存auto_submission、judge_replica_hint、间隔策略；自动提交恢复需专用恢复按钮清除数据库屏障。
