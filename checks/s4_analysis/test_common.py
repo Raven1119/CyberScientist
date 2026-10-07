@@ -70,9 +70,25 @@ def test_public_client_rejects_nonplatform_origins_before_request(tmp_path):
 
 def test_prefixed_credentials_in_objects_and_embedded_json_are_redacted(redactor):
     value = 'foreign-' + 'q' * 32
-    data={'aws_secret_access_key':value,'refresh_token':value,
+    data={'aws_secret_access_key':value,'BOHR_ACCESS_KEY':value,'CLOUD_ACCESS_KEY':value,'refresh_token':value,
           'body':'export CLOUD_ACCESS_KEY=' + value + '\n' + json.dumps({'refresh_token':value})}
     assert value not in json.dumps(redactor.obj(data))
+
+
+def test_credentials_in_json_keys_are_removed_without_losing_colliding_values(redactor):
+    first='fixture-'+'k'*40
+    second='sk-'+'a'*40
+    result=redactor.obj({first:1,second:2,'normal':3})
+    assert first not in json.dumps(result) and second not in json.dumps(result)
+    assert sorted(result.values())==[1,2,3]
+
+
+def test_sensitive_containers_and_numeric_passwords_are_redacted(redactor):
+    opaque='opaque-'+'q'*32
+    data={'credentials':{'default':opaque},'access_token':[opaque],'password':123456789,'pass':True}
+    result=redactor.obj(data)
+    assert opaque not in json.dumps(result) and result['password']=='[REDACTED]'
+    assert result['pass'] is True
 
 
 def test_atomic_concurrent_writers_leave_one_complete_value(tmp_path):

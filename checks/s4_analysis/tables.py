@@ -3,7 +3,11 @@ import csv
 import io
 import json
 import math
+import os
+import sys
+import tempfile
 from datetime import datetime
+from pathlib import Path
 
 from .common import atomic
 
@@ -33,12 +37,38 @@ def flatten(value, prefix=''):
     return out
 
 
-def write_csv(path, rows, fields=None):
+def write_csv(path, rows, fields=None, *, csv_limit=80_000_000):
     if fields is None: fields = sorted({key for row in rows for key in row})
     output = io.StringIO(newline='')
     writer = csv.DictWriter(output, fieldnames=fields, lineterminator='\n', extrasaction='raise')
     writer.writeheader(); writer.writerows(rows)
-    atomic(path, output.getvalue().encode())
+    raw = output.getvalue().encode()
+    path = Path(path)
+    if len(raw) < csv_limit:
+        atomic(path, raw)
+        return path
+    # A pinned optional dependency is installed only in this analysis worktree.
+    # The CSV intermediary contains already-redacted data and is removed.
+    dependencies = Path(__file__).resolve().parents[2] / '.package-checks/s4_analysis/deps'
+    if str(dependencies) not in sys.path: sys.path.insert(0, str(dependencies))
+    import duckdb
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix='table-', dir=path.parent) as temporary:
+        source = Path(temporary) / 'input.csv'
+        source.write_bytes(raw); source.chmod(0o600)
+        target = Path(temporary) / 'output.parquet'
+        with duckdb.connect() as connection:
+            connection.execute('CREATE TABLE records AS SELECT * FROM read_csv(?, header=true, all_varchar=true)', [str(source)])
+            # DuckDB does not parameterize COPY targets; generated paths have no quotes.
+            safe = str(target).replace("'", "''")
+            connection.execute(f"COPY records TO '{safe}' (FORMAT PARQUET, COMPRESSION ZSTD)")
+        if target.stat().st_size >= 90_000_000:
+            raise ValueError('Parquet table exceeds repository file limit')
+        destination = path.with_suffix('.parquet')
+        os.replace(target, destination)
+        destination.chmod(0o600)
+    path.unlink(missing_ok=True)
+    return destination
 
 
 def attempt_row(attempt, topic, ownership):

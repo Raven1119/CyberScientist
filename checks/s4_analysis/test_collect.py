@@ -20,6 +20,8 @@ def test_nullable_scores_and_round_boundaries_stay_distinct():
 def test_zero_score_is_collected_and_does_not_mean_missing():
     assert collect.has_score({'score':0})
     assert collect.has_score({'scorecard':{'trace_score':0}})
+    assert collect.has_score({'scoringState':{'displayScore':0}})
+    assert collect.has_score({'resultsJson':{'harbor_score':0}})
     assert not collect.has_score({'scorecard':None,'resultsJson':None})
     assert number(False) is None and number('nan') is None
 
@@ -48,6 +50,31 @@ def test_repeating_page_cannot_silently_count_as_full_coverage(tmp_path,monkeypa
     monkeypatch.setattr(collect,'observed',lambda *_:'2026-08-01T00:00:00+00:00')
     with pytest.raises(ValueError,match='without progress'):
         collect.collect_topic(Client(),'c',1)
+
+
+def test_early_empty_page_is_incomplete_and_preserves_partial_rows(tmp_path,monkeypatch):
+    class Client:
+        root=tmp_path
+        def get(self,path):
+            if '/attempts?' not in path:return {'id':'c'}
+            return {'attempts':[{'id':1,'challengeId':'c'}] if 'page=1&' in path else [],'total':100}
+    monkeypatch.setattr(collect,'observed',lambda *_:'2026-08-01T00:00:00+00:00')
+    with pytest.raises(collect.IncompleteTopic,match='before declared total') as caught:
+        collect.collect_topic(Client(),'c',1)
+    assert len(caught.value.attempts)==1 and len(caught.value.pages)==2
+
+
+def test_large_table_parquet_keeps_unknown_and_zero_distinct(tmp_path):
+    import sys
+    from pathlib import Path
+    sys.path.insert(0,str(Path(__file__).resolve().parents[2]/'.package-checks/s4_analysis/deps'))
+    duckdb=pytest.importorskip('duckdb')
+    source=tmp_path/'values.csv'
+    target=write_csv(source,[{'id':1,'score':None,'name':'测试'},{'id':2,'score':0,'name':'quoted, value'}],csv_limit=1)
+    assert target.suffix=='.parquet' and not source.exists()
+    with duckdb.connect() as connection:
+        rows=connection.execute('SELECT id,score,name FROM read_parquet(?) ORDER BY id',[str(target)]).fetchall()
+    assert rows==[('1',None,'测试'),('2','0','quoted, value')]
 
 
 def test_csv_preserves_null_zero_and_utf8(tmp_path):

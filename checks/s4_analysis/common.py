@@ -108,15 +108,18 @@ class Redactor:
                 sensitive = normal in {'apikey','accesstoken','envdaccesstoken','authorization',
                     'password','passwd','secret','secretkey','accesskey','accesskeysecret','refreshtoken','idtoken',
                     'cookie','setcookie','sessiontoken','credential','credentials','pass'} or normal.endswith(
-                    ('apikey','secretaccesskey','privatekey','password','accesstoken','refreshtoken','accesskeyid'))
+                    ('apikey','accesskey','secretaccesskey','privatekey','password','accesstoken','refreshtoken','accesskeyid'))
                 location = path+(k,)
                 public_scientific_field = location[-3:] in (
                     ('answers','[]','token'), ('datasets','[]','key'), ('resources','[]','key'))
                 sensitive = sensitive or normal in ('key','token') and isinstance(v,str) and len(v)>=16 and not public_scientific_field
-                if sensitive and isinstance(v, str) and v and v != '[REDACTED]':
+                safe_key = self.text(k)
+                if safe_key in out:
+                    safe_key += '_redacted_collision_' + str(len(out))
+                if sensitive and v is not None and v != '' and v != '[REDACTED]' and not (normal=='pass' and isinstance(v,bool)):
                     self.counts['credential_field'] += 1
-                    out[k] = '[REDACTED]'
-                else: out[k] = self.obj(v,location)
+                    out[safe_key] = '[REDACTED]'
+                else: out[safe_key] = self.obj(v,location)
             return out
         return value
 
@@ -168,12 +171,12 @@ class PublicClient:
             time.sleep(max(0, .36 - (time.time() - previous)))
             lock.seek(0); lock.truncate(); lock.write(str(time.time())); lock.flush()
 
-    def get(self, path, *, refresh=False, limit=100_000_000):
+    def get(self, path, *, refresh=False, limit=100_000_000, text_response=False):
         url = ORIGIN + path if path.startswith('/') else path
         parsed = urlsplit(url)
         if parsed.scheme != 'https' or parsed.netloc != 'play.bohrium.com' or parsed.username:
             raise ValueError('Only the authorized public platform origin is allowed')
-        cache_id = sha(url.encode())
+        cache_id = sha((url + ('#text' if text_response else '')).encode())
         target = self.cache / (cache_id + '.json.zst')
         meta_path = self.cache / (cache_id + '.meta.json')
         if target.exists() and meta_path.exists() and not refresh:
@@ -194,7 +197,7 @@ class PublicClient:
             try:
                 self.rate()
                 with httpx.Client(timeout=60, follow_redirects=False) as client:
-                    with client.stream('GET', url, headers={'Accept':'application/json'}) as response:
+                    with client.stream('GET', url, headers={'Accept':'text/plain,text/html' if text_response else 'application/json'}) as response:
                         status = response.status_code
                         if status == 429 or status >= 500:
                             raise httpx.HTTPStatusError('Transient public GET', request=response.request, response=response)
@@ -204,7 +207,7 @@ class PublicClient:
                             raw.extend(chunk)
                             if len(raw) > limit: raise ValueError('Public response exceeds byte limit')
                 original_sha = sha(raw)
-                value = json.loads(raw)
+                value = bytes(raw).decode('utf-8') if text_response else json.loads(raw)
                 def mark(v):
                     if isinstance(v, dict):
                         if 'id' in v and redactor.identify_ours(v): v['_ours'] = True

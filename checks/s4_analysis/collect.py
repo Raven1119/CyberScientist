@@ -12,6 +12,12 @@ from .common import DEFAULT_DATA, MAIN, PublicClient, atomic, sha, utcnow, write
 from .tables import attempt_row, number, write_csv
 
 
+class IncompleteTopic(ValueError):
+    def __init__(self, message, topic, attempts, pages):
+        super().__init__(message)
+        self.topic, self.attempts, self.pages = topic, attempts, pages
+
+
 def observed(client, path):
     meta = client.cache / (sha(('https://play.bohrium.com' + path).encode()) + '.meta.json')
     return json.loads(meta.read_text())['fetched_at']
@@ -70,19 +76,30 @@ def collect_topic(client, slug, seq):
                 row['_observed_at'] = observed(client, route)
                 if str(row.get('status','')).lower() != 'draft': attempts.append(row)
         total = body.get('total')
-        if not body['attempts'] or isinstance(total,int) and len(seen) >= total: break
-        if not new: raise ValueError('Pagination repeated without progress')
+        if not body['attempts']:
+            if not isinstance(total,int) or len(seen) != total:
+                raise IncompleteTopic('Pagination ended before declared total',topic,attempts,totals)
+            break
+        if isinstance(total,int) and len(seen) >= total: break
+        if not new: raise IncompleteTopic('Pagination repeated without progress',topic,attempts,totals)
     else: raise ValueError('Pagination safety bound exceeded')
+    declared = {p['total'] for p in totals}
+    non_draft = {p['total_non_draft'] for p in totals if p['total_non_draft'] is not None}
+    if declared != {len(seen)} or non_draft and non_draft != {len(attempts)}:
+        raise IncompleteTopic('Pagination totals changed or do not match unique coverage',topic,attempts,totals)
     write_json(client.root / '.raw/topic-lists' / (slug + '.json'), {'attempts':attempts,'pages':totals})
     return topic, attempts, totals
 
 
 def has_score(attempt):
     card = attempt.get('scorecard'); results = attempt.get('resultsJson')
+    state = attempt.get('scoringState')
     card = card if isinstance(card,dict) else {}
     results = results if isinstance(results,dict) else {}
+    state = state if isinstance(state,dict) else {}
     return any(number(value) is not None for value in [attempt.get('score'),
-        card.get('trace_score'), results.get('trace_score')])
+        state.get('displayScore'),card.get('trace_score'),results.get('trace_score'),
+        card.get('harbor_score'),results.get('harbor_score')])
 
 
 def export(client, topics, attempts, owners, failures, coverage):
@@ -162,7 +179,11 @@ def main():
             try:
                 topic, items, pages=future.result();topics[slug]=topic;page_audit[slug]=pages
                 for a in items: attempts[str(a['id'])]=a
-            except Exception as exc: failures.append({'kind':'topic_list','id':slug,'error':str(exc)})
+            except Exception as exc:
+                failures.append({'kind':'topic_list','id':slug,'error':str(exc)})
+                if isinstance(exc,IncompleteTopic):
+                    topics[slug]=exc.topic;page_audit[slug]=exc.pages
+                    for a in exc.attempts:attempts[str(a['id'])]=a
             write_json(client.root / '.raw/current.json',{'phase':'topic_lists','topics':len(topics),'attempts':len(attempts),'failures':len(failures),'time':utcnow()})
             print(json.dumps({'phase':'topic_lists','topics':len(topics),'attempts':len(attempts),'failures':len(failures)}),flush=True)
     write_json(client.root / 'data/snapshots/pagination_audit.json', page_audit)
