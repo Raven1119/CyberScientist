@@ -1,8 +1,8 @@
 # S4 scientific scoring: evidence and unresolved identity
 
-Generated 2026-10-07T15:49:26.173666+00:00. These are public receipt facts and protocol descriptions; no scientific solution or grader implementation is reproduced.
+Generated 2026-10-07T16:57:22.545775+00:00. These are public receipt facts and protocol descriptions; no scientific solution or grader implementation is reproduced.
 
-For 18,891 receipts with both Harbor reward and science score, `harbor_score = 100 * harbor_reward` has 0 exceptions at tolerance 0.001. Rows lacking either field remain unknown. The complete checks are in private `scorer/science_layer.csv`.
+For 18,895 receipts with both Harbor reward and science score, `harbor_score = 100 * harbor_reward` has 0 exceptions at tolerance 0.001. Rows lacking either field remain unknown. The complete checks are in private `scorer/science_layer.csv`.
 Attempt [49735](https://play.bohrium.com/api/attempts/49735) has reward 1, Harbor score 100, replay flag 1, and executability/packaging/output_coverage/result_fidelity all 0. Its source is harbor_worker. Trace score 69 and review policy produce observed display score 69. These fields document separate scoring paths; the four zeros do not imply that Harbor reward must be zero.
 Public challenge scoring.strategy is metadata, not proof of the worker code actually used. Topic prose, protocol metadata and worker receipts are retained separately; conflicts are not silently resolved.
 

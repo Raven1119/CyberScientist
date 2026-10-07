@@ -111,9 +111,14 @@ def quality_audit(root=DEFAULT_DATA):
     write_csv(root/'data/selection_quality.csv',output)
     source=root/'data/attempts.csv'
     if not source.exists():source=source.with_suffix('.parquet')
+    new_ids=legacy_ids-{r['attempt_id'] for r in frozen}
+    additions=root/'data/selection_additions.csv'
+    additional_ids={r['attempt_id'] for r in read_table('data/selection_additions.csv',root=root)} if additions.exists() else set()
     summary={'observed_at':utcnow(),'frozen_base_rows':len(frozen),'current_raw_rule_ids':len(legacy_ids),
       'guarded_rule_ids':len(valid_ids),'statuses':dict(Counter(r['status'] for r in output)),
       'new_current_rule_ids_outside_frozen_base':sorted(legacy_ids-{r['attempt_id'] for r in frozen},key=int),
+      'new_current_rule_ids_covered_by_additions':sorted(new_ids&additional_ids,key=int),
+      'uncovered_current_rule_ids':sorted(new_ids-additional_ids,key=int),
       'attempt_table_sha256':sha(source.read_bytes()),'frozen_selection_sha256':sha((root/'data/selected.csv').read_bytes()),
       'action':'Original selection, calibration, model outputs and extra archived samples retained. This is an eligibility-quality annotation, not a retrospective re-fit or sample deletion.','model_calls':0}
     write_json(root/'data/selection_quality_summary.json',summary);print(summary)

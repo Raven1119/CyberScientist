@@ -173,9 +173,15 @@ def package_name(module):
     return MODULE_PACKAGES.get(name,name).lower().replace('_','-')
 
 
+def current_head_rows(root):
+    from .select import FIELDS,select
+    selected,_,_=select(list(read_table('data/attempts.csv',FIELDS,root=root)))
+    return [r for r in selected if number(r.get('head_rank')) is not None and number(r['head_rank'])<=10]
+
+
 def environment_inventory(root):
     workspace=Path(__file__).resolve().parents[2];directory=workspace/'environments/cs-up-12'
-    selected=list(read_table('data/selected.csv'));head=[r for r in selected if number(r.get('head_rank')) is not None and number(r['head_rank'])<=10]
+    head=current_head_rows(root)
     features={r['attempt_id']:r for r in read_table('data/trace_features.csv')};topics={r['challenge_id']:r for r in read_table('data/challenges.csv')}
     output=[];packages=defaultdict(set)
     for row in head:
@@ -222,7 +228,7 @@ def environment_inventory(root):
       'software_visible_attempts':sum(r['software_visibility'].startswith('candidate') for r in rows),
       'imports_json':json.dumps(sorted({m for r in rows for m in json.loads(r['imports_json'])})),
       'actual_gpu_usage':'unknown; references do not confirm execution'} for kind,rows in sorted(bytype.items())])
-    summary={'head_attempts':len(output),'attempts_with_package_candidates':sum(bool(json.loads(r['candidate_packages_json'])) for r in output),
+    summary={'head_attempts':len(output),'head_source':'current full attempt table; frozen calibration and original selection preserved','attempts_with_package_candidates':sum(bool(json.loads(r['candidate_packages_json'])) for r in output),
       'distinct_package_candidates':len(packages),'image_locks':len(locks),'no_new_compute_jobs':True,'observed_at':utcnow()}
     write_json(root/'data/environment_summary.json',summary);return summary
 
