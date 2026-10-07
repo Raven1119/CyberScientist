@@ -174,7 +174,7 @@ def main():
                    'trace_source':report['trace_source'],'trace_sha256':report['trace_sha256'],
                    'packet_sha256':report.get('packet_sha256'),'input_fingerprint':report.get('input_fingerprint'),
                    'evidence_steps_offsets_json':json.dumps(check.get('evidence',[]),ensure_ascii=False),'explanation':check.get('explanation')})
-            else:output.append({**row,'assessment_status':'unknown_trace_not_collected_or_analysis_pending','model_confidence':None,'evidence_steps_offsets_json':'[]'})
+            else:output.append({**row,'assessment_status':'unknown_outside_selected_trace_scope' if row['attempt_id'] not in selected else 'unknown_trace_not_collected_or_analysis_pending','model_confidence':None,'evidence_steps_offsets_json':'[]'})
         write_csv(root/'data/truncation_check.csv',output)
         if not args.watch:break
         time.sleep(30)

@@ -134,7 +134,7 @@ S15 的 N11 与 N14、S45 的 N11 是两种转换下都存在的本地触发而 
 
 ## CS-UP-11 expanded public snapshot
 
-Generated 2026-10-07T16:02:35.762457+00:00. Current available v8 comparison: 527 of 7616 selected attempts / 9518 code pairs; 3154 unavailable pairs within that comparison. All selected IDs, including empty, uncollected, failed and non-v8 inputs, remain in private `scorer/v6_v8_coverage.csv`. This section is regenerated as trace collection advances. Original 63-sample evidence above remains unchanged.
+Generated 2026-10-07T17:06:02.472425+00:00. Current available v8 comparison: 1097 of 7620 selected attempts / 19798 code pairs; 6612 unavailable pairs within that comparison. All selected IDs, including empty, uncollected, failed and non-v8 inputs, remain in private `scorer/v6_v8_coverage.csv`. This section is regenerated as trace collection advances. Original 63-sample evidence above remains unchanged.
 
 | Full code | Observable positives | TP | FP | FN | TN | Precision | Recall | Conditional grade |
 |---|---:|---:|---:|---:|---:|---:|---:|---|
@@ -142,21 +142,21 @@ Generated 2026-10-07T16:02:35.762457+00:00. Current available v8 comparison: 527
 | N01_CROSS_TASK_TRACE_REUSE | 0 | 0 | 0 | 0 | 0 | unknown | unknown | unknown_or_unusable |
 | N02_ARTIFACT_RECEIPT_MISMATCH | 0 | 0 | 0 | 0 | 0 | unknown | unknown | unknown_or_unusable |
 | N03_SYSTEM_CONTEXT_MISMATCH | 0 | 0 | 0 | 0 | 0 | unknown | unknown | unknown_or_unusable |
-| N04_TRACE_SCHEMA_INVALID | 6 | 0 | 22 | 6 | 499 | 0.000 | 0.000 | unknown_or_unusable |
-| N05_PROMPT_INJECTION_OR_SCORER_GAMING | 3 | 0 | 0 | 3 | 524 | unknown | 0.000 | unknown_or_unusable |
-| N06_FABRICATED_OR_UNSUPPORTED_EXECUTION | 34 | 32 | 234 | 2 | 259 | 0.120 | 0.941 | unknown_or_unusable |
-| N07_REFERENCE_OR_ORACLE_LEAKAGE | 1 | 1 | 0 | 0 | 526 | 1.000 | 1.000 | unknown_or_unusable |
-| N08_UNPAIRED_TOOL_CALLS | 33 | 3 | 3 | 30 | 491 | 0.500 | 0.091 | unknown_or_unusable |
-| N09_NO_EXECUTION_EVIDENCE | 54 | 53 | 385 | 1 | 88 | 0.121 | 0.981 | unknown_or_unusable |
-| N10_TASK_TRACE_SEMANTIC_MISMATCH | 0 | 0 | 0 | 0 | 502 | unknown | unknown | unknown_or_unusable |
-| N11_OUTPUT_NOT_CAUSALLY_SUPPORTED | 42 | 35 | 9 | 7 | 14 | 0.795 | 0.833 | indicative |
-| N12_TRACE_REPETITION_OR_INFLATION | 3 | 3 | 192 | 0 | 332 | 0.015 | 1.000 | unknown_or_unusable |
-| N13_EXTREME_BREVITY | 11 | 6 | 45 | 5 | 471 | 0.118 | 0.545 | unknown_or_unusable |
-| N14_METHOD_SUBSTITUTION_OR_FALLBACK | 110 | 26 | 7 | 84 | 410 | 0.788 | 0.236 | unknown_or_unusable |
-| N15_PROVENANCE_METADATA_ANOMALY | 1 | 1 | 3 | 0 | 523 | 0.250 | 1.000 | unknown_or_unusable |
+| N04_TRACE_SCHEMA_INVALID | 9 | 2 | 42 | 7 | 1046 | 0.045 | 0.222 | unknown_or_unusable |
+| N05_PROMPT_INJECTION_OR_SCORER_GAMING | 5 | 1 | 0 | 4 | 1092 | 1.000 | 0.200 | unknown_or_unusable |
+| N06_FABRICATED_OR_UNSUPPORTED_EXECUTION | 59 | 54 | 331 | 5 | 707 | 0.140 | 0.915 | unknown_or_unusable |
+| N07_REFERENCE_OR_ORACLE_LEAKAGE | 7 | 5 | 0 | 2 | 1090 | 1.000 | 0.714 | indicative |
+| N08_UNPAIRED_TOOL_CALLS | 127 | 53 | 52 | 74 | 918 | 0.505 | 0.417 | unknown_or_unusable |
+| N09_NO_EXECUTION_EVIDENCE | 110 | 105 | 517 | 5 | 470 | 0.169 | 0.955 | unknown_or_unusable |
+| N10_TASK_TRACE_SEMANTIC_MISMATCH | 0 | 0 | 2 | 0 | 1049 | 0.000 | unknown | unknown_or_unusable |
+| N11_OUTPUT_NOT_CAUSALLY_SUPPORTED | 44 | 37 | 9 | 7 | 15 | 0.804 | 0.841 | indicative |
+| N12_TRACE_REPETITION_OR_INFLATION | 13 | 12 | 247 | 1 | 837 | 0.046 | 0.923 | unknown_or_unusable |
+| N13_EXTREME_BREVITY | 21 | 12 | 70 | 9 | 1006 | 0.146 | 0.571 | unknown_or_unusable |
+| N14_METHOD_SUBSTITUTION_OR_FALLBACK | 352 | 33 | 9 | 319 | 736 | 0.786 | 0.094 | unknown_or_unusable |
+| N15_PROVENANCE_METADATA_ANOMALY | 9 | 9 | 12 | 0 | 1076 | 0.429 | 1.000 | unknown_or_unusable |
 | N16_DUPLICATE_OR_BURST_SUBMISSION | 0 | 0 | 0 | 0 | 0 | unknown | unknown | unknown_or_unusable |
-| N16_EXTERNAL_SOLUTION_DISTILLATION | 10 | 1 | 0 | 9 | 517 | 1.000 | 0.100 | unknown_or_unusable |
+| N16_EXTERNAL_SOLUTION_DISTILLATION | 36 | 18 | 1 | 18 | 1060 | 0.947 | 0.500 | unknown_or_unusable |
 | N17_PREEXISTING_SUBSTANTIVE_ARTIFACT | 0 | 0 | 0 | 0 | 0 | unknown | unknown | unknown_or_unusable |
 | N18_PROCESS_EVIDENCE_INSUFFICIENT | 0 | 0 | 0 | 0 | 0 | unknown | unknown | unknown_or_unusable |
 
-320 observed scores exceed the locally reconstructed v6 cap. This does not identify the cause: version, public-field omissions, redaction and worker input differences remain confounded. N17 and N18 have no pinned v6 rule and remain unknown for mechanical reproduction. Open-world precision/recall bounds and every attempt ID are retained in private scorer tables. Public missing tool fields cannot establish that original execution evidence was absent.
+438 observed scores exceed the locally reconstructed v6 cap. This does not identify the cause: version, public-field omissions, redaction and worker input differences remain confounded. N17 and N18 have no pinned v6 rule and remain unknown for mechanical reproduction. Open-world precision/recall bounds and every attempt ID are retained in private scorer tables. Public missing tool fields cannot establish that original execution evidence was absent.
