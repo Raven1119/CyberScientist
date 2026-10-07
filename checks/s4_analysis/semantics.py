@@ -20,8 +20,7 @@ def trace_steps(path):
 
 
 def packet_steps(steps):
-    keys=['step_id','step_order','type','step_type','title','body','code','tool_name','tool_args','tool_output','tool_call_id','timestamp','time']
-    return [{'index':i+1,**{k:step[k] for k in keys if step.get(k) is not None}} for i,step in enumerate(steps)]
+    return [{**step,'index':i+1} for i,step in enumerate(steps)]
 
 
 def chunks(events,limit=300_000):
@@ -56,11 +55,33 @@ def validate(output,events):
                 ids=[ids];claim['steps']=ids
                 normalizations.append({'field':key,'claim':i,'change':'scalar_step_to_singleton_list'})
             if not isinstance(ids,list) or not ids or any(isinstance(x,bool) or not isinstance(x,int) or x not in corpus for x in ids):errors.append('invalid_step_reference')
+            sources=[]
+            for index in ids if isinstance(ids,list) else []:
+                if isinstance(index,bool) or not isinstance(index,int) or index not in corpus:continue
+                source=next((e for e in events if e['index']==index),{})
+                kind=source.get('step_type') or source.get('type');title=str(source.get('title') or '').lower()
+                if kind=='tool_call':basis='tool_call'
+                elif kind=='tool_result':
+                    fields=[source.get(k) for k in ['body','tool_output','result','content']]
+                    visible=any(bool(v) if isinstance(v,(str,list,dict)) else v is not None for v in fields)
+                    basis='tool_result_with_visible_body' if visible else 'tool_result_body_unavailable'
+                elif kind=='artifact':basis='artifact_declaration'
+                elif kind=='thought':basis='assistant_statement'
+                elif kind=='observation' and 'user' in title:basis='user_instruction_or_declaration'
+                elif kind=='observation':basis='declared_observation'
+                else:basis='unknown_or_other_event'
+                sources.append(basis)
+            claim['evidence_source_types']=sorted(set(sources))
+            claim['scientific_truth_status']='not_independently_verified'
+            claim['execution_observability']='visible_tool_result_step_referenced' if 'tool_result_with_visible_body' in sources else 'unknown_no_visible_tool_result_referenced'
             if isinstance(confidence,bool) or not isinstance(confidence,(int,float)) or not 0<=confidence<=1:errors.append('invalid_confidence')
             evidence=claim.get('evidence',[])
-            if not evidence:errors.append('missing_quote')
-            for item in evidence:
+            if not isinstance(evidence,list) or not evidence:errors.append('missing_or_invalid_quote_array')
+            for item in evidence if isinstance(evidence,list) else []:
+                if not isinstance(item,dict):errors.append('invalid_quote_object');continue
                 step=item.get('step');quote=item.get('quote')
+                if isinstance(step,bool) or not isinstance(step,int) or step not in corpus:
+                    errors.append('invalid_quote_step');continue
                 # Search original string values as well as JSON escaping.
                 source=next((e for e in events if e['index']==step),{})
                 def strings(value):
@@ -69,11 +90,12 @@ def validate(output,events):
                         for v in value.values():yield from strings(v)
                     elif isinstance(value,list):
                         for v in value:yield from strings(v)
-                values='\n'.join(strings(source))+'\n'+corpus.get(step,'')
-                if isinstance(quote,str) and len(quote)>160 and quote in values:
+                values=list(strings(source))+[corpus.get(step,'')]
+                exact=isinstance(quote,str) and bool(quote) and any(quote in value for value in values)
+                if exact and len(quote)>160:
                     item['quote']=quote[:160];quote=item['quote']
                     normalizations.append({'field':key,'claim':i,'change':'exact_quote_prefix_to_160_chars'})
-                if not isinstance(quote,str) or not quote or quote not in values:errors.append('quote_not_exact')
+                if not exact:errors.append('quote_not_exact')
                 elif len(quote)>160:errors.append('quote_over_limit')
                 if not isinstance(ids,list) or step not in ids:errors.append('quote_step_not_cited')
             claim['evidence_validation']='passed' if not errors else 'failed'
@@ -86,13 +108,16 @@ def main():
     parser.add_argument('--watch',action='store_true');args=parser.parse_args()
     root=DEFAULT_DATA;client=ModelClient();output=root/'data/semantics';output.mkdir(parents=True,exist_ok=True)
     selected=[r for r in read_table('data/selected.csv') if truth(r.get('semantic_required'))]
+    if (root/'data/selection_additions.csv').exists():
+        selected+=list(read_table('data/selection_additions.csv'))
+    selected=list({r['attempt_id']:r for r in selected}.values())
     attempted=set();done=0
     def process(item):
         aid=item['attempt_id'];path=root/'data/traces'/(aid+'.jsonl.zst')
         if not path.exists():path=root/'.raw/traces'/(aid+'.jsonl.zst')
         steps,digest=trace_steps(path);events=packet_steps(steps)
         result={'attempt_id':aid,'challenge_id':item['challenge_id'],'ours':item['ours'],
-                'trace_sha256':digest,'observed_at':utcnow(),'model':'deepseek-flash','schema_version':'s4_semantics_v1'}
+                'trace_sha256':digest,'observed_at':utcnow(),'model':'deepseek-flash','schema_version':'s4_semantics_v1','packet_schema':'all_source_fields_v2'}
         if not steps:
             result.update(status='unknown_public_trace_empty',extraction={key:[] for key in KEYS},model_calls=0)
         else:
