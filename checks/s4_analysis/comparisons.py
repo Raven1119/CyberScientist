@@ -32,6 +32,17 @@ def reliability(tp,fp,fn,positive):
     return precision,recall,grade
 
 
+def selected_reports(root,ids):
+    """Read each selected report once for both denominators and comparisons."""
+    reports={}
+    for aid in ids:
+        path=root/'.raw/v6_reports'/(aid+'.json')
+        raw=path.read_bytes() if path.exists() else None
+        reports[aid]={'report':json.loads(raw) if raw is not None else {},
+                      'sha256':sha(raw) if raw is not None else None}
+    return reports
+
+
 def agreement(root):
     attempts={r['attempt_id']:r for r in read_table('data/attempts.csv',
       ['attempt_id','challenge_id','ours','trace_engine','trace_score'])}
@@ -40,16 +51,17 @@ def agreement(root):
     pairs=[];groups=defaultdict(list);caps=[];coverage=[]
     selected=list(read_table('data/selected.csv'))
     if (root/'data/selection_additions.csv').exists():selected+=list(read_table('data/selection_additions.csv'))
-    for aid,item in {r['attempt_id']:r for r in selected}.items():
-        path=root/'.raw/v6_reports'/(aid+'.json')
-        report=json.loads(path.read_text()) if path.exists() else {}
+    selected={r['attempt_id']:r for r in selected};snapshot=selected_reports(root,selected)
+    for aid,item in selected.items():
+        report=snapshot[aid]['report']
         row=attempts.get(aid,{})
         is_v8='v8-process-evidence-sufficiency' in (row.get('trace_engine') or '')
         coverage.append({'attempt_id':aid,'challenge_id':item['challenge_id'],'ours':item['ours'],
           'v6_status':report.get('status','unknown_uncollected_or_unprepared'),
+          'v6_report_sha256':snapshot[aid]['sha256'],
           'is_v8':is_v8,'included_in_code_comparison':is_v8 and report.get('status')=='ok'})
-    for path in (root/'.raw/v6_reports').glob('*.json'):
-        report=json.loads(path.read_text());aid=path.stem;row=attempts.get(aid,{})
+    for aid,frozen in snapshot.items():
+        report=frozen['report'];row=attempts.get(aid,{})
         if report.get('status')!='ok' or 'v8-process-evidence-sufficiency' not in (row.get('trace_engine') or ''):continue
         local={i['code']:i for i in report.get('items',[]) if i.get('polarity')=='negative'}
         for code in sorted(set(local)|returned[aid]):
@@ -58,11 +70,12 @@ def agreement(root):
               'v6_status':status,'v8_listed':code in returned[aid],
               'v6_input_source':'archive_selected' if report.get('input_provenance') else 'public_api',
               'platform_input_parity':'unknown','v6_trace_sha256':report.get('trace_sha256')}
+            pair['v6_report_sha256']=frozen['sha256']
             pairs.append(pair);groups[code].append(pair)
         score=number(row.get('trace_score'));cap=number(report.get('cap'))
         caps.append({'attempt_id':aid,'challenge_id':row['challenge_id'],'ours':row['ours'],
           'v8_trace_score':score,'v6_cap':cap,'v8_above_local_cap':score>cap+.001 if score is not None and cap is not None else None,
-          'input_parity':'unknown'})
+          'input_parity':'unknown','v6_report_sha256':frozen['sha256']})
     aggregates=[]
     for code,items in sorted(groups.items()):
         observed=[i for i in items if i['v6_status'] in ['triggered','clear']]
