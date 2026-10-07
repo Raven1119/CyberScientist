@@ -50,6 +50,15 @@ class ModelClient:
             except (httpx.TransportError,httpx.HTTPStatusError,ValueError,subprocess.TimeoutExpired) as exc:
                 status=getattr(getattr(exc,'response',None),'status_code',None)
                 last={'kind':type(exc).__name__,'http_status':status}
+                if isinstance(exc,ValueError):
+                    reason='invalid_json' if isinstance(exc,json.JSONDecodeError) else str(exc)
+                    allowed={'Model_output_truncated','DEEPSEEK_API_KEY_missing','Codex_judge_used_tools_rejected',
+                             'Codex_native_turn_failed','Model output is not JSON','invalid_json'}
+                    last['reason']=reason if reason in allowed else 'invalid_model_response'
+                    # A length finish is not an external outage. An identical
+                    # request cannot provide a larger output budget.
+                    if reason in {'Model_output_truncated','DEEPSEEK_API_KEY_missing','Codex_judge_used_tools_rejected'}:break
+                    if attempt>=2:break
                 if status is not None and status<500 and status!=429:break
                 if time.monotonic()-started>=1800:break
                 time.sleep(min(180,2**attempt))

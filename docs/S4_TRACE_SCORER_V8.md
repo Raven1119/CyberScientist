@@ -1,6 +1,6 @@
 # S4 trace scorer v8: observed rules and limits
 
-Generated 2026-10-07T14:31:42.425077+00:00. Source: anonymous public GET snapshots in private `Raven1119/cs-s4-analysis`.
+Generated 2026-10-07T15:49:26.123298+00:00. Source: anonymous public GET snapshots in private `Raven1119/cs-s4-analysis`.
 Snapshot phase: `details`. 22,921 non-draft attempts, 19,915 observed trace scores; full per-attempt detail coverage is recorded in `data/coverage.json`.
 List-embedded scoring receipts are included. Until detail collection is complete these are preliminary counts; rerunning this script replaces the aggregate report.
 

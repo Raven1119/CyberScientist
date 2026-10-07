@@ -50,3 +50,17 @@ def test_attribution_keeps_self_report_separate_from_visible_numeric_zero_result
     validate(output,[{'index':2,'type':'tool_result','tool_output':0}])
     assert c['evidence_source_types']==['tool_result_with_visible_body']
     assert c['scientific_truth_status']=='not_independently_verified'
+
+
+def test_semantic_length_fallback_and_schema_repair_are_bounded():
+    from .semantics import generate_part
+    class Fake:
+        def __init__(self):self.budgets=[]
+        def generate(self,system,user,*,max_tokens):
+            self.budgets.append(max_tokens)
+            if len(self.budgets)==1:raise RuntimeError('Model_output_truncated')
+            if len(self.budgets)==2:return {'output':{'verification':[]},'request_sha256':'partial'}
+            return {'output':{k:[] for k in KEYS},'request_sha256':'complete'}
+    client=Fake();output,receipts=generate_part(client,'system','user')
+    assert client.budgets==[4096,8192,8192] and set(output)==set(KEYS)
+    assert len(receipts)==2

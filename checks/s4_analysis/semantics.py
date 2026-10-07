@@ -14,6 +14,24 @@ Each claim: {"text":"abstract factual statement", "steps":[1-based supplied even
 KEYS=['method_abstract','required_vs_actual_method','verification','failures_and_repairs','environment_setup','documentation_coverage']
 
 
+def generate_part(client,system,user,*,max_tokens=4096):
+    try:response=client.generate(system,user,max_tokens=max_tokens)
+    except RuntimeError as exc:
+        if 'Model_output_truncated' not in str(exc) or max_tokens>=16384:raise
+        response=client.generate(system,user,max_tokens=max_tokens*2)
+    receipts=[{k:v for k,v in response.items() if k!='output'}]
+    for repair in range(3):
+        output=response['output']
+        if isinstance(output,dict) and all(isinstance(output.get(k),list) for k in KEYS):
+            return output,receipts
+        if repair==2:break
+        correction=json.dumps({'original_input':user,'invalid_output':output,
+          'format_error':'Return every required key as an array. Preserve supported statements and exact original quotes; missing evidence stays unknown.'},ensure_ascii=False)
+        response=client.generate(system,correction,max_tokens=max(8192,max_tokens))
+        receipts.append({k:v for k,v in response.items() if k!='output'})
+    raise ValueError('Semantic schema invalid after bounded repair')
+
+
 def trace_steps(path):
     raw=unzstd(path.read_bytes())
     return [json.loads(line) for line in raw.splitlines() if line.strip()],sha(raw)
@@ -125,11 +143,11 @@ def main():
             question={key:topic.get(key) for key in ['title','topicContent','content','scoring']}
             parts=[];receipts=[]
             for chunk in chunks(events):
-                response=client.generate(SYSTEM,json.dumps({'task':question,'steps':chunk},ensure_ascii=False),max_tokens=4096)
-                parts.append(response['output']);receipts.append({k:v for k,v in response.items() if k!='output'})
+                part,observed=generate_part(client,SYSTEM,json.dumps({'task':question,'steps':chunk},ensure_ascii=False),max_tokens=4096)
+                parts.append(part);receipts.extend(observed)
             if len(parts)>1:
-                response=client.generate(SYSTEM+' Consolidate the supplied partial extractions, preserve their original step references and exact quotes, and remove duplicates. Do not invent evidence.',json.dumps({'partial_extractions':parts},ensure_ascii=False),max_tokens=8192)
-                extraction=response['output'];receipts.append({k:v for k,v in response.items() if k!='output'})
+                extraction,observed=generate_part(client,SYSTEM+' Consolidate the supplied partial extractions, preserve their original step references and exact quotes, and remove duplicates. Do not invent evidence.',json.dumps({'partial_extractions':parts},ensure_ascii=False),max_tokens=8192)
+                receipts.extend(observed)
             else:extraction=parts[0]
             checked=validate(extraction,events)
             result.update(status='ok' if not checked['invalid_claims'] else 'evidence_validation_warnings',

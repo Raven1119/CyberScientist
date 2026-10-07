@@ -61,6 +61,12 @@ def main():
       '**Identity: unknown.** Public platform receipts expose harbor_worker, reward, replay and scored_by labels, but no verified package version, repository link or worker source binding to harbor-framework/harbor was found in the inspected platform protocol and documentation. Name similarity and reward scaling do not establish framework identity.','',
       '## Scoring forms','',
       'Per-topic forms record required files, gates, metrics, mapping parameters, weights, aggregation, hidden-reference/replay requirements and exact source-quote checks. Their source is the public topic, not an inferred hidden grader. Discrete-total checks are valid only after score units and the applicable backend are established; topic prose can describe a different verifier from fallback API scoring metadata.','']
+    empirical=root/'scorer/arm_component_empirical_summary.json'
+    if empirical.exists():
+        checked=json.loads(empirical.read_text())
+        lines+=['## Archive comparisons','',
+          f"Read {checked['archives_checked']} sanitized archives without executing their contents; failures: {len(checked['failures'])}. Receipt sources: `{json.dumps(checked['receipt_sources'],sort_keys=True)}`. Explicit generic worker bindings: {checked['explicit_generic_worker_labels']}.",
+          'Structural candidate matches: `'+json.dumps(checked['component_candidate_matches'],sort_keys=True)+'`. These match counts do not verify worker identity or original normalization. Packaging remains unknown without the worker completeness scan. Per-archive observations, missing inputs and contradictions are retained in private `scorer/arm_component_empirical_checks.csv`.','']
     atomic(docs/'S4_SCIENTIFIC_SCORING_LAYER.md','\n'.join(lines).encode())
     print(json.dumps({'public_reports':2,'snapshot_phase':coverage.get('phase'),'generated_at':utcnow()}))
 

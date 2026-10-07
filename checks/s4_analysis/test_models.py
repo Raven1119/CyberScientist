@@ -16,3 +16,13 @@ def test_cached_model_text_is_rescrubbed_without_another_provider_call(tmp_path,
     path.write_text(json.dumps(old))
     second=client.generate('system','user')
     assert len(calls)==1 and value not in json.dumps(second) and value not in path.read_text()
+
+
+def test_truncated_response_is_not_retried_with_identical_token_budget(tmp_path,monkeypatch):
+    import pytest
+    monkeypatch.setattr(common,'credentials',lambda:({},'',{}));monkeypatch.setattr(models,'DEFAULT_DATA',tmp_path)
+    client=models.ModelClient();client.cache=tmp_path/'cache';client.cache.mkdir();calls=[]
+    def response(_):calls.append(True);raise ValueError('Model_output_truncated')
+    monkeypatch.setattr(client,'_deepseek',response)
+    with pytest.raises(RuntimeError,match='Model_output_truncated'):client.generate('system','user')
+    assert len(calls)==1

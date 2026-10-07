@@ -6,4 +6,4 @@
 
 常见问题：计划写成已执行、助手自述提升为工具已验证、把用户要求当作实际操作、引文不在所指步骤或为空、由任务说明/思考内容推断已交付文档覆盖。仅引文能逐字匹配，不代表它支持整个结论。
 
-改进：完整保留原生/结构化事件正文；为每项记录 user instruction、assistant statement、tool call、可见/缺失 tool result、artifact declaration 等来源；科学正确性始终 unknown，只有可见工具正文才标 visible receipt。旧提取与模型原始返回保留，不删去错误项来提高分数。元数据/归类与语义模型置信度分开，不能把语义摘要直接作为经验或研究事实。
+改进：完整保留原生/结构化事件正文；独立脚本 `checks/s4_analysis/semantic_projection.py` 生成带版本的 `data/semantic_evidence_basis.jsonl`，为已有和新增提取逐项记录 user instruction、assistant statement、tool call、可见/缺失 tool result、artifact declaration 等来源，并绑定原提取与轨迹 SHA。投影覆盖量、失败和生成时间见对应 summary；不原地替换冻结输出，也不调用模型。科学正确性始终未独立验证，引用可见工具正文只标记可观测来源。旧提取与模型原始返回保留，不删去错误项来提高分数。元数据/归类与语义模型置信度分开，不能把语义摘要直接作为经验或研究事实。

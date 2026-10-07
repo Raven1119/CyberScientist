@@ -1,6 +1,6 @@
 # S4 scientific scoring: evidence and unresolved identity
 
-Generated 2026-10-07T14:31:42.479401+00:00. These are public receipt facts and protocol descriptions; no scientific solution or grader implementation is reproduced.
+Generated 2026-10-07T15:49:26.173666+00:00. These are public receipt facts and protocol descriptions; no scientific solution or grader implementation is reproduced.
 
 For 18,891 receipts with both Harbor reward and science score, `harbor_score = 100 * harbor_reward` has 0 exceptions at tolerance 0.001. Rows lacking either field remain unknown. The complete checks are in private `scorer/science_layer.csv`.
 Attempt [49735](https://play.bohrium.com/api/attempts/49735) has reward 1, Harbor score 100, replay flag 1, and executability/packaging/output_coverage/result_fidelity all 0. Its source is harbor_worker. Trace score 69 and review policy produce observed display score 69. These fields document separate scoring paths; the four zeros do not imply that Harbor reward must be zero.
@@ -20,3 +20,8 @@ The public [Harbor task documentation](https://github.com/harbor-framework/harbo
 ## Scoring forms
 
 Per-topic forms record required files, gates, metrics, mapping parameters, weights, aggregation, hidden-reference/replay requirements and exact source-quote checks. Their source is the public topic, not an inferred hidden grader. Discrete-total checks are valid only after score units and the applicable backend are established; topic prose can describe a different verifier from fallback API scoring metadata.
+
+## Archive comparisons
+
+Read 86 sanitized archives without executing their contents; failures: 0. Receipt sources: `{"bundle": 13, "harbor_worker": 73}`. Explicit generic worker bindings: 0.
+Structural candidate matches: `{"executability": 77, "output_coverage": 60, "result_fidelity": 51}`. These match counts do not verify worker identity or original normalization. Packaging remains unknown without the worker completeness scan. Per-archive observations, missing inputs and contradictions are retained in private `scorer/arm_component_empirical_checks.csv`.

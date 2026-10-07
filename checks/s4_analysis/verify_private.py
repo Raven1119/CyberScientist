@@ -31,6 +31,20 @@ def audit_value(value):
     return result
 
 
+def index_snapshot(root):
+    """Freeze the index object IDs once; later working-tree writes cannot pass audit."""
+    result={}
+    for entry in subprocess.check_output(['git','ls-files','--stage','-z'],cwd=root).split(b'\0'):
+        if not entry:continue
+        metadata,name=entry.split(b'\t',1);mode,digest,stage=metadata.split()
+        if mode not in [b'100644',b'100755'] or stage!=b'0':raise ValueError('Unexpected index entry')
+        path=root/name.decode()
+        if any(part in ['.raw','.local','.git'] for part in path.relative_to(root).parts):
+            raise ValueError('Ignored raw path in Git index')
+        result[path]=digest.decode()
+    return result
+
+
 def main():
     parser=argparse.ArgumentParser();parser.add_argument('--index',action='store_true');args=parser.parse_args()
     root=DEFAULT_DATA;redactor=Redactor();total=0;files=0;issues=[]
@@ -38,14 +52,7 @@ def main():
            and '.raw' not in p.relative_to(root).parts and '.local' not in p.relative_to(root).parts] if not args.index else []
     staged={}
     if args.index:
-        entries=subprocess.check_output(['git','ls-files','--stage','-z'],cwd=root).split(b'\0')
-        for entry in entries:
-            if not entry:continue
-            metadata,name=entry.split(b'\t',1);mode,digest,stage=metadata.split()
-            path=root/name.decode();paths.append(path);staged[path]=digest.decode()
-            if mode not in [b'100644',b'100755'] or stage!=b'0':raise ValueError('Unexpected index entry')
-        for path in paths:
-            if any(part in ['.raw','.local','.git'] for part in path.relative_to(root).parts):raise ValueError('Ignored raw path in Git index')
+        staged=index_snapshot(root);paths=list(staged)
     def inspect(value,path):
         value=audit_value(value)
         text=json.dumps(value,ensure_ascii=False)
