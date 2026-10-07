@@ -1,3 +1,21 @@
+## CS-UP-13 / CS-UP-14（2026-10-08，仅阶段 1、2）
+
+### 已实现
+
+- 2026-10-08 01:35:03 +08:00 · CS-UP-13 W0 · 本工作包提交 · D-63–D-72 已原文加入 UPGRADE_DESIGN §5；只执行阶段 1、2。
+
+### 已实际验证
+
+- 开局 HEAD `19f817a`，main；tracked 工作区干净；四个旧 fallback 标签存在。SQLite 一致性备份 `.package-checks/cs-up-13/before.sqlite`；用户未跟踪文件完整保留。
+
+### 尚未验证
+
+- CS-UP-13 W1–W8、CS-UP-14 W0–W4 待逐项验证；彩排二和阶段 4 不在授权范围。
+
+### 阻塞项
+
+- W0 推送未完成：HTTPS 无凭据入口；按要求 pull --rebase 后 STATUS 顶部新增冲突，已停止并取消该次 rebase。原提交完整保留在 archive/cs-up-13-w0-before-sync，冲突 diff 留本机；替代方案是在 origin/main（8935e63）基础重新应用相同 W0 内容，保留远端 S4 更新，不强推。
+
 进度：2026-10-08 01:25:47 北京时间 · CS-UP-11 · W1–W5交付 · 代码 62286b9 · 私有数据 6ee216d
 
 ## CS-UP-11
