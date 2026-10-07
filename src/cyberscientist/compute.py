@@ -979,6 +979,14 @@ def cli(run_id: str, args: list[str], cwd: str) -> dict:
         raise ComputeError('INVALID_COMMAND', '命令参数格式错误')
     run = _run(run_id)
     work = _path(run, cwd)
+    # Help is a zero-effect capability probe. No user-supplied flags/values or
+    # arbitrary executable pass through this branch.
+    help_groups = {'image', 'job', 'project', 'dataset', 'sandbox', 'file',
+                   'database', 'knowledge-base', 'lkm', 'mentor', 'node',
+                   'paper-search', 'pdf-parser', 'scholar-search',
+                   'sciencepedia', 'tools', 'web-search'}
+    if len(args) == 2 and args[0] in help_groups and args[1] == '--help':
+        return _native(args, modern=True, timeout=30)
     if args[:1] == ['sandbox']:
         from . import sandboxes
         return sandboxes.cli(run_id, args, cwd)

@@ -22,7 +22,7 @@ def guidance_level(run_id: str) -> dict:
     solver['note'] = redact(solver['note'], config.sensitive_values())
     description = ' '.join(str(solver.get(k, '')) for k in ('model_id', 'note')).lower()
     concrete = any(word in description for word in
-                   ('deepseek', 'flash', 'mini', '便宜', '写死', '弱', '具体'))
+                   ('deepseek', 'terra', 'flash', 'mini', '便宜', '写死', '弱', '具体'))
     return {'solver': {k: solver.get(k) for k in ('model_id', 'note', 'provider')},
             'level': 'concrete_work_package' if concrete else 'goal_constraints_acceptance',
             'work_package_fields': ['algorithm_md', 'formula_md', 'parameter_ranges_md',

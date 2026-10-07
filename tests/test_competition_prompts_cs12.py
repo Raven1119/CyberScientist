@@ -12,7 +12,14 @@ from cyberscientist import api,collab,competition,competition_prompts as prompts
 from cyberscientist.brains.base import BrainEvent,SessionRef
 from cyberscientist.controller import RunController,ControllerError
 from test_competition import FakeController,template,challenges
-from test_triage_import_cs10 import seed,valid_result
+from test_triage_import_cs10 import seed as seed_with_template,valid_result
+
+def seed(*args, **kwargs):
+    result=seed_with_template(*args, **kwargs)
+    # These legacy tests exercise editing an initially empty track.
+    # The populated default is verified independently in CS-UP-13 tests.
+    db.execute("DELETE FROM competition_prompt_versions WHERE eval_id=?", (result[0]["id"],))
+    return result
 
 
 def prompt_text(version):

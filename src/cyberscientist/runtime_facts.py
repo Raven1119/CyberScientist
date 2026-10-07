@@ -61,7 +61,7 @@ def facts(run_id: str) -> dict:
                  'jobs': max(0, auth['max_jobs'] - len(jobs)) if auth else None,
                  'sandbox_minutes': max(0, auth['max_sandbox_minutes'] - committed_seconds / 60) if auth else None,
                  'sandbox_concurrent_slots': max(0, auth['max_sandboxes'] - sum(
-                     r['status'] in ('creating', 'active', 'unknown', 'deleting') for r in sandbox_rows)) if auth else None}
+                     r['status'] in ('creating', 'active', 'unknown', 'deleting') and not r['unknown_slot_released'] for r in sandbox_rows)) if auth else None}
     quotes = {kind: _quote(run_id, kind) for kind in ('job', 'sandbox')}
     try:
         manifest = local_scoring.scorer_manifest(run['challenge_id'])

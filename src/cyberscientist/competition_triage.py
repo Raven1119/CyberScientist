@@ -14,6 +14,32 @@ HANDLES = {}
 CLOSERS = {}
 
 
+def recommend(result, settings):
+    roster = challenge_models.roster(settings)
+    difficulty = result.get('difficulty')
+    candidate = next((entry for entry in roster if
+                      (difficulty == 'easy' and entry.get('provider') == 'deepseek') or
+                      (difficulty == 'medium' and entry.get('model_id') == 'gpt-5.6-terra' and entry.get('fast_mode') is True) or
+                      (difficulty == 'hard' and entry.get('model_id') == 'gpt-6-astra' and entry.get('fast_mode') is True)), None)
+    if candidate:
+        result.update(recommended_solver_id=candidate['id'], recommended_model=candidate['model_id'])
+    return result
+
+
+def select_minimum_loop(round_id):
+    rows = db.query('SELECT id,triage_json FROM eval_results WHERE eval_id=?', (round_id,))
+    parsed = [(row['id'], json.loads(row['triage_json'] or '{}')) for row in rows]
+    candidates = [(identifier, item) for identifier, item in parsed if
+                  item.get('difficulty') == 'easy' and item.get('data_complete') is True]
+    winner = min(candidates, key=lambda pair: (pair[1].get('estimated_minutes')
+                 if pair[1].get('estimated_minutes') is not None else float('inf'),
+                 -pair[1].get('priority', 0), pair[0]))[0] if candidates else None
+    for identifier, item in parsed:
+        item['minimum_loop_candidate'] = identifier == winner
+        db.execute('UPDATE eval_results SET triage_json=? WHERE id=?',
+                   (json.dumps(item, ensure_ascii=False), identifier))
+
+
 def contract(settings):
     return {'type':'object','additionalProperties':False,
             'required':['difficulty','estimated_minutes','estimated_cost_cny','recommended_model','recommended_solver_id','reason'],
@@ -116,9 +142,7 @@ async def _item(round_id, item, snapshot, settings, controller, semaphore, first
                         if event.type=='error': raise ValueError(event.payload.get('message','分诊失败'))
                     jsonschema.validate(result,packet['output_contract'])
                     result.setdefault('priority',0);result.setdefault('data_complete',None)
-                    cheap=next((entry for entry in challenge_models.roster(projected) if entry.get('provider')=='deepseek'),None)
-                    if result['difficulty']=='easy' and cheap:
-                        result.update(recommended_solver_id=cheap['id'],recommended_model=cheap['model_id'])
+                    recommend(result, projected)
                 attempts.append({'status':'done','helper_effort':projected['brain']['reasoning_effort']})
             except TimeoutError:
                 result=None;timed_out=True;attempts.append({'status':'timeout','helper_effort':projected['brain']['reasoning_effort']})
@@ -147,6 +171,7 @@ async def _run(round_id, snapshot, settings, controller, owner):
         rows=db.query('SELECT * FROM eval_results WHERE eval_id=?',(round_id,))
         await asyncio.gather(*[_item(round_id,item,snapshot,settings,controller,semaphore,owner if index==0 else None)
                               for index,item in enumerate(rows)])
+        select_minimum_loop(round_id)
     finally:
         resource_coordinator.unregister_auxiliary(root)
         if owner not in HANDLES: resource_coordinator.release_sessions(owner)

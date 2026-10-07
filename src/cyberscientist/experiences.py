@@ -540,8 +540,11 @@ def save_experience(exp_id: str, frontmatter: dict[str, Any], body_md: str,
 
 
 @_locked
-def approve_experience(exp_id: str, *, expected_revision: str | None = None) -> dict[str, Any]:
+def approve_experience(exp_id: str, *, expected_revision: str | None = None,
+                       operator: str = 'user') -> dict[str, Any]:
     """用户审批通过：candidate → active（全局经验的唯一晋升通道）。"""
+    if operator not in ('user', 'design_assistant_user_2026_10_08'):
+        raise ExperienceError('INVALID_EXPERIENCE', '不支持的审批来源')
     exp = get_experience(exp_id)
     if exp['frontmatter'].get('kind')=='environment':
         raise ExperienceError('ENVIRONMENT_READ_ONLY','环境事实待真实回执刷新，不能人工审批')
@@ -549,8 +552,8 @@ def approve_experience(exp_id: str, *, expected_revision: str | None = None) -> 
         raise ExperienceError("REVISION_CONFLICT", "审批版本已改变，请重新审阅", exp)
     with db.transaction() as conn:
         if exp["active_revision_id"] != exp["revision_id"]:
-            conn.execute("INSERT INTO experience_approvals(experience_id,revision_id,operator,created_at) VALUES(?,?,'user',?)",
-                         (exp_id,exp["revision_id"],_now()))
+            conn.execute("INSERT INTO experience_approvals(experience_id,revision_id,operator,created_at) VALUES(?,?,?,?)",
+                         (exp_id,exp["revision_id"],operator,_now()))
         updated = conn.execute("UPDATE experience_heads SET active_revision_id=head_revision_id"
                                " WHERE experience_id=? AND head_revision_id=?", (exp_id,exp["revision_id"]))
         if not updated.rowcount:

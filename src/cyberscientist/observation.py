@@ -86,7 +86,9 @@ def authority_facts(run_id: str) -> dict[str, Any]:
                 values[key] = None
             values['job_limits'] = {key: value if type(value) is bool else None for key, value in values['job_limits'].items()}
     from . import runtime_environments, runtime_facts
+    from . import capabilities
     result: dict[str, Any] = {'authorization': values,
+                              'capability_summary': capabilities.summary(run_id),
                               'runtime_environments': runtime_environments.facts(),
                               'operating_facts': runtime_facts.facts(run_id)}
     from . import environment_catalog

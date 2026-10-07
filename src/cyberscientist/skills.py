@@ -117,12 +117,14 @@ def effective_for(conn: sqlite3.Connection, settings: dict[str, Any],
     always_on = (settings.get("skills") or {}).get("always_on") or []
     bound = db.list_challenge_skills(conn, challenge_id) if challenge_id else []
     ids: list[str] = []
-    defaults = BUILTIN_EXECUTOR_SKILLS if role == 'executor' else ('bohrium-lkm',)
+    required = {sid for sid in by_id if sid.startswith(('cyberscientist-', 'bohrium-'))}
+    defaults = sorted(required) if role == 'executor' else ('bohrium-lkm',)
     for sid in list(defaults) + list(always_on) + bound:
         if sid in by_id and sid not in ids:
             ids.append(sid)
     return [by_id[sid] for sid in ids
-            if by_id[sid].get("audience", "both") in ("both", role)]
+            if (role == 'executor' and sid in required) or
+            by_id[sid].get("audience", "both") in ("both", role)]
 
 
 def prompt_segment(skills_: list[dict[str, Any]]) -> str:

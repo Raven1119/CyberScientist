@@ -3748,6 +3748,7 @@ class RunController:
                              f"本轮授权与用户目标：{json.dumps(packet.get('authorization'), ensure_ascii=False)}\n"
                              f"题目与平台契约：{json.dumps(self._challenge_for_run(run), ensure_ascii=False)}\n"
                              f"产物路径事实（题面提取与评分器验证范围）：{json.dumps(self._artifact_facts(run['challenge_id']), ensure_ascii=False)}\n"
+                             f"{observation.authority_facts(run_id)['capability_summary']}\n"
                              f"预置环境事实：{json.dumps(observation.authority_facts(run_id).get('runtime_environments', []), ensure_ascii=False)}\n"
                              f"运行事实（时间、环境、网络、价格及剩余额度）：{json.dumps(observation.authority_facts(run_id).get('operating_facts'), ensure_ascii=False)}\n"
                              f"公开数据物化状态：{json.dumps(datasets.status(run['challenge_id'])['items'], ensure_ascii=False)}\n"

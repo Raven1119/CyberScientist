@@ -28,3 +28,15 @@ D-63–D-72 原文已加入 §5。开局 main 比 origin/main 落后 13 个 S4 �
 - fake 后端提交/收割回归 `w2-tests-final.log` 81 passed；设置/功能/新协议往返 `w2-roundtrip.log` 87 passed；前端 `w2-frontend.log` 16 passed；`w2-build.log` 构建通过。这些不是正式 Worker 验证。
 - 旧合成协议测试显式配置零等待，继续验证其既有语义；新增 D-64 测试恢复生产 30 分钟策略并推进注入时钟，没有删除或跳过旧测试。
 - 有界审查修复了延迟收割触发上下文被回执摘要覆盖的问题；延迟发送仍重新核验原触发条件。
+
+## W3 — 内容、技能和能力事实
+
+输入实际为10个FILE块，全部走系统修订并按用户本轮代审批授权生效；没有捏造第11条。`observed_public_data`规范化为`observed`、`pi`为`brain`、全局`strategy`为`heuristic`，正文保留。15个指定旧ID已active；4个ABC标题精确匹配0项，未批准近似标题。其余候选清单保存在本机`w3-existing-approvals.json`。
+
+新增submission-gate、替换/追加指定skill与提示词、导入参赛过程及可编辑赛道默认模板。全部仓库cyberscientist-*与17个bohrium-*默认注入执行器，受众不再挡掉这些必需技能。116个发现条目及来源、受众、读权限、启用状态见[清单](CS_UP_13_SKILL_INVENTORY.md)。受控dispatcher对17个只读help实际调用：10项有帮助回执；knowledge-base、mentor、paper-search、pdf-parser、scholar-search、sciencepedia、web-search在已装bohr中不存在。替代：已核实的research_lkm/research_web_*接口；没有声称全部API可用。此处验证后台受控分派，未声称已在新科研Run内通过HTTP代理；阶段1禁止科研Run。PI只读文件工具实际读到submission-gate（`w3-pi-skill-read.json`）。
+
+能力清单实时读取目录、预热、机型和授权，<=2000字符，注入PI素材及每个Trial。分诊easy→DeepSeek、medium→Terra high fast、hard→Astra high fast；只标记一道数据齐全且预计最快的简单题，不自动启动。Terra/DeepSeek要求具体工作包。
+
+原生零科研探针：Codex 0.148.0-alpha.15的Terra high fast真实完成，priority被回传确认，106.258秒；它实际读取submission-gate并选择镜像。Astra PI xhigh被服务端400拒绝（需要更新Codex），Astra执行器标准降级仍failed，不据握手声称模型可用。正在尝试项目内独立运行时，未改全局CLI。硬验收PI真实简报目前未满足，替代为已通过的能力清单/只读技能检查及原生Terra回执。
+
+轻量锁定包已装项目.venv；11个模块实际导入累计1.567402秒（同进程顺序导入，非各自冷启动），版本/分项耗时`w3-local-imports.json`。pytest内容/技能/经验/赛道/分诊/PI组77通过（23.89秒）。

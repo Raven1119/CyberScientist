@@ -113,6 +113,10 @@ def import_round(challenge_ids: list[str] | None = None, *, season: str = '',
             conn.execute('INSERT INTO eval_results(id,eval_id,challenge_id,repeat_index,status,created_at,updated_at)'
                          " VALUES(?,?,?,1,'pending',?,?)", ('ri_' + uuid.uuid4().hex[:12], rid,
                          item['challenge_id'], now, now))
+    from . import competition_prompts
+    template = config.WORKSPACE_ROOT / 'templates/lightchaser-user-prompt.md'
+    if template.is_file():
+        competition_prompts.publish(rid, template.read_text(encoding='utf-8'), 0)
     return get_round(rid)
 
 
