@@ -1,5 +1,6 @@
 """Freeze reproducible selection rules before trace inspection or calibration."""
-from collections import defaultdict
+import argparse
+from collections import defaultdict,Counter
 
 from .common import DEFAULT_DATA, sha, utcnow, write_json
 from .dataset import read_table, truth
@@ -80,6 +81,8 @@ def select(rows, jump=20):
 
 
 def main():
+    parser=argparse.ArgumentParser();parser.add_argument('--audit',action='store_true');args=parser.parse_args()
+    if args.audit:quality_audit();return
     rows=list(read_table('data/attempts.csv',FIELDS));selected,bundles,calibration=select(rows)
     root=DEFAULT_DATA
     write_csv(root/'data/selected.csv',selected)
@@ -92,6 +95,28 @@ def main():
            'ranking':'display descending, trace descending, earliest numeric ID on ties',
             'calibration_freeze':'topic-grouped assignment occurs only after bundle download and before any judge call; both strata may share a topic'}
     write_json(root/'data/selection_rules.json',facts);print(facts)
+
+
+def quality_audit(root=DEFAULT_DATA):
+    rows=list(read_table('data/attempts.csv',FIELDS,root=root));legacy,_,_=select(rows)
+    guarded=[{**r,'display_score':None if number(r.get('display_score')) is not None and number(r['display_score'])<0 else r.get('display_score')} for r in rows]
+    qualified,_,_=select(guarded);legacy_ids={r['attempt_id'] for r in legacy};valid_ids={r['attempt_id'] for r in qualified}
+    frozen=list(read_table('data/selected.csv',root=root));output=[]
+    for row in frozen:
+        aid=row['attempt_id'];replayed=aid in legacy_ids
+        output.append({'attempt_id':aid,'challenge_id':row['challenge_id'],'ours':row['ours'],
+          'frozen_selection_reasons':row['selection_reasons'],'present_in_current_raw_rule_replay':replayed,
+          'qualified_with_negative_display_treated_unknown':aid in valid_ids if replayed else None,
+          'status':'not_in_current_rule_replay_snapshot_may_differ' if not replayed else 'overinclusive_negative_sentinel_jump_candidate' if aid not in valid_ids else 'qualifies_under_guarded_rule'})
+    write_csv(root/'data/selection_quality.csv',output)
+    source=root/'data/attempts.csv'
+    if not source.exists():source=source.with_suffix('.parquet')
+    summary={'observed_at':utcnow(),'frozen_base_rows':len(frozen),'current_raw_rule_ids':len(legacy_ids),
+      'guarded_rule_ids':len(valid_ids),'statuses':dict(Counter(r['status'] for r in output)),
+      'new_current_rule_ids_outside_frozen_base':sorted(legacy_ids-{r['attempt_id'] for r in frozen},key=int),
+      'attempt_table_sha256':sha(source.read_bytes()),'frozen_selection_sha256':sha((root/'data/selected.csv').read_bytes()),
+      'action':'Original selection, calibration, model outputs and extra archived samples retained. This is an eligibility-quality annotation, not a retrospective re-fit or sample deletion.','model_calls':0}
+    write_json(root/'data/selection_quality_summary.json',summary);print(summary)
 
 
 if __name__=='__main__':main()

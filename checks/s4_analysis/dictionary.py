@@ -20,7 +20,7 @@ DESCRIPTIONS={
  'is_within_round':'roundStartAt <= createdAt < roundEndAt, with timezone-aware endpoints.',
  'actual_scoring_delay_minutes':'Unknown: the public schema exposes no scoredAt timestamp.',
  'updated_at_delay_proxy_median_minutes':'Median updatedAt-createdAt for final rows; may include edits and rescoring, not actual score latency.',
- 'steady_then_higher_proxy':'First within-round display score is >0 and <=70, later best improves >=20; >=2 submissions. Numeric proxy only.',
+ 'steady_then_higher_proxy':'First within-round display score is >0 and <=70, later best improves >=20; >=2 submissions. Missing/negative sentinel first or best score is unknown, excluded from the assessable denominator. Numeric proxy only.',
  'semantic_required':'Head ranks 1-5, all selected high-science controls, jumps and ours; empty public traces yield unknown.',
  'selection_reasons':'Semicolon-separated deterministic inclusion reasons; multiple reasons preserved.',
  'sanitized_sha256':'SHA-256 after secret redaction; not interchangeable with original_sha256.',

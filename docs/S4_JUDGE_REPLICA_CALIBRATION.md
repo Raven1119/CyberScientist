@@ -6,7 +6,7 @@
 
 60 个样本（35 accept、25 review/block），44 题。训练 26 题 / 36 样本，留出 18 题 / 24 样本，题目不跨集合。CSV SHA-256：`26ed0537bf277052c564beefe73e8c937aa25d35900a540b63fc642837e87d05`。原始配置、原 winner、全部预测与映射均保留；纠正选择另存 `scorer/judge_selection_correction.json`，没有新增模型调用或修改提示词、划分、预测。
 
-两个候选：DeepSeek 请求别名 `deepseek-flash`，JSON、temperature=0、thinking=false、8192 输出 token；原生 Codex CLI 0.148.0-alpha.15 请求 `gpt-5.6-sol`、low、ephemeral/read-only、禁止工具，目录与用户配置不写入。该别名在当前账户目录中可用；原生提供商实际模型标识未回传，记 unknown，不宣称另一个模型已成功。原生 CLI 上下文机制与 DeepSeek HTTP 输入机制不同，属于对照限制。每个候选各运行 v6 常规审查与偏质疑两套系统提示词。
+两个候选：DeepSeek 请求别名 `deepseek-flash`，JSON、temperature=0、thinking=false、8192 输出 token；原生 Codex CLI 0.148.0-alpha.15 请求 `gpt-5.6-sol`、low、ephemeral/read-only、禁止工具，目录与用户配置不写入。原生 CLI 未设置温度或输出 token 上限，实际提供商默认值 unknown；旧通用缓存描述中的 temperature=0/max_tokens 不是原生参数已应用的证据。该别名在当前账户目录中可用；原生提供商实际模型标识未回传，记 unknown，不宣称另一个模型已成功。原生 CLI 上下文机制与 DeepSeek HTTP 输入机制不同，属于对照限制。每个候选各运行 v6 常规审查与偏质疑两套系统提示词。
 
 源码 SHA `afafd718c1eca6c25fa81231905988b436ff03684581d0410f8cc549599dfa46`。直接调用公开 v6 原函数：空白折叠后长事件取前 897 UTF-16 单元加 `...`（总长 900），长题面前 4997 加 `...`，产物取前 40 项、文本文件最多 200000 字节且摘要最多 6000 UTF-16 单元。源码裁判默认模型是 worker-configured-model，并非一个可据此确认的 GPT 型号。原平台 worker 回执与最终输入不可得，完整性项保留 not_observable/insufficient_evidence。
 

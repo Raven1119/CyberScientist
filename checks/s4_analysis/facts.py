@@ -24,6 +24,11 @@ FIELDS=['attempt_id','challenge_id','round_seq','topic_type','author_id','ours',
 def median(values):return statistics.median(values) if values else None
 
 
+def steady_then_higher(first,best,count):
+    if first is None or best is None or first<0 or best<0:return None
+    return 0<first<=70 and best-first>=20 and count>=2
+
+
 def scorer_facts(rows,root):
     scores=Counter();grid=[];boundaries=defaultdict(list);engines=defaultdict(list)
     formula=[];exceptions=[];science=[]
@@ -133,19 +138,19 @@ def rhythm_facts(rows,root):
         items=groups[topic_id];authors=defaultdict(list)
         for row in items:authors[row['author_id']].append(row)
         leaders=sorted([max(group,key=ranking) for group in authors.values()],key=ranking,reverse=True)[:10]
-        pattern_count=0
+        pattern_count=0;pattern_assessable=0
         for leader in leaders:
             history=sorted(authors[leader['author_id']],key=lambda r:(r['created_at'] or '',int(r['attempt_id'])))
             first=number(history[0]['display_score']);best=number(leader['display_score'])
-            pattern=first is not None and best is not None and 0<first<=70 and best-first>=20 and len(history)>1
-            pattern_count+=pattern
+            pattern=steady_then_higher(first,best,len(history))
+            pattern_count+=pattern is True;pattern_assessable+=pattern is not None
             curves.append({'challenge_id':topic_id,'topic_type':topic.get('disc'),'author_id':leader['author_id'],
                 'ours':leader['ours'],'within_round_attempt_count':len(history),'best_attempt_id':leader['attempt_id'],
                 'first_display_score':first,'best_display_score':best,'steady_then_higher_proxy':pattern,
                 'curve_json':json.dumps([{'index':i+1,'attempt_id':r['attempt_id'],'minutes':number(r['minutes_since_round_start']),
                                          'display_score':number(r['display_score'])} for i,r in enumerate(history)])})
         timed=[r for r in items if number(r['minutes_since_round_start']) is not None]
-        scored=[r for r in timed if number(r['display_score']) is not None]
+        scored=[r for r in timed if number(r['display_score']) is not None and number(r['display_score'])>=0]
         best=max(scored,key=ranking) if scored else None
         end=timestamp(topic.get('roundEndAt'))
         last=max((timestamp(r['created_at']) for r in timed),default=None)
@@ -161,7 +166,9 @@ def rhythm_facts(rows,root):
            'best_attempt_id':best['attempt_id'] if best else None,'best_display_score':number(best['display_score']) if best else None,
            'last_submission_minutes_before_end':(end-last).total_seconds()/60 if end and last else None,
            'head_authors':len(leaders),'steady_then_higher_proxy_count':pattern_count,
-           'steady_then_higher_proxy_fraction':pattern_count/len(leaders) if leaders else None,
+           'steady_then_higher_proxy_assessable_authors':pattern_assessable,
+           'steady_then_higher_proxy_unknown_authors':len(leaders)-pattern_assessable,
+           'steady_then_higher_proxy_fraction':pattern_count/pattern_assessable if pattern_assessable else None,
            'actual_scoring_delay_minutes':None,'score_time_status':'not_exposed_by_public_schema',
            'updated_at_delay_proxy_median_minutes':median(proxy_delays),
            'updated_at_delay_proxy_count':len(proxy_delays)})
@@ -173,6 +180,9 @@ def rhythm_facts(rows,root):
        'median_first_submission_minutes':median([r['first_submission_minutes'] for r in items if r['first_submission_minutes'] is not None]),
        'median_best_score_first_minutes':median([r['best_score_first_minutes'] for r in items if r['best_score_first_minutes'] is not None]),
        'head_authors':sum(r['head_authors'] for r in items),
+       'steady_then_higher_proxy_assessable_authors':sum(r['steady_then_higher_proxy_assessable_authors'] for r in items),
+       'steady_then_higher_proxy_unknown_authors':sum(r['steady_then_higher_proxy_unknown_authors'] for r in items),
+       'steady_then_higher_proxy_fraction':sum(r['steady_then_higher_proxy_count'] for r in items)/sum(r['steady_then_higher_proxy_assessable_authors'] for r in items) if sum(r['steady_then_higher_proxy_assessable_authors'] for r in items) else None,
        'steady_then_higher_proxy_count':sum(r['steady_then_higher_proxy_count'] for r in items)} for kind,items in sorted(by_type.items())])
     return {'within_round_submissions':sum(r['within_round_submissions'] for r in rhythms),'topics':len(rhythms),'head_author_curves':len(curves)}
 
