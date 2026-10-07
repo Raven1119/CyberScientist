@@ -159,11 +159,13 @@ def prepare_calibration(root,calibration,packet_directory,sealed):
 
 
 def run_offline(manifest,root):
-    mp=root/'.raw/v6_inputs/calibration_manifest.json';write_json(mp,manifest)
+    directory=root/'.raw/v6_inputs';directory.mkdir(parents=True,exist_ok=True)
     home=root/'.raw/offline-home';home.mkdir(parents=True,exist_ok=True)
-    completed=subprocess.run(['/home/wmywb/.local/bin/node','--experimental-strip-types',str(HERE/'checklist.mjs'),
-      str(HERE.parents[1]/'src/cyberscientist/vendor/trace_score_cli_v6/index.ts'),str(mp)],
-      env={'HOME':str(home),'PATH':'/usr/bin:/bin','LANG':'C.UTF-8'},stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=600)
+    with tempfile.TemporaryDirectory(dir=directory,prefix='offline-') as temporary:
+        mp=Path(temporary)/'manifest.json';write_json(mp,manifest)
+        completed=subprocess.run(['/home/wmywb/.local/bin/node','--experimental-strip-types',str(HERE/'checklist.mjs'),
+          str(HERE.parents[1]/'src/cyberscientist/vendor/trace_score_cli_v6/index.ts'),str(mp)],
+          env={'HOME':str(home),'PATH':'/usr/bin:/bin','LANG':'C.UTF-8'},stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=600)
     if completed.returncode:raise RuntimeError('Pinned offline packet creation failed')
 
 
@@ -283,18 +285,33 @@ def single_inputs(bundle,trace,task,root):
 
 def correct_selection(root):
     original=root/'scorer/judge_replica_runs/sealed-protocol-v3/judge_calibration.json'
-    report=json.loads(original.read_text())
+    raw=original.read_bytes();report=json.loads(raw)
     candidates=[(m['mae'],1-m['accept_accuracy'],provider,variant)
         for provider,variants in report['training'].items() for variant,m in variants.items()
         if report['coverage'][provider]['train']==report['coverage'][provider]['expected_train']]
     winner=list(min(candidates)[2:]) if candidates else None
     correction={'selected_using_train_mae':winner,'selection_basis':'training MAE, then training accept error, then stable lexical tie break',
-      'original_selected_using_train_only':report['selected_using_train_only'],'original_report_sha256':sha(original.read_bytes()),
+      'original_selected_using_train_only':report['selected_using_train_only'],'original_report_sha256':sha(raw),
+      'original_report_path':str(original.relative_to(root)),
       'holdout_already_exposed':True,'holdout_status':'descriptive comparison only; not a new blind validation',
       'no_new_model_calls':True,'unchanged_split_prompts_predictions_and_mappings':True,
       'deployment_verdict':'只能作提示','observed_at':utcnow()}
     write_json(root/'scorer/judge_selection_correction.json',correction)
     return correction
+
+
+def selected_calibration(root):
+    correction=root/'scorer/judge_selection_correction.json'
+    if correction.exists():
+        fixed=json.loads(correction.read_text())
+        path=root/fixed.get('original_report_path','scorer/judge_replica_runs/sealed-protocol-v3/judge_calibration.json')
+        if not path.resolve().is_relative_to(root.resolve()):raise ValueError('Corrected selection calibration source changed')
+        raw=path.read_bytes()
+        if sha(raw)!=fixed['original_report_sha256']:
+            raise ValueError('Corrected selection calibration source changed')
+        return json.loads(raw),fixed.get('selected_using_train_mae')
+    path=root/'scorer/judge_calibration.json';fitted=json.loads(path.read_text()) if path.exists() else {}
+    return fitted,fitted.get('selected_using_train_only')
 
 
 def main():
@@ -307,9 +324,7 @@ def main():
     if args.correct_selection:correct_selection(root);return
     if args.calibrate:calibrate(root,args.workers,args.run_name);return
     packet=json.loads(Path(args.packet).read_text()) if args.packet else single_inputs(args.bundle,args.trace,args.task,root)
-    fitted_path=root/'scorer/judge_calibration.json';fitted=json.loads(fitted_path.read_text()) if fitted_path.exists() else {}
-    correction=root/'scorer/judge_selection_correction.json'
-    winner=json.loads(correction.read_text()).get('selected_using_train_mae') if correction.exists() else fitted.get('selected_using_train_only')
+    fitted,winner=selected_calibration(root)
     provider=args.provider or (winner[0] if winner else 'deepseek')
     result=predict(packet,provider)
     if not args.baseline and winner and provider==winner[0] and winner[1]=='mapped':

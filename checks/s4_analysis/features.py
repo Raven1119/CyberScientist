@@ -27,6 +27,27 @@ def offsets(pattern,text):
     return [[m.start()+bisect_left(astral,m.start()),m.end()+bisect_left(astral,m.end())] for m in pattern.finditer(text)]
 
 
+def string_values(value):
+    if isinstance(value,str):yield value
+    elif isinstance(value,(int,float,bool)):yield json.dumps(value,allow_nan=False)
+    elif isinstance(value,dict):
+        for key in sorted(value):
+            children=list(string_values(value[key]))
+            if any(child.strip() for child in children):
+                yield str(key)+':'
+                yield from children
+    elif isinstance(value,list):
+        for item in value:yield from string_values(item)
+
+
+def input_fingerprint(root,aid,report_bytes,trace_bytes,item):
+    dependencies=[]
+    for folder in ['bundle_inventories','bundle_docs']:
+        path=root/'data'/folder/(aid+'.json')
+        dependencies.append(sha(path.read_bytes()) if path.exists() else None)
+    return sha(json.dumps([sha(report_bytes),sha(trace_bytes),dependencies,item.get('challenge_id'),item.get('ours')],sort_keys=True).encode())
+
+
 def declared_outputs(root,aid):
     inventory=root/'data/bundle_inventories'/(aid+'.json')
     if not inventory.exists():return None
@@ -55,7 +76,9 @@ def declared_outputs(root,aid):
 def extract(aid,item,steps,report,root):
     events=[];types=Counter();calls=set();results=set();times=[];installs=[];imports=[];locations=set();gpu=[]
     lengths=[];codes=[];errors=[];retry=[];sources=set();versions=set();output_paths=declared_outputs(root,aid)
-    generated=defaultdict(list);normalized={e['index']:e for e in report.get('normalized_events',[])}
+    generated=defaultdict(list);commands=[];command_steps=0;result_steps=0;result_content=0;missing_ids=0
+    aligned=bool(report.get('_canonical_input_sha256') and report.get('_canonical_input_sha256')==report.get('trace_sha256'))
+    normalized={e['index']:e for e in report.get('normalized_events',[])} if aligned else {}
     for i,step in enumerate(steps,1):
         kind=step.get('step_type') or step.get('type') or 'unknown';types[kind]+=1
         call_id=step.get('tool_call_id')
@@ -64,7 +87,14 @@ def extract(aid,item,steps,report,root):
             if kind=='tool_result':results.add(str(call_id))
         stamp=timestamp(step.get('timestamp')) or timestamp(step.get('time'))
         if stamp:times.append(stamp)
-        original='\n'.join(str(step.get(k) or '') for k in ['title','body','code','tool_name','tool_args','tool_output'])
+        original='\n'.join(string_values({k:v for k,v in step.items() if k not in ['timestamp','time','step_id','tool_call_id']}))
+        command='\n'.join(string_values({k:step.get(k) for k in ['code','tool_args']}))
+        if kind=='tool_call' and step.get('body'):command+='\n'+str(step['body'])
+        if command.strip():commands.append(command);command_steps+=1
+        if kind=='tool_result':
+            result_steps+=1
+            if any(s.strip() for s in string_values([step.get('body'),step.get('tool_output')])):result_content+=1
+        if kind in ['tool_call','tool_result'] and not (isinstance(call_id,str) and call_id or isinstance(call_id,int) and not isinstance(call_id,bool)):missing_ids+=1
         event=normalized.get(i)
         folded=event.get('one_line_text',re.sub(r'\s+',' ',event['text']).strip()) if event else re.sub(r'\s+',' ',original).strip()
         length=utf16_length(folded);lengths.append(length)
@@ -121,6 +151,12 @@ def extract(aid,item,steps,report,root):
         'submitted_output_inventory_status':'available' if output_paths is not None else 'unknown_bundle_unavailable',
         'submitted_output_paths_json':json.dumps(output_paths),'output_generation_candidate_steps_json':json.dumps(dict(generated)),
         'code_sequence_sha256':sha('\n'.join(codes).encode()) if codes else None,
+        'command_sequence_sha256':sha('\n'.join(commands).encode()) if commands else None,
+        'command_hashes_json':json.dumps([sha(c.encode()) for c in commands]),
+        'visible_command_steps':command_steps,'tool_result_steps':result_steps,'tool_results_with_visible_content':result_content,
+        'tool_events_without_valid_pairing_id':missing_ids,'pairing_status':'unknown_missing_ids' if missing_ids else 'ids_available' if calls or results else 'unknown_no_tool_ids',
+        'canonical_trace_sha256':report.get('_canonical_input_sha256'),
+        'v6_event_alignment_status':'exact_input_bytes' if aligned else 'unknown_different_or_unbound_input',
         'v6_input_status':report.get('status'),'v6_checklist_score':report.get('score') if report.get('status')=='ok' else None,
         'v6_cap':report.get('cap') if report.get('status')=='ok' else None,'extracted_at':utcnow()}
     return feature,events
@@ -136,13 +172,15 @@ def main():
         for aid,item in rows.items():
             report_path=root/'.raw/v6_reports'/(aid+'.json')
             if not report_path.exists():continue
-            encoded=report_path.read_bytes();digest=sha(encoded)
-            if processed.get(aid)==digest:continue
+            encoded=report_path.read_bytes()
             trace=root/'data/traces'/(aid+'.jsonl.zst')
             if not trace.exists():trace=root/'.raw/traces'/(aid+'.jsonl.zst')
             if not trace.exists():continue
-            steps=[json.loads(line) for line in unzstd(trace.read_bytes()).splitlines() if line.strip()]
-            feature,events=extract(aid,item,steps,json.loads(encoded),root)
+            raw=unzstd(trace.read_bytes());digest=input_fingerprint(root,aid,encoded,raw,item)
+            if processed.get(aid)==digest:continue
+            steps=[json.loads(line) for line in raw.splitlines() if line.strip()]
+            report=json.loads(encoded);report['_canonical_input_sha256']=sha(raw)
+            feature,events=extract(aid,item,steps,report,root)
             write_json(cache/(aid+'.json'),{'feature':feature,'events':events});processed[aid]=digest;changed+=1
         if changed:
             all_features=[];all_events=[]

@@ -69,3 +69,18 @@ def test_frozen_packet_change_rejected_without_overwriting_original_bytes(tmp_pa
     with pytest.raises(ValueError,match='Frozen judge input changed'):
         register_packets(staging,destination,manifest,rows)
     assert (destination/'1.json').read_bytes()==original and manifest.read_bytes()==frozen
+
+
+def test_correction_uses_bound_v3_mapping_even_when_global_report_is_replaced(tmp_path):
+    from .judge_replica import selected_calibration
+    from .common import write_json,sha
+    original=tmp_path/'scorer/judge_replica_runs/sealed-protocol-v3/judge_calibration.json'
+    report={'mapping':{'deepseek':[[0,42]]},'selected_using_train_only':['codex','mapped']}
+    write_json(original,report)
+    write_json(tmp_path/'scorer/judge_selection_correction.json',{'selected_using_train_mae':['deepseek','mapped'],
+      'original_report_path':str(original.relative_to(tmp_path)),'original_report_sha256':sha(original.read_bytes())})
+    write_json(tmp_path/'scorer/judge_calibration.json',{'mapping':{'deepseek':[[0,99]]}})
+    fitted,winner=selected_calibration(tmp_path)
+    assert fitted['mapping']['deepseek']==[[0,42]] and winner==['deepseek','mapped']
+    write_json(original,{'changed':True})
+    with pytest.raises(ValueError,match='source changed'):selected_calibration(tmp_path)

@@ -131,3 +131,32 @@ S15 的 N11 与 N14、S45 的 N11 是两种转换下都存在的本地触发而 
 提交前提示只使用**修复版**中条件分级达标的 N06（提示性）、N08（提示性）、N09（可靠）、N11（可靠）、N14（提示性）。具体建议只能要求补做真实工作或补全命令、输入、返回值、产物之间的真实来源链；不能教人调整措辞来迎合检查器。其他项目只保留为前端详情中的未知/不可用诊断。v6 直接读取 63 份 Codex 原生轨迹全部错判 N04、识别工具调用数为 0，因此生产诊断必须先走固定转换。
 
 离线复核顺序：先运行 `checks/build_trace_conversion_variants.py`，再运行 `checks/prepare_trace_checklist_inputs.py` 形成 331 个带真实题面与产物的输入；`checks/run_trace_checklist_v6.mjs` 只从锁定 SHA 的公开源码导出确定性函数，随后 `checks/analyze_trace_checklist_agreement.py` 生成本节两组逐项表和私有统计 JSON。主集 63 条的 v8 回执 SHA 与原因码、分数和判定在输入准备阶段重新核对；辅助集配对索引 SHA 也锁定。完整原始轨迹、回执、转换文件、私有统计和源码克隆只留 `.package-checks/cs-up-04/` 及原有本机目录；仓库报告只用 S/A 脱敏序号。
+
+## CS-UP-11 expanded public snapshot
+
+Generated 2026-10-07T15:21:49.633862+00:00. Current available v8 comparison: 501 attempts / 9050 code pairs; 2995 unavailable pairs. This section is regenerated as trace collection advances. Original 63-sample evidence above remains unchanged.
+
+| Full code | Observable positives | TP | FP | FN | TN | Precision | Recall | Conditional grade |
+|---|---:|---:|---:|---:|---:|---:|---:|---|
+| N00_TRACE_RECEIPT_MISMATCH | 0 | 0 | 0 | 0 | 0 | unknown | unknown | unknown_or_unusable |
+| N01_CROSS_TASK_TRACE_REUSE | 0 | 0 | 0 | 0 | 0 | unknown | unknown | unknown_or_unusable |
+| N02_ARTIFACT_RECEIPT_MISMATCH | 0 | 0 | 0 | 0 | 0 | unknown | unknown | unknown_or_unusable |
+| N03_SYSTEM_CONTEXT_MISMATCH | 0 | 0 | 0 | 0 | 0 | unknown | unknown | unknown_or_unusable |
+| N04_TRACE_SCHEMA_INVALID | 6 | 0 | 15 | 6 | 480 | 0.000 | 0.000 | unknown_or_unusable |
+| N05_PROMPT_INJECTION_OR_SCORER_GAMING | 3 | 0 | 0 | 3 | 498 | unknown | 0.000 | unknown_or_unusable |
+| N06_FABRICATED_OR_UNSUPPORTED_EXECUTION | 31 | 29 | 228 | 2 | 242 | 0.113 | 0.935 | unknown_or_unusable |
+| N07_REFERENCE_OR_ORACLE_LEAKAGE | 1 | 1 | 0 | 0 | 500 | 1.000 | 1.000 | unknown_or_unusable |
+| N08_UNPAIRED_TOOL_CALLS | 32 | 3 | 3 | 29 | 466 | 0.500 | 0.094 | unknown_or_unusable |
+| N09_NO_EXECUTION_EVIDENCE | 50 | 49 | 364 | 1 | 87 | 0.119 | 0.980 | unknown_or_unusable |
+| N10_TASK_TRACE_SEMANTIC_MISMATCH | 0 | 0 | 0 | 0 | 480 | unknown | unknown | unknown_or_unusable |
+| N11_OUTPUT_NOT_CAUSALLY_SUPPORTED | 41 | 34 | 9 | 7 | 14 | 0.791 | 0.829 | indicative |
+| N12_TRACE_REPETITION_OR_INFLATION | 2 | 2 | 183 | 0 | 316 | 0.011 | 1.000 | unknown_or_unusable |
+| N13_EXTREME_BREVITY | 11 | 6 | 38 | 5 | 452 | 0.136 | 0.545 | unknown_or_unusable |
+| N14_METHOD_SUBSTITUTION_OR_FALLBACK | 102 | 25 | 7 | 77 | 392 | 0.781 | 0.245 | unknown_or_unusable |
+| N15_PROVENANCE_METADATA_ANOMALY | 1 | 1 | 3 | 0 | 497 | 0.250 | 1.000 | unknown_or_unusable |
+| N16_DUPLICATE_OR_BURST_SUBMISSION | 0 | 0 | 0 | 0 | 0 | unknown | unknown | unknown_or_unusable |
+| N16_EXTERNAL_SOLUTION_DISTILLATION | 10 | 1 | 0 | 9 | 491 | 1.000 | 0.100 | unknown_or_unusable |
+| N17_PREEXISTING_SUBSTANTIVE_ARTIFACT | 0 | 0 | 0 | 0 | 0 | unknown | unknown | unknown_or_unusable |
+| N18_PROCESS_EVIDENCE_INSUFFICIENT | 0 | 0 | 0 | 0 | 0 | unknown | unknown | unknown_or_unusable |
+
+302 observed scores exceed the locally reconstructed v6 cap. This does not identify the cause: version, public-field omissions, redaction and worker input differences remain confounded. N17 and N18 have no pinned v6 rule and remain unknown for mechanical reproduction. Open-world precision/recall bounds and every attempt ID are retained in private scorer tables. Public missing tool fields cannot establish that original execution evidence was absent.
