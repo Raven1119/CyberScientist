@@ -1,0 +1,78 @@
+{
+  "source": "CS-UP-11 frozen taxonomy",
+  "sha256": "78d054bbc6ddb9d4a5c932ec7d48a1fe57211de373140844a3765fd53390f0ba",
+  "categories": [
+    {
+      "id": "C01",
+      "name": "Raw tool outputs and execution receipts"
+    },
+    {
+      "id": "C02",
+      "name": "Source code and scripts"
+    },
+    {
+      "id": "C03",
+      "name": "Intermediate computation steps and derivations"
+    },
+    {
+      "id": "C04",
+      "name": "Causal linkage between tool results and artifacts"
+    },
+    {
+      "id": "C05",
+      "name": "Training logs and optimization traces"
+    },
+    {
+      "id": "C06",
+      "name": "Independent verification and validation"
+    },
+    {
+      "id": "C07",
+      "name": "File creation and modification events"
+    },
+    {
+      "id": "C08",
+      "name": "Execution environment and system context"
+    },
+    {
+      "id": "C09",
+      "name": "Tool call completeness and audit trail"
+    },
+    {
+      "id": "C10",
+      "name": "Artifact content and echo"
+    },
+    {
+      "id": "C11",
+      "name": "Provenance and origin of code or data"
+    },
+    {
+      "id": "C12",
+      "name": "Numerical consistency and value matching"
+    },
+    {
+      "id": "C13",
+      "name": "Method implementation and algorithm details"
+    },
+    {
+      "id": "C14",
+      "name": "Command-line invocations and execution commands"
+    },
+    {
+      "id": "C15",
+      "name": "External references and literature values"
+    },
+    {
+      "id": "C16",
+      "name": "Resource usage and budget compliance"
+    },
+    {
+      "id": "C17",
+      "name": "Security and policy compliance"
+    },
+    {
+      "id": "C18",
+      "name": "Other or ambiguous evidence requests"
+    }
+  ]
+}

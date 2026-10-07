@@ -38,6 +38,8 @@ packages = ["src/cyberscientist"]
 "src/cyberscientist/vendor/trace_score_cli_v6/index.ts" = "cyberscientist/vendor/trace_score_cli_v6/index.ts"
 "src/cyberscientist/vendor/trace_score_cli_v6/runner.mjs" = "cyberscientist/vendor/trace_score_cli_v6/runner.mjs"
 "src/cyberscientist/vendor/trace_score_cli_v6/LICENSE" = "cyberscientist/vendor/trace_score_cli_v6/LICENSE"
+"src/cyberscientist/vendor/trace_gate_v8/calibration.json" = "cyberscientist/vendor/trace_gate_v8/calibration.json"
+"src/cyberscientist/vendor/trace_gate_v8/taxonomy.json" = "cyberscientist/vendor/trace_gate_v8/taxonomy.json"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

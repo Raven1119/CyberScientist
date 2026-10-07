@@ -636,7 +636,7 @@ def preflight_submission(run_id: str, trial_id: str | None,
             from . import artifact_contracts
             challenge = artifact_contracts.for_run(run_id)
             diagnostic = trace_diagnostics.diagnose_sealed_package(
-                sealed, challenge["content"] if challenge else "")
+                sealed, challenge["content"] if challenge else "", run_id)
         except Exception as exc:
             diagnostic = trace_diagnostics.unavailable(type(exc).__name__)
     return {"source_package_sha256": source_hash,

@@ -7,6 +7,7 @@ import { useApp } from '../app-context'
 import { Badge, Modal, LoadingState } from '../components'
 import { RunOperations } from './RunOperations'
 import PackageReviews from '../PackageReviews'
+import TraceGate, { type GateReport } from '../components/TraceGate'
 import { Observation } from '../design/Observation'
 import {
   ACTIVE_PHASES,
@@ -1874,6 +1875,7 @@ function SubmissionsPanel({
     error_code: string | null
     admission: { verdict: string; signals: Record<string, { ok: boolean | null; detail: string }> }
     trace_diagnostics: {
+      gate_report?: GateReport
       status: 'ready' | 'unavailable'
       reason?: string
       checklist_cap: number | null
@@ -1979,6 +1981,7 @@ function SubmissionsPanel({
           <p>轨迹确定性诊断：{preflight.trace_diagnostics.status === 'ready'
             ? `可用 · 公开 v6 检查表提示上限 ${preflight.trace_diagnostics.checklist_cap ?? '未知'}（不是官方评分）`
             : `不可用（${preflight.trace_diagnostics.reason || '未知原因'}）；不影响提交准入`}</p>
+          {preflight.trace_diagnostics.gate_report && <TraceGate report={preflight.trace_diagnostics.gate_report} />}
           {preflight.trace_diagnostics.status === 'ready' && <p className="small-text">
             分级只对历史 v8 回执中可见的代码成立；诊断不证明当前平台会采用同一上限。
           </p>}
@@ -1990,7 +1993,7 @@ function SubmissionsPanel({
           </ul>}
           {preflight.trace_diagnostics.status === 'ready' && <details>
             <summary>查看全部触发项（含历史一致性不足的检查项）</summary>
-            <p className="small-text">分级仅按 63 份历史回执中可见代码计算；平台可能未显示所有触发项。</p>
+            <p className="small-text">分级按 CS-UP-11 的 1097 份历史回执中可见代码计算；平台可能未显示所有触发项。</p>
             <ul>{preflight.trace_diagnostics.details.map((item) => <li key={item.code}>
               {item.code} · {item.grade === 'unavailable' ? '未知' : item.grade === 'reliable' ? '条件可靠' : '条件提示性'}：{item.reason}
               {item.implied_cap !== null && ` · 该项上限 ${item.implied_cap}`}

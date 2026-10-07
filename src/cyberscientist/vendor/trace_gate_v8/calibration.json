@@ -1,0 +1,208 @@
+{
+  "source": "CS-UP-11 scorer/v6_v8_agreement.csv",
+  "sha256": "4f272be77e7253033995a5ea87063ce33e55cd9ff2a774413e6e1f90060664c5",
+  "observations": 1097,
+  "scope": "conditional on visible v8 codes; absent codes remain unknown",
+  "items": {
+    "N00_TRACE_RECEIPT_MISMATCH": {
+      "conditional_grade": "unknown_or_unusable",
+      "conditional_precision": "",
+      "conditional_recall": "",
+      "TP": "0",
+      "FP": "0",
+      "FN": "0",
+      "TN": "0",
+      "not_observable_or_v8_only": "1097"
+    },
+    "N01_CROSS_TASK_TRACE_REUSE": {
+      "conditional_grade": "unknown_or_unusable",
+      "conditional_precision": "",
+      "conditional_recall": "",
+      "TP": "0",
+      "FP": "0",
+      "FN": "0",
+      "TN": "0",
+      "not_observable_or_v8_only": "1097"
+    },
+    "N02_ARTIFACT_RECEIPT_MISMATCH": {
+      "conditional_grade": "unknown_or_unusable",
+      "conditional_precision": "",
+      "conditional_recall": "",
+      "TP": "0",
+      "FP": "0",
+      "FN": "0",
+      "TN": "0",
+      "not_observable_or_v8_only": "1097"
+    },
+    "N03_SYSTEM_CONTEXT_MISMATCH": {
+      "conditional_grade": "unknown_or_unusable",
+      "conditional_precision": "",
+      "conditional_recall": "",
+      "TP": "0",
+      "FP": "0",
+      "FN": "0",
+      "TN": "0",
+      "not_observable_or_v8_only": "1097"
+    },
+    "N04_TRACE_SCHEMA_INVALID": {
+      "conditional_grade": "unknown_or_unusable",
+      "conditional_precision": "0.045454545454545456",
+      "conditional_recall": "0.2222222222222222",
+      "TP": "2",
+      "FP": "42",
+      "FN": "7",
+      "TN": "1046",
+      "not_observable_or_v8_only": "0"
+    },
+    "N05_PROMPT_INJECTION_OR_SCORER_GAMING": {
+      "conditional_grade": "unknown_or_unusable",
+      "conditional_precision": "1.0",
+      "conditional_recall": "0.2",
+      "TP": "1",
+      "FP": "0",
+      "FN": "4",
+      "TN": "1092",
+      "not_observable_or_v8_only": "0"
+    },
+    "N06_FABRICATED_OR_UNSUPPORTED_EXECUTION": {
+      "conditional_grade": "unknown_or_unusable",
+      "conditional_precision": "0.14025974025974025",
+      "conditional_recall": "0.9152542372881356",
+      "TP": "54",
+      "FP": "331",
+      "FN": "5",
+      "TN": "707",
+      "not_observable_or_v8_only": "0"
+    },
+    "N07_REFERENCE_OR_ORACLE_LEAKAGE": {
+      "conditional_grade": "indicative",
+      "conditional_precision": "1.0",
+      "conditional_recall": "0.7142857142857143",
+      "TP": "5",
+      "FP": "0",
+      "FN": "2",
+      "TN": "1090",
+      "not_observable_or_v8_only": "0"
+    },
+    "N08_UNPAIRED_TOOL_CALLS": {
+      "conditional_grade": "unknown_or_unusable",
+      "conditional_precision": "0.5047619047619047",
+      "conditional_recall": "0.41732283464566927",
+      "TP": "53",
+      "FP": "52",
+      "FN": "74",
+      "TN": "918",
+      "not_observable_or_v8_only": "0"
+    },
+    "N09_NO_EXECUTION_EVIDENCE": {
+      "conditional_grade": "unknown_or_unusable",
+      "conditional_precision": "0.16881028938906753",
+      "conditional_recall": "0.9545454545454546",
+      "TP": "105",
+      "FP": "517",
+      "FN": "5",
+      "TN": "470",
+      "not_observable_or_v8_only": "0"
+    },
+    "N10_TASK_TRACE_SEMANTIC_MISMATCH": {
+      "conditional_grade": "unknown_or_unusable",
+      "conditional_precision": "0.0",
+      "conditional_recall": "",
+      "TP": "0",
+      "FP": "2",
+      "FN": "0",
+      "TN": "1049",
+      "not_observable_or_v8_only": "46"
+    },
+    "N11_OUTPUT_NOT_CAUSALLY_SUPPORTED": {
+      "conditional_grade": "indicative",
+      "conditional_precision": "0.8043478260869565",
+      "conditional_recall": "0.8409090909090909",
+      "TP": "37",
+      "FP": "9",
+      "FN": "7",
+      "TN": "15",
+      "not_observable_or_v8_only": "1029"
+    },
+    "N12_TRACE_REPETITION_OR_INFLATION": {
+      "conditional_grade": "unknown_or_unusable",
+      "conditional_precision": "0.04633204633204633",
+      "conditional_recall": "0.9230769230769231",
+      "TP": "12",
+      "FP": "247",
+      "FN": "1",
+      "TN": "837",
+      "not_observable_or_v8_only": "0"
+    },
+    "N13_EXTREME_BREVITY": {
+      "conditional_grade": "unknown_or_unusable",
+      "conditional_precision": "0.14634146341463414",
+      "conditional_recall": "0.5714285714285714",
+      "TP": "12",
+      "FP": "70",
+      "FN": "9",
+      "TN": "1006",
+      "not_observable_or_v8_only": "0"
+    },
+    "N14_METHOD_SUBSTITUTION_OR_FALLBACK": {
+      "conditional_grade": "unknown_or_unusable",
+      "conditional_precision": "0.7857142857142857",
+      "conditional_recall": "0.09375",
+      "TP": "33",
+      "FP": "9",
+      "FN": "319",
+      "TN": "736",
+      "not_observable_or_v8_only": "0"
+    },
+    "N15_PROVENANCE_METADATA_ANOMALY": {
+      "conditional_grade": "unknown_or_unusable",
+      "conditional_precision": "0.42857142857142855",
+      "conditional_recall": "1.0",
+      "TP": "9",
+      "FP": "12",
+      "FN": "0",
+      "TN": "1076",
+      "not_observable_or_v8_only": "0"
+    },
+    "N16_DUPLICATE_OR_BURST_SUBMISSION": {
+      "conditional_grade": "unknown_or_unusable",
+      "conditional_precision": "",
+      "conditional_recall": "",
+      "TP": "0",
+      "FP": "0",
+      "FN": "0",
+      "TN": "0",
+      "not_observable_or_v8_only": "1097"
+    },
+    "N16_EXTERNAL_SOLUTION_DISTILLATION": {
+      "conditional_grade": "unknown_or_unusable",
+      "conditional_precision": "0.9473684210526315",
+      "conditional_recall": "0.5",
+      "TP": "18",
+      "FP": "1",
+      "FN": "18",
+      "TN": "1060",
+      "not_observable_or_v8_only": "0"
+    },
+    "N17_PREEXISTING_SUBSTANTIVE_ARTIFACT": {
+      "conditional_grade": "unknown_or_unusable",
+      "conditional_precision": "",
+      "conditional_recall": "",
+      "TP": "0",
+      "FP": "0",
+      "FN": "0",
+      "TN": "0",
+      "not_observable_or_v8_only": "8"
+    },
+    "N18_PROCESS_EVIDENCE_INSUFFICIENT": {
+      "conditional_grade": "unknown_or_unusable",
+      "conditional_precision": "",
+      "conditional_recall": "",
+      "TP": "0",
+      "FP": "0",
+      "FN": "0",
+      "TN": "0",
+      "not_observable_or_v8_only": "44"
+    }
+  }
+}

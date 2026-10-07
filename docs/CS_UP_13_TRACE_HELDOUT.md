@@ -1,0 +1,19 @@
+# CS-UP-13 独立留出检查
+
+24个非空S4公开轨迹，ID与CS-UP-11全部selected/selection_additions不交叉。冻结先于取回轨迹与比较；既有校准分级未按留出结果调整。第一批24个随机样本公开轨迹均为空，保留为覆盖缺失，不作通过。
+
+一致率只条件于回执可见代码；未列代码不是已知未触发。N11无提交产物、N17/N18无实际worker输入时保留无法判定。
+
+|检查|可判定|无法判定|TP/FP/FN/TN|条件一致率|
+|---|---:|---:|---|---|
+|N11_OUTPUT_NOT_CAUSALLY_SUPPORTED|0|24|0/0/0/0|unknown|
+|N06_FABRICATED_OR_UNSUPPORTED_EXECUTION|24|0|1/10/0/13|0.5833333333333334|
+|N09_NO_EXECUTION_EVIDENCE|24|0|2/20/0/2|0.16666666666666666|
+|N13_EXTREME_BREVITY|24|0|1/3/0/20|0.875|
+|N08_UNPAIRED_TOOL_CALLS|24|0|0/0/1/23|0.9583333333333334|
+|N12_TRACE_REPETITION_OR_INFLATION|24|0|0/4/0/20|0.8333333333333334|
+|N15_PROVENANCE_METADATA_ANOMALY|24|0|0/2/0/22|0.9166666666666666|
+|N17_PREEXISTING_SUBSTANTIVE_ARTIFACT|0|24|0/0/0/0|unknown|
+|N18_PROCESS_EVIDENCE_INSUFFICIENT|0|24|0/0/0/0|unknown|
+
+原始回执、冻结清单、报告与输入哈希在`.package-checks/cs-up-13/w4-heldout*`，不提交原始公开数据。

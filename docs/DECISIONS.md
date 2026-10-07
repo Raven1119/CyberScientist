@@ -889,3 +889,5 @@ CS-UP-12最终追加验收：45分钟准备/长HTTP/迟回预约和预热事实�
 - W2 间隔在统一发送入口实施，持久 queued 与远端 unknown 分开；重启 sending 仅对账。安全 barrier 是 DB 权威，auto_submission 配置同步关闭，专门恢复接口清除 barrier。旧 synthetic 测试配置零等待；新的节流测试使用生产默认并控制时钟。
 
 CS-UP-13 W3输入适配：实际10条而非11条；evidence_status observed_public_data→observed、audience pi→brain、全局strategy→heuristic，正文不改。指定4个ABC标题未找到，保持其他候选而不扩大审批。只读bohr帮助允许白名单group+--help，不开放任意CLI；7个API型skill的原生命令不存在，不能将启用等同已接通。Astra旧原生CLI拒绝；仅尝试项目内独立版本，禁止修改全局CLI/配置。
+
+CS-UP-13 W4：采用1097条校准表SHA冻结，撤回旧63条分级中未经扩大样本支持的结论。原始配对与公开parser可识别配对分别报告；转换完整性仍严格核验。N17/N18与关键证据语义可见性不作关键词推断。24条独立非空留出不用于调参，N11/N17/N18缺输入时保持无法判定。

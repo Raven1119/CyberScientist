@@ -160,7 +160,9 @@ def test_historical_e008_e010_e011_only_when_local_evidence_available(pinned_dia
     assert "N04_TRACE_SCHEMA_INVALID" not in codes(diagnostic("S30", "fix"))
     e010 = diagnostic("S32", "fix")
     assert "N09_NO_EXECUTION_EVIDENCE" in codes(e010)
-    assert e010["advisory_cap"] == 49
+    # The expanded 1097-sample CS-UP-11 calibration does not qualify N09.
+    assert e010["advisory_cap"] is None
+    assert trace_diagnostics.trace_gate.reliability('N09_NO_EXECUTION_EVIDENCE') == 'unavailable'
     assert "N09_NO_EXECUTION_EVIDENCE" not in codes(diagnostic("S33", "fix"))
 
 

@@ -28,7 +28,13 @@ try {
   const task = await fs.readFile(taskPath, 'utf8');
   const submission = await scorer.collectSubmissionEvidence(outputsPath);
   const report = scorer.buildChecklistReport(trace, lint, sha(raw), task, submission, undefined);
+  const lengths = trace.events.map(event => event.text.replace(/\s+/g, ' ').trim().length);
   await fs.writeFile(reportPath, JSON.stringify({
+    visibility: {status:'observed', unit:'UTF-16 after whitespace folding',
+      event_count:lengths.length, over_900:lengths.filter(n => n > 900).length,
+      over_900_ratio:lengths.length ? lengths.filter(n => n > 900).length/lengths.length : null,
+      max_chars:lengths.length ? Math.max(...lengths) : 0,
+      key_evidence_in_first_900:'unknown_without_semantic_and_worker_input_evidence'},
     trace_sha256: sha(raw), format: trace.format, stats: lint.stats,
     paired_tool_calls: lint.tool_schema.matched_call_ids,
     codes: report.triggered_negative_codes, score: report.score,

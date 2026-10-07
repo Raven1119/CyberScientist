@@ -19,6 +19,7 @@ from typing import Any
 import zipfile
 
 from . import trace_selection
+from . import trace_gate
 
 SOURCE_SHA = "afafd718c1eca6c25fa81231905988b436ff03684581d0410f8cc549599dfa46"
 CLI_SHA = "d231fefe0f11a481866aeae399906fc587e75d95c0cf08ff405b3f6f7ee48b03"
@@ -35,13 +36,8 @@ MAX_OUTPUT_EVIDENCE_BYTES = 128 * 1024 * 1024
 
 # Conditional on the codes exposed in 63 historical v8 receipts; unlisted
 # codes could have been suppressed by the platform. See the W2 report.
-GRADES = {
-    "N06_FABRICATED_OR_UNSUPPORTED_EXECUTION": "indicative",
-    "N08_UNPAIRED_TOOL_CALLS": "indicative",
-    "N09_NO_EXECUTION_EVIDENCE": "reliable",
-    "N11_OUTPUT_NOT_CAUSALLY_SUPPORTED": "reliable",
-    "N14_METHOD_SUBSTITUTION_OR_FALLBACK": "indicative",
-}
+GRADES = {code: trace_gate.reliability(code) for code in trace_gate.CALIBRATION['items']
+          if trace_gate.reliability(code) in ('reliable', 'indicative')}
 REASONS = {
     "N06_FABRICATED_OR_UNSUPPORTED_EXECUTION": "执行主张缺少可核对的观察或回执。",
     "N08_UNPAIRED_TOOL_CALLS": "工具调用与结果未完整配对。",
@@ -56,6 +52,7 @@ ADVICE = {
     "N11_OUTPUT_NOT_CAUSALLY_SUPPORTED": "检查实际产物的路径与哈希能否追溯到执行和验证回执；补齐缺失的真实证据链。",
     "N14_METHOD_SUBSTITUTION_OR_FALLBACK": "核对最终产物是否来自题目要求的方法；若只是临时替代结果，执行要求的方法并重新验证产物。",
 }
+ADVICE = {code: ADVICE.get(code, '核对引用来源与授权边界；缺失的原始证据保持unknown。') for code in GRADES}
 QUALIFIED_CAPS = {"N06_FABRICATED_OR_UNSUPPORTED_EXECUTION": 39,
                   "N09_NO_EXECUTION_EVIDENCE": 49}
 # Only unconditional per-code caps in the pinned source. N07/N10 can depend
@@ -83,6 +80,7 @@ def executor_view(result: dict[str, Any]) -> dict[str, Any]:
     return {"status": result.get("status", "unavailable"),
             "reason": result.get("reason") if result.get("status") == "unavailable" else None,
             "advisory_cap": result.get("advisory_cap"),
+            "gate_report": result.get('gate_report'),
             "advisories": [item for item in result.get("advisories", [])
                            if item.get("code") in GRADES][:8]}
 
@@ -204,8 +202,10 @@ def _evaluate(rows: list[dict[str, Any]], task: str, outputs: dict[str, bytes],
         _run([str(node), "--experimental-strip-types", str(VENDOR / "runner.mjs"),
               str(trace), str(task_file), str(output_dir), str(report_file)], env)
         report = json.loads(report_file.read_text())
-    if report["paired_tool_calls"] != _tool_counts(rows)[2]:
-        raise RuntimeError("public scorer lost tool call pairs")
+    selected_pairs = _tool_counts(rows)[2]
+    # The public parser also rejects malformed/unnamed calls. This is a
+    # schema finding, distinct from the converter dropping original pairs.
+    parser_pair_discrepancy = report['paired_tool_calls'] != selected_pairs
     details = [{"code": item["code"], "status": item["status"],
                 "grade": GRADES.get(item["code"], "unavailable"),
                 "implied_cap": CODE_CAPS.get(item["code"]),
@@ -220,15 +220,20 @@ def _evaluate(rows: list[dict[str, Any]], task: str, outputs: dict[str, bytes],
     # attributed to the qualified advisory set in an executor/brain summary.
     if qualified_cap is not None and report["cap"] < qualified_cap:
         qualified_cap = None
-    return {"status": "ready", "source": "public_v6_deterministic",
+    result = {"status": "ready", "source": "public_v6_deterministic",
             "comparison_basis": "conditional_on_visible_v8_receipt_codes",
             "trace_sha256": report["trace_sha256"], "trace_format": report["format"],
-            "paired_tool_calls": report["paired_tool_calls"],
+            "paired_tool_calls": selected_pairs,
+            'public_parser_paired_tool_calls': report['paired_tool_calls'],
+            'parser_pair_discrepancy': parser_pair_discrepancy,
             "stats": report["stats"], "checklist_score": report["score"],
             "checklist_cap": report["cap"],
             "advisory_cap": qualified_cap,
             "checklist_decision": report["decision"], "details": details,
-            "advisories": advisories}
+            "advisories": advisories,
+            'check_items': report['items'], 'visibility': report.get('visibility', {'status':'unknown'})}
+    result['gate_report'] = trace_gate.report(rows, outputs, result)
+    return result
 
 
 def diagnose_normalized_trace(rows: list[dict[str, Any]], task: str = "") -> dict[str, Any]:
@@ -239,7 +244,7 @@ def diagnose_normalized_trace(rows: list[dict[str, Any]], task: str = "") -> dic
         return unavailable(type(exc).__name__)
 
 
-def diagnose_sealed_package(sealed: bytes, task: str = "") -> dict[str, Any]:
+def diagnose_sealed_package(sealed: bytes, task: str = "", run_id: str | None = None) -> dict[str, Any]:
     """Analyze only platform-selected rows; any failure stays advisory-only."""
     try:
         with zipfile.ZipFile(io.BytesIO(sealed)) as archive:
@@ -260,9 +265,17 @@ def diagnose_sealed_package(sealed: bytes, task: str = "") -> dict[str, Any]:
             if isinstance(name, str) and root + name in files:
                 outputs[name] = files[root + name]
         adapted = _adapter_fields(list(selected.rows))
-        return _evaluate(adapted, task, outputs, convert=True) | {
+        result = _evaluate(adapted, task, outputs, convert=True) | {
             "selected_members": list(selected.selected_members), "selection_rule": selected.rule,
             "selected_rows": len(selected.rows), "declared_output_files": len(outputs),
             "adapter_labels_added": sum(a != b for a, b in zip(adapted, selected.rows))}
+        if run_id is None:
+            from . import db
+            row = db.query_one('SELECT run_id FROM submissions WHERE package_sha256=? LIMIT 1', (_sha(sealed),))
+            run_id = row['run_id'] if row else None
+        cross = trace_gate.cross_run_matches(outputs, run_id)
+        check = next(c for c in result['gate_report']['checks'] if c['code'].startswith('N17'))
+        check['evidence']['cross_run'] = cross
+        return result
     except (Exception, subprocess.TimeoutExpired) as exc:
         return unavailable(type(exc).__name__)

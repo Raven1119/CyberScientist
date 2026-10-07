@@ -435,7 +435,7 @@ def _score_run(run_id: str, result_id: str, *, retry: bool = False) -> tuple[str
                 challenge = db.query_one('SELECT content FROM challenges WHERE id=?',
                                          (run['challenge_id'],))
                 diagnostic = trace_diagnostics.diagnose_sealed_package(
-                    sealed, challenge['content'] if challenge else '')
+                    sealed, challenge['content'] if challenge else '', run_id)
                 preflight = {'sealed_bytes': sealed, 'error_code': None}
                 if not db.query_one("SELECT 1 FROM events WHERE run_id=?"
                                     " AND type='evaluation.sealed'", (run_id,)):
