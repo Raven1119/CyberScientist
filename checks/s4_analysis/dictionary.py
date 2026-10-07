@@ -2,7 +2,7 @@
 import csv
 import json
 
-from .common import DEFAULT_DATA,atomic,sha,utcnow,write_json
+from .common import DEFAULT_DATA,atomic,sha,unzstd,utcnow,write_json
 from .dataset import duckdb_module
 
 DESCRIPTIONS={
@@ -71,6 +71,31 @@ def main():
                 description=describe(column);lines.append('| `'+column.replace('|','\\|')+'` | '+description.replace('|','\\|')+' |')
                 schema.append({'dataset':relative,'column':column,'description':description})
             lines.append('')
+    # JSONL has named top-level columns too. Nested objects/arrays remain typed
+    # source containers rather than an invented flattened schema.
+    groups={}
+    for folder,pattern in [('data/traces','*.jsonl.zst'),('data/attempt_details','*.jsonl.zst'),
+                           ('data/topics','*.json'),('data/semantics','*.json'),('scorer/forms','*.json')]:
+        paths=sorted((root/folder).glob(pattern))
+        if paths:groups[folder+'/<id>.'+('jsonl.zst' if 'jsonl' in pattern else 'json')]=paths
+    for folder in ['data','scorer']:
+        for path in sorted((root/folder).glob('*.jsonl*')):
+            groups[str(path.relative_to(root))]=[path]
+    for dataset,paths in groups.items():
+        columns=set()
+        for path in paths:
+            raw=path.read_bytes();raw=unzstd(raw) if path.suffix=='.zst' else raw
+            values=[json.loads(line) for line in raw.splitlines() if line.strip()] if '.jsonl' in path.name else [json.loads(raw)]
+            for value in values:
+                if isinstance(value,dict):columns.update(value)
+        lines.extend(['## '+dataset,'',
+          'JSON object top-level columns. Nested objects/arrays retain their source keys and are queried as structured JSON; per-step source identity and SHA are retained in the corresponding index. Empty trace files contain no observed columns.','',
+          '| Column | Meaning / provenance |','|---|---|'])
+        for column in sorted(columns):
+            description=describe(column)
+            lines.append('| `'+column.replace('|','\\|')+'` | '+description.replace('|','\\|')+' |')
+            schema.append({'dataset':dataset,'column':column,'description':description})
+        lines.append('')
     taxonomy=root/'data/missing_evidence_taxonomy.json'
     if taxonomy.exists():lines.extend(['## Frozen missing-evidence taxonomy','', '```json',taxonomy.read_text().strip(),'```',''])
     atomic(root/'DATA_DICTIONARY.md',('\n'.join(lines).rstrip()+'\n').encode())

@@ -3,6 +3,7 @@ import json
 from collections import Counter,defaultdict
 
 from .common import DEFAULT_DATA,utcnow,write_json
+from .dataset import read_table,truth
 from .tables import write_csv
 
 
@@ -19,6 +20,43 @@ def usage_rows(root):
           'cached_input_tokens':usage.get('prompt_cache_hit_tokens',usage.get('cached_input_tokens')),
           'finish_reason':record.get('finish_reason')})
     return rows
+
+
+def analysis_coverage(root):
+    selected={r['attempt_id']:r for r in read_table('data/selected.csv',root=root)}
+    semantic={aid for aid,r in selected.items() if truth(r.get('semantic_required'))}
+    if (root/'data/selection_additions.csv').exists():
+        for row in read_table('data/selection_additions.csv',root=root):
+            selected.setdefault(row['attempt_id'],row);semantic.add(row['attempt_id'])
+    features={r['attempt_id']:r for r in read_table('data/trace_features.csv',root=root)}
+    claims=Counter(r['attempt_id'] for r in read_table('data/missing_evidence.csv',root=root))
+    output=[]
+    for aid,item in sorted(selected.items(),key=lambda pair:int(pair[0])):
+        trace=root/'data/traces'/(aid+'.jsonl.zst')
+        local=root/'.raw/traces'/(aid+'.jsonl.zst')
+        semantics=root/'data/semantics'/(aid+'.json');v6=root/'.raw/v6_reports'/(aid+'.json')
+        truncation=root/'data/truncation_claims'/(aid+'.json')
+        sem=json.loads(semantics.read_text()) if semantics.exists() else {}
+        report=json.loads(v6.read_text()) if v6.exists() else {}
+        checks=json.loads(truncation.read_text()).get('checks',[]) if truncation.exists() else []
+        output.append({'attempt_id':aid,'challenge_id':item['challenge_id'],'ours':item['ours'],
+          'trace_retrieved':trace.exists() or local.exists(),'trace_storage':'private' if trace.exists() else 'local_only' if local.exists() else 'unknown_not_retrieved',
+          'public_trace_status':features.get(aid,{}).get('public_trace_status','unknown_no_features_yet'),
+          'feature_present':aid in features,'semantic_required':aid in semantic,
+          'semantic_status':sem.get('status','unknown_no_extraction') if aid in semantic else 'not_required',
+          'v6_status':report.get('status','unknown_not_prepared'),
+          'missing_evidence_statements':claims[aid],'truncation_checks':len(checks),
+          'truncation_assessed_checks':sum(c.get('status') in ['present','partially_present','not_observed_in_complete_fetched_trace','not_assessable_from_public_trace'] for c in checks),
+          'truncation_status_counts_json':json.dumps(dict(Counter(c.get('status','unknown') for c in checks)),sort_keys=True)})
+    write_csv(root/'data/analysis_coverage.csv',output)
+    summary={'generated_at':utcnow(),'selected_attempts':len(output),'selected_ours':sum(truth(r['ours']) for r in output),
+      'trace_retrieved':sum(r['trace_retrieved'] for r in output),'features':sum(r['feature_present'] for r in output),
+      'semantic_required':len(semantic),'semantic_statuses':dict(Counter(r['semantic_status'] for r in output if r['semantic_required'])),
+      'public_trace_statuses':dict(Counter(r['public_trace_status'] for r in output)),
+      'v6_statuses':dict(Counter(r['v6_status'] for r in output)),
+      'interpretation':'Acquisition and annotation coverage only; empty public traces or unavailable fields do not prove absence of original research.'}
+    write_json(root/'data/analysis_coverage_summary.json',summary)
+    return summary
 
 
 def main():
@@ -52,6 +90,7 @@ def main():
     if probe.exists():
         record=json.loads(probe.read_text());summary['uncached_deepseek_probe_usage']=(record.get('response') or {}).get('usage')
     write_json(root/'data/model_usage_summary.json',summary)
+    summary['analysis_coverage']=analysis_coverage(root)
     print(json.dumps(summary))
 
 

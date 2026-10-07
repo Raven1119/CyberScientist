@@ -37,7 +37,17 @@ def agreement(root):
       ['attempt_id','challenge_id','ours','trace_engine','trace_score'])}
     returned=defaultdict(set)
     for r in read_table('data/deductions.csv'):returned[r['attempt_id']].add(r['raw.code'])
-    pairs=[];groups=defaultdict(list);caps=[]
+    pairs=[];groups=defaultdict(list);caps=[];coverage=[]
+    selected=list(read_table('data/selected.csv'))
+    if (root/'data/selection_additions.csv').exists():selected+=list(read_table('data/selection_additions.csv'))
+    for aid,item in {r['attempt_id']:r for r in selected}.items():
+        path=root/'.raw/v6_reports'/(aid+'.json')
+        report=json.loads(path.read_text()) if path.exists() else {}
+        row=attempts.get(aid,{})
+        is_v8='v8-process-evidence-sufficiency' in (row.get('trace_engine') or '')
+        coverage.append({'attempt_id':aid,'challenge_id':item['challenge_id'],'ours':item['ours'],
+          'v6_status':report.get('status','unknown_uncollected_or_unprepared'),
+          'is_v8':is_v8,'included_in_code_comparison':is_v8 and report.get('status')=='ok'})
     for path in (root/'.raw/v6_reports').glob('*.json'):
         report=json.loads(path.read_text());aid=path.stem;row=attempts.get(aid,{})
         if report.get('status')!='ok' or 'v8-process-evidence-sufficiency' not in (row.get('trace_engine') or ''):continue
@@ -71,13 +81,16 @@ def agreement(root):
           'mechanically_reproducible':'unknown_no_pinned_v6_rule' if all(i['v6_status']=='unknown_v8_only' for i in items) else 'pinned_v6_only_not_verified_v8'})
     write_csv(root/'scorer/v6_v8_pairs.csv',pairs);write_csv(root/'scorer/v6_v8_agreement.csv',aggregates)
     write_csv(root/'scorer/v6_v8_cap_checks.csv',caps)
+    write_csv(root/'scorer/v6_v8_coverage.csv',coverage)
     summary={'samples':len(caps),'pairs':len(pairs),'codes':len(aggregates),'v8_above_local_cap':sum(i['v8_above_local_cap'] is True for i in caps),
       'not_observable_pairs':sum(r['not_observable_or_v8_only'] for r in aggregates),'observed_at':utcnow(),
+      'selected_attempts':len(coverage),'coverage_v6_statuses':dict(Counter(r['v6_status'] for r in coverage)),
+      'not_included_attempts':sum(not r['included_in_code_comparison'] for r in coverage),
       'source_quality':'Public API often omits tool bodies; archive and platform worker inputs not equated'}
     write_json(root/'scorer/v6_v8_summary.json',summary)
     docs=Path(__file__).resolve().parents[2]/'docs';path=docs/'TRACE_CHECKLIST_V6_V8_AGREEMENT.md'
     marker='\n## CS-UP-11 expanded public snapshot\n'
-    text=path.read_text().split(marker)[0]+marker+'\nGenerated '+utcnow()+f". Current available v8 comparison: {len(caps)} attempts / {len(pairs)} code pairs; {summary['not_observable_pairs']} unavailable pairs. This section is regenerated as trace collection advances. Original 63-sample evidence above remains unchanged.\n\n"
+    text=path.read_text().split(marker)[0]+marker+'\nGenerated '+utcnow()+f". Current available v8 comparison: {len(caps)} of {len(coverage)} selected attempts / {len(pairs)} code pairs; {summary['not_observable_pairs']} unavailable pairs within that comparison. All selected IDs, including empty, uncollected, failed and non-v8 inputs, remain in private `scorer/v6_v8_coverage.csv`. This section is regenerated as trace collection advances. Original 63-sample evidence above remains unchanged.\n\n"
     text+='| Full code | Observable positives | TP | FP | FN | TN | Precision | Recall | Conditional grade |\n|---|---:|---:|---:|---:|---:|---:|---:|---|\n'
     fmt=lambda v:'unknown' if v is None else f'{v:.3f}'
     for r in aggregates:text+=f"| {r['code']} | {r['TP']+r['FN']} | {r['TP']} | {r['FP']} | {r['FN']} | {r['TN']} | {fmt(r['conditional_precision'])} | {fmt(r['conditional_recall'])} | {r['conditional_grade']} |\n"

@@ -57,3 +57,7 @@ or eliminate the recorded private-history follow-up.
 ## 输入冻结与截断复核补充
 
 修复重复校准先覆盖 packet 后检查哈希的问题：暂存比较、冻结字节复核、单运行互斥；未重新执行历史校准。截断缓存绑定轨迹来源、完整正文、声明、题面和 v6 packet，源变化保留旧版；仅 packet 变化重算偏移而不新增模型调用。每个 chunk/声明必须恰好一个有效答复，缺漏/重复保持 unknown，原生 content/item/parts 正文完整保留。新增反例后本地测试 53 passed。校准选择规格偏差及留出暴露限制另见校准报告。
+
+## Attribution and delivery coverage
+
+Versioned semantic evidence projection preserves frozen extraction bytes and records every claim's source type, exact-quote status and explicit scientific-verification unknown. Staged-object privacy auditing is tested against concurrent working-tree changes. Model usage counts unique successful request receipts, with failed/cancelled billing explicitly unknown. Comparison and analysis coverage include uncollected, empty and non-v8 selected attempts. The data dictionary includes primary JSON/JSONL top-level columns as well as CSV/Parquet. 67 analysis regressions pass; compileall and diff checks pass. These checks do not resolve the earlier private-history credential follow-up.
