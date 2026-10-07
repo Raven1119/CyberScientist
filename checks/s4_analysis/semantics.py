@@ -18,7 +18,11 @@ def generate_part(client,system,user,*,max_tokens=4096):
     try:response=client.generate(system,user,max_tokens=max_tokens)
     except RuntimeError as exc:
         if 'Model_output_truncated' not in str(exc) or max_tokens>=16384:raise
-        response=client.generate(system,user,max_tokens=max_tokens*2)
+        try:response=client.generate(system,user,max_tokens=max_tokens*2)
+        except RuntimeError as extended:
+            if 'Model_output_truncated' not in str(extended):raise
+            concise=system+' Keep the complete input as evidence, but summarize repeated process phases. Return at most 6 method_abstract claims and at most 8 claims for each other key, with at most 2 short sentences and 2 exact evidence quotations per claim. Preserve unresolved failures and distinguish intentions from observed results. Never omit required keys or invent evidence.'
+            response=client.generate(concise,user,max_tokens=8192)
     receipts=[{k:v for k,v in response.items() if k!='output'}]
     for repair in range(3):
         output=response['output']

@@ -64,3 +64,21 @@ def test_semantic_length_fallback_and_schema_repair_are_bounded():
     client=Fake();output,receipts=generate_part(client,'system','user')
     assert client.budgets==[4096,8192,8192] and set(output)==set(KEYS)
     assert len(receipts)==2
+
+
+def test_length_repair_keeps_full_input_and_bounds_even_its_failure():
+    import pytest
+    from .semantics import generate_part
+    class Fake:
+        def __init__(self,succeeds):self.calls=[];self.succeeds=succeeds
+        def generate(self,system,user,*,max_tokens):
+            self.calls.append((system,user,max_tokens))
+            if len(self.calls)<3 or not self.succeeds:raise RuntimeError('Model_output_truncated')
+            return {'output':{k:[] for k in KEYS},'request_sha256':'concise'}
+    ok=Fake(True);generate_part(ok,'system','complete unchanged input')
+    assert [r[2] for r in ok.calls]==[4096,8192,8192]
+    assert {r[1] for r in ok.calls}=={'complete unchanged input'}
+    assert 'summarize repeated process phases' in ok.calls[2][0]
+    failed=Fake(False)
+    with pytest.raises(RuntimeError,match='Model_output_truncated'):generate_part(failed,'system','complete unchanged input')
+    assert len(failed.calls)==3

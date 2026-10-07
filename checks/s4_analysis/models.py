@@ -37,6 +37,11 @@ class ModelClient:
             previous=json.loads(path.read_text());clean=self.redactor.fork().obj(previous)
             if clean!=previous:write_json(path,clean)
             return clean
+        failure_path=DEFAULT_DATA/'.local/model_failures'/(digest+'.json')
+        if failure_path.exists():
+            previous=json.loads(failure_path.read_text())
+            if previous.get('error',{}).get('reason')=='Model_output_truncated':
+                raise RuntimeError('Analysis model call failed: '+json.dumps(previous['error']))
         started=time.monotonic();last=None
         for attempt in range(9):
             try:
