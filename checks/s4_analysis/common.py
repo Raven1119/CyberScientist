@@ -78,7 +78,7 @@ class Redactor:
             ('bearer', re.compile(r'(?i)\bBearer\s+[A-Za-z0-9._~+/=-]{12,}')),
             ('jwt', re.compile(r'\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b')),
             ('credential_assignment', re.compile(r'(?i)(?:(?<![A-Za-z0-9])(?:api[_-]?key|access[_-]?(?:key(?:[_-]?id)?|token)|refresh[_-]?token|id[_-]?token|session[_-]?(?:id|token)|private[_-]?key|secret|password|passwd|token|key|cookie|sig|Signature|X-Amz-Credential)["\x27]?\s*[:=]\s*["\x27]?)[A-Za-z0-9_./+%~=-]{12,}')),
-            ('email', re.compile(r'\b[A-Za-z0-9.!#$%&\x27*+/=?^_`{|}~-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b')),
+            ('email', re.compile(r'(?<![A-Za-z0-9.!#$%&\x27*+/=?^_`{|}~-])[A-Za-z0-9.!#$%&\x27*+/=?^_`{|}~-]{1,64}@[A-Za-z0-9.-]{1,253}\.[A-Za-z]{2,63}\b')),
         ]
 
     def fork(self):
@@ -94,6 +94,8 @@ class Redactor:
                 self.counts['known_secret'] += count
                 value = value.replace(secret, '[REDACTED]')
         for label, pattern in self.patterns:
+            marker={'email':'@','pem':'-----BEGIN','jwt':'eyJ','bearer':'bearer'}.get(label)
+            if marker and marker not in (value.lower() if label=='bearer' else value):continue
             value, count = pattern.subn('[REDACTED]', value)
             self.counts[label] += count
         return value
@@ -227,6 +229,9 @@ class PublicClient:
                 return clean
             except (httpx.TransportError, httpx.HTTPStatusError) as exc:
                 status = getattr(getattr(exc, 'response', None), 'status_code', None)
+                if status==404 and retry==0:
+                    time.sleep(1)
+                    continue
                 if retry == 6 or status is not None and status < 500 and status != 429:
                     raise RuntimeError(f'Public GET failed: {parsed.path}, status={status}, kind={type(exc).__name__}') from None
                 time.sleep(min(60, 2 ** retry))

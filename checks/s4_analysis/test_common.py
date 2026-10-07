@@ -91,6 +91,31 @@ def test_sensitive_containers_and_numeric_passwords_are_redacted(redactor):
     assert result['pass'] is True
 
 
+def test_long_scientific_or_binary_runs_do_not_trigger_quadratic_email_search(redactor):
+    import time
+    value='a'*1_000_000+'@example.test'
+    started=time.monotonic()
+    assert redactor.text(value)==value
+    assert time.monotonic()-started<10
+
+
+@pytest.mark.parametrize('codes',[(404,200),(404,404)])
+def test_public_404_is_retried_once_then_resolved_or_reported(tmp_path,monkeypatch,codes):
+    import httpx
+    calls=[];original=httpx.Client
+    def handler(request):
+        calls.append(request.url.path)
+        return httpx.Response(codes[len(calls)-1],json={'ok':True},request=request)
+    monkeypatch.setattr(common.httpx,'Client',lambda **kwargs:original(transport=httpx.MockTransport(handler),**kwargs))
+    monkeypatch.setattr(common.PublicClient,'rate',lambda self:None)
+    monkeypatch.setattr(common.time,'sleep',lambda _:None)
+    client=common.PublicClient(tmp_path)
+    if codes[-1]==200:assert client.get('/api/protocol')=={'ok':True}
+    else:
+        with pytest.raises(RuntimeError,match='status=404'):client.get('/api/protocol')
+    assert len(calls)==2
+
+
 def test_atomic_concurrent_writers_leave_one_complete_value(tmp_path):
     p=tmp_path/'result.json'
     values=[json.dumps({'index':i,'value':'x'*1000}).encode() for i in range(20)]
