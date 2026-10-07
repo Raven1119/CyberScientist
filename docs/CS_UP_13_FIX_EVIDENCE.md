@@ -67,3 +67,7 @@ D-63–D-72 原文已加入 §5。开局 main 比 origin/main 落后 13 个 S4 �
 私有材料镜像172212固定五模块版本，实际Job20845219与沙箱退出0；ABACUS官方镜像Job20847482退出0、SCF收敛。首个ABACUS Job因检查标记写错退出1，保留失败后独立修正重跑。两个起点已通过后台不可覆盖登记，沙箱创建成功时间进入runtime_observations；前端读取目录。脚本、版本、赝势来源、哈希和分层耗时见environments/cs-up-13/README.md。
 
 硬验收缺口：ABACUS沙箱两次TLS handshake timeout，没有计算回执。替代为已通过的同镜像Job，沙箱创建成功不代替exec成功。未删除已有资源；新沙箱设20分钟自动到期。
+
+## W6 — CLI只读调查
+
+参赛过程第六节已按安装源码位置逐条填写，核实官方更新清单0.1.39及tarball声明哈希。全局npm安装初始命令unknown。已有ZIP不会被--raw-messages参数重写，原生记录必须在封存前进入；旧error事件转换优先级缺陷明确保留。未修改提交代码、未安装CLI、未做真实提交。

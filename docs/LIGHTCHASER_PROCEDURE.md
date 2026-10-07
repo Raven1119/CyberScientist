@@ -170,13 +170,27 @@
 
 ## 六、提交链路切换（官方 CLI）
 
-本节先由 CS-UP-13 W6 的只读调查填写；CS-UP-14 修好提交链路后，改写为实际做法和故障处理。内容包括：
-- 本机 CLI 的版本和获取最新版的方式；
-- Worker API 的配置方法（回执要求 `http://47.92.88.121:443/api`）；
-- CLI 提交需要的文件：提交包，以及求解者的原生会话记录（rawMessages）；
-- 系统改走 CLI 提交时要改哪些代码，以及怎样保留现有的保护：题目存在性检查、unknown 不重发、提交间隔、同一封存包。
+CS-UP-13 W6只读调查，尚未切换应用提交链路。已安装@paper2arm/playground-cli 0.1.33，dist/index.js SHA256 d231fefe0f11a481866aeae399906fc587e75d95c0cf08ff405b3f6f7ee48b03。来源package.json指向Osgood001/playground-cli；当前npm registry为https://registry.npmmirror.com，全局安装锁记录缺失，最初安装命令unknown。没有安装、升级或改全局配置。
 
-CS-UP-14 完成后，系统默认经官方 CLI 提交（`submission_transport=cli`）。开赛时，如果最小闭环仍出现"不规范提交"回执，或者 CLI 本身出错，按本节排查：检查 CLI 版本、Worker API 配置、令牌、原始会话记录。必要时切到 `api` 回退，验证后恢复。这属于全局修复，按第五节热更新，并在最小闭环这道题上验证。
+官方CLI自带update-check只检查更新，不执行安装（源码1167–1222、4574）。2026-10-08只读GET默认更新地址http://nwjs1473070.bohrium.tech:50003/latest.json，返回0.1.39，tarball路径/packages/paper2arm-playground-cli-0.1.39.tgz，声明SHA256 3ea6a15807ed3ca00f6a88b07fa5165ec0a8413251c3a8efdabc580c2e58c023。安装脚本支持PLAYGROUND_NPM_PREFIX；阶段2将下载核对哈希并只在项目内解包，不执行全局脚本。最新清单本身没有签名，供应来源不能由哈希证明。只读副本在.package-checks/cs-up-13/pg-latest和pg-installer。
+
+Worker必须同时设置PLAYGROUND_ALLOW_WORKER_API_OVERRIDE=1及PLAYGROUND_WORKER_API_BASE=http://47.92.88.121:443/api（源码1336–1348）。--worker-api-base仅用于task-package上传，不配置比赛submit（2488）。令牌由--token-env或配置tokenEnv选择，Worker可另用--worker-token-env，未提供时回落平台令牌（1350–1368、3700–3707）。只向子进程环境注入，不写配置、命令行或日志。
+
+submit --help列出--challenge-id、--outputs、--trace、--raw-messages、--model、--harness、--bundle-out、--dry-run。已封存包使用--bundle与可选--attempt-id。源码3502、3576生成新包时把raw消息写为raw_messages.jsonl；已有--bundle分支不会把--raw-messages重新写入ZIP（3708–3739）。因此原生最终Trial日志必须在封存前进入包，不能靠追加参数修改已封存哈希。--trace用于身份与轨迹读取，manifest必须与封存快照一致，科学产物、原生会话和投影轨迹分别保留。
+
+手动命令模板（令牌由可信后端进程环境注入CS_PLAYGROUND_SUBMIT_TOKEN，模板不包含密钥）：
+
+```bash
+PLAYGROUND_NO_UPDATE_CHECK=1 PLAYGROUND_ALLOW_WORKER_API_OVERRIDE=1 \
+PLAYGROUND_WORKER_API_BASE=http://47.92.88.121:443/api \
+playground submit --challenge-id ENDED_TOPIC_ID --bundle sealed/package.zip \
+  --trace FINAL_TRIAL_NATIVE.jsonl --manifest sealed/arm_manifest.json \
+  --token-env CS_PLAYGROUND_SUBMIT_TOKEN --worker-token-env CS_PLAYGROUND_SUBMIT_TOKEN
+```
+
+Codex原生日志读取及转换在loadTrace（1068）、convertCodexEvents/convertModernCodexRollout与cmdTraceConvert（3431）中。modern response_item先识别；旧event流的opencodeEventLike把任意type=error识别为OpenCode（589），其分支先于codexEventLike（956、1068），从而丢掉其他Codex事件。原始记录不得删改；有问题时新开干净Trial。现有离线诊断仅在临时副本修转换分支，不能将它当官方CLI真实提交验证。阶段2要在0.1.39与真实三种模型日志上复核。
+
+应用改动入口为mailbox_platform.submit_once与mailboxes._perform_submission。后者继续负责题目存在性、封存哈希、授权、D-64队列和D-66屏障；收割通过同一入口。CLI createAttempt再worker/uploads（3742–3784），不提供幂等键，且上传内部会对408/429/5xx最多三次重试（3800）。unknown只能按邮箱+题目只读列Attempt对账，不自动重发；不能把HTTP上传成功说成harbor_worker出分。阶段2需据新版协议保留这些保护并使transport可回退。
 
 ## 七、汇报格式
 
