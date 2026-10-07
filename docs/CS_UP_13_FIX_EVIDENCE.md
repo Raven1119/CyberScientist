@@ -18,3 +18,13 @@ D-63–D-72 原文已加入 §5。开局 main 比 origin/main 落后 13 个 S4 �
 - 六 Run 全量投影的缺结果调用数依次 1/0/3/0/0/0，无缺调用、无重复配对。缺失的原事件只有 inProgress/exec_started，也没有对应完成回执；无法诚实补齐，保留 N08 风险（替代：下一轮干净复跑保留完整原生会话）。`w1-pairing-before.json`。两个未提交 Run 没有封存包，严格“六个封存包”验收无法满足，将在 W4 以四个真实包和六 Run 投影分别核验。
 
 证据根：`.package-checks/cs-up-13/`；只提交实现、测试和脱敏汇总。
+
+## W2
+
+- 新增 submission_queue 表，实验、轨迹变体、原包重放与收割都通过既有 _perform_submission 的统一准入。默认同账号同题 30 分钟、跨题 30 分钟最多 4 次；队列保留封存哈希、授权与草稿续提身份。到点重检预算、题目存在性和收割窗口；优先发送收割。
+- 队列 sending 在重启后转 unknown，不重放。真实 unknown 始终不入队自动重发；只读对账仍保留原路径。已受理草稿的明确 bundle 修复续提保留原 Attempt。
+- resultsJson（含 JSON 文本）、scored_by、scoringDetails.source 的不规范回执立即设置 DB barrier、持久弹窗；配置 auto_submission 持久关闭，两个入口暂停，科研不中断。前端恢复通过专门 feature 接口清除 barrier。
+- 前端设置可见队列、预计时间、暂停/恢复、三项间隔参数；ops digest 有队列与暂停状态。judge_replica_hint 默认 false。
+- fake 后端提交/收割回归 `w2-tests-final.log` 81 passed；设置/功能/新协议往返 `w2-roundtrip.log` 87 passed；前端 `w2-frontend.log` 16 passed；`w2-build.log` 构建通过。这些不是正式 Worker 验证。
+- 旧合成协议测试显式配置零等待，继续验证其既有语义；新增 D-64 测试恢复生产 30 分钟策略并推进注入时钟，没有删除或跳过旧测试。
+- 有界审查修复了延迟收割触发上下文被回执摘要覆盖的问题；延迟发送仍重新核验原触发条件。

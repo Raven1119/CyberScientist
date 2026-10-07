@@ -98,6 +98,11 @@ def isolated_workspace(tmp_path, monkeypatch):
 
 
     db.init_db()
+    # Legacy synthetic scenarios use zero wait. D-64 tests explicitly restore
+    # the production 30 minute policy and advance an injected clock.
+    settings = config.load_settings()
+    settings["submission_policy"] = {"same_topic_minutes": 0, "cross_topic_minutes": 0, "cross_topic_limit": 4}
+    config.save_settings(settings)
     yield
     if hasattr(db._local, "conn"):
         db._local.conn.close()

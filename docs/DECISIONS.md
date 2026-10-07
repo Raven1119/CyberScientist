@@ -885,3 +885,5 @@ CS-UP-12最终追加验收：45分钟准备/长HTTP/迟回预约和预热事实�
 - W1 平台公开 schema（2026-10-08 再 GET）允许 handoff.status=complete，但彩排真实上传拒绝（accepted_values stuck/partial/failed）。封包提前提示该冲突，允许作者省略可选字段，不自动改写科学状态。characterization 缺 modality 指文件交付未满足，不能凭此捏造必填 modality 属性。
 - W1 沙箱状态表 CHECK 不可通过仅加列迁移扩展，新增 unknown_slot_released；对外状态 unknown_released，原 unknown 和费用预约保留。
 - W1 精确系统过期变换可追加受控系统修订修复登记；字节保留，其他外部环境修改仍拒绝。
+
+- W2 间隔在统一发送入口实施，持久 queued 与远端 unknown 分开；重启 sending 仅对账。安全 barrier 是 DB 权威，auto_submission 配置同步关闭，专门恢复接口清除 barrier。旧 synthetic 测试配置零等待；新的节流测试使用生产默认并控制时钟。

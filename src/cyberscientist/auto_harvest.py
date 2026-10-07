@@ -139,9 +139,9 @@ def _summaries(params):
 def reconcile_interrupted(*, include_running: bool = True) -> None:
     # Submission receipts are reconciled separately; a started harvest is never resent.
     with db.transaction() as conn:
-        for row in conn.execute("SELECT * FROM automatic_harvests WHERE status IN ('running','unknown')" if include_running else "SELECT * FROM automatic_harvests WHERE status='unknown'").fetchall():
+        for row in conn.execute("SELECT * FROM automatic_harvests WHERE status IN ('running','unknown','queued')" if include_running else "SELECT * FROM automatic_harvests WHERE status IN ('unknown','queued')").fetchall():
             result = conn.execute('SELECT id,status FROM submissions WHERE operation_id=?', (row['operation_id'],)).fetchone()
-            status = 'done' if result and result['status'] == 'submitted' else 'unknown'
+            status = 'done' if result and result['status'] == 'submitted' else 'queued' if result and result['status'] == 'queued' else 'unknown'
             if row['status'] == status:
                 continue
             conn.execute('UPDATE automatic_harvests SET status=?,error=?,updated_at=? WHERE source_submission_id=?',
@@ -259,7 +259,7 @@ def advance_sync() -> None:
                 error = strip_secrets(str(exc))[:800]
             with db.transaction() as conn:
                 conn.execute('UPDATE automatic_harvests SET status=?,result_json=?,error=?,updated_at=? WHERE source_submission_id=?',
-                             (status, json.dumps({'submission_id': result['id'], 'status': result['status']}) if result else None,
+                             (status, json.dumps(trigger) if status == 'queued' else json.dumps({'submission_id': result['id'], 'status': result['status']}) if result else None,
                               error, db.utcnow(), src['id']))
                 db.append_event_tx(conn, run['id'], 'controller', 'harvest.' + status,
                                    {'source_submission_id': src['id'], 'submission_id': result['id'] if result else None,

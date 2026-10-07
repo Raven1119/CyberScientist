@@ -6,6 +6,7 @@ import { formatTime } from '../labels'
 import EnvironmentCatalog from '../EnvironmentCatalog'
 import ProtocolDrift from '../ProtocolDrift'
 import Preflight from '../Preflight'
+import SubmissionQueue from '../SubmissionQueue'
 import type {
   ConnectionTestResult,
   LlmProfile,
@@ -219,8 +220,12 @@ export default function SettingsPage() {
       <fieldset className="settings-stack settings-fields" disabled={saving}>
         <article className="card card-body"><h2>功能开关</h2>
           <p>关闭后停止对应的新动作；已接受的操作、历史报告与Run数据保留。</p>
-          {Object.entries({ auto_harvest: '自动收割', reviewer: '审查者', scorer_audit: '评分器审计', strategy_cards: '策略卡', deepseek_fallback: 'DeepSeek切换', protocol_drift: '协议检测', await_score: '等待评分', shared_area: '共享区', environment_catalog: '环境目录', system_triage: '系统分诊', local_calculation: '本地计算' }).map(([name, label]) =>
-            <label key={name}><input type="checkbox" checked={settings.features?.[name] ?? true} onChange={e => update(s => ({ ...s, features: { ...s.features, [name]: e.target.checked } }))} />启用{label}</label>)}
+          {Object.entries({ auto_submission: '自动提交', judge_replica_hint: '复刻裁判提示（留出集准确率54–62%）', auto_harvest: '自动收割', reviewer: '审查者', scorer_audit: '评分器审计', strategy_cards: '策略卡', deepseek_fallback: 'DeepSeek切换', protocol_drift: '协议检测', await_score: '等待评分', shared_area: '共享区', environment_catalog: '环境目录', system_triage: '系统分诊', local_calculation: '本地计算' }).map(([name, label]) =>
+            <label key={name}><input type="checkbox" checked={settings.features?.[name] ?? (name !== 'judge_replica_hint')} onChange={e => update(s => ({ ...s, features: { ...s.features, [name]: e.target.checked } }))} />启用{label}</label>)}
+        </article>
+        <SubmissionQueue />
+        <article className="card card-body"><h2>提交间隔</h2>
+          {Object.entries({ same_topic_minutes: '同账号同题最小间隔（分钟）', cross_topic_minutes: '跨题突发窗口（分钟）', cross_topic_limit: '窗口内跨题提交上限' }).map(([key, label]) => <label key={key}>{label}<input type="number" min={key === 'cross_topic_limit' ? 1 : 0} value={settings.submission_policy?.[key as keyof NonNullable<Settings['submission_policy']>] ?? (key === 'cross_topic_limit' ? 4 : 30)} onChange={e => update(s => ({ ...s, submission_policy: { same_topic_minutes: 30, cross_topic_minutes: 30, cross_topic_limit: 4, ...s.submission_policy, [key]: Number(e.target.value) } }))} /></label>)}
         </article>
         <Preflight />
         <ProtocolDrift />

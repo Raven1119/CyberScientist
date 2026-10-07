@@ -15,6 +15,7 @@ export interface SolverEntry extends ModelChoice { id: string; name: string; not
 
 export interface Settings {
   codex_fast_mode?: boolean
+  submission_policy?: { same_topic_minutes: number; cross_topic_minutes: number; cross_topic_limit: number }
   features?: Record<string, boolean>
   schema_version: number
   revision: number

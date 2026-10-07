@@ -1,7 +1,7 @@
 """Live operational switches gate new work and preserve accepted work/history."""
 from . import config
 
-NAMES = ('auto_harvest', 'reviewer', 'scorer_audit', 'strategy_cards', 'deepseek_fallback',
+NAMES = ('auto_submission', 'judge_replica_hint', 'auto_harvest', 'reviewer', 'scorer_audit', 'strategy_cards', 'deepseek_fallback',
          'protocol_drift', 'await_score', 'shared_area', 'environment_catalog', 'system_triage', 'local_calculation')
 
 
@@ -13,7 +13,10 @@ def validate(values):
 
 def enabled(name):
     if name not in NAMES: raise ValueError('未知功能开关：' + name)
-    return config.load_settings().get('features', {}).get(name, True)
+    if name == 'auto_submission':
+        from . import submission_gate
+        if submission_gate.paused(): return False
+    return config.load_settings().get('features', {}).get(name, name != 'judge_replica_hint')
 
 
 @config.serialized_mutation
@@ -25,6 +28,9 @@ def switch(name, enabled_value, expected_revision=None):
     settings['features'][name] = enabled_value
     settings['revision'] += 1
     config.save_settings(settings)
+    if name == 'auto_submission' and enabled_value:
+        from . import db
+        db.execute("DELETE FROM system_state WHERE key='auto_submission_paused'")
     return {'name': name, 'enabled': enabled_value, 'revision': settings['revision'], 'features': settings['features']}
 
 

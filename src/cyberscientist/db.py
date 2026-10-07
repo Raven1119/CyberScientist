@@ -593,6 +593,10 @@ def init_db() -> None:
         conn.executescript(SCHEMA_LOCAL_SCORING)
         conn.executescript(SCHEMA_EVALUATIONS)
         conn.executescript(SCHEMA_COMPUTE_COST)
+        conn.executescript('''CREATE TABLE IF NOT EXISTS submission_queue (
+            submission_id TEXT PRIMARY KEY REFERENCES submissions(id),state TEXT NOT NULL,
+            not_before TEXT NOT NULL,reason TEXT NOT NULL,dispatched_at TEXT,
+            resume_attempt_id TEXT,continuation_operation_id TEXT,updated_at TEXT NOT NULL);''')
         conn.executescript('''CREATE TABLE IF NOT EXISTS challenge_shared_versions (
             id TEXT PRIMARY KEY,challenge_id TEXT NOT NULL REFERENCES challenges(id),
             name TEXT NOT NULL,version INTEGER NOT NULL,path TEXT NOT NULL,sha256 TEXT NOT NULL,

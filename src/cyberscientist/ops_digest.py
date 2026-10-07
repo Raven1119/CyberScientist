@@ -73,6 +73,10 @@ def digest(since=None):
            f"barrier shutdown={bool(barrier and barrier[0]=='1')} native_close_unknown={closing}"]
     alerts=db.query_one('SELECT COUNT(*) FROM alerts WHERE acknowledged_at IS NULL'+(" AND julianday(created_at)>=julianday(?)" if stamp else ''),(stamp,) if stamp else ())[0]
     lines.append(f'pending alerts={alerts}')
+    from . import submission_gate, features
+    queued=submission_gate.items()
+    lines.append(f'auto_submission={features.enabled("auto_submission")} queue={len(queued)} paused={submission_gate.paused()}')
+    for item in queued[:3]: lines.append(f"  queued {item['challenge_id']} account={item['mailbox_id']} harvest={item['is_harvest']} eta={item['not_before']} reason={item['reason']}")
     track_map={t['id']:t for t in tracks()}
     rows=db.query("SELECT r.id,r.challenge_id,r.phase,r.created_at,json_extract(r.config_snapshot,'$.competition.round_id') AS track,"
                   "(SELECT MAX(recorded_at) FROM events e WHERE e.run_id=r.id) AS last_event,"

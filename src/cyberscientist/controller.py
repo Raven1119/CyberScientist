@@ -3344,7 +3344,7 @@ class RunController:
         if reviewed:
             source_sha = res.get('source_package_sha256')
             db.append_event(run_id, 'brain', 'package.review_pi_decision', {'operation_id': reviewed['operation_id'], 'result': json.loads(reviewed['result_json']), 'pi_reason': _redact(guidance['text_md'] if guidance else '', 4000), 'choice': 'submit', 'source_matches_review': source_sha == reviewed['source_sha256'] if source_sha else None, 'sealed_matches_review': res.get('package_sha256') == reviewed['sealed_sha256'], 'submission_id': res.get('id'), 'reviewed_source_sha256': reviewed['source_sha256'], 'reviewed_sealed_sha256': reviewed['sealed_sha256'], 'advisory_only': True}, trial_id=trial_id)
-        ok = res.get("status") == "submitted"
+        ok = res.get("status") in ("submitted", "queued")
         with db.transaction() as conn:
             conn.execute(
                 "UPDATE guidance SET status=?, applied_evidence=?,"

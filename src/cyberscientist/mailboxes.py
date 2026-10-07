@@ -297,6 +297,8 @@ def _record_feedback(conn, row, kind: str, response: dict[str, Any]) -> bool:
                            (row['id'],)).fetchone()
     if not current or any(current[key] != row[key] for key in ('package_sha256', 'package_path', 'platform_ref')):
         return False  # A response for a superseded draft package cannot supply evidence.
+    from . import submission_gate
+    submission_gate.observe_feedback_tx(conn, row, response)
     previous = conn.execute(
         "SELECT payload FROM events WHERE run_id=?"
         " AND type='submission.platform_feedback'"
@@ -749,6 +751,9 @@ def _perform_submission(sid: str, platform: MailboxPlatform, challenge_id: str,
                         continuation_operation_id: str | None = None) -> dict:
     row = db.query_one("SELECT s.*, m.email, m.secret_ref, m.platform FROM submissions s"
                        " JOIN mailboxes m ON m.id=s.mailbox_id WHERE s.id=?", (sid,))
+    from . import submission_gate
+    if not submission_gate.admit(sid, resume_attempt_id, continuation_operation_id):
+        return dict(db.query_one('SELECT * FROM submissions WHERE id=?', (sid,))) | {'deduplicated': False}
     def stage(name, attempt_id=None):
         if name=='create_sent' and row['is_harvest'] and str(row['operation_id']).startswith('auto-harvest-'):
             try:
@@ -826,6 +831,7 @@ def _perform_submission(sid: str, platform: MailboxPlatform, challenge_id: str,
         conn.execute("UPDATE submissions SET status=?,score_status=?,error=?,submitted_at=? WHERE id=?",
                      (status,"pending" if status == "submitted" else "unknown",error,
                       db.utcnow() if status == "submitted" else None,sid))
+        conn.execute('UPDATE submission_queue SET state=?,updated_at=? WHERE submission_id=?', (status,db.utcnow(),sid))
         if status == "failed" and not current["reservation_released"] and not resume_attempt_id:
             conn.execute("UPDATE submissions SET reservation_released=1 WHERE id=?",(sid,))
         if continuation_operation_id:
@@ -834,6 +840,7 @@ def _perform_submission(sid: str, platform: MailboxPlatform, challenge_id: str,
         db.append_event_tx(conn,row["run_id"],"controller",f"submission.{status}",
                            {"submission_id":sid,"error":error,"is_demo":platform.is_demo},
                            trial_id=row["trial_id"])
+    submission_gate.synchronize_pause()
     return dict(db.query_one("SELECT * FROM submissions WHERE id=?",(sid,))) | {"deduplicated":False}
 
 
@@ -1277,7 +1284,7 @@ def poll_scores(run_id: str | None = None,
                     observed = public_feedback(observed, secret, *config.sensitive_values())
                     if isinstance(observed, dict):
                         attempt = {key: observed[key] for key in
-                                   ("scorecard", "scoringState", "bundleStatus", "updatedAt")
+                                   ("scorecard", "scoringState", "bundleStatus", "updatedAt", "resultsJson", "scored_by", "scoringDetails")
                                    if key in observed}
                         with db.transaction() as conn:
                             if _record_feedback(conn, r, "attempt", attempt):
@@ -1378,6 +1385,8 @@ def poll_scores(run_id: str | None = None,
         if meaningful:
             updated += 1
             changed_runs.add(r['run_id'])
+    from . import submission_gate
+    submission_gate.synchronize_pause()
     return {"polled":polled,"updated":updated,"still_unknown":still_unknown,
             "errors":errors,"changed_run_ids":sorted(changed_runs)}
 

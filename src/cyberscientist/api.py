@@ -242,6 +242,8 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
                                 {'error': type(exc).__name__})
         auto_harvest.reconcile_interrupted()
         mailboxes.reconcile_draft_continuations()
+        from . import submission_gate
+        submission_gate.reconcile_interrupted()
         from . import power
         await power.recover(controller)
         controller.scan_score_waits()
@@ -280,6 +282,9 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
                 try:
                     await asyncio.to_thread(sandboxes.expire_due)
                     await asyncio.to_thread(sandboxes.reconcile_pending_creates)
+                    from . import submission_gate
+                    await mailboxes.submit_async(submission_gate.advance_sync)
+                    submission_gate.synchronize_pause()
                     compute.release_unknown_slots()
                 except Exception:
                     logger.exception('Sandbox expiry cleanup failed')
@@ -521,6 +526,8 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
                 model_usage.validate(merged.get('model_pricing', {}))
                 from . import auto_harvest
                 merged['harvest'] = auto_harvest.validate(merged.get('harvest', {}))
+                from . import submission_gate
+                merged['submission_policy'] = submission_gate.validate(merged.get('submission_policy', {}))
                 from . import features
                 features.validate(merged.get('features', {}))
                 policy = merged.get('policy', {})
@@ -1031,10 +1038,16 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
         from . import ops
         return await ops.resume(controller)
 
+    @app.get('/api/v1/submission_queue')
+    async def submission_queue():
+        from . import submission_gate
+        return {'items': submission_gate.items(), 'paused': submission_gate.paused()}
+
     @app.get('/api/v1/features')
     async def read_features():
         settings = config.load_settings()
-        return {'features': settings['features'], 'revision': settings['revision']}
+        from . import features
+        return {'features': {name: features.enabled(name) for name in features.NAMES}, 'revision': settings['revision']}
 
     @app.put('/api/v1/features/{name}')
     async def switch_feature(name: str, request: Request):
