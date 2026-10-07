@@ -105,7 +105,7 @@ def require_compute_slot_tx(conn, kind: str, *, run_id: str | None = None) -> No
         from .compute import occupies_slot
         used = sum(occupies_slot(row) for row in conn.execute('SELECT * FROM compute_jobs').fetchall())
     else:
-        used = conn.execute("SELECT COUNT(*) FROM compute_sandboxes WHERE status NOT IN"
+        used = conn.execute("SELECT COUNT(*) FROM compute_sandboxes WHERE unknown_slot_released=0 AND status NOT IN"
                             " ('deleted','failed')").fetchone()[0]
     if used >= limit:
         from .compute import ComputeError

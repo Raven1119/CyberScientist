@@ -615,6 +615,7 @@ def init_db() -> None:
             'queue_paused': 'INTEGER NOT NULL DEFAULT 0'})
         _ensure_columns(conn, 'compute_sandbox_operations', SANDBOX_OPERATION_V3_COLUMNS)
         _ensure_columns(conn, 'compute_sandboxes', {
+            'unknown_slot_released': 'INTEGER NOT NULL DEFAULT 0',
             'lifetime_version': 'INTEGER NOT NULL DEFAULT 1',
             'lifetime_started_at': 'TEXT',
         })

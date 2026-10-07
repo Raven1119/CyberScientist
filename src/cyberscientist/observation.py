@@ -56,6 +56,17 @@ def strip_secrets(text: str) -> str:
     return redact(_SECRET_TOKEN_RE.sub(r"\1***", text), secrets)
 
 
+def redact_structure(value: Any) -> Any:
+    """Redact values before JSON encoding so escaped quotes remain valid JSON."""
+    if isinstance(value, dict):
+        sensitive = re.compile(r'^(?:access[_-]?key|api[_-]?key|authorization|token|(?:envd[_-]?)?access[_-]?token|envd[_-]?token)$', re.I)
+        return {strip_secrets(k): '[REDACTED]' if sensitive.fullmatch(k) else redact_structure(v)
+                for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [redact_structure(v) for v in value]
+    return strip_secrets(value) if isinstance(value, str) else value
+
+
 def authority_facts(run_id: str) -> dict[str, Any]:
     """One non-secret authorization projection for every brain review surface."""
     auth = db.query_one('SELECT a.* FROM authorizations a JOIN runs r'

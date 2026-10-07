@@ -279,6 +279,7 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
                 controller.scan_score_waits()
                 try:
                     await asyncio.to_thread(sandboxes.expire_due)
+                    await asyncio.to_thread(sandboxes.reconcile_pending_creates)
                     compute.release_unknown_slots()
                 except Exception:
                     logger.exception('Sandbox expiry cleanup failed')

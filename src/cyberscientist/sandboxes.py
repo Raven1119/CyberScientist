@@ -138,6 +138,7 @@ def _retry_reason(receipt: dict, action: str) -> str | None:
 
 def _activate_lifetime(conn, run_id: str, operation_id: str, receipt: dict) -> None:
     """Use authoritative remote times when available; never extend a Run grant."""
+    conn.execute('UPDATE compute_sandboxes SET unknown_slot_released=0 WHERE operation_id=?', (operation_id,))
     row = conn.execute('SELECT * FROM compute_sandboxes WHERE operation_id=?', (operation_id,)).fetchone()
     if row['lifetime_version'] != 2:
         return
@@ -301,6 +302,7 @@ def list_run(run_id: str) -> dict:
     now = datetime.now(timezone.utc)
     for row in rows:
         item = dict(row)
+        if item['unknown_slot_released']: item['status'] = 'unknown_released'
         item['request'] = json.loads(item.pop('request_json'))
         item['receipt'] = json.loads(item.pop('receipt_json'))
         end = datetime.fromisoformat(item['deleted_at']) if item['deleted_at'] else now
@@ -309,7 +311,7 @@ def list_run(run_id: str) -> dict:
         item['lifetime_observed'] = bool(start)
         item['reserved_minutes'] = reserved_seconds(row) / 60
         items.append(item)
-    return {'items': items, 'active_or_unknown': sum(row['status'] in LIVE for row in rows),
+    return {'items': items, 'active_or_unknown': sum(row['status'] in LIVE and not row['unknown_slot_released'] for row in rows),
             'cumulative_minutes': sum(item['alive_minutes'] for item in items)}
 
 
@@ -396,7 +398,7 @@ def create(run_id: str, operation_id: str, request: dict, *, _session_id: str | 
             if prior['run_id'] != run_id or json.loads(prior['request_json']) != request:
                 raise compute.ComputeError('OPERATION_CONFLICT', 'operation_id 已绑定其他沙箱请求')
             return {'operation_id': operation_id, 'sandbox_id': prior['sandbox_id'],
-                    'status': prior['status'], 'deduplicated': True}
+                    'status': 'unknown_released' if prior['unknown_slot_released'] else prior['status'], 'deduplicated': True}
         run = conn.execute('SELECT * FROM runs WHERE id=?', (run_id,)).fetchone()
         from . import resource_coordinator
         resource_coordinator.require_compute_slot_tx(conn, 'sandbox', run_id=run_id)
@@ -419,7 +421,7 @@ def create(run_id: str, operation_id: str, request: dict, *, _session_id: str | 
             raise compute.ComputeError('UNBOUNDED_SANDBOX', '资源不限仍须设置赛道结束时间')
         rows = conn.execute('SELECT * FROM compute_sandboxes'
                             ' WHERE run_id=?', (run_id,)).fetchall()
-        if not unlimited and sum(row['status'] in LIVE for row in rows) >= auth['max_sandboxes']:
+        if not unlimited and sum(row['status'] in LIVE and not row['unknown_slot_released'] for row in rows) >= auth['max_sandboxes']:
             raise compute.ComputeError('SANDBOX_LIMIT', '已达到同时存在的沙箱上限')
         reserved = sum(reserved_seconds(row) for row in rows)
         if timeout > run_left or not unlimited and reserved + timeout > auth['max_sandbox_minutes'] * 60:
@@ -487,6 +489,8 @@ def reconcile_create(run_id: str, operation_id: str) -> dict:
                        (run_id,operation_id))
     if not row:
         raise compute.ComputeError('NOT_FOUND','沙箱创建记录不存在')
+    if row['unknown_slot_released']:
+        return {'operation_id': operation_id, 'status': 'unknown_released', 'sandbox_id': None, 'cost': 'unknown'}
     if row['status'] not in ('creating','unknown'):
         return {'operation_id':operation_id,'status':row['status'],'sandbox_id':row['sandbox_id']}
     if row['sandbox_id'] is not None:
@@ -510,6 +514,28 @@ def reconcile_create(run_id: str, operation_id: str) -> dict:
     original_error = original.get('error') if isinstance(original,dict) else None
     fresh = _body(receipt)
     fresh_error = fresh.get('error') if isinstance(fresh,dict) else None
+    if (not sid and isinstance(fresh_error, dict) and fresh_error.get('code') == 'RESOURCE_NOT_FOUND'
+            and fresh_error.get('http') == 404
+            and (datetime.now(timezone.utc) - datetime.fromisoformat(row['created_at'])).total_seconds() >= 600):
+        listing = compute._native(['sandbox','list','--no-interactive','-o','json'])
+        node = _data(_body(listing))
+        items = node.get('items') if isinstance(node, dict) else None
+        complete = (listing.get('ok') and not listing.get('truncated') and isinstance(items, list)
+                    and type(node.get('total')) is int and node['total'] == len(items))
+        identified = complete and all(isinstance(item, dict) and
+            (item.get('createRequestId') or item.get('requestId')) for item in items)
+        absent = identified and all((item.get('createRequestId') or item.get('requestId')) != operation_id for item in items)
+        if absent:
+            with db.transaction() as conn:
+                changed = conn.execute("UPDATE compute_sandboxes SET unknown_slot_released=1,updated_at=?"
+                    " WHERE operation_id=? AND sandbox_id IS NULL AND unknown_slot_released=0 AND status IN ('creating','unknown')",
+                    (db.utcnow(), operation_id))
+                if changed.rowcount:
+                    db.append_event_tx(conn, run_id, 'controller', 'sandbox.unknown_released',
+                        {'operation_id': operation_id, 'reason': 'request_id_miss_and_complete_list_absence',
+                         'cost': 'unknown', 'automatic_resend': False}, trial_id=row['trial_id'])
+            return {'operation_id': operation_id, 'status': 'unknown_released', 'sandbox_id': None,
+                    'cost': 'unknown', 'automatic_resend': False}
     if sid:
         with db.transaction() as conn:
             current_row = conn.execute('SELECT * FROM compute_sandboxes WHERE operation_id=?', (operation_id,)).fetchone()
@@ -549,6 +575,18 @@ def reconcile_create(run_id: str, operation_id: str) -> dict:
                    (_json(_receipt(receipt)),db.utcnow(),operation_id))
     return {'operation_id':operation_id,'status':'active' if sid else 'unknown','sandbox_id':sid,
             'receipt':_receipt(receipt)}
+
+
+def reconcile_pending_creates() -> None:
+    """Bounded, read-only reconciliation; released creates are never resent."""
+    for row in db.query("SELECT run_id,operation_id,created_at,updated_at FROM compute_sandboxes"
+                        " WHERE sandbox_id IS NULL AND unknown_slot_released=0 AND status IN ('creating','unknown')"):
+        now = datetime.now(timezone.utc)
+        if ((now-datetime.fromisoformat(row['created_at'])).total_seconds() >= 600
+                and (now-datetime.fromisoformat(row['updated_at'])).total_seconds() >= 60):
+            reconcile_create(row['run_id'], row['operation_id'])
+            db.execute('UPDATE compute_sandboxes SET updated_at=? WHERE operation_id=?',
+                       (db.utcnow(), row['operation_id']))
 
 
 def execute(run_id: str, sandbox_id: str, command: str, timeout: int,

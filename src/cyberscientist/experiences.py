@@ -193,6 +193,7 @@ def _reconcile(path: Path, scope: str, cid: str | None) -> dict[str, Any]:
     if fm["scope"] != scope or fm.get("challenge_id") != cid:
         raise ExperienceError("INVALID_EXPERIENCE", "frontmatter 与目录归属不一致")
     eid = fm["id"]
+    _recover_expiry_revision(path, content, parsed)
     prior_head = _head(eid)
     prior_kind = None
     if prior_head and prior_head['head_revision_id']:
@@ -234,6 +235,33 @@ def _reconcile(path: Path, scope: str, cid: str | None) -> dict[str, Any]:
                 old["id"] if old else None,int(scope == "challenge" and fm["status"] == "active")))
     _point_at(db.query_one("SELECT * FROM experience_revisions WHERE id=?", (rid,)))
     return parsed
+
+
+def _recover_expiry_revision(path: Path, content: str, parsed: dict) -> None:
+    """Recover only the exact system expiry transformation; never rewrite disk."""
+    eid = parsed['frontmatter']['id']
+    prior = db.query_one('SELECT r.* FROM experience_heads h JOIN experience_revisions r'
+                         ' ON r.id=h.head_revision_id WHERE h.experience_id=?', (eid,))
+    if not prior or prior['full_content'] == content or prior['operator'] != 'system_environment':
+        return
+    fm = json.loads(prior['frontmatter'])
+    if fm.get('kind') != 'environment' or fm.get('status') != 'active': return
+    try:
+        deadline = datetime.fromisoformat(fm['recheck_after'].replace('Z', '+00:00'))
+        if deadline.tzinfo is None: deadline = deadline.replace(tzinfo=timezone.utc)
+        if deadline > datetime.now(timezone.utc): return
+    except (KeyError, ValueError): return
+    fm.update(status='candidate', review_note='待复核：真实回执超过 recheck_after；新回执到来前不注入')
+    if _render(fm, prior['body_md']) != content: return
+    if db.query_one('SELECT 1 FROM experience_revisions WHERE experience_id=? AND applied=0', (eid,)): return
+    revision = 'rev_' + uuid.uuid4().hex
+    db.execute('INSERT INTO experience_revisions(id,experience_id,revision_hash,parent_hash,file_path,'
+               'frontmatter,body_md,full_content,operator,reason,evidence_refs,created_at,applied,parent_revision_id,activate)'
+               ' VALUES(?,?,?,?,?,?,?,?,?,?,?,?,0,?,0)',
+               (revision,eid,content_hash(content),prior['revision_hash'],_rel(path),json.dumps(fm,ensure_ascii=False),
+                parsed['body_md'],content,'system_environment','恢复已到期系统修订登记；磁盘字节保持不变',
+                prior['evidence_refs'],_now(),prior['id']))
+    _point_at(db.query_one('SELECT * FROM experience_revisions WHERE id=?', (revision,)))
 
 
 def _display_metadata(fm: dict, head) -> dict:

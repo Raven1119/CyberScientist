@@ -103,10 +103,10 @@ def _snapshot_locked(controller, run_id: str) -> dict:
         if row['type'] in ('brain.token', 'brain.raw_output', 'brain.private_note', 'prime.reasoning.raw') or row['type'].startswith('brain.private'):
             continue
         steps.append(public(row))
-    steps = json.loads(strip_secrets(json.dumps(steps, ensure_ascii=False)))
+    steps = observation.redact_structure(steps)
     root = config.WORKSPACE_DIR / 'reviews'
     root.mkdir(parents=True, exist_ok=True)
-    raw = strip_secrets(''.join(json.dumps(row, ensure_ascii=False) + '\n' for row in steps))
+    raw = ''.join(json.dumps(row, ensure_ascii=False) + '\n' for row in steps)
     digest = hashlib.sha256(raw.encode()).hexdigest()
     trace = root / (run_id + '-' + digest + '-public-trace.jsonl')
     if trace.exists():
@@ -126,7 +126,7 @@ def _snapshot_locked(controller, run_id: str) -> dict:
         inventory.append({'source_ref': source_ref, 'package_sha256': row['package_sha256'],
             'science_artifact_hashes': json.loads(row['science_artifact_hashes_json'] or '{}'),
             'recorded_platform_score': row['score'], 'score_status': row['score_status'], 'score_confidence': row['score_confidence']})
-    inventory = json.loads(strip_secrets(json.dumps(inventory, ensure_ascii=False)))
+    inventory = observation.redact_structure(inventory)
     # Hash aliases are references to visible recorded claims, not a claim that
     # the science or the artifact was independently verified.
     hash_refs = {}

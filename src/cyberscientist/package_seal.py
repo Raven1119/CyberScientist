@@ -12,6 +12,29 @@ TRACE = "traces/cyberscientist_merged.jsonl"
 DATA = "provenance/data_inputs.json"
 
 
+def preflight_files(files: dict[str, bytes]) -> list[str]:
+    """Check observed server constraints without changing scientific content."""
+    root = trace_selection.bundle_root(files)
+    manifest = json.loads(files[root + 'arm_manifest.json'])
+    errors = []
+    handoff = manifest.get('handoff')
+    # Public schema permits complete, but the actual upload validator rejects
+    # it (CS-RH-01); preserve the discrepancy and ask the author to resolve it.
+    if isinstance(handoff, dict) and handoff.get('status') == 'complete':
+        errors.append('handoff.status=complete 被真实上传校验拒绝；请省略该可选字段，或按实际交接状态填写 partial/stuck/failed')
+    char = manifest.get('characterization')
+    path = char.get('path') if isinstance(char, dict) else char if isinstance(char, str) else None
+    if path is not None and (not isinstance(path, str) or path.startswith('/')
+            or '..' in path.split('/') or '\\' in path or root + path not in files):
+        errors.append('characterization.path 必须指向包内有效 JSON；否则缺少 characterization modality')
+    elif path is not None:
+        try:
+            if not isinstance(json.loads(files[root + path]), dict): raise ValueError()
+        except (ValueError, UnicodeDecodeError):
+            errors.append('characterization modality 的文件须为 JSON 对象')
+    return errors
+
+
 def seal(source: bytes, run_id: str, trial_id: str | None, through_seq: int,
          data_inputs: dict[str, Any] | None = None, *,
          narrative_bytes: bytes | None = None,
@@ -21,6 +44,9 @@ def seal(source: bytes, run_id: str, trial_id: str | None, through_seq: int,
         if len(names) != len(set(names)):
             raise ValueError("duplicate archive member")
         files = {name: archive.read(name) for name in names}
+    errors = preflight_files(files)
+    if errors:
+        raise ValueError('; '.join(errors))
     root = trace_selection.bundle_root(files)
     trace_name = root + TRACE
     data_name = root + DATA

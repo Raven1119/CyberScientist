@@ -196,7 +196,8 @@ def advance_sync() -> None:
         if snapshot.get('automatic_harvest_version') != 1:
             continue  # no retroactive irreversible authorization on historical Runs
         auth = db.query_one('SELECT * FROM authorizations WHERE id=?', (run['authorization_id'],))
-        if not auth or auth['max_submissions'] <= 0:
+        from . import run_limits
+        if not auth or (not run_limits.track_unlimited(run, auth) and auth['max_submissions'] <= 0):
             continue
         from . import track_clock
         end = track_clock.for_run(run)['end']
