@@ -61,3 +61,9 @@ D-63–D-72 原文已加入 §5。开局 main 比 origin/main 落后 13 个 S4 �
 独立留出使用24个非空公开轨迹，与CS-UP-11 selected及selection_additions所有ID不交叉，冻结后再取回；结果见[独立留出报告](CS_UP_13_TRACE_HELDOUT.md)。N06一致率58.33%、N09 16.67%，印证不能可靠移植；N08 95.83%主要由阴性组成，未据此提升分级。N11缺产物、N17/N18缺worker可见输入，三项一致率无法判定，是未满足的硬验证项；替代为六个真实封存包的产物/配对/哈希自查。首批24个公开空轨迹保留为覆盖失败，不零填或算作通过。
 
 前端轨迹门和开关可见；14项前端测试与TypeScript/Vite构建通过。后端诊断与提交/评测集完成检查，最终数字见STATUS和w4-final-green.log。原始证据w4-rehearsal-packages.json、w4-heldout-summary.json及冻结输入哈希保存在忽略目录。
+
+## W5 — 材料与 ABACUS
+
+私有材料镜像172212固定五模块版本，实际Job20845219与沙箱退出0；ABACUS官方镜像Job20847482退出0、SCF收敛。首个ABACUS Job因检查标记写错退出1，保留失败后独立修正重跑。两个起点已通过后台不可覆盖登记，沙箱创建成功时间进入runtime_observations；前端读取目录。脚本、版本、赝势来源、哈希和分层耗时见environments/cs-up-13/README.md。
+
+硬验收缺口：ABACUS沙箱两次TLS handshake timeout，没有计算回执。替代为已通过的同镜像Job，沙箱创建成功不代替exec成功。未删除已有资源；新沙箱设20分钟自动到期。

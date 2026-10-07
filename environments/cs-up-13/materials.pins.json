@@ -1,0 +1,22 @@
+{
+  "ase": {
+    "version": "3.26.0",
+    "source": "https://pypi.org/pypi/ase/3.26.0/json"
+  },
+  "pymatgen": {
+    "version": "2025.5.28",
+    "source": "https://pypi.org/pypi/pymatgen/2025.5.28/json"
+  },
+  "spglib": {
+    "version": "2.6.0",
+    "source": "https://pypi.org/pypi/spglib/2.6.0/json"
+  },
+  "phonopy": {
+    "version": "2.39.0",
+    "source": "https://pypi.org/pypi/phonopy/2.39.0/json"
+  },
+  "ovito": {
+    "version": "3.12.3",
+    "source": "https://pypi.org/pypi/ovito/3.12.3/json"
+  }
+}
