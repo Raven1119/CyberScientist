@@ -113,3 +113,40 @@ def test_historical_artifacts_are_separate_from_new_run_workspaces(tmp_path,monk
     assert runtime_layout.run_directory('run_old')==archive/'run_old'
     assert runtime_layout.run_directory('run_new')==root/'workspace/runs/run_new'
     with pytest.raises(ValueError):runtime_layout.run_directory('../secret')
+
+
+def test_concurrent_release_refuses_before_touching_live_code(tmp_path,monkeypatch):
+    import fcntl
+    root=tmp_path/'comp';(root/'.runtime').mkdir(parents=True)
+    with (root/'.runtime/release.lock').open('a') as lock:
+        fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+        monkeypatch.setattr(runtime_release,'_release_locked',lambda *a,**k:pytest.fail('must not enter'))
+        result=runtime_release.release('HEAD',root=root,port=8765)
+    assert result['phase']=='lock' and result['status']=='failed'
+
+
+def test_metadata_failure_restores_code_and_prior_version(tmp_path,monkeypatch):
+    root=tmp_path/'comp';(root/'.runtime').mkdir(parents=True)
+    source=root/'src/cyberscientist/cli.py';source.parent.mkdir(parents=True);source.write_text('old code')
+    (root/'.runtime/version.json').write_text(json.dumps({'commit':'b'*40}))
+    (root/'.runtime/cyberscientist_launch.py').write_text('old launcher')
+    stage=tmp_path/'stage';target=stage/'src/cyberscientist/cli.py';target.parent.mkdir(parents=True);target.write_text('new code')
+    original=Path.write_text
+    def write(path,*args,**kwargs):
+        if path.name=='version.pending':raise OSError('injected disk failure')
+        return original(path,*args,**kwargs)
+    monkeypatch.setattr(Path,'write_text',write)
+    with pytest.raises(OSError,match='injected'):
+        runtime_release.publish(stage,root,{'commit':'a'*40,'files':{'src/cyberscientist/cli.py':hashlib.sha256(b'new code').hexdigest()}})
+    assert source.read_text()=='old code'
+    assert json.loads((root/'.runtime/version.json').read_text())['commit']=='b'*40
+    assert (root/'.runtime/cyberscientist_launch.py').read_text()=='old launcher'
+
+
+def test_pre_competition_commit_is_refused_before_shutdown(tmp_path,monkeypatch):
+    root=tmp_path/'comp'
+    monkeypatch.setattr(runtime_release,'export',lambda commit,stage,**k:{'commit':'a'*40,'files':{}})
+    monkeypatch.setattr(runtime_release,'build_frontend',lambda *a:None)
+    monkeypatch.setattr(runtime_release,'stop_runtime',lambda *a:pytest.fail('old backend must remain'))
+    result=runtime_release.release('old-tag',root=root,port=8765,source=Path(__file__).resolve().parents[1])
+    assert result['status']=='failed' and '发布协议' in result['reason']

@@ -161,6 +161,12 @@ def main() -> None:
             print(json.dumps(result, ensure_ascii=False))
             raise SystemExit(0 if result['status'] == 'completed' else 1)
         method = 'GET'; body = None
+        if args.target=='comp':
+            from . import redeploy
+            try:redeploy.process_identity(redeploy.request(port,'/api/v1/health',timeout=5),root=root)
+            except (OSError,ValueError,RuntimeError) as exc:
+                print(observation.strip_secrets('比赛后端身份未确认：'+str(exc)),file=sys.stderr)
+                raise SystemExit(2)
         if args.ops_command == 'submit':
             path = '/api/v1/ops/submit'; method = 'POST'
             body = {k: getattr(args,k) for k in ('run_id','trial_id','package_path','operation_id','mailbox_id','retry_of')}

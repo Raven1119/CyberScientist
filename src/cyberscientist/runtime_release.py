@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import fcntl
 import io
 import json
 import os
@@ -227,6 +228,8 @@ def publish(stage: Path, root: Path, manifest: dict):
         if path.startswith('tools/'):owned.add('tools/playground-cli/0.1.40')
         elif path.startswith('config/'):owned.add(path)
         else:owned.add(PurePosixPath(path).parts[0])
+    metadata={name:(root/'.runtime'/name).read_bytes() if (root/'.runtime'/name).exists() else None
+              for name in ('version.json','cyberscientist_launch.py')}
     changed=[]
     try:
         for name in sorted(owned):
@@ -238,6 +241,11 @@ def publish(stage: Path, root: Path, manifest: dict):
             target.parent.mkdir(parents=True,exist_ok=True)
             if source.is_dir():shutil.copytree(source,target)
             else:shutil.copy2(source,target)
+        version={'commit':manifest['commit'],'manifest_sha256':hashlib.sha256(json.dumps(manifest,sort_keys=True).encode()).hexdigest(),
+                 'launcher_sha256':_launcher(root)}
+        pending=root/'.runtime/version.pending'
+        pending.write_text(json.dumps(version,indent=2))
+        os.replace(pending,root/'.runtime/version.json')
     except OSError:
         for name in reversed(changed):
             target=root/name
@@ -245,14 +253,32 @@ def publish(stage: Path, root: Path, manifest: dict):
             elif target.exists():target.unlink()
             previous=backup/name
             if previous.exists():shutil.move(str(previous),str(target))
+        for name,content in metadata.items():
+            path=root/'.runtime'/name
+            if content is None:path.unlink(missing_ok=True)
+            else:path.write_bytes(content)
         raise
-    version={'commit':manifest['commit'],'manifest_sha256':hashlib.sha256(json.dumps(manifest,sort_keys=True).encode()).hexdigest(),
-             'launcher_sha256':_launcher(root)}
-    (root/'.runtime/version.json').write_text(json.dumps(version,indent=2))
     return version
 
 
+def compatible(stage: Path):
+    required=('src/cyberscientist/runtime_layout.py','contracts/collaboration.schema.json',
+              'contracts/experience-policy.txt','start-runtime.sh')
+    if any(not (stage/name).is_file() for name in required):
+        raise ValueError('目标早于比赛发布协议，未停止现后端；仅可回退到首个兼容比赛版本或更新版本')
+
+
 def release(commit: str, *, root: Path, port: int, timeout=180, source: Path | None = None):
+    runtime=root/'.runtime';runtime.mkdir(parents=True,exist_ok=True)
+    with (runtime/'release.lock').open('a') as lock:
+        try:fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+        except BlockingIOError:
+            return {'status':'failed','phase':'lock','reason':'另一发布正在运行；未停止或修改比赛代码'}
+        try:return _release_locked(commit,root=root,port=port,timeout=timeout,source=source)
+        finally:fcntl.flock(lock,fcntl.LOCK_UN)
+
+
+def _release_locked(commit: str, *, root: Path, port: int, timeout=180, source: Path | None = None):
     from . import redeploy
     source=source or config.WORKSPACE_ROOT;runtime=root/'.runtime';runtime.mkdir(parents=True,exist_ok=True)
     journal=runtime/'release-journal'/str(uuid.uuid4());journal.parent.mkdir(parents=True,exist_ok=True)
@@ -277,6 +303,7 @@ def release(commit: str, *, root: Path, port: int, timeout=180, source: Path | N
                     path=cached/'tree'/name
                     if path.is_symlink() or hashlib.sha256(path.read_bytes()).hexdigest()!=digest:raise ValueError('缓存哈希不匹配：'+name)
                     target=stage/name;target.parent.mkdir(parents=True,exist_ok=True);shutil.copy2(path,target)
+            compatible(stage)
             # External competition skill directories were copied in full at
             # migration. Keep them on later releases; repository skills win.
             for directory in sorted((root/'skills').glob('bohrium-*')):
