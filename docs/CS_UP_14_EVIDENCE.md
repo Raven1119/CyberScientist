@@ -49,3 +49,7 @@ W3根因追加：原生日志的完整授权确为null/true，但紧随其后的
 Terra首个完整原生turn #116→#177为97.633002秒（含工具），维护打断的后续turn不编造完整延迟。w3-terra-turns.json保留原生turn ID与事件时间。实际原胞独立核查Job23502265通过，有限SCF试算v1脚本退出127已保留，v2正在运行；尚无最终科研输出、包或Attempt。
 
 屏障修复版全量最终1585 passed、2既有warnings（892.75秒），原日志final-guard-pytest.log；没有删除或跳过测试。前端104项/22文件及构建已通过，后续未改前端。实际有限SCF v2的out.zip与shell日志已取回，日志记录收敛、275秒实际运行、赝势SHA及密度输出；生产候选LiSi cell-relax Job23502296 / bohr20855558正在32核环境运行。上述SCF不是最终弛豫，不据此声明本地科学分、正式Worker、accept或收割通过。W3/W4仍待完成，不打fallback-5。
+
+科研反证与修正：#2523记录PI指导c2754eb957查出首个cell-relax Job23502296全部原子0 0 0，故为冻结原子的受限计算，不能使用为最终弛豫。原作业和输入保留。执行者新建LiSi开放原子v2 Job23502312 / bohr20855574，Li参考23502313 / 20855575，Si参考23502314 / 20855576；#2581列出并行设置。2026-10-08T03:42Z只读compute.reconcile(allow_retry=False)实际收到远端运行观察，没有重建在途操作。
+
+取证入口.package-checks/cs-up-14/collect-w3.py --reconcile（只读远端）/--convert（仅官方转换封存原生快照），输出w3-acceptance-proof.json；当前0提交、0封存包，不推断分数。已完成Terra原生turn墙钟97.633002/900.411656/131.335583秒（含工具），维护打断的turn标not_observed，不编造完成耗时。后续封存包将核对原SHA、Trial绑定及原生日志前缀字节未改。
