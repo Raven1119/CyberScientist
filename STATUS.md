@@ -664,3 +664,5 @@ CS-UP-13 工作包提交索引（按Git事实，最终W8标签另录）：
 - 2026-10-08T15:48:43.210915+08:00 W3初始化反馈修复（本提交 CS-UP-14）：实际#14274/#14280/#14287三次校验拒绝前没有冻结评分器/远端动作，通用反馈却标unknown，执行者停止盲重试。0.85秒红回归复现；初始化校验拒绝现在明确remote_effect=none并返回原operation_id，其他评分执行unknown/不重发保留；技能新增整数1契约示例。相关71 passed/28.78秒，初始化与unknown保留16 passed/7.55秒（2既有warnings），compileall/diff-check/凭据扫描通过；新源码全量进行中、实际部署待验。当前草稿只读清单校验通过但科学代码未执行/未冻结，评分仍0。
 
 - 2026-10-08T15:54:00.787972+08:00 W3反馈修复部署实测（代码1e026d8 CS-UP-14）：main已推送；安全重部署completed、停机123.599秒/维护136.515秒、preflight warn、digest匹配/native_close_unknown=0，#14569恢复原Astra/Terra线程。修正草稿同清单只读验证通过，仍未冻结/科学评分0；cs14-scorer-validation-no-remote-effect-fix-v1已持久queued。新源码全量进行中；科学流程、首包/提交/收割继续原Run，时钟和额度未重置。
+
+- 2026-10-08T16:04:37.828356+08:00 W3/W4新源码与完整原件验证（代码1e026d8 CS-UP-14）：完整1612 passed、2既有warnings（941.11秒），5个冻结源码哈希一致；compileall/diff-check及实际凭据扫描通过，前端无修改、104项/构建既有通过仍适用。全新沙箱回收74文件均与受控传输回执的bytes/SHA256逐一匹配，Li/Si/LiSi原始日志都有SCF与Relaxation is converged!，clean-three-phase-raw-files-proof.json保留原件路径及终态标记。此项仅验原件和三相弛豫终态，六项新输出/科学自校验/登记科学分/轨迹门/真实CLI仍待分别验收。
