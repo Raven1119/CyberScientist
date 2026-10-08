@@ -3,7 +3,7 @@
 阶段1的fallback-4已推送，阶段2只验证一道已结束LiSi题。
 已取得并校验项目内官方CLI0.1.39，全局安装与配置未改。
 已复核三种模型真实日志可转换，旧error事件转换缺陷仍存在。
-不编辑原始记录，保留失败并使用新干净会话。
+不编辑原始记录，保留失败；最终干净复跑仍待验收。
 提交链路与真实Worker验收将在下文按实际结果追加。
 
 ## W0
@@ -54,7 +54,7 @@ Terra首个完整原生turn #116→#177为97.633002秒（含工具），维护�
 
 取证入口.package-checks/cs-up-14/collect-w3.py --reconcile（只读远端）/--convert（仅官方转换封存原生快照），输出w3-acceptance-proof.json；当前0提交、0封存包，不推断分数。已完成Terra原生turn墙钟97.633002/900.411656/131.335583秒（含工具），维护打断的turn标not_observed，不编造完成耗时。后续封存包将核对原SHA、Trial绑定及原生日志前缀字节未改。
 
-交付核查：audit-delivery.py在5142173对fallback-4后的25个受控改动文件按现有凭据值逐字节扫描，0命中；.package-checks/cs-up-14无跟踪文件。只输出文件路径/哈希，不输出凭据。src、apps/web、tests与已全量通过的2f4948e无差异，后续改动仅文档。最终报告更新后须重新扫描。
+交付核查：audit-delivery.py在5142173对fallback-4后的25个受控改动文件按现有凭据值逐字节扫描，0命中；.package-checks/cs-up-14无跟踪文件。只输出文件路径/哈希，不输出凭据。该次检查src、apps/web、tests与已全量通过的2f4948e无差异；此后W3发现的续行修复须另跑完整回归，最终报告更新后须重新扫描。
 
 Worker只读可达性：GET http://47.92.88.121:443/api/uploads返回404（2.012秒），/openapi.json和/api/openapi.json也404，没有公开schema可核实；没有发送POST、认证或Attempt。该结果只证明主机响应，不能推断POST是否可用，更不能当评分证据。原记录worker-reachability.json、worker-read-only-schema-probes.json均留本地忽略目录。
 
@@ -67,6 +67,14 @@ Worker只读可达性：GET http://47.92.88.121:443/api/uploads返回404（2.012
 D-74结论已经确定：04:28:32.877504Z（开局后7212.531秒）六项最终产物路径全部不存在，local_scores=0、submissions=0，#4384/4386原生回合完成自述尚无形成能、电压与合金电荷。两小时截止为04:28:20.346497Z，不扣两次维护；保持D-69，不调整默认分诊。证据d74-two-hour-proof.json，科学Run继续。
 
 CLI前置真实只读探针：按产品当前选择逻辑确定实验邮箱及主邮箱，逐个GET /auth/me和完整分页该题attempts，分别13.673/13.861秒成功；当前实验账号0旧Attempt、主邮箱3旧Attempt。没有创建、上传或提交。证据cli-authenticated-baseline-probe.json。04:27:49Z对账中开放原子LiSi23502312、Si23502314、电荷23502469均为Failed，具体科学原因仍待原日志；Li收敛23502468仍Running。监控cs14-post-turn-status-and-cli-baseline-v1已持久排队，提供实际状态与空闲事实，不替代理研究。
+
+## W3 通用续行与新科学终态
+
+实际#5571 Terra回合04:42:46Z结束后，Si23502546于#5769观察Finished，仍有其他Job在途；旧check_liveness因此直接返回，直到监控事实指导#5983才续行。`test_idle_executor_reviews_completed_job_while_other_job_runs`隔离回归在2.87秒失败，调试器确认无忙会话/审阅，只改变另一Job的Running状态就恢复看门狗排队。修复为可信终态事件驱动的一次PI生命周期审阅，原事件序号、Job身份和当前Trial入帧；普通轮询不唤醒模型，unknown不重发。事务内排队和终态序号去重，保护显式等待、现有审阅/指导、门禁和忙会话。25项存活测试10.67秒通过，126项相关回归71.86秒通过；全量和生产部署仍待核实。红/绿/相关日志为idle-job-wake-red.log、idle-job-wake-green.log、idle-job-wake-related.log。
+
+05:06Z从本地归档直接读取原生日志：LiSi23502545含4次SCF收敛、`Relaxation is converged!`及`!FINAL_ETOT_IS -2429.5556910903378594 eV`；其平台失败来自后处理文件路径，归档SHA256 cd5829b3ce201a2b6a07c9ebd5bc98016ba8492eb32263acfb005b38bc4409e4。Si23502546含SCF/弛豫收敛及`!FINAL_ETOT_IS -857.9657519714776299 eV`，归档SHA256 8100e225cf1930698fa0a05bb1b6c6fb65fb6237a6af8774741006c547fc3ac5。这里只读取日志与文件哈希，没有本地科学计算；收敛扫参、密度/电荷校验、四JSON、干净复跑和正式评分仍待完成。证据w3-recovery-terminal-log-proof.json。
+
+本题local_scoring.scorer_manifest在04:47:22Z实际返回SCORER_MISSING（尚无scorer目录），不是已调用后的科学0分。事实已交PI；现有local-scorer技能提供公开契约初建、冻结和prepare_job/register_job可信登记；已有评分器在Run中保持只读，隐藏规则保持unknown，不拿自报数字代替系统或Worker评分。
 
 ## W4 验收核对（进行中）
 
@@ -81,8 +89,8 @@ CLI前置真实只读探针：按产品当前选择逻辑确定实验邮箱及�
 |W3 CLI上传、harbor_worker、轨迹分和判定|尚未验证|当前0 Attempt；认证/分页通过不能证明POST或正式评分|
 |W3 D-74|条件不满足，保留D-69|d74-two-hour-proof.json和UPGRADE_DESIGN评估；没有更改默认分诊|
 |W3 CLI收割及阈值恢复|尚未验证|尚无确认实验分；当前auto_harvest=false、阈值100，不能提前触发|
-|W4 全量、前端、构建|已实际通过|最终2f4948e：1585 passed/2 warnings/892.75秒；前端104 passed/22文件/19.64秒、构建通过；后续仅文档|
-|W4 密钥与原始证据隔离|当前扫描通过|25改动文件与真实凭据逐字节无命中、0本地证据入Git；最终报告后须再扫|
+|W4 全量、前端、构建|基线通过；续行修复全量进行中|2f4948e：1585 passed/2 warnings/892.75秒；前端104 passed/22文件/19.64秒、构建通过；新增controller修复已过25/126项相关回归，完整回归待结果|
+|W4 密钥与原始证据隔离|已扫描版本通过；最终再扫|25改动文件基线与真实凭据逐字节无命中、0本地证据入Git；最终报告后须再扫|
 |W4 最终报告、回退文档与fallback-5|尚未完成|本报告持续补证；须在实际闭环或有证据的替代交付后更新回退目标、封存标签并核对远端SHA|
 
 阶段1完成复核：远端lightchaser-fallback-4剥离到ad9bb076128815f543a8519c10db4ca9b47c1038；授权调用账本实际模型15/20、私有镜像构建1/6、Job3/10、沙箱4/15；交付清单12个核心证据文件哈希全部匹配（stage1-completion-recheck.json）。该阶段无科研Run和参赛提交；缺失经验、历史缺结果和留出不可观测项保留在CS_UP_13_FIX_EVIDENCE，不能把标签解释为这些缺口消失。

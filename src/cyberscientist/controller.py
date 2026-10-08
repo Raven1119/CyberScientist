@@ -1537,6 +1537,51 @@ class RunController:
             db.execute("UPDATE runs SET resume_on_startup=0 WHERE id=?", (run_id,))
             self._wake(run_id)
 
+    def _review_idle_job_result(self, run_id: str, diagnosis: dict[str, Any]) -> bool:
+        """A completed Job can need attention while another Job still runs."""
+        if (self._executor_busy.get(run_id) is not False
+                or diagnosis['trial_status'] != 'active' or diagnosis['sandbox_exec_count']):
+            return False
+        with db.transaction() as conn:
+            run = conn.execute('SELECT phase,gate,current_trial_id FROM runs WHERE id=?',
+                               (run_id,)).fetchone()
+            if not run or run['phase'] != 'running' or run['gate'] != 'open':
+                return False
+            if conn.execute("SELECT 1 FROM review_requests WHERE run_id=?"
+                            " AND status IN ('pending','running') LIMIT 1", (run_id,)).fetchone():
+                return False
+            if conn.execute("SELECT 1 FROM guidance WHERE run_id=?"
+                            " AND status IN ('queued','sending','unknown') LIMIT 1", (run_id,)).fetchone():
+                return False
+            if not conn.execute("SELECT 1 FROM events WHERE run_id=? AND trial_id=?"
+                                " AND type='prime.executor.turn_completed' LIMIT 1",
+                                (run_id, run['current_trial_id'])).fetchone():
+                return False
+            terminal = conn.execute(
+                "SELECT e.seq,e.payload FROM events e JOIN compute_jobs j"
+                " ON j.run_id=e.run_id AND j.operation_id=json_extract(e.payload,'$.operation_id')"
+                " WHERE e.run_id=? AND e.trial_id=? AND e.source='controller'"
+                " AND e.type='job.observed' AND j.trial_id=e.trial_id"
+                " AND j.status IN ('Finished','Failed','Stopped')"
+                " AND json_extract(e.payload,'$.status') IN ('Finished','Failed','Stopped')"
+                " ORDER BY e.seq DESC LIMIT 1", (run_id, run['current_trial_id'])).fetchone()
+            previous = conn.execute(
+                "SELECT payload FROM events WHERE run_id=? AND trial_id=?"
+                " AND type='run.job_result_review_queued' ORDER BY seq DESC LIMIT 1",
+                (run_id, run['current_trial_id'])).fetchone()
+            if not terminal or (previous and terminal['seq'] <= json.loads(previous['payload'])['terminal_event_seq']):
+                return False
+            result = json.loads(terminal['payload'])
+            request_id = collab._enqueue_request_tx(conn, run_id, source='lifecycle',
+                                                    blocking=False, trigger='job_result_available')
+            db.append_event_tx(conn, run_id, 'controller', 'run.job_result_review_queued',
+                {'review_id': request_id, 'terminal_event_seq': terminal['seq'],
+                 'operation_id': result['operation_id'], 'status': result['status'],
+                 'notice': '已观察到Job终态且执行者空闲；PI自行决定继续或等待，不重发远端操作'},
+                trial_id=run['current_trial_id'])
+        self._wake(run_id)
+        return True
+
     def check_liveness(self, run_id: str, now: float | None = None) -> str | None:
         """One bounded, read-mostly watchdog step; returns the action taken."""
         now = time.time() if now is None else now
@@ -1570,8 +1615,6 @@ class RunController:
         if limited:
             return None  # A scheduled retry is a legitimate wait, not a stall.
         diagnosis = self._liveness_diagnosis(run_id, run)
-        if diagnosis["jobs"] or diagnosis["sandbox_exec_count"]:
-            return None
         marks = ",".join("?" for _ in _LIVENESS_PROGRESS)
         progress = db.query_one(
             f"SELECT seq,occurred_at FROM events WHERE run_id=? AND (type IN ({marks})"
@@ -1589,6 +1632,10 @@ class RunController:
             duration = json.loads(latest_wait["payload"]).get("duration_seconds", stall_seconds)
             if wait_at is not None and now < wait_at + min(duration, defaults["max_brain_wait_seconds"]):
                 return None
+        if self._review_idle_job_result(run_id, diagnosis):
+            return 'job_result_review_queued'
+        if diagnosis["jobs"] or diagnosis["sandbox_exec_count"]:
+            return None
         if self._executor_busy.get(run_id) and diagnosis["trial_status"] == "active":
             native = db.query_one(
                 "SELECT occurred_at FROM events WHERE run_id=? AND type IN ("
@@ -3503,6 +3550,12 @@ class RunController:
                 "SELECT payload FROM events WHERE run_id=? AND type='run.stall_detected'"
                 " ORDER BY seq DESC LIMIT 1", (run_id,))
             packet["stall_diagnosis"] = json.loads(stall["payload"]).get("diagnosis") if stall else None
+        if trigger == 'job_result_available':
+            available = db.query_one(
+                "SELECT payload FROM events WHERE run_id=? AND trial_id=?"
+                " AND type='run.job_result_review_queued' ORDER BY seq DESC LIMIT 1",
+                (run_id, run['current_trial_id']))
+            packet['job_result_available'] = json.loads(available['payload']) if available else None
         sup = observation._supervision(run_id)
         feedback = observation.build_frame(run_id,mode="lifecycle",frame_id=_rid("frame"),
             from_seq=sup["covered_seq"]+1,through_seq=self._last_seq(run_id),

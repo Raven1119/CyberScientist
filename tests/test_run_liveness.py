@@ -186,6 +186,86 @@ def test_second_stall_advises_and_long_job_suppresses_watchdog():
     assert 'run.stall_detected' not in _types(job_run)
 
 
+def _idle_with_completed_and_running_jobs():
+    controller, rid = _run()
+    tid = _active_trial(controller, rid)
+    controller._executor_busy[rid] = False
+    db.append_event(rid, 'prime', 'prime.executor.turn_completed', {}, trial_id=tid)
+    for operation, status in (('still-running', 'Running'), ('ready', 'Finished')):
+        db.execute("INSERT INTO compute_jobs(operation_id,run_id,trial_id,request_hash,"
+                   "spec_json,input_directory,status,created_at,updated_at)"
+                   " VALUES(?,?,?,'hash','{}','.',?,?,?)",
+                   (operation, rid, tid, status, db.utcnow(), db.utcnow()))
+    db.append_event(rid, 'controller', 'job.observed',
+                    {'operation_id': 'ready', 'status': 'Finished'}, trial_id=tid)
+    return controller, rid, tid
+
+
+def test_idle_executor_reviews_completed_job_while_other_job_runs():
+    controller, rid, tid = _idle_with_completed_and_running_jobs()
+
+    assert controller.check_liveness(rid) == 'job_result_review_queued'
+    request = db.query_one("SELECT source,trigger,status FROM review_requests"
+                           " WHERE run_id=? ORDER BY rowid DESC LIMIT 1", (rid,))
+    assert dict(request) == {'source': 'lifecycle', 'trigger': 'job_result_available',
+                             'status': 'pending'}
+    assert db.query_one('SELECT COUNT(*) FROM compute_jobs WHERE run_id=?', (rid,))[0] == 2
+    assert 'run.stall_detected' not in _types(rid)
+    packet = controller._lifecycle_packet(controller._require_run(rid), 'job_result_available')
+    assert packet['job_result_available']['operation_id'] == 'ready'
+    assert packet['job_result_available']['status'] == 'Finished'
+    terminal = db.query_one("SELECT seq FROM events WHERE run_id=? AND type='job.observed'",
+                            (rid,))['seq']
+    assert packet['job_result_available']['terminal_event_seq'] == terminal
+
+    db.execute("UPDATE review_requests SET status='done' WHERE run_id=?", (rid,))
+    assert controller.check_liveness(rid) is None
+    restarted = RunController()
+    restarted._executor_busy[rid] = False
+    assert restarted.check_liveness(rid) is None
+    assert db.query_one('SELECT COUNT(*) FROM review_requests WHERE run_id=?', (rid,))[0] == 1
+
+    db.execute("UPDATE compute_jobs SET status='Failed' WHERE operation_id='still-running'")
+    db.append_event(rid, 'controller', 'job.observed',
+                    {'operation_id': 'still-running', 'status': 'Failed'}, trial_id=tid)
+    assert restarted.check_liveness(rid) == 'job_result_review_queued'
+    assert db.query_one('SELECT COUNT(*) FROM review_requests WHERE run_id=?', (rid,))[0] == 2
+
+
+@pytest.mark.parametrize('guard', ['busy', 'gate', 'review', 'no_boundary'])
+def test_job_result_review_preserves_existing_control_guards(guard):
+    controller, rid, _ = _idle_with_completed_and_running_jobs()
+    if guard == 'busy':
+        controller._executor_busy[rid] = True
+    elif guard == 'gate':
+        db.execute("UPDATE runs SET gate='waiting_brain' WHERE id=?", (rid,))
+    elif guard == 'review':
+        controller._enqueue_lifecycle(rid, trigger='user_steer')
+    else:
+        db.execute("DELETE FROM events WHERE run_id=? AND type='prime.executor.turn_completed'", (rid,))
+    assert controller.check_liveness(rid) is None
+    assert db.query_one("SELECT 1 FROM review_requests WHERE run_id=?"
+                        " AND trigger='job_result_available'", (rid,)) is None
+
+
+def test_job_result_review_respects_explicit_brain_wait():
+    controller, rid, _ = _idle_with_completed_and_running_jobs()
+    wait = db.append_event(rid, 'brain', 'brain.wait', {'duration_seconds': 300})
+    stamp = datetime.fromisoformat(wait['occurred_at']).timestamp()
+    assert controller.check_liveness(rid, now=stamp + 299) is None
+    assert controller.check_liveness(rid, now=stamp + 300) == 'job_result_review_queued'
+
+
+def test_unknown_compute_is_not_a_completed_result_or_retry_permission():
+    controller, rid, _ = _idle_with_completed_and_running_jobs()
+    db.execute("UPDATE compute_jobs SET status='unknown' WHERE operation_id='ready'")
+    db.execute("UPDATE events SET payload=? WHERE run_id=? AND type='job.observed'",
+               (json.dumps({'operation_id': 'ready', 'status': 'unknown'}), rid))
+    assert controller.check_liveness(rid) is None
+    assert db.query_one('SELECT COUNT(*) FROM compute_jobs WHERE run_id=?', (rid,))[0] == 2
+    assert db.query_one('SELECT COUNT(*) FROM review_requests WHERE run_id=?', (rid,))[0] == 0
+
+
 def test_heartbeat_usage_poll_and_repeated_job_list_do_not_mask_stall():
     controller, rid = _run()
     for kind in ('prime.execution.heartbeat', 'brain.usage.updated', 'job.observed'):
