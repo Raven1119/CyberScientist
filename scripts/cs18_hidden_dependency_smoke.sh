@@ -6,12 +6,14 @@ ROOT="${1:-/home/wmywb/CyberScientist-comp}"
 DEV="${2:-/home/wmywb/CyberScientist}"
 BASE="lightchaser-runtime-base-1009-v2"
 AREA="$ROOT/.runtime/validation/hidden"
+SOURCE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 mkdir -p "$AREA"
 if [[ -e "$AREA/started" ]]; then
   printf '%s\n' 'Acceptance pass already started; inspect receipts, do not replay.' >&2
   exit 2
 fi
-for helper in validate-native.py validate-tools.py validate-sandbox.py validate-identities.py validate-preview.py validate-audit.py validate-browser.py; do
+cp -- "$SOURCE"/cs18_validation/validate-*.py "$ROOT/.runtime/" || exit 2
+for helper in validate-native.py validate-tools.py validate-sandbox.py validate-identities.py validate-preview.py validate-audit.py validate-browser.py validate-baseline.py; do
   test -f "$ROOT/.runtime/$helper" || exit 2
 done
 export PATH="/home/wmywb/.local/bin:$PATH"
@@ -48,6 +50,7 @@ step() {
   return 0
 }
 "$PY" -c 'from cyberscientist.runtime_release import stop_runtime;from pathlib import Path;stop_runtime(Path.cwd(),8765,300)' > "$AREA/stop.log" 2>&1 || exit 2
+"$PY" .runtime/validate-baseline.py || exit 2
 test ! -e "$HIDDEN" || exit 2
 date -Iseconds > "$AREA/started"
 mv -- "$DEV" "$HIDDEN" || exit 2
