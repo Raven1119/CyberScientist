@@ -162,6 +162,8 @@ W3新修复生产验收（d512eab CS-UP-14）：安全部署completed、停机14
 
 W3监控独立评分操作（本提交 CS-UP-14）：在现有当前Trial内，通过既有executor_scoring.prepare/channel=job冻结已初始化公开候选b25679e…ef8365，受控compute.submit实际accepted Job23507427/Bohrium20860659，操作cs14_monitor_frozen_public_score_v1_job，10分钟上限、c2_m4_cpu、已冻结声明镜像。没有修改科学/评分源码、原始native或扩展Run/提交额度；local_score.monitor_execution_requested明确来源controller，不冒称Terra原生执行。实际终态及register_job可信评分尚待验收，当前未声称分数。
 
+W3/W4当前源码完整复验（d512eab CS-UP-14）：完整1625 passed、2既有warnings，880.09秒；4个冻结源码/测试哈希一致，前端未改、104项与构建既有通过仍适用，compileall/diff-check与34文件真实凭据扫描均通过。监控评分23507427 Finished，经register_job核对系统固定命令/输入/镜像/回执后，10:00:33Z登记ls_87fbad7fd37e，score_source=executor_verified（通道历史名称，实际操作者controller另记事件）。数值100仅public_contract公开代理，不是官方/隐藏科学100；trace-placeholder-v1的predicted_display_score100不作轨迹验收依据。本地实际public_v6检查表仍36/review、N11提示，尚无正式Attempt。
+
 ## W4 验收核对（进行中）
 
 |要求|当前事实|直接证据或剩余步骤|
@@ -175,7 +177,7 @@ W3监控独立评分操作（本提交 CS-UP-14）：在现有当前Trial内，�
 |W3 CLI上传、harbor_worker、轨迹分和判定|尚未验证|当前0 Attempt；认证/分页通过不能证明POST或正式评分|
 |W3 D-74|条件不满足，保留D-69|d74-two-hour-proof.json和UPGRADE_DESIGN评估；没有更改默认分诊|
 |W3 CLI收割及阈值恢复|尚未验证|尚无确认实验分；当前auto_harvest=false、阈值100，不能提前触发|
-|W4 全量、前端、构建|嵌套占位符新源码全量进行中；其余已验证|d21d708：1624 passed/2 warnings/887.50秒，4冻结源码/测试哈希一致；前端104 passed/22文件/19.64秒、构建通过且无后续前端修改；71项相关与16项初始化/unknown回归另通过|
+|W4 全量、前端、构建|当前源码通过|d512eab：1625 passed/2 warnings/880.09秒，4冻结源码/测试哈希一致；前端104 passed/22文件/19.64秒、构建通过且无后续前端修改；71项相关与16项初始化/unknown回归另通过|
 |W4 密钥与原始证据隔离|已扫描版本通过；最终再扫|25改动文件基线与真实凭据逐字节无命中、0本地证据入Git；最终报告后须再扫|
 |W4 最终报告、回退文档与fallback-5|尚未完成|本报告持续补证；须在实际闭环或有证据的替代交付后更新回退目标、封存标签并核对远端SHA|
 
