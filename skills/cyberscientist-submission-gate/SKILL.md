@@ -34,3 +34,10 @@ metadata:
 - 只在有实质改进时提交：科学分提高，或轨迹证据明显补强。
 - 科学分高但判为 review/block 时：读扣分码和缺失证据，冻结科学结果，按干净复跑的做法重做一条证据充分的轨迹，再间隔提交。不要原包重交。
 - 回执中的 `missing_worker_submission` 或 `nonstandard-submission-guard` 是提交链路问题，立即报告，不要在轨迹上找原因。
+
+
+## 四、检查点与实际选中轨迹
+
+- 提交前审阅使用 `research_checkpoint(stage=progress, review=async/blocking)`，由PI决定是否提交；`stage=trial_complete`走Trial结束/承接流程，不等于提交前批准。
+- 检查实际封存包manifest指向的轨迹：仅搬运成果的承接Trial可能只有交付事件。完整原始会话存在不能代替所选轨迹的科学执行/验证链；应在产出最终结果的Trial连续完成复跑和提交审阅。
+- `create_sent`后没有Attempt ID仍为unknown；只读对账，无新增列表不授权重发。离线dry-run通过不证明上传或正式评分。

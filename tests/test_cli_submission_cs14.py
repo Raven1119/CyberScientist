@@ -96,6 +96,45 @@ def test_unknown_reconciles_account_topic_and_same_hash_never_sends(monkeypatch)
     assert cli_submission.reconcile_unknown(source['id'],platform,'private','ended')['status']=='absence_observed'
 
 
+def test_polling_unknown_without_reference_reaches_readonly_reconciliation(monkeypatch):
+    from test_auto_harvest import seed
+    rid, source = seed(10)
+    db.execute("UPDATE submissions SET status='unknown',platform_ref=NULL WHERE id=?", (source['id'],))
+    platform = BohriumPlaygroundPlatform('https://play.bohrium.com/api')
+    monkeypatch.setattr(mailboxes, '_platform', lambda: platform)
+    monkeypatch.setattr(mailboxes, '_platform_for_run', lambda *a: platform)
+    seen = []
+    def reconcile(*args):
+        seen.append(args[0])
+        return {'status': 'absence_observed', 'retry_allowed': False}
+    monkeypatch.setattr(cli_submission, 'reconcile_unknown', reconcile)
+    mailboxes.poll_scores(rid, manual=True)
+    assert seen == [source['id']]
+    assert db.query_one('SELECT status FROM submissions WHERE id=?', (source['id'],))['status'] == 'unknown'
+
+
+def test_failed_cli_preserves_bounded_redacted_process_diagnostics(tmp_path, monkeypatch):
+    platform = prepare(tmp_path, monkeypatch)
+    content, _ = bundle()
+    secret = 'fixture-process-private-token'
+    calls, feedback = [], []
+    def process(argv, **kwargs):
+        calls.append(argv)
+        return subprocess.CompletedProcess(argv, 1, 'not JSON ' + secret,
+            'HTTP 403 specific upstream cause ' + secret + 'x' * 3930 + secret)
+    monkeypatch.setattr(cli_submission.subprocess, 'run', process)
+    with pytest.raises(PlatformError) as error:
+        submit_once(platform, 'fixture', secret, 'unused.zip', 'ended',
+            {'package_bytes': content, 'on_feedback': lambda kind, value: feedback.append((kind, value))})
+    assert not error.value.no_side_effect and len(calls) == 1
+    diagnostic = next(value for kind, value in feedback if kind == 'cli_process')
+    assert diagnostic['exit_code'] == 1 and diagnostic['diagnostic_only'] is True
+    assert 'HTTP 403 specific upstream cause' in diagnostic['stderr']
+    assert len(diagnostic['stderr']) <= 4000
+    assert secret not in json.dumps(feedback) and secret not in str(error.value)
+    assert 'fixture-process-private' not in json.dumps(feedback)
+
+
 def test_operator_submission_caps_survive_unlimited_compute():
     from test_auto_harvest import seed
     rid,_=seed(10);row=db.query_one('SELECT * FROM runs WHERE id=?',(rid,));snapshot=json.loads(row['config_snapshot']);snapshot['operator_submission_limits']={'experimental':1,'harvest':0};db.execute('UPDATE runs SET config_snapshot=? WHERE id=?',(json.dumps(snapshot),rid));db.execute('UPDATE authorizations SET unlimited_resources=1,max_submissions=0 WHERE run_id=?',(rid,))

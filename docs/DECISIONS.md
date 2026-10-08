@@ -929,3 +929,8 @@ CS-UP-14初始化拒绝的副作用分类（2026-10-08T15:48:43.210915+08:00）�
 CS-UP-14 W3 原生凭据误报修复：实际成果包3d5bdeb8…74f2的封存被ValueError拦截；原日志精确已存密钥匹配0，展示脱敏器误匹配task-specific中的sk-、供应商reasoning密文字段和公开YOUR_BOHR_ACCESS_KEY/Bearer省略示例。现按原生JSON语义分类，只忽略供应商reasoning.encrypted_content的形状匹配，已存密钥在整个原文及编码中仍拒绝；用户同名字段不豁免。原始字节不变、不脱敏、不截断；CLI同用此分类，封存失败返回有界脱敏真实原因。真实28,063,693字节原始快照保留，成果包只读封存成功19,451,843字节/1347投影步（native-privacy-actual-snapshot-proof.json、native-privacy-seal-preview-proof.json）；这不是提交/分数。53项相关回归16.14秒通过；完整新源码回归进行中。检查仅改原生分类/错误呈现，评分规则、科学源码、原时钟/2+1额度及unknown不重发保持。
 
 W3嵌套文档占位符误报修复（本提交 CS-UP-14）：#22923完整封存再次拒绝，不能沿用旧探针成功；原日志35,295,895字节精确已存凭据命中0，唯一形状匹配为公开BOHR_ACCESS_KEY占位符后接字面转义换行/python3，ENV正则把它们合成一个值。0.43秒红回归复现；仅将转义边界作为赋值值终止符，未知真实赋值和已存凭据仍拒绝。54项相关回归15.78秒通过；实际35,782,930字节完整快照现在通过、耗时4.502秒/SHA991357bf…8461e（native-nested-placeholder-actual-proof.json），原文未改。新源码完整回归进行中，尚未部署/提交。另执行者实际轨迹检查admitted，但正式评分仍unknown；原失败/草稿保留。
+
+
+CS-UP-14 W3真实投递排查：首次自动操作在本地canonical package路径解析时报NOT_FOUND，尚无预约/远端动作，却被通用反馈归为unknown。保留原错误；仅经实际代码位置、零提交/零操作及修复文件同SHA证明后，由监控使用原PI已授权operation_id走正常提交API。实际CLI随后一次调用失败/无回执，未知预约保留；列表absence_observed不能作为未存储证明，不二次调用、切API或触发收割。原CLI stderr被旧实现丢弃，不推断原HTTP原因。新增失败诊断在完整脱敏后截到4000字符/字段，保留退出码，错误摘要300字符；无引用unknown轮询补齐BohriumPlaygroundPlatform导入，使既有只读reconcile真正执行。两项红回归真实复现，最终全量和部署另录。
+
+CS-UP-14 W3交付投影：trial_complete触发生命周期/新Trial；本次科学生产de056与交付04dc分开归因。最终实际封存选中56行，公开v6检查0/review，早先3d5b候选36不可移用；完整Terra原生3350步转换及科学原件仍真实存在，但不能凭此推断Worker所选输入或官方accept。补提交前skill的stage=progress审阅路线和manifest指针检查，保留原始字节/unknown包不变；本轮不增加第二Run、不延长时钟、不改写历史以修分。用户允许替代方向下交付Bohrium科学自校验、公开契约代理100/low与本地轨迹0/review，官方硬项未满足写明。

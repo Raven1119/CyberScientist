@@ -19,7 +19,8 @@ from typing import Any
 
 from . import arm_admission, config, datasets, db, experience_context, package_seal, trace_diagnostics, trace_narrative, trace_selection
 from .mailbox_platform import (MailboxPlatform, PlatformError, final_score,
-                               explicit_create_rejection, get_platform, public_feedback)
+                               explicit_create_rejection, get_platform, public_feedback,
+                               BohriumPlaygroundPlatform)
 
 
 class MailboxError(Exception):

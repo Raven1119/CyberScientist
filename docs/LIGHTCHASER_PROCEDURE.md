@@ -191,6 +191,13 @@ CS_PLAYGROUND_SUBMIT_TOKEN仅由后端环境注入，模板不含实际值。CLI
 
 系统改造入口mailbox_platform与mailboxes._perform_submission；题目存在性、封存SHA、D-64间隔、D-66屏障和收割窗口继续统一准入。W2完成后默认submission_transport=cli，api只作显式回退。unknown先按邮箱身份+题目分页只读对账；没有权威未存储证明时保持unknown，不通过重发试探。缺原生记录或含密钥时停止提交，做干净Trial，不能从其他Run借轨迹。
 
+
+CS-UP-14真实单题结论：首次官方CLI调用未获Attempt ID，unknown保留；离线dry-run通过3350原生步，读取网络200和完整账号列表无新增不能证明上传/正式评分。实际封存ARM指针56行，本地公开v6为0/review、v8-advisory为risk，完整原生原件38,149,791字节保留。Bohrium科学契约代理100/low不含隐藏参考，不能据此开并发或停用DeepSeek；仍用D-69。没有确认实验分，真实收割未验证，阈值保持100。
+
+提交前使用research_checkpoint的stage=progress并请求review=async/blocking，由PI明确发起提交；trial_complete用于结束Trial，可能触发承接Trial。承接Trial只搬包时，必须检查实际封存ARM指针是否仍包含生产/验证证据，不能用完整raw_messages存在代替选中轨迹的因果链。路径在本地解析失败且已确认零预约/零平台调用时，可经原授权正常接口修复；create_sent后的unknown只能只读对账，不重发。
+
+CLI故障要保留有界脱敏退出码、stderr和stdout片段，区分本地处理、中央Attempt创建、Worker上传、评分四步。列表没有新增不是权威未存储证明，不凭此释放预约。硬性Worker验收未满足时，记录原因和真实科学/轨迹替代，不能将本地代理当正式通过。详见CS_UP_14_EVIDENCE.md。
+
 ## 七、汇报格式
 
 - 中文；巡检每次最多两句话。

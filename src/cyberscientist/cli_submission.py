@@ -124,6 +124,14 @@ def submit(platform, email, secret, package_path, challenge_id, meta):
         except (subprocess.TimeoutExpired, OSError) as exc:
             # No second invocation: the create may have succeeded remotely.
             raise PlatformError('官方CLI在途状态unknown：' + type(exc).__name__) from exc
+        process_diagnostic = public_feedback({
+            'diagnostic_only': True, 'exit_code': proc.returncode,
+            'stderr': observation.strip_secrets(proc.stderr),
+            'stdout_preview': observation.strip_secrets(proc.stdout),
+        }, secret, *config.sensitive_values())
+        for field in ('stderr', 'stdout_preview'):
+            process_diagnostic[field] = process_diagnostic[field][:4000]
+        on_feedback('cli_process', process_diagnostic)
         if package.read_bytes() != content or native.read_bytes() != raw:
             raise PlatformError('CLI改变了封存字节；保留unknown并停止')
         try: receipt = json.loads(proc.stdout)
@@ -144,7 +152,9 @@ def submit(platform, email, secret, package_path, challenge_id, meta):
                 return {'accepted': True, 'receipt': str(attempt_id), 'bundle_uploaded': True, 'transport': 'cli'}
         match = re.search(r'--attempt-id\s+(\d+)', proc.stderr)
         if match: on_stage('cli_unknown', match[1])
-        raise PlatformError('官方CLI未确认同包上传，保留unknown；只读按账号和题目对账，不重发')
+        detail = process_diagnostic['stderr'][:300]
+        raise PlatformError('官方CLI未确认同包上传，保留unknown；只读按账号和题目对账，不重发'
+                            + f'；exit_code={proc.returncode}' + ('；' + detail if detail else ''))
 
 
 def reconcile_unknown(submission_id, platform, secret, challenge_id):

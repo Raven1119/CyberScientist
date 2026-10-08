@@ -1,10 +1,13 @@
 # CS-UP-14 提交链路证据
 
-阶段1的fallback-4已推送，阶段2只验证一道已结束LiSi题。
-已取得并校验项目内官方CLI0.1.39，全局安装与配置未改。
-已复核三种模型真实日志可转换，旧error事件转换缺陷仍存在。
-不编辑原始记录，保留失败；全新三相弛豫及六输出原件已验，评分仍待验收。
-提交链路与真实Worker验收将在下文按实际结果追加。
+仅交付阶段1与2；fallback-4已推送，阶段2只运行一道已结束LiSi题。
+项目内官方CLI0.1.39及CLI/API开关已接入，全局安装与配置未改。
+全新三相ABACUS弛豫、六输出和包内入口Bohrium重放已有真实原件。
+公开科学契约代理两次100/low；它不检查隐藏科学参考，不能称科学100。
+首次真实CLI调用未获Attempt ID，unknown预约保留；harbor_worker、正式分数及accept均未确认。
+实际封存包本地轨迹检查0/review、cap39；此前另一包36分不能移作最终成绩。
+已排查本地包路径、原生转换、CLI环境网络和只读账号列表；原CLI错误详情未保留，不能断言平台永久不可提交。
+没有确认实验分，故没有触发收割；保留D-69，不启动彩排二或阶段4。
 
 ## W0
 
@@ -26,7 +29,7 @@ D-73原文已入UPGRADE_DESIGN§5；阶段2最多一个Run、2实验+1收割，�
 
 W2补验：36项CLI/设置持久化回归通过（46.16秒），包括冻结policy额度对PI可见并实际拒绝超额。阶段有界审查覆盖原字节归属、密钥传播、未知副作用、收割共用入口和回退；修正发送前GET失败须释放未发送预约、CLI响应显式error不得当上传成功。实际平台Worker契约留W3验证。
 
-## W3 进行中
+## W3 实际运行记录（按时间保留）
 
 唯一赛道round_fab7e74ad784，唯一Run run_8a21b7d249，启动2026-10-08T02:28:20.346497Z。原生回执确认Astra xhigh0.161与Terra high fast0.148，priority；Run开始前后端重启总耗时123.698秒（包括安全关机等待，不计入本Run维护停机），旧Run resume_on_startup=0未恢复。单题有效计算授权为unlimited，冻结提交上限实验2、收割1。收割暂关，阈值100。
 
@@ -141,7 +144,7 @@ W3/W4原生修复完整复验（d21d708 CS-UP-14）：完整1624 passed、2既�
 
 ## 实际阶段耗时（可重叠，不相加）
 
-以持久事件recorded_at或原始wrapper时间为界；Job预约至首次观察终态含调度/轮询，不冒充CPU或模型推理时长。首次真实提交墙钟尚未发生，不能填写完成时间。
+以持久事件recorded_at或原始wrapper时间为界；Job预约至首次观察终态含调度/轮询，不冒充CPU或模型推理时长。首次真实CLI调用发生于10:14:23.188Z，距Run开局7小时46分2.842秒；上传、远端Attempt创建及首次成功提交时间仍UNKNOWN。
 
 |环节|真实边界/耗时|限制|
 |---|---|---|
@@ -166,22 +169,75 @@ W3/W4当前源码完整复验（d512eab CS-UP-14）：完整1625 passed、2既�
 
 W3执行者真实重放/评分验收（本提交 CS-UP-14）：v8候选源SHAf7c45651…921d5，补入原Trial可见科学脚本后，23507424/20860658 Finished，真正从包内密度重跑入口；未过滤日志SHAa0b4bfff…d68e，回传replay_comparison.json pass=true/mismatches={}。六项要求输出哈希同时匹配清洁原件、v8 ZIP及远端重放；附加independent_validation.json新SHA不同，未声称七文件相同（v8-entry-replay-actual-proof.json）。Terra随后通过原生工具执行冻结评分Job23507438/20860672，10:01:11Z可信登记ls_c78bde13a6ae，公开契约代理100/low，非完整科学/官方100；与监控先行评分分开归因。#25985已请求trial_complete提交前审阅，尚无正式Attempt。
 
-## W4 验收核对（进行中）
+## W3 唯一真实CLI调用及排查结果
 
-|要求|当前事实|直接证据或剩余步骤|
+同一Run `run_8a21b7d249` 从02:28:20.346497Z连续计时；原轮次截止10:28:07.166031Z，没有扣除断网或维护时间。科学生产Trial为`trial_de05641608`，两个后续Trial `trial_6d593e0e0a`、`trial_04dc15406d`只承接交付，均属于原Terra线程。它们不能冒充重新完成科学计算的干净Trial。`stage=trial_complete`按设计触发生命周期审阅，曾两次造成交付转Trial；提交前审阅应使用`stage=progress, review=async/blocking`，由PI明确请求提交。
+
+|时间UTC / 事件|实际结果|边界|
 |---|---|---|
-|W0 D-73|已实现|UPGRADE_DESIGN §5及9ab5cf9|
-|W1 官方CLI与来源|已验证|0.1.39版本、官方latest/tarball哈希、9e2a0ab；历史安装来源仍unknown|
-|W1 三模型原生转换|已验证所测样本|9/8/902步、工具配对及原SHA不变；旧error转换缺陷保留|
-|W2 实验/收割CLI、保护与开关|应用验证通过|8a2d652及后续通用修复；fake覆盖和真实HTTP api→cli往返，不代替Worker|
-|W3 单题/单Run/指定模型|实际运行确认|round_fab7e74ad784、run_8a21b7d249、原生Astra xhigh/Terra high fast线程身份；冻结实验2+收割1|
-|W3 完整科研、科学评分、轨迹门、干净复跑|新三相/六输出、v8入口重放及公开代理评分已验；轨迹官方分尚未验证|74文件和原归档哈希核实；重放六输出相同，可信公开代理100/low；本地v6提示风险，k点缺口保留|
-|W3 CLI上传、harbor_worker、轨迹分和判定|尚未验证|当前0 Attempt；认证/分页通过不能证明POST或正式评分|
-|W3 D-74|条件不满足，保留D-69|d74-two-hour-proof.json和UPGRADE_DESIGN评估；没有更改默认分诊|
-|W3 CLI收割及阈值恢复|尚未验证|尚无确认实验分；当前auto_harvest=false、阈值100，不能提前触发|
-|W4 全量、前端、构建|当前源码通过|d512eab：1625 passed/2 warnings/880.09秒，4冻结源码/测试哈希一致；前端104 passed/22文件/19.64秒、构建通过且无后续前端修改；71项相关与16项初始化/unknown回归另通过|
-|W4 密钥与原始证据隔离|已扫描版本通过；最终再扫|25改动文件基线与真实凭据逐字节无命中、0本地证据入Git；最终报告后须再扫|
-|W4 最终报告、回退文档与fallback-5|尚未完成|本报告持续补证；须在实际闭环或有证据的替代交付后更新回退目标、封存标签并核对远端SHA|
+|10:11:00 / #26155|授权指导的自动发送先因当前Trial缺少canonical package.zip报NOT_FOUND|发生于本地路径解析，尚无预约或平台调用；通用修复反馈误标unknown|
+|10:13:53 / #26250|监控核对实际失败代码、零提交/零远端操作与硬链接同SHA，通过正常提交API使用原`auto-guidance_23433e6039`修复|使用已有PI提交授权，没有绕过门禁或重放未知远端调用；原失败记录保留|
+|10:14:00 / #26251|本地`sub_ccc1b19416`及实验预约创建|本地记录不等于远端Attempt|
+|10:14:23.165 / #26253|实验账号身份和完整分页baseline成功，旧Attempt列表为空|只读认证及列表成功|
+|10:14:23.188 / #26254|官方0.1.39 CLI实际被调用一次，create_sent|距开局7:46:02.842，不等于成功上传时间|
+|10:14:25.879 / #26255|CLI未返回可确认上传回执，status=unknown，platform_ref=NULL|未知是否创建远端Attempt/上传；没有harbor_worker、轨迹分或判定|
+|10:18:27|相同封存包官方dry-run exit0，转换3350步，sealed/native字节不变|无凭据、无网络请求、无Attempt；只验证离线处理|
+|10:19:29|相同Node/CLI环境公开GET HTTP200|只证明当时读取网络可用，不能定位原POST错误|
+|后续只读完整分页|absence_observed，candidates=[]、matches=[]、retry_allowed=false|列表没有新增不是权威未存储证明；不释放unknown预约、不重发|
+
+原生产代码丢弃CLI返回码/stderr，首次调用的具体上游错误无法追溯；不得推断为403、Worker404或确定不可能提交。新修复保留有界脱敏退出诊断，但不能补造旧证据。另修复`poll_scores`引用未导入BohriumPlaygroundPlatform、被异常捕获后跳过对账的问题；对应红回归实际2 failed/0.64秒。实际读取对账已通过显式现有reconciler完成，返回空列表仍保留unknown。
+
+当次原件仅留本地忽略目录：`first-cli-local-path-repair-proof.json`、`first-cli-submission-result.json`、`first-cli-readonly-reconciliation.json`、`first-cli-offline-dry-run-proof.json`、`cli-node-readonly-network-proof.json`。原始CLI stderr未保存是一项证据缺口，不以修复后的fake输出冒充真实旧响应。
+
+### 实际同一封存包与最终轨迹
+
+|身份|SHA256 / 实际内容|
+|---|---|
+|v8科学源包|f7c45651b2b94106814784b510db11c70fb5b527993e1e9fbf4bb63fff2921d5|
+|实际CLI封存ZIP|6e1a39f9de5ce6b9639675774ffd460116d75263bbace66c025ae969586bee97；21,238,386字节|
+|完整Terra原生记录|197ecbfc45fc65ffc4a94f95cdc46ddd059901f0ea8047b4d384258b2fe257c9；38,149,791字节；与原日志前缀逐字节相同|
+|ARM指针所选轨迹|traces/cyberscientist_merged.jsonl；56行、8工具配对；SHA fe26d4664ea4a703654fc7db7d72882f4773a495823fc93e5bfeddc4382c1f5e|
+|本地公开v6检查|0/review、cap39；N06/N09/N10/N11触发，其中N11为indicative，其余相关v8对应关系不足，不能当官方扣分码|
+|v8-advisory-1|conclusion=risk；N17/N18 unknown；score_prediction=null|
+|官方v8|科学分、轨迹分、判定、扣分码、缺失证据及missing_worker_submission状态全部UNKNOWN|
+
+证据`first-cli-sealed-native-proof.json`与`first-cli-sealed-trace-diagnostic.json`来自实际被CLI读取的封存字节。完整原生转换3350步与ARM所选56行是不同输入；承接Trial的投影没有展开科学生产Trial，存在真实证据可见性风险。此前3d5b源包的36/review只是较早候选，不能覆盖这次0/review；评分脚本的trace-placeholder-v1 70或predicted_display100也不作验收。没有改写原生日志、替换已封存字节或择优汇报。
+
+后续处理方案：保持未知提交只读对账，先查平台是否有同包哈希权威记录，再决定后续授权内的动作；开赛前在新产物形成的同一Trial连续完成科学执行、入口复跑、证据核验和提交前审阅，避免只交handoff投影。本轮原截止及unknown不重发保护不允许以再次创建Attempt来试探。第二实验未执行，收割未执行：没有已确认实验分，不满足真实收割前提；阈值从未下调，当前仍100。没有拿到正式accept或轨迹≥60，D-74两项条件均不成立，保留D-69。
+
+### 科学验算的范围和剩余风险
+
+清洁三相、结构/对称性、能量/电压、全空间周期Voronoi守恒及90³→96³网格对照有真实Bohrium输出。六要求输出在真实包内重放中逐项SHA一致。它们是实际计算和有限自校验，不证明隐藏参考一致或全部数值收敛。Si k8→k10约−5.655 meV/atom未达到约1 meV内部目标；Li展宽敏感性+1.652239 meV/atom；LiSi k6补验失败/不完整；元素逐原子电荷差异、截断能与网格联合改变而非独立网格控制、ABACUS E0未提供等限制保留。电荷是公开允许的周期Voronoi定义，不解释成Bader参考。
+
+公开候选评分器没有官方隐藏参考，其authority=`local_candidate_not_official`，两次100/low仅为public_contract结构契约。监控Job23507427与Terra原生Job23507438分别归因，只有后者使用v8科学源；正式科学正确性UNKNOWN。按用户允许的替代方向，交付上述实际科学原件/自校验和本地轨迹检查；不宣称满足原硬性Worker验收。
+
+完整Terra回合已观察22次，9.150–2541.632秒，包含工具和远端等待；另5段被维护打断、没有完整结束观察，纯模型响应延迟UNKNOWN。逐回合及PI耗时在`w3-acceptance-proof.json`，不把这些墙钟时长当模型推理速度。
+
+## W3 终态、设置恢复与修复审查
+
+#26375于10:28:17.979Z确认Run finished/end_reason=authorization_expired，ended_at=10:28:17.972237Z；调度观察较轮次截止晚10.806秒，没有延长授权。累计Job69个（36 Finished、33 Failed）、本轮唯一新沙箱已删除，无本轮在途Job；失败与unknown原件完整保留。没有删除用户原有Bohrium资源。历史其他Run不属于本卡，没有把它们恢复为新增科研。
+
+10:31:12Z经Settings API按revision22→23恢复临时Terra选择、执行器路径、DeepSeek fallback与实验提交授权/目标范围；默认执行器恢复原Sol配置，D-69保留。原空fast/provider按全局fast=true、provider=codex显式表达，API拒绝null的第一次恢复请求返回422且没有保存。CLI默认/项目路径是本卡交付保留项；local_calculation=false服从AGENTS的Bohrium-only边界；auto_harvest=false在真实CLI/Worker未验证前继续保留，不能盲目恢复自动主邮箱投递。阈值实读100，原Run授权/started_at/config_snapshot逐字未变，未知提交预约保留。证据`w3-settings-restored-proof.json`。
+
+本阶段有界代码审查：CLI只增加失败可观测性，先对整个输出做形状/当前实际凭据/本次令牌脱敏，再截4000字符/字段；stdout仅诊断，不冒充回执，异常仍unknown、不再次调用CLI。轮询仅补导入使既有只读reconcile执行，不放宽匹配/重发。相关命令`.venv/bin/python -m pytest -q tests/test_cli_submission_cs14.py tests/test_native_log_privacy.py tests/test_tool_feedback.py`实际33 passed/46.20秒；skills检查11 passed/15.01秒；compileall与diff-check通过。新源码完整回归另列最终结果；前端无改动，不重复用构建替代后端测试。
+
+## W4 验收核对（最终验证中）
+
+|要求|结论|直接证据或替代|
+|---|---|---|
+|W0 D-73|已实现|UPGRADE_DESIGN §5、9ab5cf9|
+|W1 官方CLI与来源|已实际验证|0.1.39版本/latest/tarball哈希、9e2a0ab；历史安装来源unknown|
+|W1 三模型原生转换|所测样本通过；旧error缺陷未解决|9/8/902步及原SHA；实际封存原生3350步，原字节未改|
+|W2 实验/收割CLI、保护与开关|应用测试/HTTP往返验证通过|8a2d652及后续回归；fake收割不等于真实收割|
+|W3 单题/单Run/指定模型|已实际验证|唯一run_8a21b7d249、Astra xhigh fast/Terra high fast；原线程/时钟及2+1额度保持|
+|W3 科学/评分/干净复跑|部分通过|新三相/74原件、六输出和v8入口Bohrium重放；公开契约100/low；科学收敛和隐藏参考缺口如上|
+|W3 最终本地轨迹门|未过|实际封存包0/review、cap39；风险提示不能预测真实v8|
+|W3 CLI/harbor_worker/正式轨迹和判定|硬性验收未满足|真实CLI一次、unknown预约1；0确认远端Attempt/正式分数。已排查并补错误诊断与对账；不能证明永久不可提交|
+|W3 D-74|不启用|两小时首版未交，最终无官方accept/轨迹≥60；保留D-69|
+|W3 CLI收割/阈值|硬性验收未满足；阈值保持100|没有确认实验分，不触发真实收割；应用fake路径通过不作真实证据|
+|W4 完整测试/前端/构建|最终新修复回归进行中|上一源码1625 passed/2 warnings/880.09秒；前端104 passed/22文件/19.64秒及构建通过，无后续前端修改|
+|W4 密钥与原始证据|已扫描版本通过；最终再扫|改动字节与当前真实凭据比对，原件仅留本地忽略目录|
+|W4 报告/过程/fallback-5|交付收尾中|真实缺口、替代和范围如本报告；最终tag/push后另记远端SHA|
 
 阶段1完成复核：远端lightchaser-fallback-4剥离到ad9bb076128815f543a8519c10db4ca9b47c1038；授权调用账本实际模型15/20、私有镜像构建1/6、Job3/10、沙箱4/15；交付清单12个核心证据文件哈希全部匹配（stage1-completion-recheck.json）。该阶段无科研Run和参赛提交；缺失经验、历史缺结果和留出不可观测项保留在CS_UP_13_FIX_EVIDENCE，不能把标签解释为这些缺口消失。
 
