@@ -851,3 +851,9 @@ CS-UP-13 工作包提交索引（按Git事实，最终W8标签另录）：
 - 已实际验证：bohr 2.7.8原生帮助有background/timeout，没有renew；官方sandbox文档同样未列续期。旧LiSi账本69 Job，33 Failed、36 Finished。
 - 尚未验证：本卡机制与真实云端验证待执行；CS-UP-16全量及fallback-7交付仍在主树进行。
 - 阻塞项：当前原生CLI没有已确认续期协议，后续核对；不能以本地延长时间伪造续期成功。
+
+### CS-UP-17 W1
+- 已实现：docs/JOB_FAILURES_1008.md逐项69行，退出码/第一失败事实/分类/平台时长/墙钟unknown及原因；附分组修复范围，原始回执不入Git。
+- 已实际验证：对一致性旧账本、归档STDOUTERR/ZIP及冻结输入只读核对，Failed33/Finished36；失败归类环境12、时限相关3、科学4、脚本3、unknown11；私有job-failures-1008.json保留结构化来源和日志哈希，行数断言69。
+- 尚未验证：16个可前置暴露风险是候选上限，未重跑、未宣称真实消除；W3将验证各类机制。
+- 阻塞项：旧平台仅spendTime，没有完整统一起止时间；独立浪费墙钟保持unknown，替代列出平台报告时长。exit143/abort根因不凭数字推定。
