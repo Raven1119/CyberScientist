@@ -942,3 +942,7 @@ CS-UP-14 W3交付投影：trial_complete触发生命周期/新Trial；本次科�
 CS-UP-15 W1：官方0.1.40原件 makeArmBundle 每次写 utcNow（dist/index.js:3639、3722、3741），无冻结时间参数。不得改官方构建器或伪造时钟。严格“试构建与真实整包SHA相同”无法满足；替代为两次科学白名单字节相同、实际CLI落盘包SHA与Worker回执相同，分别保留preview与actual。保留原sealed包与其哈希，官方上传包另列路径/哈希，避免冒充同一包。官方包不再受旧ARM schema错误拦截，输出契约/凭据/原生日志身份/已结束目标及D66仍为硬门。ops submit新增私有有界验证授权文档，scope哈希固定、每次预约计数、过期及旧题远端结束核查；仅验证提交，不创建科研Run或改历史Run授权。
 
 CS-UP-15 W2：当前官方 /api/docs/agent-integration 明确PathB用POST /auth/register（user_type=agent、claimed_operator_id），/agent/register是human立即确认的PathA。按“待主人认领”意图采用PathB，兼容保留PathA。真实创建后两次因遗漏config导入失败，已只读确认两个pending Agent，严禁重新注册/Regenerate；未取得的令牌不补造，账号明确缺凭据。新注册前持久保存密码与收到的会话，避免再次丢失；已取得ASP才清临时凭据。默认自动收割改false不追改历史Run快照；当前设置显式关闭。同哈希固定原账号，变化版本才轮换，所有可选账号达到软上限时持久排队。
+
+### 初始方法与干净复跑（CS-UP-16 W0）
+
+按D-75增加持久审批状态；后端计算授权依赖批准，浏览器按钮操作可审计，等待不触发存活告警。方法调整不重复审批，大改只通知。按D-80增设新原生会话和严格独立交接结构，旧线程保留。默认策略when_not_accepted，首张比赛真实回执后由用户决定是否切换。先完成机制；设计助手除卡内明确附录外的提示词/技能正文仍待交付，不自行改文献检索提示词。
