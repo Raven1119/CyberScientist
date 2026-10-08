@@ -549,6 +549,7 @@ class RunController:
                     "solver_fallback": fallback,
                     "automatic_harvest_version": 1, "method_approval_version": 1,
                     "science_first_version": 1 if settings.get("science_first_flow",True) else 0,
+                    "sandbox_first_version": 1 if settings.get('policy',{}).get('science_compute') == 'sandbox_first' else 0,
                     "progressive_context_version": 1 if settings.get("progressive_context",True) else 0,
                     "compute_policy_version": 1, "sparse_brain_version": 1,
                     "lifecycle_version": 2, "submission_prediction_version": 1}
@@ -3846,6 +3847,9 @@ class RunController:
                                        {"trial_id": trial_id,
                                         "goal": action["goal"]},
                                        trial_id=trial_id)
+                from . import topic_workspace
+                if run['mode'] == 'connected' and topic_workspace.enabled(run_id):
+                    await asyncio.to_thread(topic_workspace.ensure, run_id)
                 self._snapshot_memory(run_id, trial_id, settings)
                 from . import strategies
                 created = db.query_one("SELECT * FROM events WHERE run_id=? AND type='trial.created'"

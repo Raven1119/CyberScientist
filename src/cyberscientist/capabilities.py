@@ -67,4 +67,10 @@ def index(run_id=None):
         ('research_environment','环境目录与恢复'),('research_lkm','公开科学摘要检索'),
         ('research_web_search','网页检索'),('research_web_read','读取网页'),
         ('research_experience','按ID读取经验正文')))
+    if run_id:
+        from . import topic_workspace
+        fact=topic_workspace.current(run_id)
+        if fact['mode'] != 'not_selected':
+            entries.append({'id':'topic-sandbox','use':'本题常驻沙箱；后台执行后poll读取日志；不可用时同镜像Job',
+                            'location':'research_sandbox: '+json.dumps(fact,ensure_ascii=False)})
     return entries

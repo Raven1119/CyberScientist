@@ -13,6 +13,8 @@ def validate(values):
 
 def enabled(name):
     if name not in NAMES: raise ValueError('未知功能开关：' + name)
+    if name == 'local_calculation' and config.load_settings().get('policy',{}).get('science_compute') == 'sandbox_first':
+        return False
     if name == 'auto_submission':
         from . import submission_gate
         if submission_gate.paused(): return False
@@ -35,6 +37,8 @@ def switch(name, enabled_value, expected_revision=None):
 
 
 def science_instruction():
+    if config.load_settings().get('policy',{}).get('science_compute') == 'sandbox_first':
+        return '本题Bohrium常驻沙箱用于调试、冒烟、后处理和中等计算；长时间、大规模计算使用Job。本地只读结果和打包。后台命令用research_sandbox background/poll，先查询本题工作区。\n'
     return ('秒级小计算允许本地执行；执行器的命令、输出、耗时与local来源必须留在真实轨迹中，PI委派并审阅证据；重计算使用已授权Bohrium Job 或沙箱，批量分析和科学作图也走该通道。\n'
             if enabled('local_calculation') else
             '本地计算功能已关闭；新的科学计算、统计分析和科学作图必须使用已授权Bohrium Job 或沙箱，PI只读审阅证据。\n')

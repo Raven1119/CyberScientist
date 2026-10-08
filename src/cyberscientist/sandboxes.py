@@ -874,6 +874,13 @@ def reconcile_startup(*, cleanup_terminal: bool = True) -> dict:
 
 def dispatch(run_id: str, body: dict) -> dict:
     action=body.get('action')
+    if action in ('background','poll'):
+        from . import sandbox_background
+        if action == 'poll': return sandbox_background.poll(run_id,body.get('operation_id'))
+        return sandbox_background.start(run_id,body.get('sandbox_id',''),body.get('command'),body.get('timeout'),body.get('operation_id'))
+    if action in ('ensure','work'):
+        from . import topic_workspace
+        return topic_workspace.ensure(run_id) if action == 'ensure' else topic_workspace.work(run_id,body)
     if action in ('exec','files.write') and not body.get('operation_id'):
         raise compute.ComputeError('INVALID_OPERATION','MCP 变更请求需稳定的 operation_id')
     if action=='create': return create(run_id,body.get('operation_id'),body.get('request') or {})

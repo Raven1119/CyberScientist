@@ -85,7 +85,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
                    "token_secret_ref": ""},
     "bohrium": {"executable": "", "wenyon_executable": "", "wenyon_home": "",
                 "access_key_secret_ref": "", "project_id": None, "host_overrides": {}},
-    "policy": {"science_compute": "local_seconds_remote_heavy",
+    "policy": {"science_compute": "sandbox_first",
                "default_authorization": "read_only",
                "allow_formal_submission": False,
                "require_ended_submission": False, "allowed_submission_targets": []},
@@ -159,7 +159,7 @@ def load_settings() -> dict[str, Any]:
     if 'model_pricing' in data:
         merged['model_pricing'] = json.loads(json.dumps(data['model_pricing']))
     if merged['policy'].get('science_compute') == 'bohrium_only':
-        merged['policy']['science_compute'] = 'local_seconds_remote_heavy'
+        merged['policy']['science_compute'] = 'sandbox_first'
     from .pi_policy import migrated
     merged['brain'] = migrated(merged['brain'])
     return merged
