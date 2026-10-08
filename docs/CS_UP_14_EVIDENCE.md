@@ -115,6 +115,8 @@ c8c1e7f完整回归结果：1596 passed、2既有warnings、1003.60秒，final-n
 
 d471686已推送main并安全部署，停机124.972829604秒、维护137.547986269秒；preflight warn无fail，digest实际loaded=checkout，native_close_unknown=0。#13135于07:08:13Z恢复原Astra/Terra线程及Trial，原started_at未变；指导cs14-scorer-initialize-available-v1仅queued，不能提前宣称使用。新沙箱Li原生exec回执含Relaxation is converged!/FINAL_ETOT及压力，原回执SHA和8条标记留clean-li-raw-terminal-proof.json；Si仍运行、LiSi未开始，完整复跑待验收。
 
+新初始化源码全量1610 passed、2既有warnings（816.05秒）；5个测试冻结源码哈希复核一致，compileall/diff-check通过。范围审查：API身份来自能力令牌，当前活动Trial和门禁、源路径/链接/凭据/大小、一次冻结、原评分器只读及失败清理/操作冲突均受测；没有新增科学实现或改变既有标尺。PI #13871于07:17:45Z采纳入口，尚无初始化/科学分，不据指导声称验收。
+
 ## W4 验收核对（进行中）
 
 |要求|当前事实|直接证据或剩余步骤|
@@ -128,7 +130,7 @@ d471686已推送main并安全部署，停机124.972829604秒、维护137.5479862
 |W3 CLI上传、harbor_worker、轨迹分和判定|尚未验证|当前0 Attempt；认证/分页通过不能证明POST或正式评分|
 |W3 D-74|条件不满足，保留D-69|d74-two-hour-proof.json和UPGRADE_DESIGN评估；没有更改默认分诊|
 |W3 CLI收割及阈值恢复|尚未验证|尚无确认实验分；当前auto_harvest=false、阈值100，不能提前触发|
-|W4 全量、前端、构建|前版本通过，新初始化源码全量进行中|c8c1e7f：1596 passed/2 warnings/1003.60秒，五源码哈希复核一致；前端104 passed/22文件/19.64秒、构建通过且无后续前端修改；52/64项相关回归另通过|
+|W4 全量、前端、构建|当前源码通过|d471686：1610 passed/2 warnings/816.05秒，5源码哈希复核一致；前端104 passed/22文件/19.64秒、构建通过且无后续前端修改；57项评分与25项初始化/API/技能回归另通过|
 |W4 密钥与原始证据隔离|已扫描版本通过；最终再扫|25改动文件基线与真实凭据逐字节无命中、0本地证据入Git；最终报告后须再扫|
 |W4 最终报告、回退文档与fallback-5|尚未完成|本报告持续补证；须在实际闭环或有证据的替代交付后更新回退目标、封存标签并核对远端SHA|
 
