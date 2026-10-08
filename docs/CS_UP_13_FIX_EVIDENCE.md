@@ -5,7 +5,7 @@
 轨迹门显示证据与unknown，不把弱规则说成正式分数。
 材料镜像Job与沙箱通过；ABACUS Job和新沙箱均通过，旧TLS失败保留。
 安全重部署在真实账本副本通过，停机126.69秒；自检有未确认项。
-Astra原生模型路由失败，不能据本地测试声称科研闭环已通。
+网络恢复后Astra简报和fast执行器通过原生零科研探针；科研闭环另验。
 缺失经验、历史缺结果、留出可见性等硬验收缺口在下文逐项保留。
 原始回执及第三方包只留本地忽略目录；阶段2另行验证官方CLI。
 
@@ -97,3 +97,5 @@ D-63–D-72 原文已加入 §5。开局 main 比 origin/main 落后 13 个 S4 �
 ### 网络恢复补验
 
 用户告知断网已恢复后，公开协议与更新清单均HTTP200。项目内Codex0.161.0 Astra xhigh原生探针18.6057秒，实际cat submission-gate退出0并返回结构化规则；不再把旧网络失败当当前不可用结论。ABACUS独立新沙箱create24.039秒、exec11.102秒，原脚本Si SCF收敛、退出0，原生回执有CS13_SI_SCF_PASSED。登记cs13-abacus-v2（Job与沙箱证据），保留v1及两次失败。证据network-restored-public.json、abacus-sandbox-network-restored.json和w5-abacus-v2-registration.json均只留本机。
+
+网络恢复后的完整W3原生补验：Astra xhigh PI30.190933秒，实际只读submission-gate并选择cs12-sci-py-v1、CPU，确认模板和新增经验；Astra high fast执行器25.567871秒，priority由原生线程回传确认。输入sha及active IDs在授权调用账本对应回执内，零科研。项目设置brain executable指向0.161.0，未修改全局CLI配置。此前600秒超时是历史失败，不能继续当作当前不可用结论。
