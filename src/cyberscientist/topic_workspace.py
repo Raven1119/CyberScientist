@@ -54,6 +54,19 @@ def ensure(run_id: str) -> dict:
 
 def work(run_id: str, body: dict) -> dict:
     """A work request includes its Job spec/input so fallback needs no second call."""
+    op=body.get('operation_id')
+    previous=db.query_one("SELECT * FROM compute_sandbox_operations WHERE operation_id=? AND action='background'",(op,))
+    if previous:
+        import hashlib
+        expected=hashlib.sha256(sandboxes._json([body.get('command'),body.get('timeout')]).encode()).hexdigest()
+        if previous['run_id']!=run_id or previous['command_sha256']!=expected:
+            raise compute.ComputeError('OPERATION_CONFLICT','本题工作操作已绑定其他请求')
+        return {'operation_id':op,'status':previous['status'],'deduplicated':True,'backend':'sandbox','poll_action':'poll','automatic_replay':False}
+    previous_job=db.query_one('SELECT * FROM compute_jobs WHERE operation_id=?',(op,))
+    if previous_job:
+        if previous_job['run_id']!=run_id:
+            raise compute.ComputeError('OPERATION_CONFLICT','工作操作不属于本Run')
+        return compute.submit(run_id,op,body.get('spec'),body.get('input_directory'),body.get('preflight'))
     fact = ensure(run_id)
     if fact['mode'] == 'not_selected':
         return fact

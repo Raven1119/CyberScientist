@@ -735,6 +735,10 @@ def delete(run_id: str, sandbox_id: str) -> dict:
                                (row['operation_id'],)).fetchone()
         if not current or current['status'] != 'active':
             return {'sandbox_id':sandbox_id,'status':'unknown','deduplicated':True}
+        run=conn.execute('SELECT phase FROM runs WHERE id=?',(run_id,)).fetchone()
+        terminal=run and (run['phase'] in TERMINAL_RUN or _seconds_left(row)<=30)
+        if terminal:
+            conn.execute("UPDATE compute_sandbox_operations SET status='unknown' WHERE run_id=? AND sandbox_id=? AND action='background' AND status='running'",(run_id,sandbox_id))
         if conn.execute("SELECT 1 FROM compute_sandbox_operations WHERE run_id=?"
                         " AND sandbox_id=? AND status='running' LIMIT 1",
                         (run_id,sandbox_id)).fetchone():

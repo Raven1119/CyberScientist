@@ -3850,6 +3850,11 @@ class RunController:
                 from . import topic_workspace
                 if run['mode'] == 'connected' and topic_workspace.enabled(run_id):
                     await asyncio.to_thread(topic_workspace.ensure, run_id)
+                    from . import power
+                    live=db.query_one('SELECT phase,gate,current_trial_id FROM runs WHERE id=?',(run_id,))
+                    if not live or live['phase']!='running' or live['gate']!='open' or live['current_trial_id']!=trial_id or power.shutdown_requested():
+                        db.append_event(run_id,'controller','trial.dispatch_deferred',{'trial_id':trial_id,'reason':'工作区等待期间运行状态变化'})
+                        continue
                 self._snapshot_memory(run_id, trial_id, settings)
                 from . import strategies
                 created = db.query_one("SELECT * FROM events WHERE run_id=? AND type='trial.created'"

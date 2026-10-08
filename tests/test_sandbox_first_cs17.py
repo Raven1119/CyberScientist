@@ -118,3 +118,64 @@ def test_sandbox_first_disables_local_science_structurally():
     config.save_settings(settings)
     assert not features.enabled('local_calculation')
     assert '常驻沙箱' in features.science_instruction()
+
+
+def test_work_unknown_then_expired_never_switches_to_job(run,monkeypatch):
+    _,rid,_,_,_=run
+    choose(monkeypatch)
+    fact=topic_workspace.ensure(rid)
+    monkeypatch.setattr(compute,'_native',lambda *a,**kw:{'ok':False,'unknown':True,'stderr':'lost reply'})
+    request={'operation_id':'durable-work','command':'echo once','timeout':30}
+    assert topic_workspace.work(rid,request)['status']=='unknown'
+    db.execute("UPDATE compute_sandboxes SET expires_at='2000-01-01T00:00:00+00:00' WHERE sandbox_id=?",(fact['sandbox_id'],))
+    monkeypatch.setattr(compute,'submit',lambda *a,**kw:pytest.fail('unknown后台命令不能跨到Job重放'))
+    result=topic_workspace.work(rid,request)
+    assert result['status']=='unknown' and result['automatic_replay'] is False
+
+
+def test_shutdown_blocks_background_before_native_dispatch(run,monkeypatch):
+    _,rid,_,calls,_=run
+    sid=sandboxes.create(rid,'box',{'timeout':300})['sandbox_id']
+    db.execute("INSERT OR REPLACE INTO system_state VALUES('shutdown_requested','1')")
+    with pytest.raises(compute.ComputeError,match='关机'):
+        sandbox_background.start(rid,sid,'echo forbidden',30,'shutdown-background')
+    assert sum('--background' in call for call in calls)==0
+
+
+def test_late_launch_receipt_cannot_regress_confirmed_terminal(run,monkeypatch):
+    _,rid,_,_,_=run
+    sid=sandboxes.create(rid,'box',{'timeout':300})['sandbox_id']
+    def native(args,**kw):
+        db.execute("UPDATE compute_sandbox_operations SET status='completed' WHERE operation_id='race-background'")
+        return {'ok':True,'exit_code':0,'stdout':json.dumps({'data':{'pid':42}})}
+    monkeypatch.setattr(compute,'_native',native)
+    assert sandbox_background.start(rid,sid,'echo once',30,'race-background')['status']=='completed'
+    assert db.query_one("SELECT status FROM compute_sandbox_operations WHERE operation_id='race-background'")[0]=='completed'
+
+
+def test_terminal_run_reclaims_unpolled_background(run,monkeypatch):
+    _,rid,_,calls,_=run
+    sid=sandboxes.create(rid,'box',{'timeout':300})['sandbox_id']
+    original=compute._native
+    monkeypatch.setattr(compute,'_native',lambda args,**kw:{'ok':True,'exit_code':0,'stdout':json.dumps({'data':{'pid':42}})} if '--background' in args else original(args,**kw))
+    sandbox_background.start(rid,sid,'sleep 60',60,'unpolled-background')
+    db.execute("UPDATE runs SET phase='finished' WHERE id=?",(rid,))
+    assert sandboxes.cleanup_run(rid)[0]['status']=='deleted'
+    assert db.query_one("SELECT status FROM compute_sandbox_operations WHERE operation_id='unpolled-background'")[0]=='unknown'
+
+
+async def test_pause_during_workspace_creation_prevents_executor_dispatch(run,monkeypatch):
+    from test_decision import valid_decision
+    from test_science_iteration_cs16 import Executor
+    ctrl,rid,_,_,_=run
+    snapshot=json.loads(db.query_one('SELECT config_snapshot FROM runs WHERE id=?',(rid,))[0]);snapshot['sandbox_first_version']=1
+    db.execute('UPDATE runs SET config_snapshot=?,current_trial_id=NULL WHERE id=?',(json.dumps(snapshot),rid))
+    executor=Executor();executor.prompts=[];ctrl._prime_instances[rid]=executor;ctrl._prime_sessions[rid]='fixture-native'
+    def ensure(_):
+        db.execute("UPDATE runs SET phase='paused',gate='awaiting_method_approval' WHERE id=?",(rid,))
+        return {'mode':'job','reason':'explicit fixture pause during create'}
+    monkeypatch.setattr(topic_workspace,'ensure',ensure)
+    decision=valid_decision(run_id=rid,actions=[{'op':'start_trial','goal':'有界假执行','success_check':'暂停后不投递'}])
+    await ctrl._apply_decision(rid,decision,{},None,None)
+    assert executor.prompts==[]
+    assert db.query_one("SELECT 1 FROM events WHERE run_id=? AND type='trial.dispatch_deferred'",(rid,))

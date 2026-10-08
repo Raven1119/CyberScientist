@@ -38,6 +38,11 @@ def summary(run_id: str | None = None) -> str:
     tail = ('授权=' + json.dumps(limits, ensure_ascii=False) +
             '\nunlimited_resources=true时，数量null表示不限；提交以独立额度为准。\n本地仅编排；科研在Bohrium。PI简报明确镜像、技能及CPU/GPU选择；执行器读取SKILL.md后通过受控bohr使用。')
     out = '\n'.join(lines)
+    if run_id:
+        from . import topic_workspace
+        workspace=topic_workspace.current(run_id)
+        if workspace['mode']!='not_selected':
+            out+='\n本题工作区：'+json.dumps(workspace,ensure_ascii=False)+'；research_sandbox background/poll/work。'
     # Show the chosen environment, then recent distinct images. Alphabetical
     # truncation previously hid newly verified materials/ABACUS environments.
     chosen = environment_catalog.current(run_id).get('entry_id') if run_id else None

@@ -352,6 +352,24 @@ def submit(run_id: str, operation_id: str, spec: dict, input_directory: str,
         db.append_event(run_id, 'controller', 'job.input_warning',
                         {'operation_id': operation_id, **details}, trial_id=run['current_trial_id'])
     from . import job_preflight
+    if json.loads(run['config_snapshot']).get('sandbox_first_version') == 1:
+        from . import job_checks
+        _authorized(db.get_db(),run_id)  # Remote image probes require current authority too.
+        checked_files = {rel:(source/rel).read_bytes() for rel,_ in manifest
+                         if (Path(rel).suffix in ('.py','.sh','.txt') or Path(rel).name in ('INPUT','STRU','KPT'))
+                         and (source/rel).stat().st_size <= 2_000_000}
+        try:
+            checked = job_checks.static(checked_files,spec,preflight or {})
+            checked = job_checks.image(run_id,str(spec.get('image_address') or ''),checked)
+            db.append_event(run_id,'controller','job.preflight',
+                            {'operation_id':operation_id,'status':'passed','mandatory':True,'report':checked},
+                            trial_id=run['current_trial_id'])
+        except job_preflight.PreflightError as exc:
+            db.append_event(run_id,'controller','job.preflight',
+                            {'operation_id':operation_id,'status':'blocked','mandatory':True,
+                             'code':exc.code,'details':exc.details,'message':str(exc),'reservation_created':False},
+                            trial_id=run['current_trial_id'])
+            raise ComputeError(exc.code,str(exc)) from exc
     files = {rel: (source / rel).read_bytes() for rel, _ in manifest
              if Path(rel).suffix in ('.py', '.txt') and (source / rel).stat().st_size <= 2_000_000}
     options = preflight or {}
@@ -379,6 +397,8 @@ def submit(run_id: str, operation_id: str, spec: dict, input_directory: str,
     price = compute_budget.rate(run_id, 'job', str(spec.get('machine_type', '')))
     # Persist a reservation before materializing/dispatching, under the SQLite writer lock.
     with db.transaction() as conn:
+        if conn.execute("SELECT 1 FROM compute_sandbox_operations WHERE operation_id=? AND action='background'",(operation_id,)).fetchone():
+            raise ComputeError('OPERATION_CONFLICT','该操作已绑定沙箱后台命令，禁止跨后端重放')
         old = conn.execute('SELECT * FROM compute_jobs WHERE operation_id=?', (operation_id,)).fetchone()
         if old:
             if old['run_id'] != run_id or old['request_hash'] != digest:

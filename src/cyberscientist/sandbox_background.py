@@ -10,6 +10,16 @@ import time
 from . import compute, db, sandboxes
 
 
+def _authorized(run_id: str, timeout: int) -> None:
+    from . import power, run_clock
+    run=compute._run(run_id)
+    auth=db.query_one('SELECT * FROM authorizations WHERE id=?',(run['authorization_id'],))
+    if power.shutdown_requested() or run['phase']!='running' or run['gate']!='open' or not run['current_trial_id']:
+        raise compute.ComputeError('RUN_NOT_RUNNING','研究门禁或关机状态禁止新的后台计算')
+    if not auth or run_clock.remaining(run,auth)<timeout+5:
+        raise compute.ComputeError('AUTH_EXPIRED','后台命令超出本题现有授权时长')
+
+
 def start(run_id: str, sandbox_id: str, command: str, timeout: int,
           operation_id: str) -> dict:
     box = sandboxes._owned(run_id, sandbox_id)
@@ -22,6 +32,7 @@ def start(run_id: str, sandbox_id: str, command: str, timeout: int,
         raise compute.ComputeError('INVALID_COMMAND', '后台命令须在沙箱剩余寿命内结束')
     if not isinstance(operation_id, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,100}', operation_id):
         raise compute.ComputeError('INVALID_OPERATION', '后台执行需要稳定 operation_id')
+    _authorized(run_id,timeout)
     digest = hashlib.sha256(sandboxes._json([command,timeout]).encode()).hexdigest()
     directory = '/tmp/cyberscientist-background/' + operation_id
     quoted = shlex.quote(directory)
@@ -33,6 +44,9 @@ def start(run_id: str, sandbox_id: str, command: str, timeout: int,
                f'printf "%s\\n" "$code" >{quoted}/exit.tmp; '
                f'mv {quoted}/exit.tmp {quoted}/exit')
     with db.transaction() as conn:
+        _authorized(run_id,timeout)
+        if conn.execute('SELECT 1 FROM compute_jobs WHERE operation_id=?',(operation_id,)).fetchone():
+            raise compute.ComputeError('OPERATION_CONFLICT','该操作已绑定Job，不能再启动沙箱命令')
         previous = conn.execute('SELECT * FROM compute_sandbox_operations WHERE operation_id=?',
                                 (operation_id,)).fetchone()
         if previous:
@@ -51,6 +65,7 @@ def start(run_id: str, sandbox_id: str, command: str, timeout: int,
                            trial_id=box['trial_id'])
     started = time.monotonic()
     try:
+        _authorized(run_id,timeout)
         receipt = compute._native(['sandbox', 'exec', sandbox_id, '--command', wrapper,
                                   '--background', '--timeout', '0', '--request-id', operation_id,
                                   '--no-interactive', '-o', 'json'], timeout=45)
@@ -63,8 +78,9 @@ def start(run_id: str, sandbox_id: str, command: str, timeout: int,
     pid = node.get('pid') if isinstance(node, dict) else None
     status = 'running' if receipt.get('ok') and type(pid) is int and pid > 0 else 'unknown'
     raw = sandboxes._json({'launch': safe, 'pid': pid, 'directory': directory, 'timeout': timeout})
-    db.execute('UPDATE compute_sandbox_operations SET status=?,receipt_json=?,receipt_sha256=?'
+    db.execute("UPDATE compute_sandbox_operations SET status=CASE WHEN status IN ('completed','failed','cancelled') THEN status ELSE ? END,receipt_json=?,receipt_sha256=?"
                ' WHERE operation_id=?', (status, raw, hashlib.sha256(raw.encode()).hexdigest(), operation_id))
+    status=db.query_one('SELECT status FROM compute_sandbox_operations WHERE operation_id=?',(operation_id,))[0]
     db.append_event(run_id, 'controller', 'sandbox.background_observed',
                     {'operation_id': operation_id, 'status': status, 'pid': pid,
                      'elapsed_seconds': round(time.monotonic() - started, 3)}, trial_id=box['trial_id'])
