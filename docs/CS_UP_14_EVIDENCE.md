@@ -59,3 +59,7 @@ Terra首个完整原生turn #116→#177为97.633002秒（含工具），维护�
 Worker只读可达性：GET http://47.92.88.121:443/api/uploads返回404（2.012秒），/openapi.json和/api/openapi.json也404，没有公开schema可核实；没有发送POST、认证或Attempt。该结果只证明主机响应，不能推断POST是否可用，更不能当评分证据。原记录worker-reachability.json、worker-read-only-schema-probes.json均留本地忽略目录。
 
 监控事实反馈cs14-midrun-ledger-facts-v1已queued：只列当前Job状态、实际开局及D74两小时截止、独立2+1额度和现有功能状态；没有科学答案、代码或降验收指令。D74时钟按Run.started_at连续计算，不能减去维护时间；两小时条件不会替代完整科研/评分/干净复跑要求。
+
+用户补充方案已在2026-10-08T04:10Z持久投递，PI于#3803采纳条件性回退：实际提交经排查和修复仍不可用时，允许以任务科学评分器和本地轨迹检查交付，科学评分仍在Bohrium执行，保留正式Worker和收割缺口。04:10Z重新取得官方latest.json，仍为0.1.39且tarball哈希一致；GET404不作为提交失败证据。
+
+截至04:16Z只读对账：20个Job中10 Failed、6 Finished、4 Running，0提交/0封存包。Li参考23502313归档原生日志实际含`Relaxation is converged!`和`!FINAL_ETOT_IS -392.0781205964211722 eV`，归档SHA256为1bdf4f3f6724e77982b928b049389ce5704f47bad081668cd504a65ac8658432；wrapper时间03:39:00–03:41:14Z，不等于调度/回收墙钟。旧受限LiSi23502296实际停止，归档未含完成终态，数据库通用Finished投影不能据此称弛豫通过。开放原子LiSi23502312、Si23502314、Li收敛23502436与电荷核查23502449继续对账，没有重建在途操作。原始取证留w3-reference-log-proof.json与w3-acceptance-proof.json。
