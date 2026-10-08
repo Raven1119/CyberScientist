@@ -525,6 +525,7 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
                 destination[parts[-1]] = json.loads(json.dumps(source[parts[-1]]))
             from . import challenge_models, model_usage
             try:
+                if type(merged.get('initial_method_approval',True)) is not bool: raise ValueError('方法审批开关须为布尔值')
                 if merged.get('submission_transport','cli') not in ('cli','api'): raise ValueError('submission_transport须为cli或api')
                 if not isinstance(merged.get('playground',{}).get('cli_executable',''),str): raise ValueError('CLI路径须为文本')
                 if type(merged.get('codex_fast_mode',True)) is not bool: raise ValueError('Codex fast默认开关须为布尔值')
@@ -1259,6 +1260,16 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
         body = await request.json()
         return controller.drop_pending_intent(run_id, body.get("reason", "用户放弃该意图"))
 
+
+    @app.get('/api/v1/runs/{run_id}/method')
+    async def get_method(run_id: str):
+        from . import method_approval
+        return method_approval.state(run_id)
+
+    @app.post('/api/v1/runs/{run_id}/method')
+    async def decide_method(run_id: str, body: dict[str, Any]):
+        try: return await controller.decide_method(run_id,body)
+        except ValueError as exc: raise HTTPException(409,detail={'message':str(exc)}) from exc
 
     @app.post("/api/v1/runs/{run_id}/control")
     async def control_run(run_id: str, body: ControlBody) -> dict[str, Any]:

@@ -62,13 +62,17 @@ class DemoBrain:
             "actions": [],
             "experience_proposals": [],
         }
-        if trigger == "user_steer" or packet.get("user_guidance"):
+        if (trigger == "user_steer" or packet.get("user_guidance")) and n_trials:
             decision["summary"] = "收到人工指导：调整当前 Trial 方向（演示）。"
             decision["actions"] = [{"op": "steer",
                                     "trial_id": packet.get("current_trial_id", ""),
                                     "message": packet.get("user_guidance",
                                                           "按指导调整（演示）")}]
         elif n_trials == 0:
+            decision['research_brief'] = {
+                'method_proposal': {'method_md':'演示流程验证', 'parameters_md':'无科学参数',
+                                    'basis_md':'演示链路', 'outputs_md':'演示产物', 'capabilities':['demo']},
+                'environment_choice': {'mode':'from_zero','reason_md':'演示不创建真实环境'}}
             decision["summary"] = "尚无 Trial：先启动一轮最小验证（演示）。"
             decision["actions"] = [{
                 "op": "start_trial",

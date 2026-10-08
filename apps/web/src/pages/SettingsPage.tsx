@@ -1,3 +1,4 @@
+import { CompetitionPolicySettings } from '../CompetitionPolicySettings'
 import { AccountRoles } from '../AccountRoles'
 import { useCallback, useEffect, useState } from 'react'
 import { api, listSkills } from '../api'
@@ -856,6 +857,7 @@ export default function SettingsPage() {
           </button>
         </div>
       </fieldset>
+    <CompetitionPolicySettings />
     <AccountRoles />
 </section>
   )

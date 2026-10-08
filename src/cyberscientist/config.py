@@ -44,6 +44,7 @@ def update_secret(secret_id: str, value: str | None) -> None:
         save_secrets(secrets)
 
 DEFAULT_SETTINGS: dict[str, Any] = {
+    "initial_method_approval": True,
     "submission_transport": "cli",
     'submission_policy': {'same_topic_minutes': 0, 'cross_topic_minutes': 30, 'cross_topic_limit': 4},
     'codex_fast_mode': True,

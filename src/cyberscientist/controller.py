@@ -543,7 +543,7 @@ class RunController:
                     "challenge_id": challenge_id, "mode": mode,
                     "challenge_platform_id": challenge['platform_challenge_id'],
                     "solver_fallback": fallback,
-                    "automatic_harvest_version": 1,
+                    "automatic_harvest_version": 1, "method_approval_version": 1,
                     "compute_policy_version": 1, "sparse_brain_version": 1,
                     "lifecycle_version": 2, "submission_prediction_version": 1}
         if eval_mode is not None:
@@ -775,6 +775,13 @@ class RunController:
         self._signals[run_id] = q
         self._tasks[run_id] = asyncio.create_task(self._run_loop(run_id, q))
         return self.run_snapshot(run_id)
+
+    async def decide_method(self, run_id, body):
+        from . import method_approval
+        result=method_approval.decide(run_id,body)
+        if result['deduplicated']: return result
+        self._wake(run_id)
+        return method_approval.state(run_id)
 
     async def control(self, run_id: str, action: str, text: str | None,
                       operation_id: str) -> dict[str, Any]:
@@ -1591,7 +1598,7 @@ class RunController:
         now = time.time() if now is None else now
         run = self._require_run(run_id)
         if run["phase"] != "running" or run["gate"] in (
-                "awaiting_budget", "awaiting_user"):
+                "awaiting_budget", "awaiting_user", "awaiting_method_approval"):
             return None
         if any(item[0] == run_id for item in self._session_restarts):
             return None
@@ -2542,7 +2549,7 @@ class RunController:
     def _maybe_shadow(self, run_id: str) -> None:
         """有新的有效科学变化且额度允许时，排队一次被动观察（合并语义）。"""
         run = self._require_run(run_id)
-        if run["phase"] != "running" or run["gate"] == "awaiting_budget":
+        if run["phase"] != "running" or run["gate"] in ("awaiting_budget", "awaiting_method_approval"):
             return
         sup = db.query_one("SELECT * FROM supervision WHERE run_id=?",
                            (run_id,))
@@ -2618,7 +2625,7 @@ class RunController:
         """
         import time as _time
         run = self._require_run(run_id)
-        if run["phase"] != "running" or run["gate"] == "awaiting_budget":
+        if run["phase"] != "running" or run["gate"] in ("awaiting_budget", "awaiting_method_approval"):
             return
         if self._sparse_brain(run):
             return  # 定时器只检查健康；新 Run 只由研究级变化唤醒。
@@ -3718,6 +3725,12 @@ class RunController:
         if dec.get('research_brief'):
             from . import planning
             planning.record_brief(run_id, dec['research_brief'], dec['decision_id'])
+
+        from . import method_approval
+        if method_approval.hold(run_id, dec, packet):
+            if method_approval.state(run_id)['status']=='awaiting_revision':
+                self._enqueue_lifecycle(run_id,trigger='method_proposal_incomplete',user_guidance='初始方法提案缺少必需字段，请补完整后再请求计算。')
+            return
 
         prime_sid = self._prime_sessions.get(run_id)
         prime = self._prime_instances.get(run_id) or self._make_prime(settings)

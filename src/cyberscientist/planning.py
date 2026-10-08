@@ -88,6 +88,8 @@ def record_brief(run_id: str, brief: dict, decision_id: str) -> dict:
         'decision_id': decision_id, 'brief': safe,
         'path': str(target.relative_to(config.WORKSPACE_DIR)),
         'sha256': hashlib.sha256(body.encode()).hexdigest()})
+    if safe.get('major_change') is True:
+        db.append_event(run_id,'brain','method.major_change',{'reason_md':safe.get('major_change_reason_md','方法大改'),'brief_event':event['seq']})
     from . import strategies
     strategies.maintain(run_id, brief=safe, event=event)
     return event

@@ -1,3 +1,4 @@
+import { MethodApproval } from '../MethodApproval'
 import SharedArea from '../SharedArea'
 import PostReviews from '../PostReviews'
 import { RunContinuation } from './RunContinuation'
@@ -575,6 +576,7 @@ export default function ResearchPage() {
             </div>
           </article>
 
+          {currentRun && <MethodApproval key={'method-'+currentRun.id} runId={currentRun.id} onChanged={()=>void refreshRunDetail()} />}
           {currentRun && <RunOperations key={currentRun.id} runId={currentRun.id} phase={phase ?? currentRun.phase} />}
 
           <article className="card">

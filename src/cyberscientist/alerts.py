@@ -26,7 +26,7 @@ def synchronize() -> None:
                 continue
             kind = event['type']
             payload = json.loads(event['payload'])
-            title = {'run.blocked': '研究遇到阻塞', 'run.paused': '研究已暂停', 'run.failed': '研究运行出错',
+            title = {'method.major_change': '研究方法大改', 'run.blocked': '研究遇到阻塞', 'run.paused': '研究已暂停', 'run.failed': '研究运行出错',
                      'run.needs_attention': '研究需要关注', 'run.runtime_error': '研究运行出错', 'harvest.done': '自动收割已受理',
                      'harvest.failed': '自动收割失败', 'harvest.unknown': '自动收割状态不明'}.get(kind)
             if kind=='harvest.started' and payload.get('last_mailbox_quota'):
@@ -66,7 +66,7 @@ def synchronize() -> None:
             from .mailboxes import _instant
             started = _instant(rate['first_at'])
             run = conn.execute('SELECT * FROM runs WHERE id=?', (rate['run_id'],)).fetchone()
-            if run and started and (now - started).total_seconds() > 600:
+            if run and run['gate'] != 'awaiting_method_approval' and started and (now - started).total_seconds() > 600:
                 _insert(conn, f"rate:{run['id']}:{rate['role']}:{rate['first_at']}", run,
                         'model.long_rate_limit', '模型限速已超过十分钟', {'role': rate['role'], 'retry_at': rate['retry_at']})
         for rate in conn.execute('SELECT * FROM model_provider_backoff').fetchall():
@@ -75,13 +75,13 @@ def synchronize() -> None:
             retry = _instant(rate['retry_at'])
             if not started or not retry or retry <= now or (now - started).total_seconds() <= 600:
                 continue
-            for run in conn.execute("SELECT * FROM runs WHERE phase IN ('running','waiting_score')").fetchall():
+            for run in conn.execute("SELECT * FROM runs WHERE phase IN ('running','waiting_score') AND gate!='awaiting_method_approval'").fetchall():
                 choices = json.loads(run['config_snapshot']).get('settings', {})
                 if any((choices.get(role, {}).get('provider') or choices.get(role, {}).get('runtime')) == rate['provider'] for role in ('brain', 'executor', 'reviewer', 'post_review')):
                     _insert(conn, f"provider:{run['id']}:{rate['provider']}:{rate['first_at']}", run,
                             'model.long_rate_limit', '模型提供方限速已超过十分钟',
                             {'provider': rate['provider'], 'retry_at': rate['retry_at']})
-        for run in conn.execute("SELECT * FROM runs WHERE phase IN ('running','waiting_score')").fetchall():
+        for run in conn.execute("SELECT * FROM runs WHERE phase IN ('running','waiting_score') AND gate!='awaiting_method_approval'").fetchall():
             auth = conn.execute('SELECT * FROM authorizations WHERE id=?', (run['authorization_id'],)).fetchone()
             if auth and (auth['max_run_minutes'] or auth['unlimited_resources']) and run['started_at']:
                 remaining = run_clock.remaining(run, auth)

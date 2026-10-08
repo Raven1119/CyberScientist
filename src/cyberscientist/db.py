@@ -88,6 +88,14 @@ CREATE TABLE IF NOT EXISTS submission_daily_audits (
     result_json TEXT NOT NULL, observed_at TEXT NOT NULL,
     PRIMARY KEY(mailbox_id, day)
 );
+CREATE TABLE IF NOT EXISTS method_approvals (
+ run_id TEXT PRIMARY KEY REFERENCES runs(id), status TEXT NOT NULL, version INTEGER NOT NULL,
+ proposal_json TEXT NOT NULL, pending_json TEXT, approved_by TEXT, approved_at TEXT, updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS method_approval_actions (
+ operation_id TEXT PRIMARY KEY, run_id TEXT NOT NULL REFERENCES runs(id), version INTEGER NOT NULL,
+ actor TEXT NOT NULL, action TEXT NOT NULL, text TEXT NOT NULL, request_hash TEXT NOT NULL, created_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS events (
     event_id TEXT PRIMARY KEY,
     run_id TEXT NOT NULL REFERENCES runs(id),

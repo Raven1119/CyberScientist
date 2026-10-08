@@ -103,6 +103,9 @@ def isolated_workspace(tmp_path, monkeypatch):
     settings = config.load_settings()
     # Existing HTTP protocol fixtures explicitly exercise the API fallback.
     # CS-UP-14 tests select cli and use a controlled native process fixture.
+    # Legacy synthetic flows explicitly disable the new initial approval gate.
+    # Dedicated approval tests turn it on and exercise the real structural gate.
+    settings["initial_method_approval"] = False
     settings["submission_transport"] = "api"
     settings["submission_policy"] = {"same_topic_minutes": 0, "cross_topic_minutes": 0, "cross_topic_limit": 4}
     config.save_settings(settings)

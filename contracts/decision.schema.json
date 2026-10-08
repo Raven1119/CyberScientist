@@ -614,6 +614,55 @@
               }
             }
           ]
+        },
+        "method_proposal": {
+          "type": "object",
+          "properties": {
+            "method_md": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 20000
+            },
+            "parameters_md": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 20000
+            },
+            "basis_md": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 20000
+            },
+            "outputs_md": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 20000
+            },
+            "capabilities": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 30,
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 300
+              }
+            }
+          },
+          "required": [
+            "method_md",
+            "parameters_md",
+            "basis_md",
+            "outputs_md",
+            "capabilities"
+          ],
+          "additionalProperties": false
+        },
+        "major_change": {
+          "type": "boolean"
+        },
+        "major_change_reason_md": {
+          "type": "string"
         }
       },
       "additionalProperties": false
