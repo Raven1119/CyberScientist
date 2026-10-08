@@ -297,8 +297,6 @@ def _record_feedback(conn, row, kind: str, response: dict[str, Any]) -> bool:
                            (row['id'],)).fetchone()
     if not current or any(current[key] != row[key] for key in ('package_sha256', 'package_path', 'platform_ref')):
         return False  # A response for a superseded draft package cannot supply evidence.
-    from . import submission_gate
-    submission_gate.observe_feedback_tx(conn, row, response)
     previous = conn.execute(
         "SELECT payload FROM events WHERE run_id=?"
         " AND type='submission.platform_feedback'"
@@ -307,6 +305,10 @@ def _record_feedback(conn, row, kind: str, response: dict[str, Any]) -> bool:
         (row["run_id"], row["id"], kind)).fetchone()
     if previous and json.loads(previous["payload"])["response"] == response:
         return False
+    # An explicit recovery acknowledges observations already recorded. Re-reading
+    # an unchanged historical receipt must not undo it; new feedback still gates.
+    from . import submission_gate
+    submission_gate.observe_feedback_tx(conn, row, response)
     db.append_event_tx(conn, row["run_id"], "controller", "submission.platform_feedback", {
         "submission_id": row["id"], "platform_ref": row["platform_ref"],
         "kind": kind, "response": response}, trial_id=row["trial_id"])

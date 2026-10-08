@@ -63,6 +63,14 @@ def test_nonstandard_feedback_persists_barrier_and_popup_and_recovers(response):
     assert db.query_one("SELECT COUNT(*) FROM alerts WHERE kind='submission.nonstandard'")[0]==1
     assert db.query_one('SELECT phase FROM runs WHERE id=?',(rid,))[0]=='running'
     features.switch('auto_submission',True);assert not gate.paused() and features.enabled('auto_submission')
+    with db.transaction() as conn:
+        row=conn.execute('SELECT * FROM submissions WHERE id=?',(source['id'],)).fetchone()
+        assert not mailboxes._record_feedback(conn,row,'attempt',response)
+    assert not gate.paused() and features.enabled('auto_submission')
+    with db.transaction() as conn:
+        assert mailboxes._record_feedback(conn,row,'attempt',{**response,'revision':2})
+    assert gate.paused()
+    gate.synchronize_pause();assert not features.enabled('auto_submission')
 
 
 def test_defaults_and_policy_validation():
