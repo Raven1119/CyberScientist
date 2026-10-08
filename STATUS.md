@@ -680,3 +680,5 @@ CS-UP-13 工作包提交索引（按Git事实，最终W8标签另录）：
 - 2026-10-08T09:29:13.884940+00:00 W3/W4（本提交 CS-UP-14）：核对清洁复跑wrapper原件实际06:52:39–07:40:59Z，2900秒，三相结束时间/原件SHA留clean-rerun-runtime-timestamps-proof.json；运行阶段耗时表据真实预约和首终态事件补入证据报告，不用latest observed_at代替完成时间，首提交仍未发生。
 
 - 2026-10-08T09:44:44.728200+00:00 W3嵌套文档占位符误报修复（本提交 CS-UP-14）：#22923完整封存再次拒绝，不能沿用旧探针成功；原日志35,295,895字节精确已存凭据命中0，唯一形状匹配为公开BOHR_ACCESS_KEY占位符后接字面转义换行/python3，ENV正则把它们合成一个值。0.43秒红回归复现；仅将转义边界作为赋值值终止符，未知真实赋值和已存凭据仍拒绝。54项相关回归15.78秒通过；实际35,782,930字节完整快照现在通过、耗时4.502秒/SHA991357bf…8461e（native-nested-placeholder-actual-proof.json），原文未改。新源码完整回归进行中，尚未部署/提交。另执行者实际轨迹检查admitted，但正式评分仍unknown；原失败/草稿保留。
+
+- 2026-10-08T09:49:00.573570+00:00 W3新修复生产验收（d512eab CS-UP-14）：安全部署completed、停机141.033秒/维护154.865秒、preflight warn、digest匹配且native_close_unknown=0；同Run原时钟保留。真实完整preflight source3d5bdeb8…74f2通过error_code=null/admitted，封存20,949,873字节（native-nested-placeholder-full-preflight-proof.json）。本地public_v6_deterministic检查表36/review、762工具配对、N11风险、N17/N18 unknown，v8-advisory-1不预测分数；artifact路径声明因评分器无verified input-path声明为unavailable，不误作输出缺失。新指导已queued，科学登记评分/真实CLI仍未验收；全量新源码进行中。
