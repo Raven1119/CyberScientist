@@ -1,3 +1,9 @@
+<!-- CS-NIGHT-1009 CURRENT -->
+- 已实现：CS-UP-15 W0 新决策 D-74/D-76/D-77/D-81 已记录；按 15→16→17→18 顺序施工，禁止彩排和 Lightchaser 提交。
+- 已实际验证：开工 main/e8de094，tracked 干净；SQLite 一致性完整备份与资源计数保存在 .package-checks/cs-night-1009/before.sqlite、authorization.json；已有未跟踪材料保留。rg 缺失，采用 grep/find；Linux Node/Codex 在 ~/.local/bin。
+- 尚未验证：四卡后续硬性验收、真实提交和发布尚待逐项完成。
+- 阻塞项：无；凭据、协议、远端资源将按最小探针核实，不推断成功。
+
 <!-- CURRENT CS-UP-13/14 scope: submission chain confirmed; new user-authorized DFT submitted; research stopped -->
 - 已实现：阶段1 W0–W8及阶段2官方CLI、API回退、保护与错误诊断；后续按用户授权仅验证提交链路，并追加一次DFT独立提交。
 - 已实际验证：fallback-4/fallback-5已推送；代码aaa4133完整1627 passed（2既有warnings），前端104项/构建、安全部署与只读对账通过。隔离官方CLI0.1.40原样构建并实际提交abc Attempt50127/Worker27746及DFT Attempt50139/Worker27757，包SHA和上传回执一致；六项DFT科学输出及完整原生会话不变。逐项原件与命令见CS-UP-14最新记录。
