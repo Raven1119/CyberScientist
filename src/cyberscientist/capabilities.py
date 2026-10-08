@@ -1,5 +1,6 @@
 """Fresh, bounded capabilities; observations never grant spending authority."""
 import json
+import re
 from . import db, environment_catalog, machine_catalog, sandbox_warmup, skills
 
 
@@ -12,6 +13,16 @@ def _names(values, limit):
     return ','.join(picked)
 
 
+def toolchain_items():
+    """Administrative observations only; an unvalidated recipe is not available."""
+    row=db.query_one("SELECT payload_json FROM runtime_observations WHERE kind='competition_toolchain'")
+    if not row:return []
+    data=json.loads(row['payload_json'])
+    return [{k:item[k] for k in ('id','use','location')} for item in data.get('items',[])
+            if item.get('status')=='verified' and all(isinstance(item.get(k),str) and item[k]
+                for k in ('id','use','location')) and re.fullmatch('[a-f0-9]{64}',item.get('receipt_sha256',''))]
+
+
 def summary(run_id: str | None = None) -> str:
     entries = environment_catalog.items()
     warm = {x['entry_id']: x['created_success_at'] for x in sandbox_warmup.latest()}
@@ -22,6 +33,7 @@ def summary(run_id: str | None = None) -> str:
         lines.append('技能ID前缀' + prefix + '：' + _names(names, 250))
     lines.append('环境ID：' + _names([e['id'] for e in entries], 350))
     lines.append('镜像/包/冒烟完整事实：research_environment list/restore；计算：research_job/research_sandbox；LKM：research_lkm。')
+    lines.extend(f"工具链 {item['id']}：{item['use']}；{item['location']}" for item in toolchain_items())
     for channel, fact in machine_catalog.facts().items():
         names = [x.get('skuEnName') or x.get('sku_name') for x in fact['items']]
         names = list(filter(None, names))
@@ -67,6 +79,7 @@ def index(run_id=None):
                             'location':str(__import__('pathlib').Path(item['source'])/item['id']/'SKILL.md')})
     for item in environment_catalog.items():
         entries.append({'id':item['id'],'use':'已登记环境起点，先读取当前验证事实','location':'research_environment list: '+item['id']})
+    entries.extend(toolchain_items())
     entries.extend({'id':name,'use':purpose,'location':name} for name,purpose in (
         ('research_job','提交重计算Job'),('research_sandbox','持续交互环境'),
         ('research_environment','环境目录与恢复'),('research_lkm','公开科学摘要检索'),

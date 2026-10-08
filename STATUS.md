@@ -889,3 +889,9 @@ CS-UP-13 工作包提交索引（按Git事实，最终W8标签另录）：
 - 已实际验证：私有镜像172937构建状态2；六包import通过；最小Si SCF和pybader默认pickle计算、电荷守恒检查退出0（materials-smoke-poll.json）。已登记competition-materials-20261009和runtime_environments；观察耗时14.88963秒。26项模板/预检回归、17项最终模板/能力/环境回归通过（cs17-template-preflight.log、cs17-template-index-final.log）。两轴审查的目录兼容与早期成功误判问题均已修正。
 - 尚未验证：cell-relax模板的实际科学弛豫不作为已验证结果；本卡要求的真实最小SCF和pybader已完成。
 - 阻塞项：pybader的dat输出与当前pandas旧接口不兼容；默认pickle实测通过，限制已登记。初次预检程序误用后台函数名以及重复观察操作ID被真实保护拒绝，失败日志保留；未重放unknown计算。
+
+### CS-UP-17 W5
+- 已实现：官方DeePMD GPU目录、离线组合镜像172951、6条验证后工具链索引；预置DPA4-Neo材料权重和SG15 PBE219文件。客户端专用环境和冻结锁文件完成，速查技能只保留占位目录。
+- 已实际验证：官方GPU镜像dp/import/LAMMPS与真实DP势run 0通过；新离线镜像新沙箱SHA/219文件、六包import、SCF、pybader退出0，后台15.001575秒；dflow1.8.133和bohrium-sdk0.15.0实际import退出0。登记toolchain-registration.json；预检/模板/能力52项通过27.17秒。已保存原设置备份并将当前新题默认science_compute改为sandbox_first，历史快照保留。
+- 尚未验证：Neo与每个推理后端的兼容、客户端工作流执行、个人存储挂载不作为通过证据；正文待设计助手。
+- 阻塞项：官方GPU镜像在CPU箱的CUDA库错误已明确登记；使用实测4090路径。全量重新冻结运行中，首次因审查修正中断日志保留。

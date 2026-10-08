@@ -41,6 +41,18 @@ def test_experience_index_top_n_is_bounded_and_no_full_body():
     assert len(out)==8 and all(len(row['summary'])<=160 and 'body_md' not in row for row in out)
 
 
+def test_toolchain_index_only_exposes_verified_receipt_backed_locations():
+    from cyberscientist import capabilities
+    entries=[{'id':'DP-model','use':'材料势','location':'image:/opt/models/model.pt','status':'verified','receipt_sha256':'a'*64},
+             {'id':'unvalidated','use':'recipe','location':'placeholder','status':'unverified','receipt_sha256':'b'*64},
+             {'id':'bad-hash','use':'recipe','location':'placeholder','status':'verified','receipt_sha256':'z'*64}]
+    db.execute('INSERT INTO runtime_observations VALUES(?,?,?)',('competition_toolchain',json.dumps({'items':entries}),db.utcnow()))
+    exposed=capabilities.toolchain_items()
+    assert exposed==[{'id':'DP-model','use':'材料势','location':'image:/opt/models/model.pt'}]
+    assert all(item['id'] not in ('unvalidated','bad-hash') for item in capabilities.index())
+    assert 'image:/opt/models/model.pt' in capabilities.summary()
+
+
 def test_facts_cannot_escape_run(tmp_path):
     rid=seed();root=config.WORKSPACE_DIR/'runs'/rid;root.mkdir(parents=True,exist_ok=True)
     (root/'facts').symlink_to(tmp_path,target_is_directory=True)
