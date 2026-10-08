@@ -1,3 +1,9 @@
+<!-- CURRENT CS-UP-13/14 scope: user requested submission-chain-only follow-up -->
+- 已实现：阶段1 W0–W8及阶段2官方CLI、API回退、保护与错误诊断；后续按用户最新要求仅处理提交链路。
+- 已实际验证：fallback-4已推送；当前链路代码aaa4133完整1627 passed（2既有warnings），前端104项/构建、compileall/diff-check通过；安全部署及真实只读对账已验证。逐项证据见docs/CS_UP_13_FIX_EVIDENCE.md、docs/CS_UP_14_EVIDENCE.md。
+- 尚未验证：首次真实CLI仍unknown，未确认Attempt、上传、harbor_worker、官方科学/轨迹分、accept或真实收割；本地科学契约代理100/low、最终包轨迹0/review，均不等于正式通过。
+- 阻塞项：原首次CLI错误详情未保存，完整列表无匹配不能证明未存储；原预约与原始证据保留。科研及其他阶段已停止，未启动彩排二/阶段4。以下记录按时间保留历史事实，当前结论以本段及最新追加为准。
+
 <!-- CS-UP-13 W4 -->
 - 已实现：v8轨迹门、平台一致性分级、18类相关证据自查、可见性、跨Run代码哈希和前端报告；复刻默认关闭。
 - 已实际验证：六个真实封存包、24个独立非空S4留出；前端14通过及构建通过；后端最终检查日志w4-final-green.log。
@@ -692,3 +698,7 @@ CS-UP-13 工作包提交索引（按Git事实，最终W8标签另录）：
 - 2026-10-08T10:29:34.257940+00:00 W3/W4真实CLI与最终包核对（本提交 CS-UP-14）：#26155本地NOT_FOUND经零预约/零平台动作及同SHA证明，沿原授权操作正常API修复；#26254在10:14:23.188Z真正调用官方CLI一次，#26255 unknown，无Attempt ID/上传确认/官方分数，预约不释放。只读完整列表absence_observed不授权重发；同包dry-run exit0/3350步、相同Node读取网络200仅限各自范围。实际sealed SHA6e1a39f9…ee97、完整native38,149,791字节/SHA197ecbfc…57c9，原前缀未改；manifest所选56行最终本地v6检查0/review/cap39，替代先前不同包36分，官方v8 UNKNOWN。没有确认实验分，未执行第二实验/收割，阈值100、D-69保留。已修复no-ref unknown轮询未导入类和CLI丢弃错误诊断，2 failed红回归已复现；最终全量进行中。过程/skill补提交前progress审阅和所选证据链检查。仅阶段1+2，彩排二/阶段4未执行。
 
 - 2026-10-08T10:32:15.699058+00:00 W3终态/W4审查（本提交 CS-UP-14）：原Run于10:28:17.972Z按authorization_expired结束，原截止未延长；69 Job=36 Finished/33 Failed，唯一本轮沙箱已回收，unknown提交预约1保持。Settings revision22→23恢复临时Terra/路径/DeepSeek与测试提交授权，阈值实读100，原Run冻结配置/授权/started_at不变；保留CLI路径和Bohrium-only，真实Worker未验证故auto_harvest继续关闭（明确未恢复项）。空fast/provider按既有默认显式化，首次422未保存。`.venv/bin/python -m pytest -q tests/test_cli_submission_cs14.py tests/test_native_log_privacy.py tests/test_tool_feedback.py`33 passed/46.20秒，技能11 passed/15.01秒，compileall/diff-check通过。阶段有界审查确认失败诊断先脱敏后截断、一次CLI及unknown不重发、只读对账边界不变；完整新源码回归仍进行中。
+
+- 2026-10-08T10:47:29.995683+00:00 W4/提交链路收尾（代码aaa4133 CS-UP-14）：新源码完整1627 passed、2既有warnings、886.60秒，4冻结源码/测试SHA复核一致；前端既有104项/构建通过、无后续前端改动。安全重部署completed，停机146.336秒、维护180.924秒，preflight warn、digest loaded=checkout=aaa4133/matches=true、native_close_unknown=0；生产已产生#26377/#26378真实cli_reconciled/absence_observed，无Attempt引用的只读对账修复已实际验证。Node同凭据/base的GET /auth/me 200且owner匹配，GET题目列表200；题目open、operatorConfirmed=true，均不能证明POST/上传。用户最新要求缩减为“把提交链路打通就停止”，后续仅排查链路，不再推进科研、收割或其他阶段；目前首次CLI仍unknown，不宣称打通。
+
+- 2026-10-08T10:59:12.148528+00:00 W4链路取证交付（代码aaa4133 / 本提交 CS-UP-14）：全局author视图实读10个历史Attempt、最新10-07，题目完整分页仍无10-08匹配；网络被发送前拦截的官方CLI预演准确构造中央POST/multipart4822字节、带认证、包/原生字节不变，没有实际重发。此项仅验证本地处理及请求构造，不把通用“无法连接worker”归因当事实。真实链路继续UNKNOWN，缺原首次stderr和权威未存储回执；unknown预约/原时钟/额度不改。原件保留在.package-checks/cs-up-14。仅交付代码/证据和fallback-5基线，不将标签当Worker验收；科研、收割、彩排二及阶段4停止。

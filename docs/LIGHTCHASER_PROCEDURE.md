@@ -170,6 +170,8 @@
 
 ## 六、官方 CLI 提交与故障处理
 
+CS-UP-14回退目标为`lightchaser-fallback-5`（CLI）。`fallback-4`及以前是原接口版本，只能在显式`submission_transport=api`时作为兼容回退；不得据切换重发unknown。此标签不代表真实Worker验收通过，实际缺口见本节末及CS_UP_14_EVIDENCE.md。
+
 项目内官方CLI0.1.39位于.package-checks/playground-cli-0.1.39/package/dist/index.js。下载自官方latest.json给出的包URL，tarball SHA256 3ea6a15807ed3ca00f6a88b07fa5165ec0a8413251c3a8efdabc580c2e58c023，实收121215字节；全局0.1.33及配置未改。更新时先GET默认latest清单、核对tarball哈希并在项目内解包，不运行全局安装脚本。清单无签名，哈希只证明与清单一致。
 
 AgentMaster只读调查：host/submission.py:30–42使用submit --challenge-id --outputs --trace --model --harness；:64–80只把邮箱令牌放PLAYGROUND_TOKEN；:141–198先记录submitting再调用CLI，失败保守计数。169个command.json记录证实这些参数（含不同轮次和dry-run，不能等同169个有效评分）。原始安装命令及历史Worker环境配置unknown；当前已安装包源码默认Worker为http://47.92.88.121:443/api。其stage_trace_upload会过滤传输错误，违反本轮不得改原始记录的要求，本系统不采用该过滤做法。

@@ -219,9 +219,9 @@ W3执行者真实重放/评分验收（本提交 CS-UP-14）：v8候选源SHAf7c
 
 10:31:12Z经Settings API按revision22→23恢复临时Terra选择、执行器路径、DeepSeek fallback与实验提交授权/目标范围；默认执行器恢复原Sol配置，D-69保留。原空fast/provider按全局fast=true、provider=codex显式表达，API拒绝null的第一次恢复请求返回422且没有保存。CLI默认/项目路径是本卡交付保留项；local_calculation=false服从AGENTS的Bohrium-only边界；auto_harvest=false在真实CLI/Worker未验证前继续保留，不能盲目恢复自动主邮箱投递。阈值实读100，原Run授权/started_at/config_snapshot逐字未变，未知提交预约保留。证据`w3-settings-restored-proof.json`。
 
-本阶段有界代码审查：CLI只增加失败可观测性，先对整个输出做形状/当前实际凭据/本次令牌脱敏，再截4000字符/字段；stdout仅诊断，不冒充回执，异常仍unknown、不再次调用CLI。轮询仅补导入使既有只读reconcile执行，不放宽匹配/重发。相关命令`.venv/bin/python -m pytest -q tests/test_cli_submission_cs14.py tests/test_native_log_privacy.py tests/test_tool_feedback.py`实际33 passed/46.20秒；skills检查11 passed/15.01秒；compileall与diff-check通过。新源码完整回归另列最终结果；前端无改动，不重复用构建替代后端测试。
+本阶段有界代码审查：CLI只增加失败可观测性，先对整个输出做形状/当前实际凭据/本次令牌脱敏，再截4000字符/字段；stdout仅诊断，不冒充回执，异常仍unknown、不再次调用CLI。轮询仅补导入使既有只读reconcile执行，不放宽匹配/重发。相关命令`.venv/bin/python -m pytest -q tests/test_cli_submission_cs14.py tests/test_native_log_privacy.py tests/test_tool_feedback.py`实际33 passed/46.20秒；skills检查11 passed/15.01秒；compileall与diff-check通过。新源码完整1627 passed、2既有warnings、886.60秒（cli-live-diagnostics-full.log），4冻结源码/测试SHA一致；前端无改动，不重复用构建替代后端测试。
 
-## W4 验收核对（最终验证中）
+## W4 验收核对
 
 |要求|结论|直接证据或替代|
 |---|---|---|
@@ -235,11 +235,21 @@ W3执行者真实重放/评分验收（本提交 CS-UP-14）：v8候选源SHAf7c
 |W3 CLI/harbor_worker/正式轨迹和判定|硬性验收未满足|真实CLI一次、unknown预约1；0确认远端Attempt/正式分数。已排查并补错误诊断与对账；不能证明永久不可提交|
 |W3 D-74|不启用|两小时首版未交，最终无官方accept/轨迹≥60；保留D-69|
 |W3 CLI收割/阈值|硬性验收未满足；阈值保持100|没有确认实验分，不触发真实收割；应用fake路径通过不作真实证据|
-|W4 完整测试/前端/构建|最终新修复回归进行中|上一源码1625 passed/2 warnings/880.09秒；前端104 passed/22文件/19.64秒及构建通过，无后续前端修改|
-|W4 密钥与原始证据|已扫描版本通过；最终再扫|改动字节与当前真实凭据比对，原件仅留本地忽略目录|
-|W4 报告/过程/fallback-5|交付收尾中|真实缺口、替代和范围如本报告；最终tag/push后另记远端SHA|
+|W4 完整测试/前端/构建|当前源码通过|aaa4133：1627 passed/2 warnings/886.60秒，4冻结源码/测试SHA一致；前端104 passed/22文件/19.64秒及构建通过，无后续前端修改|
+|W4 密钥与原始证据|最终字节扫描通过|改动字节与当前真实凭据比对0命中、0本地原件入Git；原件仅留本地忽略目录|
+|W4 报告/过程/fallback-5|实现与证据交付；正式链路缺口保留|报告/回退文档已更新；fallback-5作为代码基线，不宣称Worker验收通过，标签推送另录|
 
 阶段1完成复核：远端lightchaser-fallback-4剥离到ad9bb076128815f543a8519c10db4ca9b47c1038；授权调用账本实际模型15/20、私有镜像构建1/6、Job3/10、沙箱4/15；交付清单12个核心证据文件哈希全部匹配（stage1-completion-recheck.json）。该阶段无科研Run和参赛提交；缺失经验、历史缺结果和留出不可观测项保留在CS_UP_13_FIX_EVIDENCE，不能把标签解释为这些缺口消失。
+
+## 最新范围与链路实测
+
+用户最新指令为“把提交链路打通就停止吧，不用继续了”。后续仅定位/验证提交链路，不再推进科研、收割、彩排二或阶段4。
+
+代码aaa4133安全部署completed，停机146.336秒、维护180.924秒，preflight warn；digest loaded=checkout=aaa4133、matches=true、native_close_unknown=0。生产#26377/#26378真实cli_reconciled仍absence_observed，只读修复已执行。Node同凭据和API base真实GET /auth/me HTTP200、身份匹配；题目status=open，实验agent operatorConfirmed=true，排除了当时读取认证/身份错误；这些都不能证明创建POST/Worker上传成功。原始失败详情缺失与unknown预约继续保留，不将应用回归1627通过写成真实提交链路打通。
+
+进一步只读核查：10:47:45Z全局author视图返回该实验账号10个历史Attempt，最新为10-07，没有本题10-08的新记录；题目完整分页同样没有匹配。10:49:54Z对真实官方CLI和同一封存字节执行网络拦截预演，唯一请求为正确中央题目POST、带认证、multipart4822字节；fetch在发送前一律中止，没有新增Attempt/网络投递。该探针仅确认本地预处理/请求构造，不复现未知的上游错误，CLI的通用“无法连接worker”文案也不能定位中央POST与Worker步骤。原件cli-global-author-readonly-proof.json、cli-shadow-create-request-proof.json保留在本地。
+
+当前阻塞事实是：首个真实create_sent没有Attempt ID或可恢复的上游错误详情，完整列表无新增仍不能证明权威未存储。没有改写状态、释放预约、延长原轮时钟或通过第二次相同投递试探；后续只可在出现可核对远端记录/权威创建失败证据后继续对应操作。科研和其他阶段已停止，真实提交链路尚未证实打通。
 
 ## 开赛时监控要注意什么
 
