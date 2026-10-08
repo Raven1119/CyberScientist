@@ -1772,7 +1772,15 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
     @app.post("/api/v1/mailboxes/experiment/register")
     async def register_experiment(request: Request) -> dict[str, Any]:
         body = await request.json()
-        return await asyncio.to_thread(mailboxes.register_experiment, int(body.get("count", 1)))
+        return await asyncio.to_thread(mailboxes.register_experiment, int(body.get("count", 1)), pending_claim=body.get('pending_claim', True))
+
+    @app.put('/api/v1/mailboxes/{mailbox_id}/role')
+    async def mailbox_role(mailbox_id: str, body: dict[str, Any]):
+        return mailboxes.set_role(mailbox_id, body.get('role'))
+
+    @app.post('/api/v1/mailboxes/claims/refresh')
+    async def refresh_claims():
+        return await asyncio.to_thread(mailboxes.refresh_claims)
 
     @app.delete("/api/v1/mailboxes/{mailbox_id}")
     async def disable_mailbox(mailbox_id: str) -> dict[str, Any]:

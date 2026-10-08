@@ -361,7 +361,7 @@ def add_harvest(email: str, secret_value: str) -> dict[str, Any]:
     return _row(db.query_one("SELECT * FROM mailboxes WHERE id=?", (mid,)))
 
 
-def register_experiment(count: int) -> dict[str, Any]:
+def register_experiment(count: int, *, pending_claim: bool = False) -> dict[str, Any]:
     """批量注册实验邮箱。真实平台未配置时报准确缺项。"""
     if not 1 <= count <= 20:
         raise MailboxError("INVALID_MESSAGE", "单次注册数量须为 1-20")
@@ -370,7 +370,7 @@ def register_experiment(count: int) -> dict[str, Any]:
     items, errors = [], []
     for index in range(count):
         try:
-            acc = platform.register_account()
+            acc = platform.register_account(pending_claim=True) if pending_claim and isinstance(platform, BohriumPlaygroundPlatform) else platform.register_account()
         except Exception as exc:
             if not items and isinstance(exc, PlatformError):
                 raise MailboxError("MISSING_CREDENTIAL", str(exc)) from exc
@@ -386,8 +386,60 @@ def register_experiment(count: int) -> dict[str, Any]:
                 " VALUES(?,?,?,?,?,'active',?,?,?)",
                 (mid, "experiment", acc["email"], platform.name, secret_ref,
                  limit, int(platform.is_demo), db.utcnow()))
+        db.execute('UPDATE mailboxes SET platform_account_id=?,operator_id=?,claim_status=? WHERE id=?',
+                   (acc.get('platform_account_id'),acc.get('operator_id'),acc.get('claim_status','unknown'),mid))
+        if acc.get('pending_secret_id'): config.update_secret(acc['pending_secret_id'], None)
+        if acc.get('registration_secret_id'): config.update_secret(acc['registration_secret_id'], None)
         items.append(_row(db.query_one("SELECT * FROM mailboxes WHERE id=?", (mid,))))
     return {"items": items, "is_demo": platform.is_demo, "errors": errors}
+
+
+def refresh_claims():
+    results=[]
+    for row in db.query("SELECT * FROM mailboxes WHERE is_demo=0 AND status='active'"):
+        if not config.secret_configured(row['secret_ref'] or ''):
+            results.append({'id':row['id'],'credential_status':'missing'});continue
+        try:
+            p=get_platform(row['platform'])
+            who=p._http('GET','/auth/me',token=config.resolve_secret(row['secret_ref']))
+            status='confirmed' if who.get('operatorConfirmed') is True or who.get('userType')=='human' else 'pending' if who.get('operatorId') else 'unknown'
+            db.execute('UPDATE mailboxes SET platform_account_id=?,operator_id=?,claim_status=? WHERE id=?',
+                (str(who['id']),str(who.get('operatorId') or who['id']),status,row['id']))
+            results.append({'id':row['id'],'claim_status':status})
+        except Exception as exc:results.append({'id':row['id'],'status':'unknown','error_type':type(exc).__name__})
+    return {'items':results}
+
+
+def set_role(mailbox_id: str, role: str) -> dict[str, Any]:
+    if role not in ('harvest','experiment'): raise MailboxError('INVALID_MESSAGE','账号角色无效')
+    try:
+        with db.transaction() as conn:
+            row=conn.execute('SELECT * FROM mailboxes WHERE id=?',(mailbox_id,)).fetchone()
+            if not row: raise MailboxError('NOT_FOUND','账号不存在')
+            conn.execute('UPDATE mailboxes SET role=? WHERE id=?',(role,mailbox_id))
+            conn.execute("INSERT OR REPLACE INTO system_state VALUES(?,?)",('mailbox_role:'+mailbox_id,json.dumps({'role':role,'previous_role':row['role'],'at':db.utcnow()})))
+    except sqlite3.IntegrityError as exc: raise MailboxError('CONFLICT','已有收割账号，请先修改其角色') from exc
+    return _row(db.query_one('SELECT * FROM mailboxes WHERE id=?',(mailbox_id,)))
+
+
+def select_experiment(conn, run_id, accounts, digest=None):
+    """Rotate within a topic and prefer the least recently used account."""
+    policy=config.load_settings()['submission_policy']
+    target=json.loads(_challenge_key(conn,run_id))
+    history=[s for s in _target_submissions(conn,run_id) if not s['is_harvest']]
+    last=max(history,key=lambda s:s['created_at'])['mailbox_id'] if history else None
+    prior_hash=[s for s in history if digest and s['package_sha256']==digest]
+    if prior_hash:
+        return next((m for m in accounts if m['id']==prior_hash[0]['mailbox_id']),None)
+    eligible=[m for m in accounts if m['id']!=last] if len(accounts)>1 else accounts
+    def recent(m):
+        rows=conn.execute('SELECT created_at FROM submissions WHERE mailbox_id=? AND reservation_released=0',(m['id'],)).fetchall()
+        cutoff=datetime.now(timezone.utc)-timedelta(minutes=policy['cross_topic_minutes'])
+        return sum(_instant(r['created_at'])>=cutoff for r in rows)
+    def use(m):
+        row=conn.execute('SELECT MAX(created_at) FROM submissions WHERE mailbox_id=?',(m['id'],)).fetchone()
+        return row[0] or ''
+    return min(eligible,key=lambda m:(recent(m)>=policy['cross_topic_limit'],use(m),m['created_at'],m['id'])) if eligible else None
 
 
 def disable_mailbox(mailbox_id: str) -> dict[str, Any]:
@@ -1063,11 +1115,11 @@ def submit_experiment(run_id: str, trial_id: str | None,
             challenge_key = _challenge_key(conn, run_id)
             limit = config.load_settings()["mailbox"]["submission_limit"]
             accounts = conn.execute("SELECT * FROM mailboxes WHERE role='experiment' AND status='active'"
-                                    " AND platform=? AND is_demo=? ORDER BY created_at,id",
+                                    " AND platform=? AND is_demo=? AND secret_ref IS NOT NULL ORDER BY created_at,id",
                                     (platform.name,int(platform.is_demo))).fetchall()
             available = [(mb, _used_for(conn, mb["id"], challenge_key)) for mb in accounts]
             available = [(mb, used) for mb, used in available if used < limit]
-            mb = sorted(available, key=lambda item: (item[1] == 0, -item[1], item[0]["created_at"], item[0]["id"]))[0][0] if available else None
+            mb = select_experiment(conn, run_id, [m for m,used in available], digest)
             if not mb:
                 raise MailboxError("NO_MAILBOX",f"题目 {challenge_key} 的实验邮箱额度已用尽或无可用邮箱（平台 {platform.name}）")
             sid = _rid("sub")
@@ -1276,7 +1328,7 @@ def submit_exact_replay(source_submission_id: str, operation_id: str,
         challenge_key = _challenge_key(conn, run_id)
         limit = config.load_settings()['mailbox']['submission_limit']
         accounts = conn.execute("SELECT * FROM mailboxes WHERE role='experiment' AND status='active'"
-                                " AND platform=? AND is_demo=? ORDER BY created_at,id",
+                                " AND platform=? AND is_demo=? AND secret_ref IS NOT NULL ORDER BY created_at,id",
                                 (platform.name,int(platform.is_demo))).fetchall()
         available = [(mb, _used_for(conn, mb['id'], challenge_key)) for mb in accounts]
         available = [(mb, used) for mb, used in available if used < limit]

@@ -45,9 +45,9 @@ def update_secret(secret_id: str, value: str | None) -> None:
 
 DEFAULT_SETTINGS: dict[str, Any] = {
     "submission_transport": "cli",
-    'submission_policy': {'same_topic_minutes': 30, 'cross_topic_minutes': 30, 'cross_topic_limit': 4},
+    'submission_policy': {'same_topic_minutes': 0, 'cross_topic_minutes': 30, 'cross_topic_limit': 4},
     'codex_fast_mode': True,
-    'features': {'auto_submission': True, 'judge_replica_hint': False, 'auto_harvest': True, 'reviewer': True, 'strategy_cards': True, 'deepseek_fallback': True, 'system_triage': True, 'local_calculation': True, 'environment_catalog': True, 'scorer_audit': True, 'await_score': True, 'shared_area': True, 'protocol_drift': True},
+    'features': {'auto_submission': True, 'judge_replica_hint': False, 'auto_harvest': False, 'reviewer': True, 'strategy_cards': True, 'deepseek_fallback': True, 'system_triage': True, 'local_calculation': True, 'environment_catalog': True, 'scorer_audit': True, 'await_score': True, 'shared_area': True, 'protocol_drift': True},
     "schema_version": 1,
     "revision": 0,
     "app": {"host": "127.0.0.1", "port": 8765, "mode": "demo",

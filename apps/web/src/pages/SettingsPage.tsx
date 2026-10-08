@@ -1,3 +1,4 @@
+import { AccountRoles } from '../AccountRoles'
 import { useCallback, useEffect, useState } from 'react'
 import { api, listSkills } from '../api'
 import { useApp } from '../app-context'
@@ -855,7 +856,8 @@ export default function SettingsPage() {
           </button>
         </div>
       </fieldset>
-    </section>
+    <AccountRoles />
+</section>
   )
 }
 

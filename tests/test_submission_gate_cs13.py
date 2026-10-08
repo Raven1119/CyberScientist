@@ -7,7 +7,7 @@ from test_mailboxes import _make_package, _extra_run, _set_scored
 
 
 def policy():
-    settings=config.load_settings();settings['submission_policy']=dict(config.DEFAULT_SETTINGS['submission_policy']);config.save_settings(settings)
+    settings=config.load_settings();settings['submission_policy']=dict(config.DEFAULT_SETTINGS['submission_policy'],same_topic_minutes=30);config.save_settings(settings)
 
 
 def test_same_topic_queue_due_and_restart_no_unknown_replay(monkeypatch):
@@ -74,7 +74,7 @@ def test_nonstandard_feedback_persists_barrier_and_popup_and_recovers(response):
 
 
 def test_defaults_and_policy_validation():
-    assert config.DEFAULT_SETTINGS['submission_policy']=={'same_topic_minutes':30,'cross_topic_minutes':30,'cross_topic_limit':4}
+    assert config.DEFAULT_SETTINGS['submission_policy']=={'same_topic_minutes':0,'cross_topic_minutes':30,'cross_topic_limit':4}
     for value in ({'cross_topic_limit':0},{'same_topic_minutes':-1},{'same_topic_minutes':True},{'unknown':1}):
         with pytest.raises(ValueError):gate.validate(value)
     db.init_db();db.init_db()

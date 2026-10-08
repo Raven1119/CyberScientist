@@ -7,6 +7,7 @@ from test_mailboxes import _seed_challenge, _make_run, _make_package, _set_score
 
 
 def seed(score=100, limit=5):
+    settings=config.load_settings();settings['features']['auto_harvest']=True;config.save_settings(settings)
     _seed_challenge(); rid=_make_run(max_submissions=limit); _make_package(rid)
     mailboxes.register_experiment(1); mailboxes.add_harvest('owned@example.com','fixture-harvest')
     source=mailboxes.submit_experiment(rid,'trial_mb1',None,'experiment')

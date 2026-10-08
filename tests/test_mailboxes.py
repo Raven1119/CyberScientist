@@ -169,17 +169,19 @@ def test_quota_is_per_platform_challenge_for_both_mailbox_roles():
     assert exc.value.code == 'NO_MAILBOX' and 'platform-11' in str(exc.value)
 
 
-def test_experiment_sticks_to_used_mailbox_and_other_challenge_keeps_quota():
+def test_experiment_rotates_mailboxes_and_other_challenge_keeps_quota():
     settings = config.load_settings()
     settings['mailbox']['submission_limit'] = 2
     config.save_settings(settings)
     first, second = mailboxes.register_experiment(2)['items']
     rid_a = _extra_run(100)
-    submissions = [mailboxes.submit_experiment(rid_a, 'trial_mb1', None, f'stick-{i}')
-                   for i in range(3)]
-    assert [item['mailbox_id'] for item in submissions] == [first['id'], first['id'], second['id']]
+    submissions = []
+    for i in range(3):
+        _make_package(rid_a, f'rotation-{i}', str(i))
+        submissions.append(mailboxes.submit_experiment(rid_a, f'rotation-{i}', None, f'stick-{i}'))
+    assert [item['mailbox_id'] for item in submissions] == [first['id'], second['id'], first['id']]
     rid_b = _extra_run(101)
-    assert mailboxes.submit_experiment(rid_b, 'trial_mb1', None, 'other-task')['mailbox_id'] == first['id']
+    assert mailboxes.submit_experiment(rid_b, 'trial_mb1', None, 'other-task')['mailbox_id'] == second['id']
 
 
 def test_experiment_ten_on_a_does_not_consume_b():

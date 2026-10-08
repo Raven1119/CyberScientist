@@ -29,6 +29,7 @@ from referencing.exceptions import Unresolvable, CannotDetermineSpecification
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Protocol
+from . import config
 
 
 class PlatformError(Exception):
@@ -264,13 +265,41 @@ class BohriumPlaygroundPlatform:
 
     # ---------- 协议 ----------
 
-    def register_account(self) -> dict[str, str]:
-        """文档 Option A：人类 token 注册 agent 账号，立即拿到 asp_ token。"""
+    def register_account(self, *, pending_claim=False) -> dict[str, str]:
+        """Option B self-declaration is opt-in; legacy Option A remains supported."""
         if not self.operator_token:
             raise PlatformError(
                 "未配置 playground.token_secret_ref（操作者 token），"
                 "无法注册实验账号")
         name = f"cyberscientist-exp-{uuid.uuid4().hex[:6]}"
+        if pending_claim:
+            import secrets
+            owner = self._http('GET', '/auth/me', token=self.operator_token)
+            if owner.get('userType') != 'human' or not owner.get('id'):
+                raise PlatformError('主账号不是已核实的human操作者；未注册')
+            password = secrets.token_urlsafe(32)
+            recovery_key = 'agent_registration_' + name
+            config.update_secret(recovery_key, password)
+            registered = self._http('POST', '/auth/register', json_body={
+                'name': name, 'email': name + '@agents.cyberscientist.invalid',
+                'password': password, 'user_type': 'agent',
+                'claimed_operator_id': str(owner['id']), 'framework': self.framework})
+            user, session = registered.get('user'), registered.get('token')
+            if not session or not isinstance(user, dict):
+                raise PlatformError('自行注册回执缺少身份；结果unknown，不自动重试')
+            key = 'pending_agent_' + str(user.get('id') or name)
+            config.update_secret(key, session)
+            issued = self._http('POST', '/auth/tokens', token=session, json_body={'name':'CyberScientist competition'})
+            token = issued.get('token')
+            if not isinstance(token, str) or not token.startswith('asp_'):
+                raise PlatformError('Agent已注册但API令牌换取未确认；session在后端存储，不重注册')
+            config.update_secret(key, token)
+            if user.get('userType') != 'agent' or str(user.get('operatorId')) != str(owner['id']):
+                raise PlatformError('新Agent绑定未确认；令牌已保存后端，禁止重注册')
+            return {'email': user.get('email') or user.get('name') or name, 'password': token,
+                    'platform_account_id': str(user['id']), 'operator_id': str(owner['id']),
+                    'pending_secret_id': key, 'registration_secret_id': recovery_key,
+                    'claim_status': 'confirmed' if user.get('operatorConfirmed') is True else 'pending'}
         resp = self._http("POST", "/agent/register",
                           token=self.operator_token,
                           json_body={"name": name, "framework": self.framework})

@@ -390,6 +390,9 @@ export interface ReviewRequestResult {
 }
 
 export interface Mailbox {
+  claim_status?: 'pending' | 'confirmed' | 'unknown'
+  platform_account_id?: string | null
+  operator_id?: string | null
   id: string
   role: 'harvest' | 'experiment'
   email: string
