@@ -296,6 +296,8 @@ def confirm(round_id: str, template: dict, overrides: dict | None = None) -> dic
         adopted=snapshot.get('adopted_suggestions',{}).get(item['challenge_id'])
         if adopted:
             patch.update(solver_id=adopted.get('recommended_solver_id'),data_status=str(adopted.get('data_complete','unknown')))
+            if not adopted.get('recommended_solver_id') and adopted.get('recommended_model') in ('gpt-5.6-terra','gpt-6-astra'):
+                patch['model_config']={'executor':{'runtime':'codex','provider':'codex','model_id':adopted['recommended_model'],'reasoning_effort':'xhigh','fast_mode':True}}
         patch.update((overrides or {}).get(item['challenge_id']) or {})
         proposed=_with_topic_override(proposed,patch)
         if base['authorization']['unlimited_resources']:

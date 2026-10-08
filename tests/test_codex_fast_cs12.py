@@ -113,7 +113,7 @@ async def test_persisted_fast_role_roster_and_effort_survive_other_setting_save(
     assert ctl._make_brain(runtime).fast_mode and ctl._make_prime(runtime).fast_mode
 
 
-async def test_easy_triage_recommends_deepseek_but_never_applies_it_implicitly(monkeypatch):
+async def test_easy_triage_recommends_terra_but_never_applies_it_implicitly(monkeypatch):
     rnd,_=seed(1);ctl=RunController()
     class Helper:
         async def open(self,spec):return SessionRef('fixture','helper')
@@ -122,7 +122,7 @@ async def test_easy_triage_recommends_deepseek_but_never_applies_it_implicitly(m
     monkeypatch.setattr(ctl,'_make_brain',lambda settings:Helper())
     await competition.triage(rnd['id'],ctl)
     row=db.query_one('SELECT * FROM eval_results');result=json.loads(row['triage_json'])
-    assert result['recommended_solver_id']=='fixture-ds' and result['recommended_model']=='deepseek-flash'
+    assert result['recommended_solver_id'] is None and result['recommended_model']=='gpt-5.6-terra'
     assert row['template_json'] is None and not db.query('SELECT * FROM runs')
 
 

@@ -31,3 +31,7 @@
 两轴审查发现并修正7处生产问题：正常提交通知自动等分、真实扣分字段、无消费者的复跑策略、初始方法摘要不更新、简报缺能力导致Run异常、旧会话关闭未知仍开新线程、实际提交模型身份取旧配置。18项修正回归、12项旧等分兼容、实际HTTP闭环1项和面板10项通过，证据cs16-review-fixes.log、cs16-score-wait-review.log、cs16-w2-http-regression.log、cs16-review-fixes-web-2.log。旧测试明确选择旧协议政策，没有删除或跳过。
 
 真实Astra xhigh/priority会话01a11cc1-32cc-77a3-8af4-236c89a805b6握手19.763秒，到Decision465.605秒；方法提案存在、selected_capabilities非空，零Job/提交。此次JSON紧凑口径336039→52795字节（15.71%，验证附加指导包含在后者）。证据pi-cold/result.json；完整原生记录只在私有本地。**耗时目标不通过**：相比旧319秒未下降，更未达到79.75秒；上下文目标通过。替代为保留压缩和真实失败证据，后续按供应商延迟/工具调用分项诊断，不追加科研Run或重跑取最好值。
+
+## W6 模型档位
+
+分诊简单/中等Terra fast，难题Astra fast；空roster不回退DeepSeek，显式采纳时写入本题模型选择。未知难度仍unknown。新配置默认Terra xhigh fast，用户已有选择不覆盖。29项测试通过cs16-w6-tests.log，前端20项通过cs16-w6-web-4.log（旧默认断言与标签修正，保留失败日志）。

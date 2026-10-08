@@ -13,7 +13,7 @@ type Item = { harvest_scores?: { main_best: number | null; experiment_best: numb
   triage: { difficulty: string; estimated_minutes: number | null; estimated_cost_cny: number | null; recommended_model: string; recommended_solver_id?: string; priority?: number; data_complete?: boolean | null; reason: string } | null;
   leaderboard_best?: number | null; our_best?: number | null; score_gap?: number | null;
   triage_attempts?: { id: string; helper_effort: string; status: string }[];
-  adopted_suggestion?: { recommended_solver_id?: string; data_complete?: boolean | null } | null; user_triage?: { platform_challenge_id: string; solver_entry: SolverEntry; pi_notes: string; data_status: string } | null;
+  adopted_suggestion?: { recommended_model?: string; recommended_solver_id?: string; data_complete?: boolean | null } | null; user_triage?: { platform_challenge_id: string; solver_entry: SolverEntry; pi_notes: string; data_status: string } | null;
   model_cost?: unknown; trace_diagnostic: unknown; usage: unknown[]; cost: unknown; next_action: string | null }
 type Clock = { start: string | null; end: string | null; source: string; remaining_seconds: number | null; platform_end: string | null }
 type Transport = { base_url: string; paths: Record<string, string>; bundle_format: string; bundle_field: string; protocol_version: string; topic_link: string; verified: boolean; status?: string }
@@ -61,8 +61,8 @@ export default function CompetitionPage() {
   const [busy, setBusy] = useState(false)
   const [shutdown, setShutdown] = useState<{ can_shutdown: boolean; message: string; remote_jobs: unknown[]; remote_sandboxes: unknown[] } | null>(null)
   const [overrides, setOverrides] = useState<Record<string, Template>>({})
-  const initialExecutor = useRef(choice('gpt-6.1-sol'))
-  const defaultTemplate = (): Template => ({ model_config: { brain: choice('gpt-6-astra'), executor: choice('gpt-6.1-sol') },
+  const initialExecutor = useRef(choice('gpt-5.6-terra'))
+  const defaultTemplate = (): Template => ({ model_config: { brain: choice('gpt-6-astra'), executor: choice('gpt-5.6-terra') },
     authorization: { unlimited_resources: true, allow_model_calls: true, max_run_minutes: 60, max_jobs: 2, max_submissions: 0,
       max_sandboxes: 2, max_environment_saves: 0, max_sandbox_minutes: 60, allow_data_download: true }, solver_note: '' })
   const [template, setTemplate] = useState<Template>(defaultTemplate)
@@ -120,6 +120,8 @@ export default function CompetitionPage() {
   const itemTemplate = (item: Item): Template => overrides[item.challenge_id] ?? (item.adopted_suggestion?.recommended_solver_id ? {
     ...template, solver_id: item.adopted_suggestion.recommended_solver_id,
     model_config: { ...template.model_config, executor: roster.find(entry => entry.id === item.adopted_suggestion?.recommended_solver_id) ?? template.model_config.executor },
+  } : ['gpt-5.6-terra','gpt-6-astra'].includes(item.adopted_suggestion?.recommended_model ?? '') ? {
+    ...template,solver_id:null,model_config:{...template.model_config,executor:choice(item.adopted_suggestion!.recommended_model!)},
   } : item.user_triage ? {
     ...template, solver_id: item.user_triage.solver_entry.id, solver_note: item.user_triage.solver_entry.note ?? template.solver_note,
     model_config: { ...template.model_config, executor: item.user_triage.solver_entry },

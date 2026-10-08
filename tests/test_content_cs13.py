@@ -33,7 +33,7 @@ def test_three_levels_and_one_data_complete_fastest_candidate():
         for sid, provider, model in [('easy', 'deepseek', 'deepseek-flash'),
             ('medium', 'codex', 'gpt-5.6-terra'), ('hard', 'codex', 'gpt-6-astra')]]
     for level in ('easy', 'medium', 'hard'):
-        assert competition_triage.recommend({'difficulty': level}, settings)['recommended_solver_id'] == level
+        assert competition_triage.recommend({'difficulty': level}, settings)['recommended_solver_id'] == ('medium' if level=='easy' else level)
     rnd = competition.import_round(challenges(3), mode='demo')
     rows = db.query('SELECT id FROM eval_results WHERE eval_id=? ORDER BY id', (rnd['id'],))
     for row, duration, complete in zip(rows, (1, 5, 2), (False, True, True)):

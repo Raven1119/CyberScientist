@@ -271,17 +271,17 @@ it('saves a scheduling-only clock and requires saving a changed submission trans
   expect(put.mock.calls[1][1]).toMatchObject({ verified: true, paths: { bundle: '/track-b/attempts/{id}/bundle' } })
 })
 
-it('defaults Sol to high and persists explicit per-role fast choices in the template', async () => {
+it('defaults Terra to xhigh and persists explicit per-role fast choices in the template', async () => {
   get.mockImplementation(async (path: string) => path === '/api/v1/rounds' ? { items: [{ id: 'round_one', status: 'draft' }] } : detail)
   put.mockResolvedValue(detail)
   render(<CompetitionPage />)
   await screen.findByText(/easy · deepseek-flash/)
-  expect((screen.getByLabelText('求解者 思考强度') as HTMLSelectElement).value).toBe('high')
+  expect((screen.getByLabelText('求解者 思考强度') as HTMLSelectElement).value).toBe('xhigh')
   expect((screen.getByLabelText('PI fast') as HTMLInputElement).checked).toBe(true)
   const user = userEvent.setup()
   await user.click(screen.getByLabelText('求解者 fast'))
   await user.click(screen.getByRole('button', { name: '保存当前模板' }))
-  expect(put.mock.calls[0][1].template.model_config).toMatchObject({ brain: { fast_mode: true, reasoning_effort: 'xhigh' }, executor: { fast_mode: false, reasoning_effort: 'high' } })
+  expect(put.mock.calls[0][1].template.model_config).toMatchObject({ brain: { fast_mode: true, reasoning_effort: 'xhigh' }, executor: { fast_mode: false, reasoning_effort: 'xhigh' } })
 })
 
 it('shows track harvest countdown and separate main / experiment scores', async () => {
@@ -293,4 +293,21 @@ it('shows track harvest countdown and separate main / experiment scores', async 
   expect(screen.getByText('主邮箱成绩 / 最好实验成绩')).toBeTruthy()
   expect(screen.getByText('64.8 / 70')).toBeTruthy()
   expect(screen.getByText('待出分 1')).toBeTruthy()
+})
+
+it('shows Astra xhigh PI and Terra fast defaults without saved model choices',async()=>{
+ get.mockImplementation(async(path:string)=>path==='/api/v1/rounds'?{items:[]}:path==='/api/v1/competition-panel'?{items:[],auto_submission:true,distributions:[],repairs:[],alerts:[]}:path==='/api/v1/mailboxes'?{items:[]}:{} )
+ render(<CompetitionPage/> )
+ expect((screen.getByLabelText('PI 模型') as HTMLInputElement).value).toBe('gpt-6-astra')
+ expect((screen.getByLabelText('PI 思考强度') as HTMLSelectElement).value).toBe('xhigh')
+ expect((screen.getByLabelText('求解者 模型') as HTMLInputElement).value).toBe('gpt-5.6-terra')
+ expect((screen.getByLabelText('求解者 fast') as HTMLInputElement).checked).toBe(true)
+})
+
+it('shows adopted Astra recommendation without a solver roster entry',async()=>{
+ const adopted={...detail,items:[{...detail.items[0],adopted_suggestion:{recommended_solver_id:null,recommended_model:'gpt-6-astra'}}]}
+ get.mockImplementation(async(path:string)=>path==='/api/v1/settings'?{solver_roster:[]}:path==='/api/v1/rounds'?{items:[{id:'round_one',status:'draft'}]}:adopted)
+ render(<CompetitionPage/> )
+ await screen.findByText(/easy · deepseek-flash/)
+ expect((screen.getByLabelText('测试题求解者 模型') as HTMLInputElement).value).toBe('gpt-6-astra')
 })

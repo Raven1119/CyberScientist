@@ -17,12 +17,12 @@ CLOSERS = {}
 def recommend(result, settings):
     roster = challenge_models.roster(settings)
     difficulty = result.get('difficulty')
-    candidate = next((entry for entry in roster if
-                      (difficulty == 'easy' and entry.get('provider') == 'deepseek') or
-                      (difficulty == 'medium' and entry.get('model_id') == 'gpt-5.6-terra' and entry.get('fast_mode') is True) or
-                      (difficulty == 'hard' and entry.get('model_id') == 'gpt-6-astra' and entry.get('fast_mode') is True)), None)
-    if candidate:
-        result.update(recommended_solver_id=candidate['id'], recommended_model=candidate['model_id'])
+    model={'easy':'gpt-5.6-terra','medium':'gpt-5.6-terra','hard':'gpt-6-astra'}.get(difficulty)
+    if model is None:
+        result.update(recommended_solver_id=None,recommended_model='unknown')
+        return result
+    candidate=next((entry for entry in roster if entry.get('provider')=='codex' and entry.get('model_id')==model and entry.get('fast_mode') is True),None)
+    result.update(recommended_solver_id=candidate['id'] if candidate else None,recommended_model=model)
     return result
 
 
@@ -133,7 +133,7 @@ async def _item(round_id, item, snapshot, settings, controller, semaphore, first
                     if power.shutdown_requested() or not features.enabled('system_triage'):
                         attempts.append({'status':'not_dispatched','helper_effort':projected['brain']['reasoning_effort']});return
                     packet={'protocol':'role_task','task':'competition_triage',
-                            'instructions':'你是分诊助手，只读题面/资源/公开分布和用户提示词。给出难度、推荐条目、优先级priority、公开数据是否齐全data_complete及理由；简单题默认建议DeepSeek条目。所有输出只是建议，不自动配置、启动或授权。数据可获取不等于实际验证。',
+                            'instructions':'你是分诊助手，只读题面/资源/公开分布和用户提示词。给出难度、推荐条目、优先级priority、公开数据是否齐全data_complete及理由；简单和中等题建议Terra fast，难题建议Astra fast；PI固定Astra xhigh。所有输出只是建议，不自动配置、启动或授权。数据可获取不等于实际验证。',
                             'user_prompt':competition_prompts.freeze(round_id,item['challenge_id']),
                             'challenge':next(e.get('challenge_snapshot') for e in snapshot['entries'] if e['challenge_id']==item['challenge_id']),
                             'public_scores':scores,'solver_roster':challenge_models.roster(projected),'output_contract':contract(projected)}
