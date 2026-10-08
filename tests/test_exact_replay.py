@@ -35,3 +35,15 @@ def test_exact_replay_preserves_frozen_bytes_and_uses_new_attempt(monkeypatch):
     assert conflict.value.code == 'CONFLICT'
     events = db.query("SELECT payload FROM events WHERE run_id=? AND type='submission.replay_created'", (rid,))
     assert len(events) == 1
+
+
+def test_same_hash_replay_cannot_change_account_when_original_is_full():
+    from test_auto_harvest import seed
+    from cyberscientist import config,db,mailboxes
+    rid,source=seed(100)
+    settings=config.load_settings();settings['mailbox']['submission_limit']=1;config.save_settings(settings)
+    mailboxes.register_experiment(1)
+    import pytest
+    with pytest.raises(mailboxes.MailboxError,match='邮箱'):
+        mailboxes.submit_exact_replay(source['id'],'cannot-change-account','same original version')
+    assert not db.query_one("SELECT 1 FROM submissions WHERE operation_id='cannot-change-account'")

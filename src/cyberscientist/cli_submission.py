@@ -229,15 +229,21 @@ def reconcile_unknown(submission_id, platform, secret, challenge_id):
                 and str(item.get('authorId')) == now['owner_id']
                 and item.get('bundleSha256') == (row['official_package_sha256'] or row['package_sha256'])): matches.append(attempt_id)
     from datetime import datetime, timezone
-    age = (datetime.now(timezone.utc) - datetime.fromisoformat(row['created_at']).replace(tzinfo=timezone.utc)).total_seconds()
-    inferred = not candidates and now.get('complete') is True and age >= 600
+    sent = db.query_one("SELECT occurred_at FROM events WHERE run_id=? AND type='submission.stage' AND json_extract(payload,'$.submission_id')=? AND json_extract(payload,'$.stage')='create_sent' ORDER BY seq DESC LIMIT 1", (row['run_id'], submission_id))
+    # Reservation age says nothing about when the non-idempotent call began.
+    age = None
+    if sent:
+        stamp = datetime.fromisoformat(sent['occurred_at'])
+        if stamp.tzinfo is None: stamp = stamp.replace(tzinfo=timezone.utc)
+        age = (datetime.now(timezone.utc) - stamp).total_seconds()
+    inferred = row['platform_ref'] is None and not candidates and now.get('complete') is True and age is not None and age >= 600
     result = {'status': 'matched' if len(matches) == 1 else 'not_stored_inferred' if inferred else 'absence_observed' if not candidates else 'ambiguous',
               'candidates': candidates, 'matches': matches, 'retry_allowed': False,
               'reason': '十分钟完整分页无新增仅为未存储推断；重发须新显式意图且最多一次'}
     if inferred:
         with db.transaction() as conn:
-            conn.execute("UPDATE submissions SET stage='not_stored_inferred',reservation_released=1 WHERE id=? AND status='unknown' AND platform_ref IS NULL", (submission_id,))
-        result['retry_allowed'] = not bool(row['retry_of'])
+            released = conn.execute("UPDATE submissions SET stage='not_stored_inferred',reservation_released=1 WHERE id=? AND status='unknown' AND platform_ref IS NULL", (submission_id,))
+        result['retry_allowed'] = released.rowcount == 1 and not bool(row['retry_of'])
     if len(matches) == 1:
         db.execute("UPDATE submissions SET platform_ref=? WHERE id=? AND platform_ref IS NULL AND status='unknown'", (matches[0], submission_id))
     db.append_event(row['run_id'], 'controller', 'submission.cli_reconciled', result | {'submission_id': submission_id}, trial_id=row['trial_id'])

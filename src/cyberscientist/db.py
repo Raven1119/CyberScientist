@@ -83,6 +83,11 @@ CREATE TABLE IF NOT EXISTS trials (
     status TEXT NOT NULL DEFAULT 'active',
     created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS submission_daily_audits (
+    mailbox_id TEXT NOT NULL, day TEXT NOT NULL, submission_id TEXT NOT NULL,
+    result_json TEXT NOT NULL, observed_at TEXT NOT NULL,
+    PRIMARY KEY(mailbox_id, day)
+);
 CREATE TABLE IF NOT EXISTS events (
     event_id TEXT PRIMARY KEY,
     run_id TEXT NOT NULL REFERENCES runs(id),

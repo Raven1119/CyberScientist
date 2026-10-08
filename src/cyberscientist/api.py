@@ -1035,6 +1035,11 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
         try: return ops_digest.digest(since)
         except ValueError as exc: raise HTTPException(422,detail={'message':str(exc)}) from exc
 
+    @app.get('/api/v1/ops/official-cli')
+    async def official_cli_readiness():
+        from . import cli_submission
+        return await asyncio.to_thread(cli_submission.readiness, latest=True)
+
     @app.post('/api/v1/ops/submit')
     async def ops_submit(body: dict[str, Any]):
         try:

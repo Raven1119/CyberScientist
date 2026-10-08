@@ -7,6 +7,7 @@ export function AccountRoles() {
   const [enabled, setEnabled] = useState(false)
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
+  const [cliNotice, setCliNotice] = useState('')
   const refresh = useCallback(async () => {
     try {
       const [accounts, settings] = await Promise.all([
@@ -36,6 +37,12 @@ export function AccountRoles() {
       <button type="button" className="btn" aria-label="切换收割开关" disabled={busy} onClick={() => void toggle()}>
         收割{enabled ? '已开启' : '已关闭'}
       </button>
+      <button type="button" className="btn" aria-label="检查官方CLI更新" onClick={() => {
+        void api.get<{version: string; latest?: string; update_available?: boolean}>('/api/v1/ops/official-cli')
+          .then(r => setCliNotice(r.update_available ? `官方CLI有新版本 ${r.latest}，当前 ${r.version}；需人工升级` : `当前官方CLI ${r.version}；${r.latest ? '无更新' : '最新版本未知'}`))
+          .catch(e => setError(String(e)))
+      }}>检查官方CLI更新</button>
+      {cliNotice && <p role="status">{cliNotice}</p>}
       {error && <p role="alert" className="form-error">{error}</p>}
       {items.filter(m => m.status === 'active').map(m => <div className="meta-row" key={m.id}>
         <span>{m.email} · {!m.secret_configured && <span className="form-error">凭据未配置 · </span>}<span className={m.claim_status === 'pending' ? 'form-error' : ''}>

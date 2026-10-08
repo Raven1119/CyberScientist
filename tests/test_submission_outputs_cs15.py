@@ -40,6 +40,8 @@ def test_unknown_ten_minute_complete_absence_releases_once(monkeypatch):
     rid,source=seed(10)
     db.execute("UPDATE submissions SET status='unknown',platform_ref=NULL,created_at=? WHERE id=?",((datetime.now(timezone.utc)-timedelta(minutes=11)).isoformat(),source['id']))
     db.append_event(rid,'controller','submission.cli_baseline',{'submission_id':source['id'],'owner_id':'owner','attempt_ids':[]})
+    db.append_event(rid,'controller','submission.stage',{'submission_id':source['id'],'stage':'create_sent'})
+    db.execute("UPDATE events SET occurred_at=? WHERE run_id=? AND type='submission.stage'",((datetime.now(timezone.utc)-timedelta(minutes=11)).isoformat(),rid))
     p=BohriumPlaygroundPlatform('https://play.bohrium.com/api')
     monkeypatch.setattr(cli_submission,'account_attempts',lambda *a:{'owner_id':'owner','attempts':[],'complete':True})
     got=cli_submission.reconcile_unknown(source['id'],p,'private','ended')
@@ -47,3 +49,29 @@ def test_unknown_ten_minute_complete_absence_releases_once(monkeypatch):
     assert db.query_one('SELECT reservation_released FROM submissions WHERE id=?',(source['id'],))[0]==1
     db.execute('UPDATE submissions SET retry_of=? WHERE id=?',(source['id'],source['id']))
     assert not cli_submission.reconcile_unknown(source['id'],p,'private','ended')['retry_allowed']
+
+
+def test_old_reservation_does_not_release_a_fresh_send(monkeypatch):
+    from test_auto_harvest import seed
+    rid,source=seed(10)
+    db.execute("UPDATE submissions SET status='unknown',platform_ref=NULL,created_at=? WHERE id=?",((datetime.now(timezone.utc)-timedelta(days=1)).isoformat(),source['id']))
+    db.append_event(rid,'controller','submission.cli_baseline',{'submission_id':source['id'],'owner_id':'owner','attempt_ids':[]})
+    db.append_event(rid,'controller','submission.stage',{'submission_id':source['id'],'stage':'create_sent'})
+    p=BohriumPlaygroundPlatform('https://play.bohrium.com/api')
+    monkeypatch.setattr(cli_submission,'account_attempts',lambda *a:{'owner_id':'owner','attempts':[],'complete':True})
+    assert cli_submission.reconcile_unknown(source['id'],p,'private','ended')['status']=='absence_observed'
+    assert db.query_one('SELECT reservation_released FROM submissions WHERE id=?',(source['id'],))[0]==0
+
+
+def test_unknown_with_known_attempt_never_authorizes_resend(monkeypatch):
+    from test_auto_harvest import seed
+    rid,source=seed(10)
+    db.execute("UPDATE submissions SET status='unknown',platform_ref='known-remote' WHERE id=?",(source['id'],))
+    db.append_event(rid,'controller','submission.cli_baseline',{'submission_id':source['id'],'owner_id':'owner','attempt_ids':[]})
+    db.append_event(rid,'controller','submission.stage',{'submission_id':source['id'],'stage':'create_sent'})
+    db.execute("UPDATE events SET occurred_at=? WHERE run_id=? AND type='submission.stage'",((datetime.now(timezone.utc)-timedelta(minutes=11)).isoformat(),rid))
+    p=BohriumPlaygroundPlatform('https://play.bohrium.com/api')
+    monkeypatch.setattr(cli_submission,'account_attempts',lambda *a:{'owner_id':'owner','attempts':[],'complete':True})
+    result=cli_submission.reconcile_unknown(source['id'],p,'private','ended')
+    assert not result['retry_allowed'] and result['status']=='absence_observed'
+    assert db.query_one('SELECT reservation_released FROM submissions WHERE id=?',(source['id'],))[0]==0

@@ -766,3 +766,12 @@ CS-UP-13 工作包提交索引（按Git事实，最终W8标签另录）：
 - 已实际验证：24项相关回归通过（w4-related.log）；同一50139官方包提示N11/N14与真实平台码完全一致，输入来自真实官方包，未修改轨迹。证据50139-local-hint-calibration.json。
 - 尚未验证：新提交的逐回执校准随W5执行。
 - 阻塞项：旧unknown完整分页出现50139但包哈希不匹配，状态ambiguous，预约保持、不重发（legacy-lisi-unknown-reconciliation.json）；无法满足清理验收，替代为保留明确关联歧义。
+
+### CS-UP-15 W5
+- 已实现：两轴有界审查所见问题已修复：旧题结束解析、unknown按真实create_sent时间计时、同哈希重放账号约束、重发幂等先查账本；官方更新只读API/设置页提示；每日首次平台包下载审计（无官方URL即unknown，不猜路由）。
+- 已实际验证：27项最终针对性回归通过（cs15-final-focused.log）。新的应用API /api/v1/ops/submit 真正投递LiSi，sub_8e446f6e58→Attempt50211、Worker27828，官方CLI exit0；完整原生会话与六输出保留，没有新Run/Job。创建上传证据lisi-api-result.json及私有数据库事件。
+- 已实际验证：最终全量1649 passed、2条依赖弃用警告（cs15-final-frozen-suite.log，1065.24秒）；前端23文件106测试和构建通过，compileall/diff通过。三项旧收割测试因默认改为关闭而失败，现明确开启该用例政策，相关122项与最终全量均通过。
+- 尚未验证：卡内明确保留的外部验收缺口见阻塞项；Git远端交付在本提交后执行，结果随下一项和最终报告记录。
+- 阻塞项：paired-block原满分包缺本系统Trial绑定证明，不能补造绑定来提交；真实第二实验账号仍缺凭据。平台Attempt.bundlePath=null，无法下载官方包；替代为本地官方实际包及Worker确认哈希/成员数。严格预演/实投SHA与旧unknown结案缺口仍保留。
+
+- CS-UP-15 W3/W5 已实际验证：50211真实正式回执harbor_worker，科学reward1/score100、轨迹82.425/factor1、accept、N11(-6)/N14(-8)、final=true、counts_toward_season=false；科学与轨迹分别入库并保留完整私有回执，未把展示100当作额外科学证据。新包本地提示N11/N14校准记录已生成。旧草稿续传/收割用例的默认值依赖已修复，最终全量1649通过。

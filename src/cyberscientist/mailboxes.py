@@ -947,6 +947,9 @@ def _perform_submission(sid: str, platform: MailboxPlatform, challenge_id: str,
                            {"submission_id":sid,"error":error,"is_demo":platform.is_demo},
                            trial_id=row["trial_id"])
     submission_gate.synchronize_pause()
+    if status == 'submitted' and receipt.get('transport') == 'cli':
+        from . import submission_downloads
+        submission_downloads.audit(sid, platform, config.resolve_secret(row['secret_ref'] or ''))
     return dict(db.query_one("SELECT * FROM submissions WHERE id=?",(sid,))) | {"deduplicated":False}
 
 
@@ -954,6 +957,10 @@ def retry_not_stored(submission_id: str, operation_id: str) -> dict[str, Any]:
     """Explicit new intent only; periodic polling cannot create a retry."""
     original = db.query_one('SELECT s.*,m.secret_ref FROM submissions s JOIN mailboxes m ON m.id=s.mailbox_id WHERE s.id=?', (submission_id,))
     if not original: raise MailboxError('NOT_FOUND', '原提交不存在')
+    prior = db.query_one('SELECT * FROM submissions WHERE retry_of=?', (submission_id,))
+    if prior:
+        if prior['operation_id'] != operation_id: raise MailboxError('CONFLICT', '该提交已重发一次')
+        return dict(prior) | {'deduplicated': True}
     platform = _platform_for_run(original['run_id'])
     from . import cli_submission
     result = cli_submission.reconcile_unknown(submission_id, platform,
@@ -965,6 +972,9 @@ def retry_not_stored(submission_id: str, operation_id: str) -> dict[str, Any]:
         if prior:
             if prior['operation_id'] != operation_id: raise MailboxError('CONFLICT', '该提交已重发一次')
             return dict(prior) | {'deduplicated': True}
+        current = conn.execute('SELECT * FROM submissions WHERE id=?', (submission_id,)).fetchone()
+        if current['status'] != 'unknown' or current['platform_ref'] is not None or current['stage'] != 'not_stored_inferred' or not current['reservation_released']:
+            raise MailboxError('RECONCILIATION_NOT_PROVEN', '对账后原提交状态已变化，不能重发')
         if original['retry_of']: raise MailboxError('CONFLICT', '重发不能再次重发')
         _check_budget(conn, original['run_id'], existing_submission_id=original['id'])
         if original['validation_scope']:
@@ -1338,13 +1348,8 @@ def submit_exact_replay(source_submission_id: str, operation_id: str,
         _check_budget(conn, run_id)
         challenge_key = _challenge_key(conn, run_id)
         limit = config.load_settings()['mailbox']['submission_limit']
-        accounts = conn.execute("SELECT * FROM mailboxes WHERE role='experiment' AND status='active'"
-                                " AND platform=? AND is_demo=? AND secret_ref IS NOT NULL ORDER BY created_at,id",
-                                (platform.name,int(platform.is_demo))).fetchall()
-        available = [(mb, _used_for(conn, mb['id'], challenge_key)) for mb in accounts]
-        available = [(mb, used) for mb, used in available if used < limit]
-        mb = sorted(available, key=lambda item: (item[1] == 0, -item[1],
-                                                 item[0]['created_at'], item[0]['id']))[0][0] if available else None
+        accounts = conn.execute("SELECT * FROM mailboxes WHERE role='experiment' AND status='active' AND platform=? AND is_demo=? AND secret_ref IS NOT NULL ORDER BY created_at,id", (platform.name, int(platform.is_demo))).fetchall()
+        mb = select_experiment(conn, run_id, [m for m in accounts if _used_for(conn, m['id'], challenge_key) < limit], digest)
         if not mb:
             raise MailboxError('NO_MAILBOX', '本题实验邮箱额度已用尽或无可用邮箱')
         sid = _rid('sub')

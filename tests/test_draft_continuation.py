@@ -210,7 +210,8 @@ def test_shutdown_after_owned_draft_get_prevents_continuation_post(tmp_path):
 
 
 def test_repaired_experiment_leaves_second_total_attempt_for_same_package_harvest(monkeypatch):
-    from cyberscientist import auto_harvest
+    from cyberscientist import auto_harvest, config
+    settings=config.load_settings();settings['features']['auto_harvest']=True;config.save_settings(settings)
     from test_mailboxes import _set_scored
     rid, original, platform = seed(monkeypatch, limit=2)
     mailboxes.add_harvest('fixture-harvest@example.com', 'fixture-harvest-secret')

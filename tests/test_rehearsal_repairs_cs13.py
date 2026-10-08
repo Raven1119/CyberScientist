@@ -1,7 +1,7 @@
 import json
 from datetime import datetime, timezone, timedelta
 import pytest
-from cyberscientist import auto_harvest, db, observation
+from cyberscientist import auto_harvest, db, observation, config
 from test_auto_harvest import seed
 from test_deadline_harvest_cs12 import track, harvests
 
@@ -63,6 +63,7 @@ def test_known_server_handoff_and_missing_characterization_preflight():
 
 @pytest.mark.parametrize('score,remaining_hours', [(100,4),(60,1)])
 async def test_one_click_confirmation_score_and_automatic_harvest(score,remaining_hours):
+    settings=config.load_settings();settings['features']['auto_harvest']=True;config.save_settings(settings)
     from cyberscientist import competition, evaluations, mailboxes
     from test_competition import FakeController, template
     from test_mailboxes import _seed_challenge, _make_package, _set_scored, _legacy_prediction_run
