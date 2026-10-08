@@ -105,6 +105,7 @@ def isolated_workspace(tmp_path, monkeypatch):
     # CS-UP-14 tests select cli and use a controlled native process fixture.
     # Legacy synthetic flows explicitly disable the new initial approval gate.
     # Dedicated approval tests turn it on and exercise the real structural gate.
+    settings["progressive_context"] = False  # Historical protocol fixtures keep the old delivery shape.
     settings["initial_method_approval"] = False
     settings["submission_transport"] = "api"
     settings["submission_policy"] = {"same_topic_minutes": 0, "cross_topic_minutes": 0, "cross_topic_limit": 4}

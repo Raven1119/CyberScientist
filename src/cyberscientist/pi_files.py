@@ -46,10 +46,12 @@ def _root(run, scope, parts):
         if not any(row['id'] == parts[0] for row in trials):
             raise ValueError('Trial不属于本Run')
         return config.WORKSPACE_DIR / 'runs' / run['id'] / 'trials' / parts[0], parts[1:], None
+    if scope == 'facts':
+        return config.WORKSPACE_DIR / 'runs' / run['id'] / 'facts', parts, None
     if scope == 'resources':
         # Dataset materialization copies files here; symlinks are never followed.
         return config.WORKSPACE_DIR / 'challenges' / run['challenge_id'], parts, None
-    raise ValueError('只允许skills、trials、resources三个读取范围')
+    raise ValueError('只允许skills、trials、resources、facts读取范围')
 
 
 def _open(root, parts, directory):

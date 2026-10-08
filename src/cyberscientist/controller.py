@@ -547,6 +547,7 @@ class RunController:
                     "challenge_platform_id": challenge['platform_challenge_id'],
                     "solver_fallback": fallback,
                     "automatic_harvest_version": 1, "method_approval_version": 1,
+                    "progressive_context_version": 1 if settings.get("progressive_context",True) else 0,
                     "compute_policy_version": 1, "sparse_brain_version": 1,
                     "lifecycle_version": 2, "submission_prediction_version": 1}
         if eval_mode is not None:
@@ -3003,6 +3004,9 @@ class RunController:
                 packet["sparse_brain_version"] = 1 if self._sparse_brain(run) else 0
             from . import competition_prompts
             packet['user_prompt']=competition_prompts.packet(run)
+            from . import progressive_context
+            if progressive_context.enabled(run_id):
+                packet=progressive_context.compact(run_id,packet)
         except Exception as exc:  # noqa: BLE001
             self._finish_request(req["id"], "error",
                                  error=f"frame 构建失败: {exc}"[:300])
@@ -3851,6 +3855,10 @@ class RunController:
                 task_text += planning.brief_for_run(run_id)
                 from . import environment_catalog
                 task_text += environment_catalog.executor_instructions(run_id)
+                from . import progressive_context
+                if progressive_context.enabled(run_id):
+                    task_text=progressive_context.executor_prompt(run_id,trial_id,self._challenge_for_run(run),action['goal'],action['success_check'],observation.authority_facts(run_id),enabled_skills,experience_context.for_trial(run_id,trial_id))
+                    task_text+=planning.brief_for_run(run_id)
                 if action.get('fresh_executor_session'):
                     from . import clean_runs
                     task_text = clean_runs.prompt(self._challenge_for_run(run), action['clean_handoff'], enabled_skills,

@@ -377,11 +377,11 @@ class KimiBrain:
             + (
                 features.science_instruction() +
                 "干净复跑用 start_trial.fresh_executor_session=true，并提供clean_handoff={method_md,parameters_md,pitfalls_md}；不含代码或探索产出数值，参数只含题面/确定输入。新线程不resume。科学分完整版本可直接提交，回执未到时可继续工作，轨迹提示仅参考。\n"
-                "本次 trigger=run_start：先核对输入中的官方题面、资源路径和评分约束。读取 research_startup 全部同题策略卡与公开分布，输出 research_brief；开启初始方法审批时还须method_proposal={method_md,parameters_md,basis_md,outputs_md,capabilities:[能力ID]}，批准前不计算；方法大改时写major_change=true及major_change_reason_md。research_brief（problem_md/science_md/ranked_methods=[{name,reason_md}]/traps_md/parallel_preparation={contract,verifier,environment}/acceptance_md）。准备契约、验证器、环境并行。guidance.level 为 concrete_work_package 时再写 work_package={algorithm_md,formula_md,parameter_ranges_md,expected_intermediate_md,test_cases_md,stop_conditions_md} 并派发具体 Trial；强模型收到目标/约束/验收。里程碑按验证器输出纠正科学假设与数值。"
+                "本次 trigger=run_start：先核对输入中的官方题面、资源路径和评分约束。选择方法和环境前先查能力索引；research_brief 必填selected_capabilities=[能力ID]。读取 research_startup 同题策略卡索引与公开分布，正文用research_experience按需读取，输出 research_brief；开启初始方法审批时还须method_proposal={method_md,parameters_md,basis_md,outputs_md,capabilities:[能力ID]}，批准前不计算；方法大改时写major_change=true及major_change_reason_md。research_brief（problem_md/science_md/ranked_methods=[{name,reason_md}]/traps_md/parallel_preparation={contract,verifier,environment}/acceptance_md）。准备契约、验证器、环境并行。guidance.level 为 concrete_work_package 时再写 work_package={algorithm_md,formula_md,parameter_ranges_md,expected_intermediate_md,test_cases_md,stop_conditions_md} 并派发具体 Trial；强模型收到目标/约束/验收。里程碑按验证器输出纠正科学假设与数值。"
                 "需要补证时使用已开放的只读工具；网络失败记录 unknown，"
                 "根据已有证据启动不依赖该缺项的有界 Trial。首个 Trial 写清待检验假设、"
                 "资源试算、产物及停止条件；不以确认满分可达为启动条件。"
-                "每项判断标明已读来源，外部指导单独归因。通读全部同题策略卡后选择有区别的路线；research_brief 写 route_md/difference_md/advice_md/failed_routes=[{route_md,evidence_refs}]，开局和里程碑都更新，后端自动补正式分。用 research_experience 随时读取最新修订。\n"
+                "每项判断标明已读来源，外部指导单独归因。按同题策略卡索引读取相关正文后选择有区别的路线；research_brief 写 route_md/difference_md/advice_md/failed_routes=[{route_md,evidence_refs}]，开局和里程碑都更新，后端自动补正式分。用 research_experience 随时读取最新修订。\n"
                 if packet.get("trigger") == "run_start" else
                 "必要时可使用 research_trace 或 platform_scores；公开分布可辅助路线排序；保留来源、口径和 unknown。\n"
             ) +

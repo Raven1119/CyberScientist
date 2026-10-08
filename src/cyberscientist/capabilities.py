@@ -51,3 +51,20 @@ def summary(run_id: str | None = None) -> str:
         if len(out) + len(line) + len(tail) + 2 <= 2000:
             out += '\n' + line
     return out + '\n' + tail
+
+
+def index(run_id=None):
+    """Names, one-line purposes and read locations; no environment recipes."""
+    entries=[]
+    for item in skills.scan_catalog():
+        if item['id'].startswith(('bohrium-','cyberscientist-')):
+            entries.append({'id':item['id'],'use':' '.join(item['description'].split())[:140],
+                            'location':str(__import__('pathlib').Path(item['source'])/item['id']/'SKILL.md')})
+    for item in environment_catalog.items():
+        entries.append({'id':item['id'],'use':'已登记环境起点，先读取当前验证事实','location':'research_environment list: '+item['id']})
+    entries.extend({'id':name,'use':purpose,'location':name} for name,purpose in (
+        ('research_job','提交重计算Job'),('research_sandbox','持续交互环境'),
+        ('research_environment','环境目录与恢复'),('research_lkm','公开科学摘要检索'),
+        ('research_web_search','网页检索'),('research_web_read','读取网页'),
+        ('research_experience','按ID读取经验正文')))
+    return entries

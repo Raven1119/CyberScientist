@@ -70,6 +70,9 @@ def startup(run_id: str, challenge: dict) -> dict:
 
 def record_brief(run_id: str, brief: dict, decision_id: str) -> dict:
     safe = json.loads(redact(json.dumps(brief, ensure_ascii=False), config.sensitive_values()))
+    from . import progressive_context
+    if progressive_context.enabled(run_id) and not (isinstance(safe.get('selected_capabilities'),list) and safe['selected_capabilities'] and all(isinstance(v,str) and v.strip() for v in safe['selected_capabilities'])):
+        raise ValueError('研究简报必须填写selected_capabilities能力ID列表')
     from . import environment_catalog
     if environment_catalog.enabled():
         if not safe.get('environment_choice') and environment_catalog.current(run_id)['mode'] == 'unknown':

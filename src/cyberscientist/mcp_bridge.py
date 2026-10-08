@@ -170,9 +170,9 @@ _SCORES_TOOL = {
     "inputSchema": {"type": "object", "additionalProperties": False,
                     "properties": {}, "required": []}}
 
-_FILES_TOOL = {'name': 'research_files', 'description': '仅PI只读：列全部skills、本Run trials、题目resources目录并分页读文件；拒绝越界、符号链接和密钥，无shell或写入。返回原文件SHA、来源与下一页。',
+_FILES_TOOL = {'name': 'research_files', 'description': '仅PI只读：列全部skills、本Run trials、题目resources和按需facts目录并分页读文件；拒绝越界、符号链接和密钥，无shell或写入。返回原文件SHA、来源与下一页。',
     'inputSchema': {'type': 'object', 'additionalProperties': False, 'properties': {
-        'action': {'enum': ['list', 'read']}, 'scope': {'enum': ['skills', 'trials', 'resources']},
+        'action': {'enum': ['list', 'read']}, 'scope': {'enum': ['skills', 'trials', 'resources','facts']},
         'path': {'type': 'string'}, 'offset': {'type': 'integer', 'minimum': 0},
         'limit': {'type': 'integer', 'minimum': 1, 'maximum': 12000}, 'expected_sha256': {'type': 'string'}},
         'required': ['action', 'scope']}}
