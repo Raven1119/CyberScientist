@@ -82,6 +82,8 @@ CLI前置真实只读探针：按产品当前选择逻辑确定实验邮箱及�
 
 部署c8c1e7f实际成功：journal 0652b67488104fcd9eff45abf4c97f23，exit0、停机123.299064秒、维护137.720778秒、自检warn无fail、digest代码匹配、native_close_unknown=0。正式控制接口05:36:48Z重开并恢复原Run；恢复前后对比同题Run数1、原授权auth_ae6a3df3f6、started_at、33个Job身份/状态、0提交及#7328失败事件均保留（native-frame-controlled-recovery.json）。#7387于05:37:00Z确认原Astra/Terra线程ID，#7390开始PI recovery审阅，不承诺IPython内存恢复。另64项Codex/协议漂移/安全部署/digest回归42.30秒通过；新增修复完整回归仍在运行。科研、评分与提交未因此宣称通过。
 
+c8c1e7f完整回归结果：1596 passed、2既有warnings、1003.60秒，final-native-frame-pytest.log；native-frame-test-source.json的五个关键源码/测试哈希复核一致，后续仅报告修改。前端自104项测试及构建通过后无代码变化。05:38:55Z直接核对23502561回收的app/outputs六项文件及各SHA，public_contract_validation.json实际为PASS/issues=[]；只证明六件文件与公开契约，科学分和干净复跑仍未验收（candidate-six-files-proof.json）。PI #7431/7432在同Run启动承接Trial trial_de05641608，沿用原Terra会话、原授权及累计2+1额度；新环境冒烟首版失败保留，修正版23502592实际运行中。截至05:49Z，local_scores=0、submissions=0，不能提前宣称评分闭环。
+
 ## W4 验收核对（进行中）
 
 |要求|当前事实|直接证据或剩余步骤|
@@ -91,11 +93,11 @@ CLI前置真实只读探针：按产品当前选择逻辑确定实验邮箱及�
 |W1 三模型原生转换|已验证所测样本|9/8/902步、工具配对及原SHA不变；旧error转换缺陷保留|
 |W2 实验/收割CLI、保护与开关|应用验证通过|8a2d652及后续通用修复；fake覆盖和真实HTTP api→cli往返，不代替Worker|
 |W3 单题/单Run/指定模型|实际运行确认|round_fab7e74ad784、run_8a21b7d249、原生Astra xhigh/Terra high fast线程身份；冻结实验2+收割1|
-|W3 完整科研、科学评分、轨迹门、干净复跑|尚未验证|等待最终科学终态与六项产物；当前0本地科学评分，必须在Bohrium执行科学验算|
+|W3 完整科研、科学评分、轨迹门、干净复跑|候选六文件已核实；其余尚未验证|23502561回收件公开契约PASS；承接Trial补验中，当前0本地科学评分，必须在Bohrium执行科学验算|
 |W3 CLI上传、harbor_worker、轨迹分和判定|尚未验证|当前0 Attempt；认证/分页通过不能证明POST或正式评分|
 |W3 D-74|条件不满足，保留D-69|d74-two-hour-proof.json和UPGRADE_DESIGN评估；没有更改默认分诊|
 |W3 CLI收割及阈值恢复|尚未验证|尚无确认实验分；当前auto_harvest=false、阈值100，不能提前触发|
-|W4 全量、前端、构建|续行修复通过；大帧恢复修复全量进行中|8a00b72：1592 passed/2 warnings/793.46秒；前端104 passed/22文件/19.64秒、构建通过；c8c1e7f已过52/64项相关回归，完整回归待结果|
+|W4 全量、前端、构建|当前源码通过|c8c1e7f：1596 passed/2 warnings/1003.60秒，五源码哈希复核一致；前端104 passed/22文件/19.64秒、构建通过且无后续前端修改；52/64项相关回归另通过|
 |W4 密钥与原始证据隔离|已扫描版本通过；最终再扫|25改动文件基线与真实凭据逐字节无命中、0本地证据入Git；最终报告后须再扫|
 |W4 最终报告、回退文档与fallback-5|尚未完成|本报告持续补证；须在实际闭环或有证据的替代交付后更新回退目标、封存标签并核对远端SHA|
 
