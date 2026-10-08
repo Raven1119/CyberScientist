@@ -658,3 +658,5 @@ CS-UP-13 工作包提交索引（按Git事实，最终W8标签另录）：
 - 2026-10-08T15:10:00.981019+08:00 W3评分入口部署实测（代码d471686 CS-UP-14）：main已推送，安全重部署completed、停机124.973秒/维护137.548秒，preflight warn无fail、代码digest匹配且native_close_unknown=0；#13135恢复原Astra/Terra线程、原Run/Trial/started_at。cs14-scorer-initialize-available-v1已持久排队，实际初始化及科学分仍待验证。全新沙箱Li原生回执含弛豫收敛/最终能量/应力，Si仍运行、LiSi尚未开始，完整复跑未验收；全量回归进行中。
 
 - 2026-10-08T15:18:59.356287+08:00 W3/W4评分初始化完整验证（代码d471686 CS-UP-14）：全量1610 passed、2既有warnings（816.05秒），5个测试冻结源码哈希复核一致；compileall/diff-check通过，前端无变更且104项/构建先前通过仍适用。有界审查确认身份来自能力令牌，当前活动Trial与门禁、100文件/10MB、凭据/链接/越界、一次冻结和失败清理/幂等保护不绕过；不在本地执行科学代码。PI #13871已采纳新入口，实际初始化、科学评分、完整复跑与正式提交尚未验证。
+
+- 2026-10-08T15:32:41.351656+08:00 W3清洁复跑/评分指导实测（本提交 CS-UP-14）：全新沙箱Si原生exec回执trial_de05641608_clean_si_native_tail_13含三步SCF、压力23.208648/−15.207451/−0.019365 kbar及Relaxation is converged!/FINAL_ETOT，原回执SHA留clean-si-raw-terminal-proof.json；Li与Si终态已有真实记录，LiSi已启动但完整复跑尚未验证。PI #13871指导guidance_649336ff10已经checkpoint实际sent且acknowledged，初始化和科学分仍0。补验23502690退出143/Failed原件保留，未据此归因为科学失败；0提交/0收割。
