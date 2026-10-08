@@ -185,7 +185,7 @@ def _template(template: dict, mode: str, *, frozen: bool = False) -> dict:
         raise CompetitionError('求解者派生条目字段不符')
     if template.get('solver_id'):
         solver_entry = template.get('solver_entry') if frozen else challenge_models.solver(template['solver_id'], settings)
-        if solver_entry.get('id') != template['solver_id']:
+        if not isinstance(solver_entry,dict) or solver_entry.get('id') != template['solver_id']:
             raise CompetitionError('冻结求解者 ID 不匹配')
         solver_entry = challenge_models.roster({**settings, 'solver_roster': [solver_entry]})[0]
         choices['executor'] = solver_entry
@@ -298,7 +298,10 @@ def confirm(round_id: str, template: dict, overrides: dict | None = None) -> dic
             patch.update(solver_id=adopted.get('recommended_solver_id'),data_status=str(adopted.get('data_complete','unknown')))
             if not adopted.get('recommended_solver_id') and adopted.get('recommended_model') in ('gpt-5.6-terra','gpt-6-astra'):
                 patch['model_config']={'executor':{'runtime':'codex','provider':'codex','model_id':adopted['recommended_model'],'reasoning_effort':'xhigh','fast_mode':True}}
-        patch.update((overrides or {}).get(item['challenge_id']) or {})
+        manual_patch=(overrides or {}).get(item['challenge_id']) or {}
+        if adopted and not adopted.get('recommended_solver_id') and 'model_config' in patch and 'solver_id' not in manual_patch and 'executor' not in (manual_patch.get('model_config') or {}):
+            snapshot.setdefault('adopted_model_overrides',[]).append(item['challenge_id'])
+        patch.update(manual_patch)
         proposed=_with_topic_override(proposed,patch)
         if base['authorization']['unlimited_resources']:
             proposed['authorization']=dict(proposed.get('authorization') or base['authorization'],unlimited_resources=True)
@@ -327,7 +330,21 @@ def confirm(round_id: str, template: dict, overrides: dict | None = None) -> dic
 @config.serialized_mutation
 def save_template(round_id, template):
     row=_round(round_id);snapshot=json.loads(row['config_json'])
-    snapshot['template']=_template(template,snapshot['mode'])
+    selected=_template(template,snapshot['mode'])
+    previous=snapshot.get('template') or {}
+    changed=selected.get('solver_id')!=previous.get('solver_id') or selected['model_config']['executor']!=(previous.get('model_config') or {}).get('executor')
+    if row['status']!='draft' and changed:
+        # A later explicit track choice supersedes model-only helper advice for
+        # deferred topics, while manual topic overrides and launched Runs stay frozen.
+        for cid in snapshot.get('adopted_model_overrides',[]):
+            patch=snapshot.get('topic_overrides',{}).get(cid,{})
+            patch.get('model_config',{}).pop('executor',None)
+            if not patch.get('model_config'):patch.pop('model_config',None)
+            patch.pop('solver_id',None)
+            patch.pop('solver_entry',None)
+            snapshot.get('adopted_suggestions',{}).pop(cid,None)
+        snapshot['adopted_model_overrides']=[]
+    snapshot['template']=selected
     db.execute('UPDATE eval_runs SET config_json=?,updated_at=? WHERE id=?',(_dump(snapshot),db.utcnow(),round_id))
     return get_round(round_id)
 

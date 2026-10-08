@@ -48,3 +48,5 @@
 默认新Run采用competition，Run冻结其模式；显式development保留旧行为。前端设置可切换，API拒绝非法值。不存在“已证明未发生”的额外核查被虚构或清零；对尚未盘点的步骤不声称已移除。26项模式/封包/旧CLI/新线程/科学迭代回归通过cs16-w7-tests.log，其中两种模式各验证实际诊断调用与跨包扫描行为、4→1事实读取和经验引用可解析。
 
 W6最终Standards复核发现默认自动DeepSeek后备仍可越过分诊：已在新science_first_flow结构上禁用自动切换，只保留显式手动选择；历史旧流程兼容。30项相关回归通过cs16-w6-final-review.log。首轮全量55通过时为该修正中断，不作完整通过证据，最终冻结后重跑。
+
+W8全量发现暂缓题用户后续显式换模型被已采纳的空roster建议覆盖，修正为仅覆盖该类建议来源，题级手动选择/已启动Run不变；35项回归通过cs16-explicit-model-compat-2.log。完整前端25文件122测试和生产构建通过cs16-web-final.log、cs16-build-final.log。中断的cs16-final-frozen-suite.log包含失败及pytest中断清理错误，不作全量通过证据；再次最终冻结后跑完整集。
