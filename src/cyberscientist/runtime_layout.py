@@ -48,3 +48,7 @@ def run_directory(run_id: str) -> Path:
             base=Path(record['root'])
     if not re.fullmatch(r'run_[A-Za-z0-9_-]+',run_id):raise ValueError('无效Run标识')
     return base/run_id
+
+
+def archived_run(run_id: str) -> bool:
+    return version() is not None and run_directory(run_id).parent != config.WORKSPACE_DIR/'runs'

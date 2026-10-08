@@ -178,3 +178,13 @@ def test_release_updates_native_skill_bytes_without_touching_auth(tmp_path):
     manifest={'commit':'a'*40,'files':{'skills/demo/SKILL.md':hashlib.sha256(new.read_bytes()).hexdigest()}}
     runtime_release.publish(stage,root,manifest)
     assert old.read_text()=='new lesson' and auth.read_text()=='private fixture'
+
+
+def test_archived_run_score_reconciliation_preserves_migrated_notes(tmp_path,monkeypatch):
+    from cyberscientist import trial_notes
+    root=deployed(tmp_path,monkeypatch)
+    monkeypatch.setattr(config,'WORKSPACE_DIR',root/'workspace')
+    (root/'.runtime/run-archive.json').write_text(json.dumps({'root':str(tmp_path/'archive'),'run_ids':['run_old']}))
+    monkeypatch.setattr(trial_notes.experiences,'save_experience',lambda *a,**k:pytest.fail('archived notes must remain frozen'))
+    assert trial_notes.record('run_old','trial_old') is None
+    assert not runtime_layout.archived_run('run_new')

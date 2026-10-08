@@ -6,6 +6,12 @@ from .observation import strip_secrets
 
 
 def record(run_id: str, trial_id: str) -> dict | None:
+    from . import runtime_layout
+    if runtime_layout.archived_run(run_id):
+        # Historical score reconciliation must not regenerate developer paths
+        # into the migrated active experience library. Original notes/revisions
+        # remain available; new Runs continue normal automatic note updates.
+        return None
     trial = db.query_one('SELECT * FROM trials WHERE id=? AND run_id=?', (trial_id, run_id))
     if not trial or trial['status'] not in ('done', 'reported_complete', 'interrupted'):
         return None
