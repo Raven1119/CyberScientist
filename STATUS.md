@@ -666,3 +666,5 @@ CS-UP-13 工作包提交索引（按Git事实，最终W8标签另录）：
 - 2026-10-08T15:54:00.787972+08:00 W3反馈修复部署实测（代码1e026d8 CS-UP-14）：main已推送；安全重部署completed、停机123.599秒/维护136.515秒、preflight warn、digest匹配/native_close_unknown=0，#14569恢复原Astra/Terra线程。修正草稿同清单只读验证通过，仍未冻结/科学评分0；cs14-scorer-validation-no-remote-effect-fix-v1已持久queued。新源码全量进行中；科学流程、首包/提交/收割继续原Run，时钟和额度未重置。
 
 - 2026-10-08T16:04:37.828356+08:00 W3/W4新源码与完整原件验证（代码1e026d8 CS-UP-14）：完整1612 passed、2既有warnings（941.11秒），5个冻结源码哈希一致；compileall/diff-check及实际凭据扫描通过，前端无修改、104项/构建既有通过仍适用。全新沙箱回收74文件均与受控传输回执的bytes/SHA256逐一匹配，Li/Si/LiSi原始日志都有SCF与Relaxation is converged!，clean-three-phase-raw-files-proof.json保留原件路径及终态标记。此项仅验原件和三相弛豫终态，六项新输出/科学自校验/登记科学分/轨迹门/真实CLI仍待分别验收。
+
+- 2026-10-08T16:11:32.388144+08:00 W3初始化/新输出生产验收（代码1e026d8 CS-UP-14）：#16079在08:05:19Z确认trial_de05641608_initialize_public_proxy_v4，固定评分器b25679e…ef8365的COVERAGE/score.py/scorer.json三文件哈希逐项匹配回执，SCORER_MISSING已解决；source authority为local_candidate_not_official，非官方科学分。清洁输出Job23502801 Finished，六要求文件+独立验证JSON均与原Job归档逐字节哈希相符（fresh-six-output-files-proof.json）；科学评分登记、轨迹门和真实CLI仍待验收，0提交。

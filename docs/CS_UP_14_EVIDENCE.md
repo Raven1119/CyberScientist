@@ -125,6 +125,8 @@ d471686已推送main并安全部署，停机124.972829604秒、维护137.5479862
 
 反馈修复1e026d8全量1612 passed、2既有warnings（941.11秒），5个冻结源码哈希复核一致，compileall/diff-check通过。全新沙箱受控取回74文件逐一bytes/SHA256一致，Li/Si/LiSi三份未过滤running_cell-relax.log均含SCF与Relaxation is converged!，最终原文标记与文件清单留clean-three-phase-raw-files-proof.json。这只验收新原件/三相弛豫终态，独立几何/电荷检查、最终六输出、评分和提交另验。07:55原生重试后16,808,089字节快照经官方0.1.39转换2145步，867调用/866结果（一个在途），输入快照和原日志前缀未改，active-native-after-retry-conversion-proof.json留证；不当最终轨迹门结果。
 
+08:05:19Z #16079首次成功初始化（trial_de05641608_initialize_public_proxy_v4），固定版本b25679e12141b492c5af029801105c6336ed547280d901dc0678cbe009ef8365；三文件哈希与初始化回执逐项一致，scorer-initialized-production-proof.json留证。COVERAGE明确直接公开契约、独立科学验证及隐藏评分unknown的范围；public_contract=100不等于科学/官方100，原评分器不能改写。清洁输出Job23502801 Finished，六要求文件和独立验证JSON与原归档哈希逐项相符，fresh-six-output-files-proof.json记录归档SHA和各文件SHA；登记科学分、轨迹门、CLI仍待验收。
+
 ## W4 验收核对（进行中）
 
 |要求|当前事实|直接证据或剩余步骤|
