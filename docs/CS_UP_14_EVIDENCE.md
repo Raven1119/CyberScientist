@@ -131,6 +131,8 @@ d471686已推送main并安全部署，停机124.972829604秒、维护137.5479862
 
 CS-UP-14 W3 原生凭据误报修复：实际成果包3d5bdeb8…74f2的封存被ValueError拦截；原日志精确已存密钥匹配0，展示脱敏器误匹配task-specific中的sk-、供应商reasoning密文字段和公开YOUR_BOHR_ACCESS_KEY/Bearer省略示例。现按原生JSON语义分类，只忽略供应商reasoning.encrypted_content的形状匹配，已存密钥在整个原文及编码中仍拒绝；用户同名字段不豁免。原始字节不变、不脱敏、不截断；CLI同用此分类，封存失败返回有界脱敏真实原因。真实28,063,693字节原始快照保留，成果包只读封存成功19,451,843字节/1347投影步（native-privacy-actual-snapshot-proof.json、native-privacy-seal-preview-proof.json）；这不是提交/分数。53项相关回归16.14秒通过；完整新源码回归进行中。检查仅改原生分类/错误呈现，评分规则、科学源码、原时钟/2+1额度及unknown不重发保持。
 
+W3修复生产验收（d21d708 CS-UP-14）：安全重部署completed，停机132.608秒/维护145.627秒，preflight warn，digest loaded=checkout、native_close_unknown=0。原Run/Trial/started_at保持，#20141 recovery审阅已启动，cs14-native-privacy-classifier-fix-d21d708-v1持久queued。实际只读封存19,724,468字节/1412投影步、完整native30,407,474字节，官方缓存schema valid且CLI文件准备通过（native-privacy-schema-preview-proof.json）；没有POST/分数。新源码全量仍在运行。
+
 ## W4 验收核对（进行中）
 
 |要求|当前事实|直接证据或剩余步骤|
