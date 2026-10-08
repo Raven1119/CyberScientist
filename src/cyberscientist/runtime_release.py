@@ -232,7 +232,7 @@ def publish(stage: Path, root: Path, manifest: dict):
         else:owned.add(PurePosixPath(path).parts[0])
     metadata={name:(root/'.runtime'/name).read_bytes() if (root/'.runtime'/name).exists() else None
               for name in ('version.json','cyberscientist_launch.py')}
-    changed=[]
+    changed=[];native_changed=[]
     try:
         for name in sorted(owned):
             target=root/name
@@ -243,12 +243,22 @@ def publish(stage: Path, root: Path, manifest: dict):
             target.parent.mkdir(parents=True,exist_ok=True)
             if source.is_dir():shutil.copytree(source,target)
             else:shutil.copy2(source,target)
+        if (stage/'skills').is_dir():
+            for name,home in (('codex',root/'.runtime/codex'),('deepseek',root/'.cyberscientist/codex-deepseek')):
+                if not home.exists():continue
+                target=home/'skills';previous=backup/'native-skills'/name
+                if target.exists():previous.parent.mkdir(parents=True,exist_ok=True);shutil.move(str(target),str(previous))
+                native_changed.append((target,previous))
+                shutil.copytree(stage/'skills',target)
         version={'commit':manifest['commit'],'manifest_sha256':hashlib.sha256(json.dumps(manifest,sort_keys=True).encode()).hexdigest(),
                  'launcher_sha256':_launcher(root)}
         pending=root/'.runtime/version.pending'
         pending.write_text(json.dumps(version,indent=2))
         os.replace(pending,root/'.runtime/version.json')
     except OSError:
+        for target,previous in reversed(native_changed):
+            if target.exists():shutil.rmtree(target)
+            if previous.exists():shutil.move(str(previous),str(target))
         for name in reversed(changed):
             target=root/name
             if target.is_dir():shutil.rmtree(target)

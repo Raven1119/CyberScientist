@@ -150,3 +150,31 @@ def test_pre_competition_commit_is_refused_before_shutdown(tmp_path,monkeypatch)
     monkeypatch.setattr(runtime_release,'stop_runtime',lambda *a:pytest.fail('old backend must remain'))
     result=runtime_release.release('old-tag',root=root,port=8765,source=Path(__file__).resolve().parents[1])
     assert result['status']=='failed' and '发布协议' in result['reason']
+
+
+async def test_monitor_guidance_reaches_pi_queue_without_executor_delivery():
+    import asyncio
+    from cyberscientist import db
+    from cyberscientist.controller import RunController
+    from test_collaboration import _seed_challenge
+    _seed_challenge();controller=RunController();rid=controller.create_run('COLLAB_CH')['id']
+    db.execute("UPDATE runs SET phase='running' WHERE id=?",(rid,))
+    class Executor:
+        async def steer(self,*args):pytest.fail('monitor must not steer executor')
+        async def prompt(self,*args):pytest.fail('monitor must not prompt executor')
+    controller._prime_instances[rid]=Executor();controller._prime_sessions[rid]='native-executor'
+    controller._signals[rid]=asyncio.Queue()
+    await controller.control(rid,'steer','technical repair facts','monitor-guidance')
+    await controller._handle_signal(await controller._signals[rid].get(),rid,controller._signals[rid])
+    request=db.query_one("SELECT frame_json FROM review_requests WHERE run_id=? AND trigger='user_steer'",(rid,))
+    assert json.loads(request['frame_json'])['user_guidance']=='technical repair facts'
+
+
+def test_release_updates_native_skill_bytes_without_touching_auth(tmp_path):
+    root=tmp_path/'comp';stage=tmp_path/'stage'
+    auth=root/'.runtime/codex/auth.json';auth.parent.mkdir(parents=True);auth.write_text('private fixture')
+    old=auth.parent/'skills/demo/SKILL.md';old.parent.mkdir(parents=True);old.write_text('old lesson')
+    new=stage/'skills/demo/SKILL.md';new.parent.mkdir(parents=True);new.write_text('new lesson')
+    manifest={'commit':'a'*40,'files':{'skills/demo/SKILL.md':hashlib.sha256(new.read_bytes()).hexdigest()}}
+    runtime_release.publish(stage,root,manifest)
+    assert old.read_text()=='new lesson' and auth.read_text()=='private fixture'

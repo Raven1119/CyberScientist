@@ -933,3 +933,15 @@ CS-UP-13 工作包提交索引（按Git事实，最终W8标签另录）：
 
 - CS-UP-18 W2 已实现：两轴审查发现并修复并发发布混合版本、版本元数据写失败后代码未恢复、comp普通ops误触开发端口、不兼容旧标签先停机四项；发布全程flock、元数据同事务恢复、普通ops核实PID/工作区、旧协议发布停机前拒绝。
 - CS-UP-18 W2 尚未验证：新旧fallback标签不具备比赛协议；最早可回退基线将为本卡首个兼容比赛版本，原fallback-8不得冒称可用比赛回退。
+
+### CS-UP-18 W3 数据迁移
+- 已实现：完整备份位于兄弟CyberScientist-migration-backup/1009；48历史Run目录和Job输入归档CyberScientist-run-archive/1009，与比赛新会话目录分开。迁移177活动路径行；原值存新增表runtime_migration_originals，旧Run快照/事件/回执保留历史例外。开发后端安全关机can_shutdown=true后停止PID1321553；所有resume_on_startup关闭，开发CLI启动入口禁用。
+- 已实际验证：比赛48 Run/14提交/163历史Job，秘密文件前后SHA完全一致；新.venv按uv.lock安装，客户端按冻结锁新装。60经验文件仅做技术引用映射，新增61派生修订，原修订/审批保留，活动数122不变，候选未导入；比赛经验/技能/能力扫描0违规。WebBridge打开真实前端，digest和无Git代码指纹正常。
+- 尚未验证：隐藏开发目录完整冒烟、最终发布/回退闭环；首次真实发布已启动，但最终自检未通过。
+- 阻塞项：两新账号缺凭据，experiment_mailbox自检fail（现有两个账号/auth/me为200）。保留该失败，不以禁用账号或换凭据冒充全部通过。
+
+### CS-UP-18 W4 原生隔离初验
+- 已实现：仅进程级比赛HOME/CODEX_HOME；复制原生认证和完整配置后去掉无关项目，禁用5个无关内置技能。保留全部23比赛技能（17bohrium完整目录），后续发布同步应用与原生技能字节。监控steer只进PI持久队列。
+- 已实际验证：global config/auth SHA不变；service_tier/model/effort/features/memories完整一致，原生前后模型目录完全一致、登录类型/档位一致；原生启用恰23技能。实际PI01a11d6d-cc52-79a2-a8ba-4b4b75c4647c、执行者01a11d6e-1d4e-7930-834a-6865bdc44333均task_complete、xhigh、priority，开发路径/施工约定/全局AGENTS路径0。官方CLI试构建退出0，提交数14→14。32项发布/DeepSeek回归通过8.15秒，33项控制回归通过10.92秒。
+- 尚未验证：隐藏源目录后的同一组验收；原生记录原文仅私有保存。
+- 阻塞项：80个全局额外技能名逐词搜索，PI供应商base_instructions里resume1次、执行者worktree1次；它们是基础指令普通词，技能清单中并未启用。字面全文零命中仍不通过，不能改写原生记录或移除供应商内核指令来造零。验证监听器误用旧完成事件已修正，首次回合的task_complete由原生记录独立核实，不冒称旧监听器成功。
