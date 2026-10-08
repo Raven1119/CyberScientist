@@ -101,6 +101,9 @@ def isolated_workspace(tmp_path, monkeypatch):
     # Legacy synthetic scenarios use zero wait. D-64 tests explicitly restore
     # the production 30 minute policy and advance an injected clock.
     settings = config.load_settings()
+    # Existing HTTP protocol fixtures explicitly exercise the API fallback.
+    # CS-UP-14 tests select cli and use a controlled native process fixture.
+    settings["submission_transport"] = "api"
     settings["submission_policy"] = {"same_topic_minutes": 0, "cross_topic_minutes": 0, "cross_topic_limit": 4}
     config.save_settings(settings)
     yield

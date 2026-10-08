@@ -3772,6 +3772,8 @@ class RunController:
                                     {"skills": [s["id"] for s in enabled_skills],
                                      "trial_id": trial_id},
                                     trial_id=trial_id)
+                from . import native_logs
+                native_logs.bind_trial(run_id, trial_id, prime_sid)
                 self._prime_prompts[run_id] = (trial_id, task_text)
                 self._prime_guidance_ids.pop(run_id, None)
                 receipt = await prime.prompt(prime_sid, task_text)

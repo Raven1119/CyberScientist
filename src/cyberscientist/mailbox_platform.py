@@ -480,3 +480,14 @@ def fetch_platform_challenge(base_url: str, slug: str,
     if not isinstance(data, dict) or "_raw" in data:
         raise PlatformError(f"平台题目 {slug} 详情不是 JSON，契约未核实")
     return data
+
+
+def submit_once(platform, email, secret, package_path, challenge_id, meta):
+    from . import config
+    transport = config.load_settings().get('submission_transport', 'cli')
+    if transport not in ('cli', 'api'):
+        raise PlatformError('未知提交方式；未发送', no_side_effect=True)
+    if transport == 'cli' and isinstance(platform, BohriumPlaygroundPlatform):
+        from . import cli_submission
+        return cli_submission.submit(platform, email, secret, package_path, challenge_id, meta)
+    return platform.submit_package(email, secret, package_path, challenge_id=challenge_id, meta=meta)

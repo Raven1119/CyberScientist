@@ -44,6 +44,20 @@ beforeEach(() => {
 })
 afterEach(() => { cleanup(); vi.resetAllMocks() })
 
+it('saves the CLI/API transport choice and project executable across remounts', async () => {
+  const user = userEvent.setup(); let view = render(<SettingsPage />)
+  expect((await screen.findByLabelText('提交方式') as HTMLSelectElement).value).toBe('cli')
+  for (const mode of ['api', 'cli']) {
+    await user.selectOptions(screen.getByLabelText('提交方式'), mode)
+    fireEvent.change(screen.getByLabelText('官方 CLI 路径'), { target: { value: '/project/playground/index.js' } })
+    await user.click(screen.getAllByRole('button', { name: '保存设置' })[0])
+    await waitFor(() => expect(put.mock.calls[put.mock.calls.length - 1]?.[1].settings.submission_transport).toBe(mode))
+    view.unmount(); view = render(<SettingsPage />)
+    expect((await screen.findByLabelText('提交方式') as HTMLSelectElement).value).toBe(mode)
+    expect((screen.getByLabelText('官方 CLI 路径') as HTMLInputElement).value).toBe('/project/playground/index.js')
+  }
+})
+
 describe('settings and skills persist together', () => {
   it('keeps both PI forms fixed to native Astra and saves the migrated choice', async () => {
     const user = userEvent.setup()

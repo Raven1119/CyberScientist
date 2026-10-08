@@ -44,6 +44,7 @@ def update_secret(secret_id: str, value: str | None) -> None:
         save_secrets(secrets)
 
 DEFAULT_SETTINGS: dict[str, Any] = {
+    "submission_transport": "cli",
     'submission_policy': {'same_topic_minutes': 30, 'cross_topic_minutes': 30, 'cross_topic_limit': 4},
     'codex_fast_mode': True,
     'features': {'auto_submission': True, 'judge_replica_hint': False, 'auto_harvest': True, 'reviewer': True, 'strategy_cards': True, 'deepseek_fallback': True, 'system_triage': True, 'local_calculation': True, 'environment_catalog': True, 'scorer_audit': True, 'await_score': True, 'shared_area': True, 'protocol_drift': True},
@@ -75,7 +76,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "prime": {"executable": "", "llm_profile_id": "",
               "automatic_refine": False, "subagents_enabled": False},
     "llm_profiles": [],
-    "playground": {"base_url": "https://play.bohrium.com/api",
+    "playground": {"cli_executable": "", "base_url": "https://play.bohrium.com/api",
                    "token_secret_ref": ""},
     "bohrium": {"executable": "", "wenyon_executable": "", "wenyon_home": "",
                 "access_key_secret_ref": "", "project_id": None, "host_overrides": {}},

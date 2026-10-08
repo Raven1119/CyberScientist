@@ -14,6 +14,7 @@ export interface SettingsStatus {
 export interface SolverEntry extends ModelChoice { id: string; name: string; note?: string }
 
 export interface Settings {
+  submission_transport?: 'cli' | 'api'
   codex_fast_mode?: boolean
   submission_policy?: { same_topic_minutes: number; cross_topic_minutes: number; cross_topic_limit: number }
   features?: Record<string, boolean>
@@ -49,7 +50,7 @@ export interface Settings {
     subagents_enabled: boolean
   }
   llm_profiles: LlmProfile[]
-  playground: { base_url: string; token_secret_ref: string }
+  playground: { cli_executable?: string; base_url: string; token_secret_ref: string }
   bohrium: {
     executable: string
     wenyon_executable: string

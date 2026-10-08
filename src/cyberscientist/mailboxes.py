@@ -438,6 +438,14 @@ def _check_budget(conn, run_id: str, *, terminal_harvest: bool = False,
         from . import run_clock
         if run_clock.remaining(run, auth) <= 0:
             raise MailboxError("NEEDS_AUTHORIZATION","本轮授权时长已用尽")
+    snapshot = json.loads(run['config_snapshot'])
+    caps = snapshot.get('operator_submission_limits', snapshot.get('settings', {}).get('policy', {}).get('submission_limits', {}))
+    cap = caps.get('harvest' if terminal_harvest else 'experimental')
+    if cap is not None:
+        if type(cap) is not int or cap < 0: raise MailboxError('NEEDS_AUTHORIZATION', '独立提交上限无效')
+        count = conn.execute('SELECT COUNT(*) FROM submissions WHERE run_id=? AND is_harvest=? AND reservation_released=0 AND id!=?',
+            (run_id, int(terminal_harvest), existing_submission_id or '')).fetchone()[0]
+        if count >= cap: raise MailboxError('NEEDS_AUTHORIZATION', f'本轮独立提交上限已到（{count}/{cap}）；无上限计算不扩大提交授权')
     limit = auth["max_submissions"] if auth else 0
     used = conn.execute("SELECT COUNT(*) AS n FROM submissions WHERE run_id=?"
                         " AND reservation_released=0 AND id!=?",
@@ -805,10 +813,12 @@ def _perform_submission(sid: str, platform: MailboxPlatform, challenge_id: str,
             raise PlatformError('自动收割已关闭；未发送，预约已释放', no_side_effect=True)
         if power.shutdown_requested():
             raise PlatformError('安全关机已停止新增提交；未发送', no_side_effect=True)
-        receipt = platform.submit_package(
+        from .mailbox_platform import submit_once
+        receipt = submit_once(platform,
             row["email"], config.resolve_secret(row["secret_ref"] or ""),
             str(config.WORKSPACE_DIR / row["package_path"]), challenge_id=challenge_id,
-            meta={"on_stage": stage, "on_feedback": feedback,
+            meta={"on_stage": stage, "on_feedback": feedback, "run_id": row["run_id"],
+                  "trial_id": row["trial_id"], "submission_id": sid,
                   "package_bytes": frozen_bytes,
                   "trace": _form_trace(frozen_bytes), **_submission_metadata(row["run_id"]),
                   **({'resume_attempt_id': resume_attempt_id} if resume_attempt_id else {})})
@@ -1269,6 +1279,14 @@ def poll_scores(run_id: str | None = None,
             continue
         ref = r["platform_ref"]
         if not ref:
+            try:
+                from . import cli_submission
+                secret = config.resolve_secret(r['secret_ref'] or '')
+                candidate_platform = _platform_for_run(r['run_id'], platform if r['platform'] == platform.name else get_platform(r['platform']))
+                if isinstance(candidate_platform, BohriumPlaygroundPlatform):
+                    cli_submission.reconcile_unknown(r['id'], candidate_platform, secret, _run_challenge_id(r['run_id']))
+            except Exception:
+                pass  # Keep unknown; a failed read cannot authorize a resend.
             still_unknown += 1  # 无平台回执引用：没有可查的对象，保持 unknown
             continue
         polled += 1

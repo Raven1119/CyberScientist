@@ -76,7 +76,8 @@ class CodexExecutor:
                 from .. import ops_digest
                 ops_digest.record_session(spec['run_id'],'executor',tid,
                                           {'model':result.get('model'),'provider':result.get('modelProvider'),
-                                           'reasoning_effort':result.get('reasoningEffort'),'fast_mode':fast})
+                                           'reasoning_effort':result.get('reasoningEffort'),'fast_mode':fast,
+                                           'native_log_path':result.get('thread',{}).get('path')})
         except BaseException:
             await rpc.stop()
             raise

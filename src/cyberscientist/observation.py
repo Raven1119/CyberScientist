@@ -96,7 +96,14 @@ def authority_facts(run_id: str) -> dict[str, Any]:
         result['environment_catalog'] = environment_catalog.items()
         result['environment_choice'] = environment_catalog.current(run_id)
     run = db.query_one('SELECT config_snapshot FROM runs WHERE id=?', (run_id,))
-    template = json.loads(run['config_snapshot']).get('competition', {}) if run else {}
+    snapshot = json.loads(run['config_snapshot']) if run else {}
+    template = snapshot.get('competition', {})
+    caps = snapshot.get('operator_submission_limits', snapshot.get('settings', {}).get('policy', {}).get('submission_limits', {}))
+    if caps and values is not None:
+        values['submission_limits'] = caps
+        values['submission_reservations'] = {name: db.query_one(
+            'SELECT COUNT(*) FROM submissions WHERE run_id=? AND is_harvest=? AND reservation_released=0',
+            (run_id, flag))[0] for name, flag in (('experimental', 0), ('harvest', 1))}
     result['solver_note'] = template.get('solver_note', '')
     result['round_challenge_snapshot'] = template.get('challenge_snapshot')
     from . import package_reviews

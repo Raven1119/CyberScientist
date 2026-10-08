@@ -897,3 +897,9 @@ CS-UP-13 W5–W8：材料环境真实Job+沙箱验证；ABACUS Job成功、沙�
 ## CS-UP-14
 
 W0 D-73采用官方CLI、默认cli并保留api显式回退。W1官方0.1.39包只在项目内解包，sha核对；不执行全局脚本。AgentMaster过滤raw传输错误的做法不符合本轮原始记录不可改要求，不采用。已有包模式原生日志必须在封存前纳入manifest.raw_messages且保持字节；不能事后追加--raw-messages改变封存包。现代三模型日志转换已实际核验，旧error优先级缺陷仍保留，替代为新干净会话。
+
+W2：控制器将官方原生thread.path与最终Trial绑定；封存时把完整原始会话字节和SHA纳入raw_messages.jsonl与provenance/native_session.json。完整会话可包含同Run前序Trial，不切片、不滤error、不拼接外部会话；最终Trial必须在该原生会话中实际执行。干净复跑指新授权Bohrium环境中可见重新写代码与运行，不能仅搬运旧产物。原始记录含密钥则前置拒绝，不能脱敏后冒充原始记录。
+
+W2：官方CLI只调用一次，令牌只在子进程环境中，独立临时HOME/不存在的配置路径，临时文件只有公开包、manifest、原生日志。已有sealed ZIP不重打包。官方0.1.39自身对同Attempt的Worker上传会重试最多3次（源码3956起）；系统不再次创建Attempt、不自动降级API。发送前完整分页绑定账号/题目，超时后只读对账；匹配必须包含同SHA，平台缺SHA则保持unknown；完整列表没有新增仍不是权威未存储证明，不释放预约或自动重发。上传成功仅等于transport receipt，不能当harbor_worker评分。
+
+W2：保留目标存在/已结束范围、封存SHA、D64持久队列、D66暂停屏障、收割触发及确认分要求。新增冻结policy.submission_limits与可见预约计数，单独限制实验和收割，防止一键无上限计算扩大本卡2+1授权。默认cli，Settings可显式api回退；Demo及历史HTTP契约fixture明确api，新CLI用单独fake验证，未删除/跳过旧测试。

@@ -518,6 +518,8 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
                 destination[parts[-1]] = json.loads(json.dumps(source[parts[-1]]))
             from . import challenge_models, model_usage
             try:
+                if merged.get('submission_transport','cli') not in ('cli','api'): raise ValueError('submission_transport须为cli或api')
+                if not isinstance(merged.get('playground',{}).get('cli_executable',''),str): raise ValueError('CLI路径须为文本')
                 if type(merged.get('codex_fast_mode',True)) is not bool: raise ValueError('Codex fast默认开关须为布尔值')
                 for role in ('brain', 'executor', 'reviewer', 'post_review'):
                     challenge_models.choose(role, None, merged)
@@ -532,6 +534,9 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
                 from . import features
                 features.validate(merged.get('features', {}))
                 policy = merged.get('policy', {})
+                caps = policy.get('submission_limits', {})
+                if not isinstance(caps, dict) or set(caps)-{'experimental','harvest'} or any(type(v) is not int or v < 0 for v in caps.values()):
+                    raise ValueError('独立提交额度须为experimental/harvest非负整数')
                 if type(policy.get('require_ended_submission', False)) is not bool or not isinstance(policy.get('allowed_submission_targets', []), list) or any(not isinstance(target, str) or not target for target in policy.get('allowed_submission_targets', [])):
                     raise ValueError('提交目标授权策略无效')
                 encoded = json.dumps(incoming, ensure_ascii=False)

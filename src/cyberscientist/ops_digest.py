@@ -49,7 +49,7 @@ def sessions(run_id):
 
 
 def record_session(run_id,role,session_id,raw):
-    value={key:raw.get(key) for key in ('model','provider','reasoning_effort','fast_mode')}
+    value={key:raw.get(key) for key in ('model','provider','reasoning_effort','fast_mode','native_log_path')}
     try:
         db.append_event(run_id,'controller','session.configuration',value | {'role':role,'session_id':session_id})
     except Exception as exc:

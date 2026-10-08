@@ -57,6 +57,18 @@ def seal(source: bytes, run_id: str, trial_id: str | None, through_seq: int,
     if not selected.readable:
         raise ValueError("selected trace unreadable")
     manifest = json.loads(files[manifest_name])
+    from . import native_logs
+    native = native_logs.snapshot(run_id, trial_id)
+    if native is not None:
+        raw_name = root + 'raw_messages.jsonl'
+        if raw_name in files and files[raw_name] != native['bytes']:
+            raise ValueError('提交包原生日志与最终Trial原始字节不符；不能重写或借用其他会话')
+        files[raw_name] = native['bytes']
+        manifest['raw_messages'] = 'raw_messages.jsonl'
+        files[root + 'provenance/native_session.json'] = json.dumps(
+            {key: value for key, value in native.items() if key != 'bytes'},
+            ensure_ascii=False, sort_keys=True).encode()
+
     relative_files = {name[len(selected.bundle_root):]: raw for name, raw in files.items()
                       if name.startswith(selected.bundle_root)}
     steps = trace_projection.project(run_id, trial_id, through_seq, relative_files)
