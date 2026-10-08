@@ -64,4 +64,6 @@ docs/MONITOR_FAULT_TABLE_DRAFT.md覆盖卡要求的10类故障，每行均有默
 
 完整后端首次因最终预检审查修正主动中断，原日志保留。第二次完整集1729通过4失败，1124.85秒（cs17-full-frozen-suite-2.log）：旧CPU/GPU拒绝信息断言、本地默认迁移断言、按字母序假定首个环境是Lean，以及帧构建耗尽授权后worker完成误报未过期。前三项按当前事实修订断言，仍保留原覆盖；第四项在生产完成分支复核实时预算。原中断测试使用启动屏障保证正在原生调用时过期，新增构帧期间过期且不启动模型的独立回归。相关30项通过16.86秒（cs17-full-review-fixes.log），不删不跳已有测试。
 
-前端25文件122项通过（cs17-web-final.log，22.29秒）；生产构建、compileall和git diff --check通过。两次独立开发树准备只用于机制施工，不启动新的科学Run；最终后端冻结完整集待结果。私有cleanup-reconciled-final.json确认本轮箱均deleted；预算保守计沙箱8/20、Job2/20、镜像请求3/3（一次创建前拒绝）、提交1/6、新账号2/2。
+前端25文件122项通过（cs17-web-final.log，22.29秒）；生产构建、compileall和git diff --check通过。两次独立开发树准备只用于机制施工，不启动新的科学Run；最终后端冻结完整集1734项通过、2条依赖弃用警告，1050.28秒（cs17-full-frozen-suite-3.log）。私有cleanup-reconciled-final.json确认本轮箱均deleted；预算保守计沙箱8/20、Job2/20、镜像请求3/3（一次创建前拒绝）、提交1/6、新账号2/2。
+
+最终两轴有界审查完成，未发现阻断。预算完成分支追加定向4项通过；最终compileall和git diff --check通过。fallback-8对应本卡最终证据提交；远端推送与标签哈希另在总报告核对。
