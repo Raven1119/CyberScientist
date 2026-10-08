@@ -114,13 +114,14 @@ _TOOLS.extend(_PUBLIC_TOOLS)
 
 _TOOLS.append({
     "name": "research_local_score",
-    "description": "本地评分：evaluate 系统执行；prepare 返回固定哈希输入与可信评分命令，执行器自行准备环境、传输并用 research_sandbox exec 执行；register 按 execution_operation_id 核对通道回执登记正式分。prepare_job 在 Job 中执行同样固定评分命令，register_job 由后端下载核验；不得修改评分器；不提交。",
+    "description": "本地评分：initialize 仅在缺少评分器时，将当前 Trial 内 source_directory 草稿一次冻结为题目评分器，已有评分器不可替换；候选评分器不等于官方评分。evaluate 系统执行；prepare/prepare_job 返回固定输入与可信命令，在授权沙箱/Job执行后用register/register_job核验登记；不提交。",
     "inputSchema": {"type": "object", "additionalProperties": False,
-        "properties": {"action": {"enum": ["evaluate", "prepare", "register", "prepare_job", "register_job"]},
+        "properties": {"action": {"enum": ["initialize", "evaluate", "prepare", "register", "prepare_job", "register_job"]},
                        "trial_id": {"type": "string"},
                        "sandbox_id": {"type": "string"},
                        "operation_id": {"type": "string"},
                        "package_path": {"type": "string"},
+                       "source_directory": {"type": "string"},
                        "execution_operation_id": {"type": "string"},
                        "environment_paths": {"type": "object"}},
         "required": ["trial_id", "operation_id"]}})

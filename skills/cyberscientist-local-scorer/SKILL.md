@@ -11,7 +11,9 @@ metadata:
 
 先核对每条样本在提交时的轮次、评分策略、原始科学文件和分项回执。只有同一评分方式下可配对的输入与科学分，才用于推断字段、门槛或容差；仅有总分时记录“不可复刻”。主办方告知的 30–70 轨迹因子规则是外部规则，不是从历史分数推断的。CS-UP-03R 的 71 条历史实时分项记录没有可取回科学包或轨迹；10 条完整展示分与告知规则冲突，另一个分段计算虽能在样本内解释它们，平台未确认其适用性，见 `docs/SCORER_REVERSE_ENGINEERING.md`。不要把这些分数当作产物评分器的验收样本。
 
-将评分器放在 `workspace/challenges/<challenge_id>/scorer/`，用 `scorer.json` 声明 Python 入口、题目镜像、人工版本和契约版本。入口接收从封存ARM包提取的科学输入ZIP：轨迹成员已剔除，manifest的trace指针已移除。只输出一个JSON对象：`score`（0–100）、`components`、`confidence`、`notes`、`scorer_version`；最后一项使用运行时提供的`CS_SCORER_VERSION`。按D-49，秒级小计算可在项目`.venv`用numpy/scipy/sympy完成并留下命令、输出、耗时和产物来源；重计算仍在授权Bohrium执行。正式评分继续通过下述可信登记通道，不能把本地自报值当系统评分。评分器文件及镜像声明的变化都产生新版本。
+用 `scorer.json` 声明 Python 入口、题目镜像、人工版本和契约版本。入口接收从封存ARM包提取的科学输入ZIP：轨迹成员已剔除，manifest的trace指针已移除。只输出一个JSON对象：`score`（0–100）、`components`、`confidence`、`notes`、`scorer_version`；最后一项使用运行时提供的`CS_SCORER_VERSION`。科学计算、依赖验证和科学评分在授权 Bohrium Job 或沙箱完成；本机仅准备代码、文件与应用诊断。正式评分继续通过下述可信登记通道，不能把本地自报值当系统评分。
+
+题目已有 `challenges/<challenge_id>/scorer/` 或 `workspace/challenges/<challenge_id>/scorer/` 时保持只读，科研 Run 不得改写。若工具明确返回 `SCORER_MISSING`，在**当前 Trial 目录内**创建独立草稿（如 `scorer-draft/`），按公开题面构建检查，不读取隐藏答案、不自行提高权重；缺失规则保持 unknown/低置信度。调用 `research_local_score(action="initialize", trial_id="当前Trial", operation_id="稳定ID", source_directory="草稿绝对路径")`。后端只校验并冻结这一次草稿，不在本机执行；记录源路径和全部文件哈希。成功后题目评分器不可替换或再次初始化，即使删除也不能重建。需要修正现有评分器时报告问题，不能在 Run 中自改。初始化的候选评分器没有官方评分权威；系统验证执行回执不意味着验证其科学标尺。随后用 `prepare_job/register_job` 或 `prepare/register` 执行评分并登记。
 
 提交前对当前产物做本地评分，把评分器版本、封存包哈希和分项写入账本；建议在实验提交时写下可证伪的分数变化预测，缺失则记录 unknown。平台分数只有在 `confirmed` 后才作为校准目标。对齐同一封存包哈希，分别看科学分、轨迹分和展示分；分数或回执修订时更新校准状态，不悄悄覆盖旧预测。将不一致归因于具体尚未复刻的规则，而非伪造更高本地分。
 

@@ -1570,6 +1570,10 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
         identity = _tool_auth(request)
         body = await request.json()
         action = body.get('action', 'evaluate')
+        if action == 'initialize':
+            return await asyncio.to_thread(local_scoring.initialize_scorer,
+                identity['run_id'], body.get('trial_id'), body.get('operation_id'),
+                body.get('source_directory'))
         if action == 'prepare_job':
             return await asyncio.to_thread(executor_scoring.prepare, identity['run_id'], body.get('trial_id'), body.get('operation_id'), 'job', body.get('package_path'), body.get('environment_paths'), channel='job')
         if action == 'register_job':
@@ -1583,7 +1587,7 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
                 identity['run_id'], body.get('trial_id'), body.get('operation_id'),
                 body.get('execution_operation_id'))
         if action != 'evaluate':
-            raise local_scoring.LocalScoreError('INVALID_ACTION', '支持 evaluate/prepare/register')
+            raise local_scoring.LocalScoreError('INVALID_ACTION', '支持 initialize/evaluate/prepare/register/prepare_job/register_job')
         return await asyncio.to_thread(local_scoring.evaluate,
             identity['run_id'], body.get('trial_id'), body.get('sandbox_id'),
             body.get('operation_id'), body.get('package_path'))

@@ -11,6 +11,8 @@ import json
 import math
 import re
 import shlex
+import shutil
+import tempfile
 import uuid
 import zipfile
 from pathlib import Path
@@ -116,6 +118,11 @@ def scorer_manifest(challenge_id: str) -> dict[str, Any]:
             break
     if base is None:
         raise LocalScoreError('SCORER_MISSING', '题目缺少 scorer/ 目录')
+    return _manifest_from_directory(base)
+
+
+def _manifest_from_directory(base: Path) -> dict[str, Any]:
+    """Validate and snapshot source bytes without executing any scorer code."""
     files: dict[str, bytes] = {}
     total = 0
     for path in sorted(base.rglob('*')):
@@ -182,6 +189,93 @@ def scorer_manifest(challenge_id: str) -> dict[str, Any]:
             'scorer_version': version, 'file_hashes': hashes, 'files': files, 'runtime': runtime,
             **({'comparison_contract': comparison} if comparison else {}),
             **({'input_contract': contract} if contract is not None else {})}
+
+
+@config.serialized_mutation
+def initialize_scorer(run_id: str, trial_id: str, operation_id: str,
+                      source_directory: str) -> dict[str, Any]:
+    """Publish a missing local candidate grader once, outside executor write scope.
+
+    Existing project/user graders cannot be replaced. The bytes come from the
+    current Trial, remain auditable, and confer no official scoring authority.
+    """
+    if not isinstance(operation_id, str) or not _OPERATION.fullmatch(operation_id):
+        raise LocalScoreError('INVALID_OPERATION', '需要稳定的有界 operation_id')
+    # Reuse the exact active-Trial gate used by scoring preparation/registration.
+    from .executor_scoring import _current
+    run = _current(run_id, trial_id)
+    if not db.query_one("SELECT 1 FROM trials WHERE id=? AND run_id=? AND status='active'",
+                        (trial_id, run_id)):
+        raise LocalScoreError('NOT_OWNED', '需要本 Run 的活动 Trial')
+    trial = config.WORKSPACE_DIR / 'runs' / run_id / 'trials' / trial_id
+    if (not isinstance(source_directory, str) or not source_directory
+            or '..' in Path(source_directory).parts):
+        raise LocalScoreError('INVALID_SCORER', '需要当前 Trial 内的草稿目录')
+    source = Path(source_directory)
+    if not source.is_absolute():
+        source = trial / source
+    if source.is_symlink() or any(p.is_symlink() for p in source.parents):
+        raise LocalScoreError('INVALID_SCORER', '草稿路径不得经过符号链接')
+    source = source.resolve()
+    if trial.resolve() not in source.parents or not source.is_dir():
+        raise LocalScoreError('NOT_OWNED', '草稿必须位于当前 Trial 内')
+    manifest = _manifest_from_directory(source)
+    secrets = [value.encode() for value in config.sensitive_values()]
+    if any(secret in raw for secret in secrets for raw in manifest['files'].values()):
+        raise LocalScoreError('INVALID_SCORER', '评分器草稿包含受保护凭据')
+    challenge_id = run['challenge_id']
+    if not re.fullmatch(r'[A-Za-z0-9_.-]{1,200}', challenge_id) or challenge_id in ('.', '..'):
+        raise LocalScoreError('INVALID_SCORER', '题目标识无法安全定位')
+    kind = 'scorer.initialize:' + challenge_id
+    request = {'trial_id': trial_id, 'source_directory': str(source),
+               'scorer_version': manifest['scorer_version']}
+    request_hash = hashlib.sha256(_canonical(request).encode()).hexdigest()
+    existing = db.query_one('SELECT * FROM operations WHERE operation_id=?', (operation_id,))
+    if existing:
+        if (existing['run_id'] != run_id or existing['kind'] != kind
+                or existing['status'] != 'confirmed' or existing['payload_hash'] != request_hash):
+            raise LocalScoreError('OPERATION_CONFLICT', 'operation_id 已绑定其他请求或草稿')
+        frozen = scorer_manifest(challenge_id)
+        if frozen['scorer_version'] != manifest['scorer_version']:
+            raise LocalScoreError('SCORER_CHANGED', '已冻结评分器身份不符')
+        return json.loads(existing['request_summary']) | {'deduplicated': True}
+    target = config.WORKSPACE_DIR / 'challenges' / challenge_id / 'scorer'
+    for root in (config.WORKSPACE_ROOT / 'challenges', config.WORKSPACE_DIR / 'challenges'):
+        candidate = root / challenge_id / 'scorer'
+        if (candidate.exists() or candidate.is_symlink()
+                or any(p.is_symlink() for p in candidate.parents)):
+            raise LocalScoreError('SCORER_EXISTS', '已有评分器保持只读，不得初始化覆盖')
+    if (db.query_one('SELECT 1 FROM operations WHERE kind=?', (kind,))
+            or db.query_one('SELECT 1 FROM local_scores WHERE challenge_id=?', (challenge_id,))):
+        raise LocalScoreError('SCORER_EXISTS', '已有评分器历史，不得重新初始化')
+    result = {'status': 'initialized', 'operation_id': operation_id,
+              'challenge_id': challenge_id, 'trial_id': trial_id,
+              'source_directory': str(source), 'scorer_version': manifest['scorer_version'],
+              'file_hashes': manifest['file_hashes'], 'authority': 'local_candidate_not_official'}
+    target.parent.mkdir(parents=True, exist_ok=True)
+    stage = Path(tempfile.mkdtemp(prefix='.scorer-init-', dir=target.parent))
+    try:
+        for name, raw in manifest['files'].items():
+            path = stage / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(raw)
+            path.chmod(0o444)
+        # Keep publication and its provenance serialized with all app mutations.
+        # A crash after rename fails closed: the existing target is never replaced.
+        with db.transaction() as conn:
+            conn.execute('INSERT INTO operations(operation_id,run_id,kind,status,'
+                         'request_summary,payload_hash,created_at) VALUES(?,?,?,?,?,?,?)',
+                         (operation_id, run_id, kind, 'confirmed', _canonical(result),
+                          request_hash, db.utcnow()))
+            if target.exists() or target.is_symlink():
+                raise LocalScoreError('SCORER_EXISTS', '已有评分器保持只读')
+            stage.rename(target)
+            db.append_event_tx(conn, run_id, 'executor', 'science.scorer_initialized',
+                               result, trial_id=trial_id)
+    finally:
+        if stage.exists():
+            shutil.rmtree(stage)
+    return result
 
 
 def predict_trace(sealed: bytes) -> dict[str, Any]:
