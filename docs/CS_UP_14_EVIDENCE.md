@@ -104,7 +104,7 @@ c8c1e7f完整回归结果：1596 passed、2既有warnings、1003.60秒，final-n
 |六项新输出|23502801 Finished；六文件+独立验证JSON全部与原归档SHA相符，归档77c757b9…7397|官方隐藏参考误差未知，非科学100证明|
 |截止能对照|23502608六点终态；23502658独立数值单位已核实，Si截止差−0.004427028585496373 meV/atom|不能据截止收敛推出k点/展宽/密度网格全部收敛|
 |几何/电荷独立验证|23502801的原始JSON：三相cube/STRU映射通过，周期全空间Voronoi分区逆序原子差0，总电子数残差真实保留|双网格原始日志已补验，k点仍有缺口；执行者报告Si k8→k10约−5.655 meV/atom，未达约1 meV内部目标|
-|科学评分|08:05首次固定公开候选b25679e…ef8365，三文件哈希匹配；仅可在Bohrium执行|当前无已登记分，public_contract代理不能替代官方或全部科学有效性|
+|科学评分|公开候选b25679e…ef8365固定；监控/执行者真实Bohrium各登记public_contract=100、low；执行者Job23507438|代理不能替代官方、隐藏参考或全部科学有效性；占位轨迹预测不用作验收|
 |原生封存/轨迹|凭据误报已修复；3d5bdeb8…74f2实际只读封存通过，官方缓存schema valid，完整30,407,474字节原件未改|最终轨迹门、正式CLI上传/Worker评分和收割尚未验收|
 
 清洁输出的Bohrium原件记载形成能−0.40966867032834386 eV/f.u.、嵌锂电压+0.40966867032834386 V、LiSi残余压力0.135078 kbar、最大力0.003918 eV/Å。电荷方法为周期最近原子Voronoi全空间分区、并列边界等分，Li/Si分别3.2424932073301336/3.75751675108192电子，公开定义下transfer分别+0.24249320733013358/−0.24248324891807993电子；不将该方法结果解释成隐藏Bader参考。上述数值直接抄自远端JSON，本地没有执行科学计算。fresh-independent-science-remote-proof.json记录独立JSON SHA ab2e1b9b…3b7；原始几何、电荷网格、能量定义和未收敛项不因契约通过而豁免。
@@ -164,6 +164,8 @@ W3监控独立评分操作（本提交 CS-UP-14）：在现有当前Trial内，�
 
 W3/W4当前源码完整复验（d512eab CS-UP-14）：完整1625 passed、2既有warnings，880.09秒；4个冻结源码/测试哈希一致，前端未改、104项与构建既有通过仍适用，compileall/diff-check与34文件真实凭据扫描均通过。监控评分23507427 Finished，经register_job核对系统固定命令/输入/镜像/回执后，10:00:33Z登记ls_87fbad7fd37e，score_source=executor_verified（通道历史名称，实际操作者controller另记事件）。数值100仅public_contract公开代理，不是官方/隐藏科学100；trace-placeholder-v1的predicted_display_score100不作轨迹验收依据。本地实际public_v6检查表仍36/review、N11提示，尚无正式Attempt。
 
+W3执行者真实重放/评分验收（本提交 CS-UP-14）：v8候选源SHAf7c45651…921d5，补入原Trial可见科学脚本后，23507424/20860658 Finished，真正从包内密度重跑入口；未过滤日志SHAa0b4bfff…d68e，回传replay_comparison.json pass=true/mismatches={}。六项要求输出哈希同时匹配清洁原件、v8 ZIP及远端重放；附加independent_validation.json新SHA不同，未声称七文件相同（v8-entry-replay-actual-proof.json）。Terra随后通过原生工具执行冻结评分Job23507438/20860672，10:01:11Z可信登记ls_c78bde13a6ae，公开契约代理100/low，非完整科学/官方100；与监控先行评分分开归因。#25985已请求trial_complete提交前审阅，尚无正式Attempt。
+
 ## W4 验收核对（进行中）
 
 |要求|当前事实|直接证据或剩余步骤|
@@ -173,7 +175,7 @@ W3/W4当前源码完整复验（d512eab CS-UP-14）：完整1625 passed、2既�
 |W1 三模型原生转换|已验证所测样本|9/8/902步、工具配对及原SHA不变；旧error转换缺陷保留|
 |W2 实验/收割CLI、保护与开关|应用验证通过|8a2d652及后续通用修复；fake覆盖和真实HTTP api→cli往返，不代替Worker|
 |W3 单题/单Run/指定模型|实际运行确认|round_fab7e74ad784、run_8a21b7d249、原生Astra xhigh/Terra high fast线程身份；冻结实验2+收割1|
-|W3 完整科研、科学评分、轨迹门、干净复跑|新三相原件/六输出已验；科学/轨迹评分尚未验证|74文件和23502801原归档逐项SHA匹配；已冻结公开代理，尚无登记科学分；k点/网格缺口保留|
+|W3 完整科研、科学评分、轨迹门、干净复跑|新三相/六输出、v8入口重放及公开代理评分已验；轨迹官方分尚未验证|74文件和原归档哈希核实；重放六输出相同，可信公开代理100/low；本地v6提示风险，k点缺口保留|
 |W3 CLI上传、harbor_worker、轨迹分和判定|尚未验证|当前0 Attempt；认证/分页通过不能证明POST或正式评分|
 |W3 D-74|条件不满足，保留D-69|d74-two-hour-proof.json和UPGRADE_DESIGN评估；没有更改默认分诊|
 |W3 CLI收割及阈值恢复|尚未验证|尚无确认实验分；当前auto_harvest=false、阈值100，不能提前触发|
