@@ -65,7 +65,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
               "custom_profile_id": None},
     "executor": {"runtime": "codex",
                  "executable": "",
-                 "model_id": "gpt-5.6-terra", "provider": "codex",
+                 "model_id": "gpt-5.6-terra",
                  "reasoning_effort": "xhigh", "fast_mode": True},
     "reviewer": {"runtime": "codex", "provider": "codex", "executable": "",
                  "model_id": "gpt-6.1-sol", "reasoning_effort": "high"},
