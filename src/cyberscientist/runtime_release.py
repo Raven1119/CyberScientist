@@ -115,6 +115,8 @@ def build_frontend(source: Path, commit: str, stage: Path):
         with tarfile.open(fileobj=io.BytesIO(result.stdout),mode='r:') as archive:
             for member in archive:
                 path=PurePosixPath(member.name)
+                if member.isdir() and path in (PurePosixPath('apps'),PurePosixPath('apps/web')):
+                    continue
                 if path.is_absolute() or '..' in path.parts or not path.is_relative_to('apps/web'):
                     raise ValueError('前端归档路径越界')
                 if member.isdir():continue
