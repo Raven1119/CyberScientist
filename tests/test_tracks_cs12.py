@@ -21,7 +21,7 @@ async def test_two_five_topic_tracks_queue_prompts_clocks_transports_and_shared_
             {'challenge_ids':ids[5:],'label':'全栈赛道','mode':'demo','clock':{'duration_hours':6}}])
         assert response.status_code==200
         tracks=response.json()['items'];a,b=tracks
-        competition_prompts.publish(a['id'],'材料独立提示',0);competition_prompts.publish(b['id'],'全栈独立提示',0)
+        competition_prompts.publish(a['id'],'材料独立提示',competition_prompts.latest(a['id'])['version']);competition_prompts.publish(b['id'],'全栈独立提示',competition_prompts.latest(b['id'])['version'])
         custom=track_transport.defaults();custom['paths']={k:p.replace('/attempts','/track-b/attempts') for k,p in custom['paths'].items()};custom.update(verified=True,bundle_field='arm_zip');custom['paths']['create']='/track-b/challenges/{id}/attempts'
         updated=await client.put(f"/api/v1/rounds/{b['id']}/transport",json=custom)
         assert updated.status_code==200
@@ -117,7 +117,7 @@ async def test_confirmed_clock_cannot_clear_deadline_and_preflight_reads_overrid
     # W9 readiness requires prompt, protocol evidence and matching main account
     # as well as the W3 clock. Supply those facts without relaxing clock checks.
     from cyberscientist import competition_prompts,mailboxes,config
-    competition_prompts.publish(rid,'fixture user prompt',0)
+    competition_prompts.publish(rid,'fixture user prompt',competition_prompts.latest(rid)['version'])
     snapshot=json.loads(db.query_one('SELECT config_json FROM eval_runs WHERE id=?',(rid,))[0])
     snapshot['submission_transport']=track_transport.defaults(config.load_settings()['playground']['base_url']) | {'verified':True,'evidence':{'source':'synthetic_fixture'}}
     db.execute('UPDATE eval_runs SET config_json=? WHERE id=?',(json.dumps(snapshot),rid))

@@ -155,7 +155,7 @@ async def test_real_triage_contract_rejects_wrong_fields_on_native_path(monkeypa
     brain.rpc = NativeRPC([json.dumps(bad), json.dumps(good)], 'codex')
     ctl = RunController(); monkeypatch.setattr(ctl, '_make_brain', lambda settings: brain)
     result = await competition.triage(rnd['id'], ctl)
-    assert result['items'][0]['triage'] == good and len(brain.rpc.calls) == 2
+    assert result['items'][0]['triage'] == {**good, 'minimum_loop_candidate': False} and len(brain.rpc.calls) == 2
     assert 'estimated_minutes' in json.dumps(brain.rpc.calls[1])
 
 
