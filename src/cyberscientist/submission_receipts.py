@@ -56,6 +56,8 @@ def observe_tx(conn,row,body):
     previous=json.loads(current['receipt_details_json'] or '{}')
     merged=previous|incoming
     if merged==previous:return False
+    from . import trace_hints
+    trace_hints.record_tx(conn,row,merged)
     when=db.utcnow()
     columns={key:incoming[key] for key in ('harbor_reward','harbor_score','trace_score','trace_factor','trace_decision','scoring_source','scored_by','counts_toward_season','score_is_final') if key in incoming}
     columns.update(receipt_details_json=json.dumps(merged,ensure_ascii=False),receipt_observed_at=when)

@@ -716,7 +716,12 @@ def preflight_submission(run_id: str, trial_id: str | None,
         except (KeyError, ValueError, zipfile.BadZipFile):
             code = "INVALID_PACKAGE"
     diagnostic = trace_diagnostics.unavailable("non_ARM_bundle")
-    if is_bundle:
+    runtime_row = db.query_one('SELECT mode FROM runs WHERE id=?', (run_id,))
+    official_cli = runtime_row and runtime_row['mode'] == 'connected' and config.load_settings().get('submission_transport','cli') == 'cli'
+    if official_cli:
+        diagnostic = {'status':'pending_cli_preview','advisory_only':True,'hints':[],
+                      'notice':'仅在官方试构建trace上提示扣分码，不估分、不拦截'}
+    if is_bundle and not official_cli:
         try:
             from . import artifact_contracts
             challenge = artifact_contracts.for_run(run_id)

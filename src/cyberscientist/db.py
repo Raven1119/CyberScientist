@@ -608,6 +608,9 @@ def init_db() -> None:
         conn.executescript('''CREATE TABLE IF NOT EXISTS submission_validation_scopes (
             id TEXT PRIMARY KEY,grant_sha256 TEXT NOT NULL,grant_json TEXT NOT NULL,created_at TEXT NOT NULL);''')
         conn.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_submission_one_retry ON submissions(retry_of) WHERE retry_of IS NOT NULL')
+        conn.executescript('''CREATE TABLE IF NOT EXISTS trace_hint_calibrations (
+            submission_id TEXT NOT NULL REFERENCES submissions(id),comparison_sha256 TEXT NOT NULL,
+            comparison_json TEXT NOT NULL,observed_at TEXT NOT NULL,PRIMARY KEY(submission_id,comparison_sha256));''')
         conn.executescript('''CREATE TABLE IF NOT EXISTS submission_queue (
             submission_id TEXT PRIMARY KEY REFERENCES submissions(id),state TEXT NOT NULL,
             not_before TEXT NOT NULL,reason TEXT NOT NULL,dispatched_at TEXT,
