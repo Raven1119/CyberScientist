@@ -282,6 +282,9 @@ class RunController:
         settings["run_defaults"] = config.load_settings()["run_defaults"]
         from .pi_policy import migrated
         settings['brain'] = migrated(settings['brain'])  # Historical snapshots remain immutable.
+        from . import competition_panel
+        override=competition_panel.state(run_id,'executor_override')
+        if override: settings['executor']={**settings.get('executor',{}),**override}
         if snapshot.get('competition'):
             for role in ('brain','executor','reviewer','post_review'):
                 if isinstance(settings.get(role),dict): settings[role].setdefault('fast_mode',True)

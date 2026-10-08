@@ -1,3 +1,4 @@
+import { CompetitionPanel } from '../CompetitionPanel'
 import { useEffect, useRef, useState } from 'react'
 import { api } from '../api'
 import { useApp } from '../app-context'
@@ -130,7 +131,7 @@ export default function CompetitionPage() {
     if (b.score_gap == null) return -1
     return b.score_gap - a.score_gap || b.priority - a.priority
   })
-  return <section><div className="page-head"><h1>比赛赛道</h1></div>
+  return <section><div className="page-head"><h1>比赛赛道</h1></div><CompetitionPanel/>
     <button className="btn" disabled={busy} onClick={async () => {
       setBusy(true)
       try { setShutdown(await api.post('/api/v1/system/safe-shutdown', {})) }

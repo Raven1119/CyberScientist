@@ -88,6 +88,9 @@ CREATE TABLE IF NOT EXISTS submission_daily_audits (
     result_json TEXT NOT NULL, observed_at TEXT NOT NULL,
     PRIMARY KEY(mailbox_id, day)
 );
+CREATE TABLE IF NOT EXISTS monitor_repairs (
+ operation_id TEXT PRIMARY KEY, run_id TEXT, text_md TEXT NOT NULL, created_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS method_approvals (
  run_id TEXT PRIMARY KEY REFERENCES runs(id), status TEXT NOT NULL, version INTEGER NOT NULL,
  proposal_json TEXT NOT NULL, pending_json TEXT, approved_by TEXT, approved_at TEXT, updated_at TEXT NOT NULL

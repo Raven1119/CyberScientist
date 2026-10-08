@@ -438,6 +438,11 @@ def select_experiment(conn, run_id, accounts, digest=None):
     if prior_hash:
         return next((m for m in accounts if m['id']==prior_hash[0]['mailbox_id']),None)
     eligible=[m for m in accounts if m['id']!=last] if len(accounts)>1 else accounts
+    from . import competition_panel
+    preferred=competition_panel.state(run_id,'preferred_mailbox')
+    if preferred:
+        selected=next((m for m in eligible if m['id']==preferred),None)
+        if selected:return selected
     def recent(m):
         rows=conn.execute('SELECT created_at FROM submissions WHERE mailbox_id=? AND reservation_released=0',(m['id'],)).fetchall()
         cutoff=datetime.now(timezone.utc)-timedelta(minutes=policy['cross_topic_minutes'])

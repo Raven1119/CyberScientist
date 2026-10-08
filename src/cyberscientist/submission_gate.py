@@ -87,8 +87,9 @@ def admit(sid, resume_attempt_id=None, continuation_operation_id=None):
         now=_now(); due,reason=_when(conn,row,now)
         if paused() or not features.enabled('auto_submission'):reason='自动提交已暂停'
         elif power.shutdown_requested():reason='安全关机门禁'
+        elif (held:=conn.execute('SELECT value FROM system_state WHERE key=?',('submission_hold:'+row['run_id'],)).fetchone()) and held[0]=='true':reason='本题暂缓提交'
         elif not row['is_harvest'] and conn.execute("SELECT 1 FROM submission_queue q JOIN submissions s ON s.id=q.submission_id JOIN mailboxes m ON m.id=s.mailbox_id WHERE q.state='queued' AND s.is_harvest=1 AND lower(m.email)=lower(?) AND m.platform=? LIMIT 1",(row['email'],row['platform'])).fetchone():reason='收割优先';due=max(due,now+timedelta(seconds=1))
-        blocked=due>now or reason in ('自动提交已暂停','安全关机门禁','收割优先')
+        blocked=due>now or reason in ('自动提交已暂停','安全关机门禁','收割优先','本题暂缓提交')
         if not old:
             conn.execute("INSERT INTO submission_queue(submission_id,state,not_before,reason,resume_attempt_id,continuation_operation_id,updated_at) VALUES(?,'queued',?,?,?,?,?)",(sid,due.isoformat(),reason,resume_attempt_id,continuation_operation_id,db.utcnow()))
         if blocked:

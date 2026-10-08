@@ -1262,6 +1262,23 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
         return controller.drop_pending_intent(run_id, body.get("reason", "用户放弃该意图"))
 
 
+    @app.get('/api/v1/competition-panel')
+    async def competition_panel_view():
+        from . import competition_panel
+        return competition_panel.view()
+
+    @app.post('/api/v1/runs/{run_id}/panel')
+    async def competition_panel_control(run_id: str, body: dict[str, Any]):
+        from . import competition_panel
+        try: return competition_panel.change(run_id,body)
+        except ValueError as exc: raise HTTPException(409,detail={'code':'PANEL_CONFLICT','message':str(exc)}) from exc
+
+    @app.post('/api/v1/competition-panel/repairs')
+    async def competition_panel_repair(body: dict[str, Any]):
+        from . import competition_panel
+        try: return competition_panel.record_repair(body)
+        except ValueError as exc: raise HTTPException(409,detail={'code':'REPAIR_CONFLICT','message':str(exc)}) from exc
+
     @app.get('/api/v1/runs/{run_id}/method')
     async def get_method(run_id: str):
         from . import method_approval
