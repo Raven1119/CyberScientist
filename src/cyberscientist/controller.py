@@ -2301,14 +2301,14 @@ class RunController:
                     else:
                         self._pause_needs_attention(run_id, "执行器会话失联且重启失败；请检查连接")
 
-    async def _restart_prime_session(self, run_id: str) -> bool:
+    async def _restart_prime_session(self, run_id: str, *, fresh: bool = False) -> bool:
         self._session_restarts.add((run_id, "executor"))
         try:
-            return await self._restart_prime_session_impl(run_id)
+            return await self._restart_prime_session_impl(run_id, fresh=fresh)
         finally:
             self._session_restarts.discard((run_id, "executor"))
 
-    async def _restart_prime_session_impl(self, run_id: str) -> bool:
+    async def _restart_prime_session_impl(self, run_id: str, *, fresh: bool = False) -> bool:
         old, session = self._prime_instances.get(run_id), self._prime_sessions.get(run_id)
         pump = self._pumps.pop(run_id, None)
         if pump:
@@ -2324,7 +2324,7 @@ class RunController:
             if isinstance(runtime, KimiExecutor):
                 runtime.ask_handler = lambda _sid, question: self._answer_executor_question(run_id,question)
             spec = self._prime_spec(run_id, self._runtime_settings(run_id))
-            if old is None and isinstance(runtime, CodexExecutor):
+            if not fresh and old is None and isinstance(runtime, CodexExecutor):
                 spec['resume_thread_id'] = self._require_run(run_id)['executor_thread_id']
             new_session = await asyncio.wait_for(runtime.start(spec), timeout=60)
         except Exception:
@@ -2336,7 +2336,7 @@ class RunController:
         self._executor_busy[run_id] = False
         self._native_arrival_at.pop(run_id, None)
         self._last_native_marker_at.pop(run_id, None)
-        db.append_event(run_id, "controller", "executor.session_restarted", {})
+        db.append_event(run_id, "controller", "executor.session_restarted", {"old_session_id": session, "session_id": new_session, "fresh": fresh})
         starter = self._start_pump.get(run_id)
         if starter:
             starter()
@@ -3782,6 +3782,18 @@ class RunController:
                         db.append_event(run_id, "brain", "brain.action_rejected", {
                             "op": op, "reason": f"达到 Trial 上限 {limit}；需要新 Trial 请结束当前 Run 重新授权"})
                     continue
+                if action.get('fresh_executor_session'):
+                    from . import clean_runs
+                    try:
+                        clean_runs.validate(action.get('clean_handoff'))
+                    except ValueError as exc:
+                        db.append_event(run_id, 'brain', 'brain.action_rejected', {'op':op,'reason':str(exc)})
+                        continue
+                    if not await self._restart_prime_session(run_id, fresh=True):
+                        db.append_event(run_id,'controller','executor.fresh_failed',{'reason':'新会话未确认；未创建 Trial'})
+                        continue
+                    prime_sid = self._prime_sessions[run_id]
+                    prime = self._prime_instances[run_id]
                 trial_id = _rid("trial")
                 parent = run["current_trial_id"]
                 with db.transaction() as conn:
@@ -3836,6 +3848,11 @@ class RunController:
                 task_text += planning.brief_for_run(run_id)
                 from . import environment_catalog
                 task_text += environment_catalog.executor_instructions(run_id)
+                if action.get('fresh_executor_session'):
+                    from . import clean_runs
+                    task_text = clean_runs.prompt(self._challenge_for_run(run), action['clean_handoff'], enabled_skills,
+                                                  observation.authority_facts(run_id)['capability_summary'])
+                    db.append_event(run_id,'controller','trial.clean_run',{'session_id':prime_sid,'parent_trial_id':parent,'disclosure':'方法来自本方此前的探索'},trial_id=trial_id)
                 if enabled_skills:
                     db.append_event(run_id, "controller",
                                     "trial.skills_enabled",

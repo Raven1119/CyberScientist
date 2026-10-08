@@ -51,6 +51,35 @@
               "success_check": {
                 "type": "string",
                 "minLength": 1
+              },
+              "fresh_executor_session": {
+                "type": "boolean"
+              },
+              "clean_handoff": {
+                "type": "object",
+                "properties": {
+                  "method_md": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 12000
+                  },
+                  "parameters_md": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 12000
+                  },
+                  "pitfalls_md": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 12000
+                  }
+                },
+                "required": [
+                  "method_md",
+                  "parameters_md",
+                  "pitfalls_md"
+                ],
+                "additionalProperties": false
               }
             },
             "required": [
@@ -58,7 +87,26 @@
               "goal",
               "success_check"
             ],
-            "additionalProperties": false
+            "additionalProperties": false,
+            "allOf": [
+              {
+                "if": {
+                  "properties": {
+                    "fresh_executor_session": {
+                      "const": true
+                    }
+                  },
+                  "required": [
+                    "fresh_executor_session"
+                  ]
+                },
+                "then": {
+                  "required": [
+                    "clean_handoff"
+                  ]
+                }
+              }
+            ]
           },
           {
             "type": "object",
