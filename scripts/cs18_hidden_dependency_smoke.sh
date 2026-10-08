@@ -28,7 +28,7 @@ HIDDEN="${DEV}.hidden-dependency-$(date +%s)"
 RENAMED=0
 restore() {
   rc=$?
-  if [[ "$RENAMED" == 1 ]]; then
+  if [[ -d "$HIDDEN" ]]; then
     if [[ -e "$DEV" ]]; then
       printf '%s\n' 'Cannot restore: original path unexpectedly exists; hidden tree preserved.' >&2
       exit 3

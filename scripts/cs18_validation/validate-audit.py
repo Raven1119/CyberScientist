@@ -41,8 +41,8 @@ result['all_resume_on_startup_disabled']=db.query_one('SELECT COUNT(*) FROM runs
 with urllib.request.urlopen('http://127.0.0.1:8765/api/v1/health',timeout=10) as response:result['health']=json.load(response)
 with urllib.request.urlopen('http://127.0.0.1:8765/api/v1/ops/digest',timeout=10) as response:result['digest']=json.load(response)
 with urllib.request.urlopen('http://127.0.0.1:8765/api/v1/runs/run_8a21b7d249',timeout=10) as response:
- historical=json.load(response);result['historical_run_view']={'http_status':response.status,'id':historical.get('id'),'keys':list(historical)}
-with urllib.request.urlopen('http://127.0.0.1:8765/api/v1/runs/run_8a21b7d249/artifacts/submissions/sub_8e446f6e58/package.zip',timeout=30) as response:
+ historical=json.load(response);result['historical_run_view']={'http_status':response.status,'id':historical.get('run',historical).get('id'),'keys':list(historical)}
+with urllib.request.urlopen('http://127.0.0.1:8765/api/v1/runs/run_8a21b7d249/artifacts/trials/trial_04dc15406d/result_package.zip',timeout=30) as response:
  result['historical_artifact_view']={'http_status':response.status,'content_length':response.headers.get('Content-Length'),'zip_header':response.read(4).hex()}
 result['version']=runtime_layout.version()
 result['experience_files']={p.relative_to(ROOT/'experience').as_posix():hashlib.sha256(p.read_bytes()).hexdigest() for p in (ROOT/'experience').rglob('*') if p.is_file()}

@@ -1,4 +1,4 @@
-import hashlib,json,shutil,sqlite3,sys,time
+import hashlib,json,math,shutil,sqlite3,sys,time
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1];sys.path.insert(0,str(ROOT/'src'))
 from cyberscientist import config,db,sandboxes,job_checks,environment_catalog
@@ -11,9 +11,10 @@ config.DATA_DIR=AREA;config.DB_PATH=AREA/'validation.sqlite';config.SETTINGS_PAT
 db.init_db();RID='run_8a21b7d249';r=db.query_one('SELECT * FROM runs WHERE id=?',(RID,));snap=json.loads(r['config_snapshot']);snap['settings']=config.load_settings();snap['settings']['initial_method_approval']=False;snap.get('competition',{}).pop('budget_policy',None)
 used=db.query_one('SELECT COUNT(*) FROM compute_sandboxes WHERE run_id=?',(RID,))[0]
 historical_jobs=db.query_one('SELECT COUNT(*) FROM compute_jobs WHERE run_id=?',(RID,))[0]
+historical_reserved=sum(sandboxes.reserved_seconds(row) for row in db.query('SELECT * FROM compute_sandboxes WHERE run_id=?',(RID,)))
 # The production image probe checks a Job authorization. This private copy
 # permits one additional slot for preflight; this helper never submits a Job.
-db.execute('UPDATE authorizations SET unlimited_resources=0,max_run_minutes=15,max_sandboxes=?,max_sandbox_minutes=120,max_jobs=?,max_submissions=0 WHERE id=?',(used+1,historical_jobs+1,r['authorization_id']))
+db.execute('UPDATE authorizations SET unlimited_resources=0,max_run_minutes=15,max_sandboxes=?,max_sandbox_minutes=?,max_jobs=?,max_submissions=0 WHERE id=?',(used+1,math.ceil((historical_reserved+300)/60),historical_jobs+1,r['authorization_id']))
 db.execute("UPDATE runs SET phase='running',gate='open',clock_version=0,started_at=?,ended_at=NULL,config_snapshot=? WHERE id=?",(db.utcnow(),json.dumps(snap),RID))
 entry=environment_catalog.get('competition-materials-assets-20261009');image=entry['image_address'] if 'image_address' in entry else entry['image']
 files={'task.sh':b'set -eu\nprintf ready > result.txt\n'};spec={'command':'bash task.sh','image_address':image,'machine_type':'c2_m4_cpu','max_run_time':2,'backward_files':['result.txt','STDOUTERR']}

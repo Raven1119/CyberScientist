@@ -172,7 +172,7 @@
 
 比赛进程使用专用 `.runtime/codex` 和 `.runtime/home`。认证、模型/提供商、priority、功能开关和全部23个比赛技能已从原配置复制并核对；全局配置不改。禁止在比赛目录放开发 AGENTS、STATUS 或任务卡。无Git运行版本由 `.runtime/version.json` 核实，不能靠比赛目录执行 `git rev-parse` 判断。
 
-系统默认 `submission_transport=cli`。比赛内官方 CLI 固定为 `tools/playground-cli/0.1.40/dist/main.js`，用 Linux Node 执行；仅在开发目录审计新版本、更新完整目录与 integrity 清单后发布，不在比赛运行中自动升级。Worker API 来自设置 `playground.worker_base_url`，当前官方端点为 `http://47.92.88.121:443/api`；HTTP 上传成功、Worker 评分和参赛有效性分别确认。
+系统默认 `submission_transport=cli`。比赛内官方 CLI 固定为 `tools/playground-cli/0.1.40/dist/index.js`，用 Linux Node 执行；仅在开发目录审计新版本、更新完整目录与 integrity 清单后发布，不在比赛运行中自动升级。Worker API 来自设置 `playground.worker_base_url`，当前官方端点为 `http://47.92.88.121:443/api`；HTTP 上传成功、Worker 评分和参赛有效性分别确认。
 
 当前 CLI 支持 `submit --dir <冻结科学目录> --rawMessages <执行者原生记录>`，不再传旧 `--bundle`。应用保留题目存在性、账号归属、提交间隔、同封存包和 unknown 不重放保护。试构建使用 `ops submit --target comp --dry-run` 加原有 Run/Trial/邮箱/包参数；只构建不提交，不生成正式分数。令牌仅由后端秘密引用解析，不能写进命令、轨迹或日志。
 
