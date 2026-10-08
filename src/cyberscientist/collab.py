@@ -19,7 +19,7 @@ import jsonschema
 from . import db, experience_context
 
 _CONTRACT_PATH = (Path(__file__).resolve().parent.parent.parent
-                  / "docs" / "collaboration" / "contract.schema.json")
+                  / "contracts" / "collaboration.schema.json")
 _CONTRACT: dict[str, Any] = json.loads(
     _CONTRACT_PATH.read_text(encoding="utf-8"))
 

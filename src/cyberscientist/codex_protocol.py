@@ -40,7 +40,8 @@ NATIVE_BRAIN_ENV_KEYS = NATIVE_BRAIN_SHELL_ENV_KEYS + NATIVE_BRAIN_AUTH_ENV_KEYS
 def native_brain_environment(source: Mapping[str, str] | None = None) -> dict[str, str]:
     """Explicit process environment; this does not isolate readable auth files."""
     values = os.environ if source is None else source
-    return {key: values[key] for key in NATIVE_BRAIN_ENV_KEYS if key in values}
+    from . import runtime_layout
+    return runtime_layout.native_environment({key: values[key] for key in NATIVE_BRAIN_ENV_KEYS if key in values})
 
 
 async def initialize(rpc: JsonRpcStdio) -> dict[str, Any]:
@@ -94,6 +95,8 @@ def thread_params(spec: dict[str, Any], model: str | None,
         "memories.use_memories": False,
         "memories.generate_memories": False,
     }
+    from . import runtime_layout
+    if runtime_layout.version() is not None:cfg['project_doc_max_bytes']=0
     if effort:
         cfg["model_reasoning_effort"] = effort
     if not writable:
@@ -143,15 +146,16 @@ def thread_params(spec: dict[str, Any], model: str | None,
 
 def process_environment(spec: dict[str, Any]) -> dict[str, str] | None:
     """Keep MCP capabilities in the process environment, never saved config."""
+    from . import runtime_layout
     if not spec.get("mcp_servers"):
-        return spec.get("env")
+        return runtime_layout.native_environment(dict(spec.get('env') or os.environ)) if runtime_layout.version() else spec.get('env')
     env = dict(spec.get("env") or os.environ)
     for server in spec["mcp_servers"]:
         values = server.get("env") or {}
         if isinstance(values, list):
             values = {item["name"]: item["value"] for item in values}
         env.update(values)
-    return env
+    return runtime_layout.native_environment(env)
 
 
 def verify_thread_config(result: dict[str, Any], model: str | None,

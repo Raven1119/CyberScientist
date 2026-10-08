@@ -164,6 +164,10 @@ def submit(platform, email, secret, package_path, challenge_id, meta):
             on_package(preview_bytes, {'phase': 'preview', 'sha256': preview_hash})
         except Exception as exc:
             raise PlatformError('官方CLI试构建失败：' + str(exc), no_side_effect=True) from exc
+        if meta.get('dry_run') is True:
+            return {'status':'built','dry_run':True,'package_sha256':preview_hash,
+                    'outputs':staged['sha256'],'native_sha256':hashlib.sha256(raw).hexdigest(),
+                    'submission_created':False}
         from . import evidence_policy
         on_feedback('trace_hint', evidence_policy.automatic_trace_hint(preview_bytes,meta.get('run_id')))
         if meta.get('run_id'):

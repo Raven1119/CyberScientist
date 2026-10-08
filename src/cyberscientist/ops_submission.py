@@ -6,6 +6,22 @@ from urllib.parse import quote
 from . import db, config, mailboxes, cli_submission
 
 
+def preview(request):
+    """Build with the official CLI; never reserve or create a submission."""
+    run_id,trial_id=request['run_id'],request['trial_id']
+    if not db.query_one('SELECT 1 FROM trials WHERE id=? AND run_id=?',(trial_id,run_id)):
+        raise ValueError('Trial不属于此Run')
+    platform=mailboxes._platform_for_run(run_id)
+    row=db.query_one("SELECT * FROM mailboxes WHERE id=? AND status='active' AND platform=?",
+                     (request.get('mailbox_id'),platform.name))
+    if not row:raise ValueError('试构建需要明确可用的邮箱')
+    package=mailboxes._resolve_package(run_id,trial_id,request['package_path'])
+    content=package.read_bytes()
+    return cli_submission.submit(platform,row['email'],config.resolve_secret(row['secret_ref']),
+        str(package),mailboxes._run_challenge_id(run_id),
+        {'package_bytes':content,'run_id':run_id,'trial_id':trial_id,'dry_run':True})
+
+
 def submit(request):
     grant = request['authorization']
     if (not isinstance(grant, dict) or type(grant.get('max_submissions')) is not int

@@ -11,7 +11,7 @@ from .observation import strip_secrets
 from .brains.base import BrainEvent
 
 MAX_REWRITES = 2
-_COLLAB = json.loads((Path(__file__).resolve().parents[2] / 'docs/collaboration/contract.schema.json').read_text())
+_COLLAB = json.loads((Path(__file__).resolve().parents[2] / 'contracts/collaboration.schema.json').read_text())
 
 
 def parse(text: str, packet: dict) -> BrainEvent:

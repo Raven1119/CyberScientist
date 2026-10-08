@@ -110,7 +110,7 @@ def _is_sparse_brain_trigger(event_type: str, payload: dict[str, Any],
 
 _REVIEW_RESULT_SCHEMA: dict[str, Any] = json.loads(
     (Path(__file__).resolve().parent.parent.parent
-     / "docs" / "collaboration" / "contract.schema.json").read_text(
+     / "contracts" / "collaboration.schema.json").read_text(
          encoding="utf-8"))
 
 

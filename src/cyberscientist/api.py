@@ -1047,6 +1047,9 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
     @app.post('/api/v1/ops/submit')
     async def ops_submit(body: dict[str, Any]):
         try:
+            if body.get('dry_run') is True:
+                from . import ops_submission
+                return await mailboxes.submit_async(ops_submission.preview,body)
             if body.get('retry_of'):
                 return await mailboxes.submit_async(mailboxes.retry_not_stored, body['retry_of'], body['operation_id'])
             if 'authorization' in body:
@@ -1990,7 +1993,9 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
 
     @app.get("/api/v1/runs/{run_id}/artifacts/{relpath:path}")
     async def get_artifact(run_id: str, relpath: str) -> FileResponse:
-        base = (config.WORKSPACE_DIR / "runs" / run_id).resolve()
+        from . import runtime_layout
+        try:base = runtime_layout.run_directory(run_id).resolve()
+        except ValueError as exc:raise HTTPException(422,detail={'message':str(exc)}) from exc
         target = (base / relpath).resolve()
         if not target.is_relative_to(base):
             raise HTTPException(403, detail={"code": "PATH_FORBIDDEN",

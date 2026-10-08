@@ -27,9 +27,9 @@ def git(*args):
                           capture_output=True, text=True, timeout=30, check=True).stdout.strip()
 
 
-def process_identity(health):
+def process_identity(health, *, root=None):
     pid = health.get('process_id')
-    root = config.WORKSPACE_ROOT.resolve()
+    root = (root or config.WORKSPACE_ROOT).resolve()
     if type(pid) is not int or pid <= 1 or pid == os.getpid():
         raise RuntimeError('后端没有可核实的进程身份；保留安全关机状态')
     proc = Path('/proc') / str(pid)

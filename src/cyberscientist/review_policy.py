@@ -18,16 +18,17 @@ INSTRUCTION = (
     '每条提议review必须注明classification、decision_sha256、conflicts、counterfactual_md、'
     'score_bands_md、leaderboard_md、known_results_md。模型对符合性的声明仍是待验证分析。'
 )
+INSTRUCTION = re.sub(r'\bD-(\d+)\b', r'policy-\1', INSTRUCTION)
 
 
 def decisions() -> dict:
-    path = Path(__file__).resolve().parents[2] / 'docs' / 'UPGRADE_DESIGN.md'
+    path = Path(__file__).resolve().parents[2] / 'contracts' / 'experience-policy.txt'
     lines = [line for line in path.read_text(encoding='utf-8').splitlines()
-             if (match := re.match(r'\| D-(\d+) \|', line)) and 24 <= int(match[1]) <= 61]
+             if (match := re.match(r'\| policy-(\d+) \|', line)) and 24 <= int(match[1]) <= 61]
     if len(lines) != 38:
         raise ValueError('复盘设计决定D-24–D-61不完整，不能生成经验候选')
     text = '\n'.join(lines)
-    return {'source': 'docs/UPGRADE_DESIGN.md', 'text': text,
+    return {'source': 'contracts/experience-policy.txt', 'text': text,
             'sha256': hashlib.sha256(text.encode()).hexdigest()}
 
 

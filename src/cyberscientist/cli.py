@@ -111,13 +111,20 @@ def main() -> None:
     ops_redeploy = ops_sub.add_parser('redeploy', help='安全关机、只换代码、对账恢复和自检')
     ops_redeploy.add_argument('--commit', default=None)
     ops_redeploy.add_argument('--timeout', type=float, default=180)
+    ops_release=ops_sub.add_parser('release',help='按提交白名单发布比赛目录，保留运行数据')
+    ops_release.add_argument('--commit',required=True)
+    ops_release.add_argument('--timeout',type=float,default=180)
     ops_submit = ops_sub.add_parser('submit', help='应用内统一提交路径；支持有界旧题验证授权')
     for name in ('run-id', 'trial-id', 'package-path', 'operation-id'):
         ops_submit.add_argument('--' + name, required=True)
     ops_submit.add_argument('--authorization-file')
     ops_submit.add_argument('--mailbox-id')
     ops_submit.add_argument('--retry-of')
+    ops_submit.add_argument('--dry-run',action='store_true',help='仅官方CLI试构建，不预占、不提交')
     for command in (ops_redeploy, ops_status, ops_digest, ops_events, ops_alerts, ops_shutdown, ops_resume, ops_submit): command.add_argument('--port', type=int, default=None)
+    ops_release.add_argument('--port',type=int,default=None)
+    for command in (ops_switch,ops_redeploy,ops_release,ops_status,ops_digest,ops_events,ops_alerts,ops_shutdown,ops_resume,ops_submit):
+        command.add_argument('--target',choices=('dev','comp'),default='comp' if command==ops_release else 'dev')
     evaluation = sub.add_parser('eval', help='运行或生成本地评测报告')
     evaluation_sub = evaluation.add_subparsers(dest='eval_command', required=True)
     eval_run = evaluation_sub.add_parser('run', help='启动一层评测')
@@ -132,7 +139,22 @@ def main() -> None:
 
     if args.command == 'ops':
         from . import config, features, observation
-        port = args.port or config.load_settings()['app']['port']
+        from . import runtime_layout,runtime_release
+        root=runtime_layout.competition_root() if args.target=='comp' else config.WORKSPACE_ROOT
+        if args.target=='comp':
+            settings_path=root/'.cyberscientist/settings.json'
+            if not settings_path.is_file():parser.error('比赛设置尚未迁移，拒绝回退开发端口')
+            port=args.port or json.loads(settings_path.read_text())['app']['port']
+        else:port=args.port or config.load_settings()['app']['port']
+        if args.ops_command=='release' or (args.ops_command=='redeploy' and args.target=='comp'):
+            if args.target!='comp':parser.error('release只发布比赛目录')
+            current=runtime_layout.version(root)
+            commit=args.commit or (current or {}).get('commit')
+            if not commit:parser.error('比赛版本未知，请给出commit')
+            result=runtime_release.release(commit,root=root,port=port,timeout=args.timeout,
+                source=root if args.ops_command=='redeploy' else None)
+            print(observation.strip_secrets(json.dumps(result,ensure_ascii=False)))
+            raise SystemExit(0 if result['status']=='completed' else 1)
         if args.ops_command == 'redeploy':
             from .redeploy import redeploy
             result = redeploy(port, args.commit, timeout=args.timeout)
@@ -142,6 +164,7 @@ def main() -> None:
         if args.ops_command == 'submit':
             path = '/api/v1/ops/submit'; method = 'POST'
             body = {k: getattr(args,k) for k in ('run_id','trial_id','package_path','operation_id','mailbox_id','retry_of')}
+            if args.dry_run:body['dry_run']=True
             if args.authorization_file:
                 body['authorization'] = json.loads(Path(args.authorization_file).read_text())
         elif args.ops_command == 'switch':
@@ -250,6 +273,8 @@ def main() -> None:
         return
     if args.command in ("start", "serve"):
         from . import config
+        if (config.DATA_DIR/'runtime-migrated.json').exists():
+            parser.error('此开发后端已迁移并禁用；请使用比赛启动脚本或ops --target comp')
         config.acquire_workspace_lock()
         settings = config.load_settings()
         if args.mode:

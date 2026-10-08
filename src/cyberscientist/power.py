@@ -60,7 +60,9 @@ async def safe_shutdown(controller, timeout: float = 60) -> dict:
     if auxiliary or db.query_one('SELECT 1 FROM model_session_leases LIMIT 1'):
         errors.append({'error': 'native_sessions_still_open', 'auxiliary_tasks': len(auxiliary)})
     run_clock.heartbeat()
-    backup_dir = config.WORKSPACE_ROOT / '.package-checks' / 'shutdown'
+    from . import runtime_layout
+    backup_dir = (config.WORKSPACE_ROOT / '.runtime' / 'backups' if runtime_layout.version() else
+                  config.WORKSPACE_ROOT / '.package-checks' / 'shutdown')
     backup_dir.mkdir(parents=True, exist_ok=True)
     backup = backup_dir / (uuid.uuid4().hex + '.sqlite')
     with sqlite3.connect(backup) as target:

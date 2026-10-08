@@ -15,6 +15,7 @@ from typing import Any, Iterable
 import yaml
 
 from . import db
+from . import runtime_layout
 
 SKILL_DIRS: tuple[Path, ...] = (
     Path(__file__).resolve().parents[2] / 'skills',
@@ -59,7 +60,7 @@ def scan_catalog(skill_dirs: Iterable[Path] | None = None) -> list[dict[str, Any
     目录不存在则跳过；子目录无 SKILL.md 不算技能。
     同名技能多目录出现时前者优先（按 skill_dirs 顺序）。
     """
-    dirs = SKILL_DIRS if skill_dirs is None else skill_dirs
+    dirs = runtime_layout.skill_roots(SKILL_DIRS) if skill_dirs is None else skill_dirs
     found: dict[str, dict[str, Any]] = {}
     for root in dirs:
         root = Path(root)
@@ -90,7 +91,7 @@ def file_catalog() -> list[dict[str, str]]:
     the stable reader ID; duplicate IDs retain the configured root precedence.
     """
     found = {}
-    for root in SKILL_DIRS:
+    for root in runtime_layout.skill_roots(SKILL_DIRS):
         root = Path(root)
         if root.is_symlink():
             continue

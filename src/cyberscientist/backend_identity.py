@@ -10,6 +10,9 @@ _loaded = None
 
 def _commit(root):
     """Read the checked-out ref without launching an unrelated CLI at startup."""
+    from . import runtime_layout
+    deployed=runtime_layout.version(root)
+    if deployed is not None:return deployed['commit']
     gitdir = root / '.git'
     try:
         if gitdir.is_file():
