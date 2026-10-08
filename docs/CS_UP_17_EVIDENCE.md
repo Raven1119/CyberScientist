@@ -55,3 +55,7 @@ SCF与cell-relax完整案例在skills/cyberscientist-job-spec/attachments/abacus
 CPU沙箱运行官方GPU镜像时LAMMPS因libcuda.so.1无效失败，不能把管道退出0当通过；4090配置实测通过。个人存储备份上传后SG15元数据/挂载未核实，不用该备份作为离线可用性证据；最终采用镜像快照。构建请求累计保守计3次，其中一次缺tag在创建前拒绝，无第四次构建。
 
 可审阅交付：组合镜像Dockerfile/描述、离线资产清单、客户端冻结锁文件、ABACUS两个附件案例；工具链速查仅占位目录skills/cyberscientist-toolchain-reference，正文等待设计助手，不冒称已启用。私有证据toolchain-registration.json、assets-snapshot-poll.json、deepmd-lammps-smoke.json、fullstack-clients-result.json；原生原文不入Git。
+
+## W6 监控故障表草稿
+
+docs/MONITOR_FAULT_TABLE_DRAFT.md覆盖卡要求的10类故障，每行均有默认动作、首次观察起算的明确时限和超时上报/继续方式。监控指导只经PI持久队列；unknown不重放、口头数值不覆盖日志、评分延迟不伪装完成。镜像准备后端45分钟上限与监控10分钟首上报分别列出，避免把草稿时限冒称远端超时。策略定稿由设计助手审阅交付。
