@@ -135,3 +135,41 @@ def test_api_initialization_requires_executor_and_routes_authenticated_run(monke
     assert result.status_code == 200, result.text
     assert result.json()['status'] == 'initialized'
     assert db.query_one('SELECT run_id FROM operations WHERE operation_id=?', ('api-init',))['run_id'] == rid
+
+
+def test_initialize_validation_failure_has_no_remote_effect(monkeypatch):
+    from fastapi.testclient import TestClient
+    from cyberscientist import api, collab
+    rid, tid, source = _draft()
+    descriptor = source / 'scorer.json'
+    invalid = json.loads(descriptor.read_text())
+    invalid['contract_version'] = 'public-task-contract-v1'
+    descriptor.write_text(json.dumps(invalid))
+    monkeypatch.setattr(collab, 'validate_token', lambda _: {'run_id': rid, 'role': 'executor'})
+    result = TestClient(api.create_app()).post('/api/v1/tools/local_score',
+        headers={'Authorization': 'Bearer fixture'}, json={'action': 'initialize',
+            'trial_id': tid, 'operation_id': 'bad-metadata', 'source_directory': str(source)})
+    assert result.status_code == 409
+    body = result.json()
+    assert body['detail']['code'] == 'INVALID_SCORER'
+    assert body['failure_feedback']['possible_remote_effect'] == 'none'
+    assert body['failure_feedback']['operation_id'] == 'bad-metadata'
+    assert '整数 1' in body['detail']['message']
+    assert not db.query('SELECT 1 FROM operations')
+    assert not (config.WORKSPACE_DIR / 'challenges' / 'MB_CH' / 'scorer').exists()
+
+
+def test_execution_unknown_feedback_remains_unknown(monkeypatch):
+    from fastapi.testclient import TestClient
+    from cyberscientist import api, collab
+    rid, tid, _ = _draft()
+    monkeypatch.setattr(collab, 'validate_token', lambda _: {'run_id': rid, 'role': 'executor'})
+    def uncertain(*args, **kwargs):
+        raise local_scoring.LocalScoreError('EXECUTION_UNKNOWN', 'remote receipt not observed')
+    monkeypatch.setattr(local_scoring, 'evaluate', uncertain)
+    result = TestClient(api.create_app()).post('/api/v1/tools/local_score',
+        headers={'Authorization': 'Bearer fixture'}, json={'action': 'evaluate',
+            'trial_id': tid, 'operation_id': 'unknown-execution'})
+    assert result.status_code == 409
+    assert result.json()['failure_feedback']['possible_remote_effect'] == 'unknown'
+    assert result.json()['failure_feedback']['automatic_resend'] is False

@@ -158,7 +158,7 @@ def _manifest_from_directory(base: Path) -> dict[str, Any]:
             or not isinstance(manifest['version'], str) or not manifest['version'].strip()
             or len(manifest['version']) > 80
             or type(manifest['contract_version']) is not int or manifest['contract_version'] != 1):
-        raise LocalScoreError('INVALID_SCORER', '评分器入口、镜像或契约版本无效')
+        raise LocalScoreError('INVALID_SCORER', '评分器入口、镜像或契约版本无效（contract_version 必须为整数 1）')
     contract = manifest.get('input_contract')
     if contract is not None:
         if (not isinstance(contract, dict)

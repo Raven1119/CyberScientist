@@ -15,6 +15,14 @@ metadata:
 
 题目已有 `challenges/<challenge_id>/scorer/` 或 `workspace/challenges/<challenge_id>/scorer/` 时保持只读，科研 Run 不得改写。若工具明确返回 `SCORER_MISSING`，在**当前 Trial 目录内**创建独立草稿（如 `scorer-draft/`），按公开题面构建检查，不读取隐藏答案、不自行提高权重；缺失规则保持 unknown/低置信度。调用 `research_local_score(action="initialize", trial_id="当前Trial", operation_id="稳定ID", source_directory="草稿绝对路径")`。后端只校验并冻结这一次草稿，不在本机执行；记录源路径和全部文件哈希。成功后题目评分器不可替换或再次初始化，即使删除也不能重建。需要修正现有评分器时报告问题，不能在 Run 中自改。初始化的候选评分器没有官方评分权威；系统验证执行回执不意味着验证其科学标尺。随后用 `prepare_job/register_job` 或 `prepare/register` 执行评分并登记。
 
+最小 `scorer.json` 如下，`contract_version` 必须是 JSON 整数 `1`，不是版本名称字符串；镜像换成已核对且获授权的真实镜像：
+
+```json
+{"entrypoint":"score.py","image":"registry.example/science:v1","version":"0.1.0","contract_version":1}
+```
+
+initialize 的格式/归属校验拒绝不会启动远端任务，也不冻结评分器；修正明确错误后可按原授权选择下一次操作。其他执行或传输 unknown 仍先只读对账，不重发。
+
 提交前对当前产物做本地评分，把评分器版本、封存包哈希和分项写入账本；建议在实验提交时写下可证伪的分数变化预测，缺失则记录 unknown。平台分数只有在 `confirmed` 后才作为校准目标。对齐同一封存包哈希，分别看科学分、轨迹分和展示分；分数或回执修订时更新校准状态，不悄悄覆盖旧预测。将不一致归因于具体尚未复刻的规则，而非伪造更高本地分。
 
 子项候选只有经 `research_local_score` 评分并登记后，才进入本 Run 的正式候选记录；独立实验日志中的自报数值不会自动登记。评分器的 `components` 中，嵌套子项用 `score`、`points` 或 `*_score` 表示分数，其余字段为诊断。系统按 Run、评分器哈希和完整科学输入哈希复用评分；finish 会比较实际最终包与已登记的子项最佳成绩。退步作为可见事实交给 PI 判断；可选择修复，也可在 finish 中可选记录 `finish_confirmation` 的 token 和 reason_md 后如实收尾。系统不替换产物，确认不增加权限。

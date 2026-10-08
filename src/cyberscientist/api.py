@@ -453,7 +453,9 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
                             content={"detail": {"code": exc.code, "message": str(exc),
                                                 "recoverable": True, "details": exc.details},
                                      'failure_feedback': tool_feedback.failure(
-                                         request.url.path, str(exc), code=exc.code)})
+                                         request.url.path, str(exc), code=exc.code,
+                                         remote_effect='none' if getattr(request.state, 'local_score_action', None) == 'initialize' else 'unknown',
+                                         operation_id=getattr(request.state, 'local_score_operation_id', None))})
 
     # ---------------- 健康 ----------------
 
@@ -1570,6 +1572,8 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
         identity = _tool_auth(request)
         body = await request.json()
         action = body.get('action', 'evaluate')
+        request.state.local_score_action = action
+        request.state.local_score_operation_id = body.get('operation_id') if isinstance(body.get('operation_id'), str) else None
         if action == 'initialize':
             return await asyncio.to_thread(local_scoring.initialize_scorer,
                 identity['run_id'], body.get('trial_id'), body.get('operation_id'),
