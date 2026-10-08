@@ -24,3 +24,16 @@ def test_defaults_and_explicit_adoption_work_without_roster():
     selected=json.loads(db.query_one('SELECT template_json FROM eval_results WHERE id=?',(row['id'],))[0])
     assert selected['model_config']['executor']['model_id']=='gpt-6-astra'
     assert selected['model_config']['executor']['fast_mode'] is True
+
+
+def test_science_first_default_never_routes_to_automatic_deepseek(monkeypatch):
+    from cyberscientist import model_fallback
+    settings=config.load_settings();settings['science_first_flow']=True;settings['app']['mode']='connected'
+    settings['features']['deepseek_fallback']=True
+    settings['solver_roster']=[{'id':'ds','name':'manual DS','runtime':'codex','provider':'deepseek','model_id':'deepseek-flash','reasoning_effort':'high'}]
+    monkeypatch.setattr(model_fallback,'validate',lambda *a:(_ for _ in ()).throw(AssertionError('no automatic fallback')))
+    original={'runtime':'codex','provider':'codex','model_id':'gpt-5.6-terra','reasoning_effort':'xhigh','fast_mode':True}
+    selected,receipt=model_fallback.select(original,settings)
+    assert selected==original and receipt['status']=='manual_only'
+    manual=settings['solver_roster'][0]
+    assert model_fallback.select(manual,settings)[0]['provider']=='deepseek'

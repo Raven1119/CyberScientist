@@ -69,6 +69,9 @@ def facts():
 def select(choice, settings):
     original = dict(choice)
     result = {'status': 'original', 'original': original}
+    if settings.get('science_first_flow',True):
+        result['status']='manual_only'
+        return original,result
     if not settings.get('features', {}).get('deepseek_fallback', True) or settings['app']['mode'] != 'connected': return original, result
     if (choice.get('provider') or choice['runtime']) != 'codex': return original, result
     settings_value = validate(settings.get('deepseek_fallback', {}), settings)
