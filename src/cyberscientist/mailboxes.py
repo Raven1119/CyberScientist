@@ -29,6 +29,12 @@ class MailboxError(Exception):
         self.warnings = warnings or []
 
 
+def _seal_failure(exc):
+    from .observation import strip_secrets
+    detail = strip_secrets(str(exc))[:300]
+    return f'ARM 包无法封存：{type(exc).__name__}' + (f'：{detail}' if detail else '')
+
+
 async def submit_async(function, *args, **kwargs):
     """Keep an in-flight submission thread visible until it actually finishes."""
     from . import resource_coordinator
@@ -597,9 +603,9 @@ def preflight_submission(run_id: str, trial_id: str | None,
         except (KeyError, ValueError, TypeError, sqlite3.Error, OSError, zipfile.BadZipFile) as exc:
             with db.transaction() as conn:
                 db.append_event_tx(conn, run_id, "controller", "submission.preflight_failed",
-                    {"code": "INVALID_PACKAGE", "reason": str(exc)[:200],
+                    {"code": "INVALID_PACKAGE", "reason": _seal_failure(exc),
                      "source_package_sha256": source_hash}, trial_id=trial_id)
-            raise MailboxError("INVALID_PACKAGE", f"ARM 包无法封存：{type(exc).__name__}") from exc
+            raise MailboxError("INVALID_PACKAGE", _seal_failure(exc)) from exc
         report = arm_admission.check(sealed, _protocol_snapshot())
     code = None
     advisory_warnings = []
@@ -690,7 +696,7 @@ def inspect_trace_narrative(run_id: str, trial_id: str | None,
                 "reasons": exc.reasons}
     except (ValueError, TypeError, KeyError, zipfile.BadZipFile) as exc:
         return {"valid": False, "error_code": "INVALID_PACKAGE",
-                "reasons": [f"ARM 包无法封存：{type(exc).__name__}"]}
+                "reasons": [_seal_failure(exc)]}
     return {"valid": True, "error_code": None, "reasons": [],
             "source_package_sha256": hashlib.sha256(source).hexdigest(),
             "sealed_package_sha256": hashlib.sha256(sealed).hexdigest(),

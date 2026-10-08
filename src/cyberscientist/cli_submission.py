@@ -11,7 +11,7 @@ import tempfile
 import urllib.parse
 import zipfile
 
-from . import config, db, observation, platform_contracts, trace_selection
+from . import config, db, observation, platform_contracts, trace_selection, native_logs
 from .mailbox_platform import PlatformError, public_feedback
 
 WORKER = 'http://47.92.88.121:443/api'
@@ -61,7 +61,7 @@ def _files(content):
         if not isinstance(provenance, dict): raise ValueError('原生会话绑定须为对象')
         if provenance.get('sha256') != hashlib.sha256(raw).hexdigest():
             raise ValueError('封存原生会话哈希不符')
-        if observation.strip_secrets(raw.decode()) != raw.decode():
+        if native_logs.contains_secrets(raw.decode()):
             raise ValueError('原始会话需脱敏；不得改写，请用干净Trial')
         first = json.loads(raw.splitlines()[0])
         if first.get('payload', {}).get('id') != provenance.get('session_id'):
