@@ -160,6 +160,8 @@ W3嵌套文档占位符误报修复（本提交 CS-UP-14）：#22923完整封存
 
 W3新修复生产验收（d512eab CS-UP-14）：安全部署completed、停机141.033秒/维护154.865秒、preflight warn、digest匹配且native_close_unknown=0；同Run原时钟保留。真实完整preflight source3d5bdeb8…74f2通过error_code=null/admitted，封存20,949,873字节（native-nested-placeholder-full-preflight-proof.json）。本地public_v6_deterministic检查表36/review、762工具配对、N11风险、N17/N18 unknown，v8-advisory-1不预测分数；artifact路径声明因评分器无verified input-path声明为unavailable，不误作输出缺失。新指导已queued，科学登记评分/真实CLI仍未验收；全量新源码进行中。
 
+W3监控独立评分操作（本提交 CS-UP-14）：在现有当前Trial内，通过既有executor_scoring.prepare/channel=job冻结已初始化公开候选b25679e…ef8365，受控compute.submit实际accepted Job23507427/Bohrium20860659，操作cs14_monitor_frozen_public_score_v1_job，10分钟上限、c2_m4_cpu、已冻结声明镜像。没有修改科学/评分源码、原始native或扩展Run/提交额度；local_score.monitor_execution_requested明确来源controller，不冒称Terra原生执行。实际终态及register_job可信评分尚待验收，当前未声称分数。
+
 ## W4 验收核对（进行中）
 
 |要求|当前事实|直接证据或剩余步骤|
