@@ -9,7 +9,7 @@
 | W2 | 8 项闭环/早回执/账号测试通过（cs16-w2-tests.log）。fake 走实际 controller、提交和回执写路径：批准前无执行消息；批准后完整版本产物提交；等待期间新 Trial 可继续；final=false 的科学分唤醒 PI；第二完整版本轮换账号。提交路径未调用本地科学评分；现有轨迹诊断已为 advisory。没有真实计算或评分器探测。 |
 | W3 | 14 项回归通过（cs16-w3-tests.log）；等待空闲、不 resume、旧日志不改、交接不含探索目标、封包只含新线程。已结束 LiSi 旧题账本副本真实最小 Trial trial_f694ba14df，新 Terra xhigh priority 线程 01a11cb8-50b5-7640-a467-6631a741406a 完成；169820 字节原生日志封包逐字节相等（clean-native/result.json）。无 Job/沙箱/提交。此绑定专用验证未接 MCP；旧 idle 线程未曾生成日志，旧日志保留由 fake 不变性测试覆盖。原生完成后验证消费者误等旧事件名，已停止并按真实 task_complete 及回执文本判定、封包；不把测试程序中断记作完整脚本通过。 |
 | W4 | 实时逐题面板及全部控制接入真实接口并留审计；暂缓提交为持久门禁；档位覆盖保存在独立运行控制记录，冻结快照不改，仅新会话生效。19 项后端测试、34 项前端控制/审批/账号/旧页面测试通过，构建通过；真实 Chromium 截图 cs16-competition-panel.png（实际组件、明确 synthetic HTTP，page_errors=[]）。 |
-| W5 | 渐进披露已实现，经验前8条标题/ID/一行摘要，正文按需读取；能力索引含名称/用途/位置；完整事实按哈希在facts范围分页读取。研究简报selected_capabilities在新版本Run强制非空。32项回归通过（cs16-w5-tests-3.log）。同一旧首包默认JSON由345938降至53424字节（15.44%），原题面不变；完整分项见cs16-context-comparison.json。真实Astra PI冷启动正在执行，耗时和所选能力最终在W8补录。 |
+| W5 | 渐进披露已实现，经验前8条标题/ID/一行摘要，正文按需读取；能力索引含名称/用途/位置；完整事实按哈希在facts范围分页读取。研究简报selected_capabilities在新版本Run强制非空。32项回归通过（cs16-w5-tests-3.log）。同一旧首包默认JSON由345938降至53424字节（15.44%），原题面不变；完整分项见cs16-context-comparison.json。真实Astra xhigh/priority到Decision465.605秒，已选13项能力；耗时目标不通过，完整结果见后文。 |
 
 ## W5 同输入字节对比
 
@@ -50,3 +50,10 @@
 W6最终Standards复核发现默认自动DeepSeek后备仍可越过分诊：已在新science_first_flow结构上禁用自动切换，只保留显式手动选择；历史旧流程兼容。30项相关回归通过cs16-w6-final-review.log。首轮全量55通过时为该修正中断，不作完整通过证据，最终冻结后重跑。
 
 W8全量发现暂缓题用户后续显式换模型被已采纳的空roster建议覆盖，修正为仅覆盖该类建议来源，题级手动选择/已启动Run不变；35项回归通过cs16-explicit-model-compat-2.log。完整前端25文件122测试和生产构建通过cs16-web-final.log、cs16-build-final.log。中断的cs16-final-frozen-suite.log包含失败及pytest中断清理错误，不作全量通过证据；再次最终冻结后跑完整集。
+
+## W8 最终交付
+
+- 最终完整后端：1685 passed，2项依赖弃用警告，1221.54秒（cs16-final-frozen-suite-5.log）。
+- 完整前端：25文件122测试；生产构建通过（cs16-web-final.log、cs16-build-final.log）。compileall、git diff --check通过。
+- 全量兼容修正：去掉会阻碍旧Prime切换的冗余provider默认；先选择显式模型覆盖，再验证实际使用的模型；DeepSeek旧测试显式high；原生分诊格式测试按新easy→Terra规则断言，仍验证两次格式重写。28项provider/controller回归、15项结构化原生回归通过。先前失败日志保留，最终完整集没有跳过测试。
+- 有界两轴审查及修正已完成；W5冷启动时间目标未达到，保留为不通过。全部卡内步骤已处理，代码与证据交付等待用户和设计助手验收。
