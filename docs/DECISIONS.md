@@ -903,3 +903,5 @@ W2：控制器将官方原生thread.path与最终Trial绑定；封存时把完�
 W2：官方CLI只调用一次，令牌只在子进程环境中，独立临时HOME/不存在的配置路径，临时文件只有公开包、manifest、原生日志。已有sealed ZIP不重打包。官方0.1.39自身对同Attempt的Worker上传会重试最多3次（源码3956起）；系统不再次创建Attempt、不自动降级API。发送前完整分页绑定账号/题目，超时后只读对账；匹配必须包含同SHA，平台缺SHA则保持unknown；完整列表没有新增仍不是权威未存储证明，不释放预约或自动重发。上传成功仅等于transport receipt，不能当harbor_worker评分。
 
 W2：保留目标存在/已结束范围、封存SHA、D64持久队列、D66暂停屏障、收割触发及确认分要求。新增冻结policy.submission_limits与可见预约计数，单独限制实验和收割，防止一键无上限计算扩大本卡2+1授权。默认cli，Settings可显式api回退；Demo及历史HTTP契约fixture明确api，新CLI用单独fake验证，未删除/跳过旧测试。
+
+W3能力摘要修正：零值不能脱离unlimited_resources投影；所有目录ID保留，优先当前起点和最近验证的不同镜像，GPU观察始终展示。短摘要仍<=2000字，完整依赖/镜像读取research_environment list/restore。该修复是实际单题发现的通用事实呈现缺陷，按安全部署恢复原Run，不新增Run或扩展2+1额度。

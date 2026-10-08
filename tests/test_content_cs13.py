@@ -43,3 +43,18 @@ def test_three_levels_and_one_data_complete_fastest_candidate():
     picked = [row['id'] for row in db.query('SELECT id,triage_json FROM eval_results')
               if json.loads(row['triage_json'])['minimum_loop_candidate']]
     assert picked == [rows[2]['id']]
+
+
+def test_capability_summary_unlimited_sentinel_and_recent_environment_visibility(monkeypatch):
+    from test_auto_harvest import seed
+    rid, _ = seed(10)
+    db.execute('UPDATE authorizations SET unlimited_resources=1,max_jobs=0,max_sandboxes=0 WHERE run_id=?', (rid,))
+    entries = [dict(id=f'old-{i}', image=f'old-image-{i}', last_verified_at='2026-01-01', restore_seconds={}) for i in range(6)]
+    entries += [dict(id='cs13-materials-v1', image='materials-image', last_verified_at='2026-10-07', restore_seconds={}), dict(id='cs13-abacus-v2', image='abacus-image', last_verified_at='2026-10-08', restore_seconds={})]
+    monkeypatch.setattr(capabilities.environment_catalog, 'items', lambda: entries)
+    value = capabilities.summary(rid)
+    assert len(value) <= 2000
+    assert '"unlimited_resources": true' in value and '"max_jobs": null' in value
+    assert '"max_sandboxes": null' in value and '"max_jobs": 0' not in value
+    assert 'cs13-materials-v1=materials-image' in value and 'cs13-abacus-v2=abacus-image' in value
+    assert 'GPU job=' in value and 'GPU sandbox=' in value

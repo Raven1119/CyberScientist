@@ -178,7 +178,11 @@ def test_topics_without_runs_are_projected_for_deferred_and_skipped_tracks():
     cutoff=(datetime.now(timezone.utc)-timedelta(minutes=5)).isoformat()
     assert rid not in ops_digest.digest(cutoff)['text']
     db.execute('UPDATE eval_results SET updated_at=? WHERE id=?',(db.utcnow(),topics[1]['id']))
-    text=ops_digest.digest(cutoff)['text'];assert topics[1]['challenge_id'] in text and topics[2]['challenge_id'] not in text
+    text=ops_digest.digest(cutoff)['text']
+    # Topic IDs such as c2 can also occur inside a random round ID or Git SHA.
+    # Assert the emitted row identity rather than a substring of the full digest.
+    row_ids = {line.split()[0] for line in text.splitlines() if line.strip()}
+    assert topics[1]['challenge_id'] in row_ids and topics[2]['challenge_id'] not in row_ids
 
 
 @pytest.mark.asyncio
