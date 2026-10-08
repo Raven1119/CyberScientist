@@ -10,7 +10,10 @@ for name in ('settings.json','secrets.json'):shutil.copy2(ROOT/'.cyberscientist'
 config.DATA_DIR=AREA;config.DB_PATH=AREA/'validation.sqlite';config.SETTINGS_PATH=AREA/'settings.json';config.SECRETS_PATH=AREA/'secrets.json';config.WORKSPACE_DIR=AREA/'workspace';config.EXPERIENCE_DIR=AREA/'experience';config.LOCK_PATH=AREA/'lock'
 db.init_db();RID='run_8a21b7d249';r=db.query_one('SELECT * FROM runs WHERE id=?',(RID,));snap=json.loads(r['config_snapshot']);snap['settings']=config.load_settings();snap['settings']['initial_method_approval']=False;snap.get('competition',{}).pop('budget_policy',None)
 used=db.query_one('SELECT COUNT(*) FROM compute_sandboxes WHERE run_id=?',(RID,))[0]
-db.execute('UPDATE authorizations SET unlimited_resources=0,max_run_minutes=15,max_sandboxes=?,max_sandbox_minutes=120,max_jobs=0,max_submissions=0 WHERE id=?',(used+1,r['authorization_id']))
+historical_jobs=db.query_one('SELECT COUNT(*) FROM compute_jobs WHERE run_id=?',(RID,))[0]
+# The production image probe checks a Job authorization. This private copy
+# permits one additional slot for preflight; this helper never submits a Job.
+db.execute('UPDATE authorizations SET unlimited_resources=0,max_run_minutes=15,max_sandboxes=?,max_sandbox_minutes=120,max_jobs=?,max_submissions=0 WHERE id=?',(used+1,historical_jobs+1,r['authorization_id']))
 db.execute("UPDATE runs SET phase='running',gate='open',clock_version=0,started_at=?,ended_at=NULL,config_snapshot=? WHERE id=?",(db.utcnow(),json.dumps(snap),RID))
 entry=environment_catalog.get('competition-materials-assets-20261009');image=entry['image_address'] if 'image_address' in entry else entry['image']
 files={'task.sh':b'set -eu\nprintf ready > result.txt\n'};spec={'command':'bash task.sh','image_address':image,'machine_type':'c2_m4_cpu','max_run_time':2,'backward_files':['result.txt','STDOUTERR']}
