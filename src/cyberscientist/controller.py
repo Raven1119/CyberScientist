@@ -517,10 +517,11 @@ class RunController:
             if model_config is None and supplied_models:
                 from .pi_policy import migrated
                 supplied_models = {**supplied_models, 'brain': migrated(supplied_models.get('brain') or settings['brain'])}
-            selected = challenge_models.from_challenge(challenge, settings)
             if supplied_models is not None:
                 selected = {role: challenge_models.choose(role, supplied_models.get(role), settings)
                             for role in ('brain', 'executor', 'reviewer', 'post_review')}
+            else:
+                selected = challenge_models.from_challenge(challenge, settings)
         except (ValueError, TypeError, KeyError) as exc:
             raise ControllerError("INVALID_ARGUMENT", f"题目模型配置无效：{exc}") from exc
         from . import model_fallback

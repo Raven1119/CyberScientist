@@ -50,7 +50,7 @@ def test_four_roles_and_legacy_override_normalize_provider():
             with pytest.raises(ValueError, match='PI只能'): challenge_models.choose(role, choice, settings)
         else:
             assert challenge_models.choose(role, choice, settings)['provider'] == 'deepseek'
-    settings['executor'].update(provider='deepseek', model_id='deepseek-flash')
+    settings['executor'].update(provider='deepseek', model_id='deepseek-flash', reasoning_effort='high')
     config.save_settings(settings)
     seed()
     run = RunController().create_run('provider-c', model_config={'executor': {
@@ -80,7 +80,7 @@ def test_roster_frozen_on_confirm_and_append_and_no_client_entry_override():
 def test_usage_latest_cumulative_per_session_price_bounds_and_unknown():
     seed()
     settings = config.load_settings()
-    settings['executor'].update(provider='deepseek', model_id='deepseek-flash')
+    settings['executor'].update(provider='deepseek', model_id='deepseek-flash', reasoning_effort='high')
     config.save_settings(settings)
     rid = RunController().create_run('provider-c')['id']
     for counts in (100, 200, 200):
