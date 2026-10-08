@@ -63,3 +63,7 @@ Worker只读可达性：GET http://47.92.88.121:443/api/uploads返回404（2.012
 用户补充方案已在2026-10-08T04:10Z持久投递，PI于#3803采纳条件性回退：实际提交经排查和修复仍不可用时，允许以任务科学评分器和本地轨迹检查交付，科学评分仍在Bohrium执行，保留正式Worker和收割缺口。04:10Z重新取得官方latest.json，仍为0.1.39且tarball哈希一致；GET404不作为提交失败证据。
 
 截至04:16Z只读对账：20个Job中10 Failed、6 Finished、4 Running，0提交/0封存包。Li参考23502313归档原生日志实际含`Relaxation is converged!`和`!FINAL_ETOT_IS -392.0781205964211722 eV`，归档SHA256为1bdf4f3f6724e77982b928b049389ce5704f47bad081668cd504a65ac8658432；wrapper时间03:39:00–03:41:14Z，不等于调度/回收墙钟。旧受限LiSi23502296实际停止，归档未含完成终态，数据库通用Finished投影不能据此称弛豫通过。开放原子LiSi23502312、Si23502314、Li收敛23502436与电荷核查23502449继续对账，没有重建在途操作。原始取证留w3-reference-log-proof.json与w3-acceptance-proof.json。
+
+D-74结论已经确定：04:28:32.877504Z（开局后7212.531秒）六项最终产物路径全部不存在，local_scores=0、submissions=0，#4384/4386原生回合完成自述尚无形成能、电压与合金电荷。两小时截止为04:28:20.346497Z，不扣两次维护；保持D-69，不调整默认分诊。证据d74-two-hour-proof.json，科学Run继续。
+
+CLI前置真实只读探针：按产品当前选择逻辑确定实验邮箱及主邮箱，逐个GET /auth/me和完整分页该题attempts，分别13.673/13.861秒成功；当前实验账号0旧Attempt、主邮箱3旧Attempt。没有创建、上传或提交。证据cli-authenticated-baseline-probe.json。04:27:49Z对账中开放原子LiSi23502312、Si23502314、电荷23502469均为Failed，具体科学原因仍待原日志；Li收敛23502468仍Running。监控cs14-post-turn-status-and-cli-baseline-v1已持久排队，提供实际状态与空闲事实，不替代理研究。
