@@ -439,6 +439,16 @@ def _check_budget(conn, run_id: str, *, terminal_harvest: bool = False,
     run = conn.execute("SELECT * FROM runs WHERE id=?", (run_id,)).fetchone()
     if not run:
         raise MailboxError("NOT_FOUND", f"Run 不存在: {run_id}")
+    if existing_submission_id:
+        validation = conn.execute('SELECT validation_scope FROM submissions WHERE id=? AND run_id=?', (existing_submission_id, run_id)).fetchone()
+        if validation and validation['validation_scope']:
+            scope = conn.execute('SELECT grant_json FROM submission_validation_scopes WHERE id=?', (validation['validation_scope'],)).fetchone()
+            grant = json.loads(scope[0]) if scope else {}
+            used = conn.execute('SELECT COUNT(*) FROM submissions WHERE validation_scope=?', (validation['validation_scope'],)).fetchone()[0]
+            if (_instant(grant.get('expires_at')) is None or _instant(grant['expires_at']) <= datetime.now(timezone.utc)
+                    or used > grant.get('max_submissions', 0) or _run_challenge_id(run_id) not in grant.get('targets', [])):
+                raise MailboxError('NEEDS_AUTHORIZATION', '旧题验证授权无效或到期')
+            return
     if run["phase"] in ("pausing", "paused", "cancelled", "failed", "recovering") or (run['phase'] == 'finished' and not terminal_harvest):
         raise MailboxError("INVALID_STATE", "当前 Run 不允许新增提交")
     auth = conn.execute("SELECT * FROM authorizations WHERE id=? AND run_id=?",
@@ -793,6 +803,18 @@ def _perform_submission(sid: str, platform: MailboxPlatform, challenge_id: str,
         with db.transaction() as conn:
             current = conn.execute("SELECT * FROM submissions WHERE id=?", (sid,)).fetchone()
             _record_feedback(conn, current, kind, safe)
+    def official_package(content, info):
+        digest = hashlib.sha256(content).hexdigest()
+        path = config.WORKSPACE_DIR / 'submissions' / sid / (info['phase'] + '-' + digest + '.zip')
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if not path.exists():
+            with path.open('xb') as stream: stream.write(content)
+        if info['phase'] == 'preview':
+            db.execute('UPDATE submissions SET preview_package_sha256=? WHERE id=?', (digest, sid))
+        else:
+            db.execute('UPDATE submissions SET official_package_path=?,official_package_sha256=? WHERE id=?',
+                       (path.relative_to(config.WORKSPACE_DIR).as_posix(), digest, sid))
+        db.append_event(row['run_id'], 'controller', 'submission.official_package', info | {'submission_id': sid, 'sha256': digest}, trial_id=row['trial_id'])
     stage("prepared")
     try:
         from . import power
@@ -826,13 +848,15 @@ def _perform_submission(sid: str, platform: MailboxPlatform, challenge_id: str,
         receipt = submit_once(platform,
             row["email"], config.resolve_secret(row["secret_ref"] or ""),
             str(config.WORKSPACE_DIR / row["package_path"]), challenge_id=challenge_id,
-            meta={"on_stage": stage, "on_feedback": feedback, "run_id": row["run_id"],
+            meta={"on_stage": stage, "on_feedback": feedback, "on_package": official_package, "run_id": row["run_id"],
                   "trial_id": row["trial_id"], "submission_id": sid,
                   "package_bytes": frozen_bytes,
                   "trace": _form_trace(frozen_bytes), **_submission_metadata(row["run_id"]),
                   **({'resume_attempt_id': resume_attempt_id} if resume_attempt_id else {})})
         # Only explicit definitive rejection without a remote side effect releases quota.
         status = "submitted" if receipt.get("accepted") is True else "unknown"
+        if receipt.get('worker_job_id') is not None:
+            db.execute('UPDATE submissions SET worker_job_id=? WHERE id=?', (str(receipt['worker_job_id']), sid))
         if (receipt.get("accepted") is False and receipt.get("no_side_effect") is True
                 and not resume_attempt_id):
             status = "failed"
@@ -861,6 +885,38 @@ def _perform_submission(sid: str, platform: MailboxPlatform, challenge_id: str,
                            trial_id=row["trial_id"])
     submission_gate.synchronize_pause()
     return dict(db.query_one("SELECT * FROM submissions WHERE id=?",(sid,))) | {"deduplicated":False}
+
+
+def retry_not_stored(submission_id: str, operation_id: str) -> dict[str, Any]:
+    """Explicit new intent only; periodic polling cannot create a retry."""
+    original = db.query_one('SELECT s.*,m.secret_ref FROM submissions s JOIN mailboxes m ON m.id=s.mailbox_id WHERE s.id=?', (submission_id,))
+    if not original: raise MailboxError('NOT_FOUND', '原提交不存在')
+    platform = _platform_for_run(original['run_id'])
+    from . import cli_submission
+    result = cli_submission.reconcile_unknown(submission_id, platform,
+        config.resolve_secret(original['secret_ref']), _run_challenge_id(original['run_id']))
+    if not result.get('retry_allowed'):
+        raise MailboxError('RECONCILIATION_NOT_PROVEN', '未达到十分钟完整分页无新增的重发条件')
+    with db.transaction() as conn:
+        prior = conn.execute('SELECT * FROM submissions WHERE retry_of=?', (submission_id,)).fetchone()
+        if prior:
+            if prior['operation_id'] != operation_id: raise MailboxError('CONFLICT', '该提交已重发一次')
+            return dict(prior) | {'deduplicated': True}
+        if original['retry_of']: raise MailboxError('CONFLICT', '重发不能再次重发')
+        _check_budget(conn, original['run_id'], existing_submission_id=original['id'])
+        if original['validation_scope']:
+            scope = conn.execute('SELECT grant_json FROM submission_validation_scopes WHERE id=?', (original['validation_scope'],)).fetchone()
+            used = conn.execute('SELECT COUNT(*) FROM submissions WHERE validation_scope=?', (original['validation_scope'],)).fetchone()[0]
+            if used >= json.loads(scope[0])['max_submissions']: raise MailboxError('NEEDS_AUTHORIZATION', '验证额度已用尽')
+        sid = _rid('sub')
+        source = config.WORKSPACE_DIR / original['package_path']
+        content = source.read_bytes()
+        if hashlib.sha256(content).hexdigest() != original['package_sha256']: raise MailboxError('INVALID_PACKAGE', '来源包哈希变化')
+        frozen = _freeze(sid, source, content)
+        conn.execute("INSERT INTO submissions(id,run_id,trial_id,mailbox_id,package_path,package_sha256,status,operation_id,created_at,request_hash,stage,retry_of,validation_scope) VALUES(?,?,?,?,?,?,'unknown',?,?,?,'reserved',?,?)",
+                     (sid, original['run_id'], original['trial_id'], original['mailbox_id'], frozen, original['package_sha256'], operation_id, db.utcnow(), _request_hash({'retry_of':submission_id}), submission_id, original['validation_scope']))
+        db.append_event_tx(conn, original['run_id'], 'controller', 'submission.retry_authorized', {'submission_id':sid,'retry_of':submission_id,'inferred_only':True}, trial_id=original['trial_id'])
+    return _perform_submission(sid, platform, _run_challenge_id(original['run_id']))
 
 
 def reconcile_explicit_create_rejection(submission_id: str) -> dict[str, Any]:

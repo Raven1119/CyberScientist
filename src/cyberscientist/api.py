@@ -192,6 +192,11 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
     backend_identity.record_startup()
     config.ensure_dirs()
     db.init_db()
+    if 'tools/playground-cli/0.1.40' in config.load_settings()['playground'].get('cli_executable', ''):
+        from . import cli_submission
+        # Startup integrity is local; public latest is a separate explicit check.
+        db.execute("INSERT OR REPLACE INTO system_state VALUES('official_cli_readiness',?)",
+                   (json.dumps(cli_submission.readiness()),))
     for challenge in db.query("SELECT id,resources_json FROM challenges WHERE resources_json IS NOT NULL"):
         try:
             resources = json.loads(challenge["resources_json"])
@@ -1029,6 +1034,19 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
         from . import ops_digest
         try: return ops_digest.digest(since)
         except ValueError as exc: raise HTTPException(422,detail={'message':str(exc)}) from exc
+
+    @app.post('/api/v1/ops/submit')
+    async def ops_submit(body: dict[str, Any]):
+        try:
+            if body.get('retry_of'):
+                return await mailboxes.submit_async(mailboxes.retry_not_stored, body['retry_of'], body['operation_id'])
+            if 'authorization' in body:
+                from . import ops_submission
+                return await mailboxes.submit_async(ops_submission.submit, body)
+            return await mailboxes.submit_async(mailboxes.submit_experiment,
+                body['run_id'], body.get('trial_id'), body.get('package_path'), body['operation_id'])
+        except (ValueError, KeyError) as exc:
+            raise HTTPException(422, detail={'message': observation.strip_secrets(str(exc))}) from exc
 
     @app.get('/api/v1/ops/alerts')
     async def ops_alerts():

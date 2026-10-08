@@ -11,14 +11,23 @@ from cyberscientist.mailbox_platform import BohriumPlaygroundPlatform, PlatformE
 
 def bundle(trial='trial-final'):
     native = (json.dumps({'type': 'session_meta', 'payload': {'id': 'native-final'}})+'\n').encode()
-    manifest = {'arm_version': '1.1', 'raw_messages': 'raw_messages.jsonl'}
+    manifest = {'arm_version': '1.1', 'raw_messages': 'raw_messages.jsonl', 'expected_outputs': [{'path':'outputs/answer.json'}]}
     proof = {'sha256': hashlib.sha256(native).hexdigest(), 'session_id': 'native-final', 'model': 'gpt-5.6-terra', 'trial_id': trial}
     output = io.BytesIO()
     with zipfile.ZipFile(output, 'w') as archive:
+        archive.writestr('outputs/answer.json', '{"answer":1}')
         archive.writestr('arm_manifest.json', json.dumps(manifest))
         archive.writestr('raw_messages.jsonl', native)
         archive.writestr('provenance/native_session.json', json.dumps(proof))
     return output.getvalue(), native
+
+
+def fake_build(argv):
+    package=Path(argv[argv.index('--bundle-out')+1]);out=Path(argv[argv.index('--outputs')+1])
+    with zipfile.ZipFile(package,'w') as archive:
+        for f in out.rglob('*'):
+            if f.is_file(): archive.writestr('outputs/'+f.relative_to(out).as_posix(),f.read_bytes())
+    return subprocess.CompletedProcess(argv,0,json.dumps({'status':'dry_run','bundle_sha256':hashlib.sha256(package.read_bytes()).hexdigest()}),'')
 
 
 def prepare(tmp_path, monkeypatch):
@@ -36,23 +45,27 @@ def test_native_bytes_and_token_env_only_one_official_invocation(tmp_path, monke
         calls.append(argv); home=Path(env['HOME']); homes.append(home)
         assert env['CS_PLAYGROUND_SUBMIT_TOKEN']=='fake-private-token' and 'fake-private-token' not in str(argv)
         assert not (home/'absent-config.json').exists() and not (home/'absent-credentials.env').exists()
-        assert Path(argv[argv.index('--bundle')+1]).read_bytes()==content
+        assert '--bundle' not in argv
+        built=fake_build(argv)
+        if '--dry-run' in argv: return built
         assert Path(argv[argv.index('--trace')+1]).read_bytes()==native
         assert all(b'fake-private-token' not in p.read_bytes() for p in home.rglob('*') if p.is_file())
-        return subprocess.CompletedProcess(argv,0,json.dumps({'schema_version':'playground-cli-submission/v0','status':'submitted','challenge_id':'ended','attempt_id':'123','bundle_sha256':hashlib.sha256(content).hexdigest(),'worker_api_base':cli_submission.WORKER,'bundle_response':{'accepted':True}}),'')
+        return subprocess.CompletedProcess(argv,0,json.dumps({'schema_version':'playground-cli-submission/v0','status':'submitted','challenge_id':'ended','attempt_id':'123','bundle_sha256':hashlib.sha256(Path(argv[argv.index('--bundle-out')+1]).read_bytes()).hexdigest(),'worker_api_base':cli_submission.WORKER,'bundle_response':{'accepted':True}}),'')
     monkeypatch.setattr(cli_submission.subprocess,'run',process)
     result=submit_once(platform,'fixture','fake-private-token','unused.zip','ended',{'package_bytes':content})
-    assert result['accepted'] and result['transport']=='cli' and len(calls)==1
+    assert result['accepted'] and result['transport']=='cli' and len(calls)==2
     assert all(not home.exists() for home in homes)
 
 
 def test_timeout_keeps_unknown_no_retry_and_cleans_temp(tmp_path, monkeypatch):
     platform=prepare(tmp_path,monkeypatch);content,_=bundle();calls=[];homes=[]
     def process(argv,env,**kwargs):
-        calls.append(argv);homes.append(Path(env['HOME']));raise subprocess.TimeoutExpired(argv,600)
+        calls.append(argv);homes.append(Path(env['HOME']))
+        if '--dry-run' in argv: return fake_build(argv)
+        raise subprocess.TimeoutExpired(argv,600)
     monkeypatch.setattr(cli_submission.subprocess,'run',process)
     with pytest.raises(PlatformError) as exc:submit_once(platform,'fixture','fake-private-token','unused.zip','ended',{'package_bytes':content})
-    assert not exc.value.no_side_effect and len(calls)==1 and all(not p.exists() for p in homes)
+    assert not exc.value.no_side_effect and len(calls)==2 and all(not p.exists() for p in homes)
 
 
 def test_missing_raw_stops_before_process_and_releases_unsent(tmp_path,monkeypatch):
@@ -120,13 +133,14 @@ def test_failed_cli_preserves_bounded_redacted_process_diagnostics(tmp_path, mon
     calls, feedback = [], []
     def process(argv, **kwargs):
         calls.append(argv)
+        if '--dry-run' in argv: return fake_build(argv)
         return subprocess.CompletedProcess(argv, 1, 'not JSON ' + secret,
             'HTTP 403 specific upstream cause ' + secret + 'x' * 3930 + secret)
     monkeypatch.setattr(cli_submission.subprocess, 'run', process)
     with pytest.raises(PlatformError) as error:
         submit_once(platform, 'fixture', secret, 'unused.zip', 'ended',
             {'package_bytes': content, 'on_feedback': lambda kind, value: feedback.append((kind, value))})
-    assert not error.value.no_side_effect and len(calls) == 1
+    assert not error.value.no_side_effect and len(calls) == 2
     diagnostic = next(value for kind, value in feedback if kind == 'cli_process')
     assert diagnostic['exit_code'] == 1 and diagnostic['diagnostic_only'] is True
     assert 'HTTP 403 specific upstream cause' in diagnostic['stderr']

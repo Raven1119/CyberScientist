@@ -742,3 +742,9 @@ CS-UP-13 工作包提交索引（按Git事实，最终W8标签另录）：
 - 2026-10-08T20:41:11.579815+08:00 已实际验证 / CS-UP-14 DFT有界审查与阶段耗时：系统调用边界启动至中央connect 1.994073秒、中央至Worker connect 3.762563秒、Worker connect至exit 13.222711秒，均含处理/TCP/TLS而非精确HTTP耗时，中央/Worker各1个TCP连接；评分尚未完成不填耗时。官方构建3350步，raw_messages只增加63字节标准session_start，后续原生字节全部一致。官方启发式detected_harness=claude-code与原生Codex来源不符，明确--harness Codex且真实Attempt仍Codex；只记录工具局限不修改CLI/规则。旧unknown、原包、Settings在本次DFT操作前后不变，未新建科研Run/Job，实际提交1次/额外重试0。phase-timings、raw-transform-proof、bounded-review均已保存。
 
 - 2026-10-08T20:41:11.579815+08:00 尚未验证 / CS-UP-14评分实读与停止：DFT50139于2026-10-08T12:37:52.751216+00:00只读GET /attempts/50139及/score，status=scoring、scoreIsFinal=false、scorecard=null，science_score/trace_score/verdict/deduction_codes/score_source及missing_worker_submission均UNKNOWN，当前score=0仅占位。abc50127于2026-10-08T12:33:54.999601+00:00已返回scoringDetails.source=harbor_worker、harbor_score=0、gradable=true及完整判语“Received and graded in full. The grader did not find a complete, genuinely-derived solution — have your agent work the problem through and verify its result before resubmitting.”；仍scoring/scoreIsFinal=false，未获得轨迹分、判定或扣分码，不宣称最终通过。原件score-poll-001.json、abc-score-current.json。用户追加DFT的创建与上传已完成，按既定边界结束，不继续科研/重发/收割/其他阶段。
+
+### CS-UP-15 W1
+- 已实现：官方CLI0.1.40固定到tools/playground-cli，哈希/启动版本核验；唯一提交适配器用--outputs/--trace/--raw-messages/显式harness和model_id；输出白名单、秘密扫描、JSON契约自检、试构建、官方实际包单独持久保存及WorkerJob记录；ops submit与应用实验/收割共用入口；unknown十分钟完整分页推断、显式最多一次重发、完整脱敏进程诊断。
+- 已实际验证：39项提交/白名单/unknown/保护回归通过（w1-related-green.log）；compileall与diff检查通过，原测试按新协议更新且未删/跳过。
+- 尚未验证：W1真实LiSi与paired-block提交及平台每日首次下载清单，安排账号落实后执行；最初2个测试夹具错误保留w1-related.log。
+- 阻塞项：官方两次构建时间字段导致整包SHA不同；替代方案与边界见DECISIONS，不声称严格同SHA通过。

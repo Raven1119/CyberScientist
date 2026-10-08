@@ -1,0 +1,16 @@
+{
+  "version": "0.1.40",
+  "source": "https://play.bohrium.com/packages/paper2arm-playground-cli-0.1.40.tgz",
+  "archive_sha256": "de1c4e5384358c610cfb01310d8f158cc04259447cd81fe9c35a599ceb5eb0d0",
+  "files": {
+    "tsconfig.json": "0f98b29bad72ad5d7db4303bff23259463577227607f71ee6c939df9c52e534d",
+    "package.json": "340cd8079803de742aeffb46b7641d0516e74f410a682a2d5883ff2df2a4026a",
+    "README.md": "8e2e86642afbe98ff54092493aeda07e934defe13ebb4596cba360da708f6ba1",
+    "src/index.ts": "0e01124e530d3590bf764cf8335e7b436a7cfcae13a2ad12649b18a101b9b75a",
+    "src/task-authoring.ts": "70feec6dc269b75d766dce10515502cf61a1aad966a46fc4a766d38e1f0d962c",
+    "skill/README.md": "880dee84638b38c4375875b22081a9f7f39b524c724bccf46b5ec076aae5aec6",
+    "dist/index.js": "65fe7e873c5229d436d228fb1445aa50eb2977dd0dbfe5ac45fd009aa35babff",
+    "dist/task-authoring.js": "19a204c7b5ea740e0d1c4e8a12fdfd068ea44d6cf7ea41c4cbb4f65fa924d762",
+    "skill/paper2arm-forge/SKILL.md": "dd49a8f03042fbf61f1ff669100ca3a171a4c070bb77e9426b06ee02aae4c1e1"
+  }
+}

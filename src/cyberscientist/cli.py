@@ -111,7 +111,13 @@ def main() -> None:
     ops_redeploy = ops_sub.add_parser('redeploy', help='安全关机、只换代码、对账恢复和自检')
     ops_redeploy.add_argument('--commit', default=None)
     ops_redeploy.add_argument('--timeout', type=float, default=180)
-    for command in (ops_redeploy, ops_status, ops_digest, ops_events, ops_alerts, ops_shutdown, ops_resume): command.add_argument('--port', type=int, default=None)
+    ops_submit = ops_sub.add_parser('submit', help='应用内统一提交路径；支持有界旧题验证授权')
+    for name in ('run-id', 'trial-id', 'package-path', 'operation-id'):
+        ops_submit.add_argument('--' + name, required=True)
+    ops_submit.add_argument('--authorization-file')
+    ops_submit.add_argument('--mailbox-id')
+    ops_submit.add_argument('--retry-of')
+    for command in (ops_redeploy, ops_status, ops_digest, ops_events, ops_alerts, ops_shutdown, ops_resume, ops_submit): command.add_argument('--port', type=int, default=None)
     evaluation = sub.add_parser('eval', help='运行或生成本地评测报告')
     evaluation_sub = evaluation.add_subparsers(dest='eval_command', required=True)
     eval_run = evaluation_sub.add_parser('run', help='启动一层评测')
@@ -133,7 +139,12 @@ def main() -> None:
             print(json.dumps(result, ensure_ascii=False))
             raise SystemExit(0 if result['status'] == 'completed' else 1)
         method = 'GET'; body = None
-        if args.ops_command == 'switch':
+        if args.ops_command == 'submit':
+            path = '/api/v1/ops/submit'; method = 'POST'
+            body = {k: getattr(args,k) for k in ('run_id','trial_id','package_path','operation_id','mailbox_id','retry_of')}
+            if args.authorization_file:
+                body['authorization'] = json.loads(Path(args.authorization_file).read_text())
+        elif args.ops_command == 'switch':
             if args.name not in features.NAMES: parser.error('未知功能开关：' + args.name)
             path = '/api/v1/features/' + args.name; method = 'PUT'; body = {'enabled': args.state == 'on'}
         elif args.ops_command == 'events':

@@ -593,6 +593,15 @@ def init_db() -> None:
         conn.executescript(SCHEMA_LOCAL_SCORING)
         conn.executescript(SCHEMA_EVALUATIONS)
         conn.executescript(SCHEMA_COMPUTE_COST)
+        _ensure_columns(conn, 'submissions', {
+            'official_package_path': 'TEXT', 'official_package_sha256': 'TEXT',
+            'preview_package_sha256': 'TEXT', 'worker_job_id': 'TEXT',
+            'retry_of': 'TEXT REFERENCES submissions(id)',
+            'validation_scope': 'TEXT',
+        })
+        conn.executescript('''CREATE TABLE IF NOT EXISTS submission_validation_scopes (
+            id TEXT PRIMARY KEY,grant_sha256 TEXT NOT NULL,grant_json TEXT NOT NULL,created_at TEXT NOT NULL);''')
+        conn.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_submission_one_retry ON submissions(retry_of) WHERE retry_of IS NOT NULL')
         conn.executescript('''CREATE TABLE IF NOT EXISTS submission_queue (
             submission_id TEXT PRIMARY KEY REFERENCES submissions(id),state TEXT NOT NULL,
             not_before TEXT NOT NULL,reason TEXT NOT NULL,dispatched_at TEXT,
