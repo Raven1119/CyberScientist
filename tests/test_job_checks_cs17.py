@@ -102,3 +102,32 @@ def test_closed_gate_job_cannot_probe_remote_image(run,monkeypatch):
     monkeypatch.setattr(job_checks,'image',lambda *args:pytest.fail('关门时禁止远端预检'))
     with pytest.raises(compute.ComputeError):compute.submit(rid,'closed-job',spec('echo ready'),str(work))
     assert not calls
+
+
+def test_printed_download_instructions_are_not_network_execution():
+    report=job_checks.static({'task.sh':b"echo 'pip install ase'\nprintf '%s\\n' 'curl https://example.test'\n"},spec(),{})
+    assert report['commands']==['bash']
+
+
+def test_packaged_executable_is_checked_as_input_not_image_command():
+    files={'task.sh':b'#!/bin/bash\necho ready > result.txt\n'}
+    report=job_checks.static(files,spec('./task.sh'),{'_file_modes':{'task.sh':0o755}})
+    assert './task.sh' not in report['commands']
+    with pytest.raises(job_checks.Error) as exc:
+        job_checks.static(files,spec('./task.sh'),{'_file_modes':{'task.sh':0o644}})
+    assert exc.value.code=='SCRIPT_NOT_EXECUTABLE'
+
+
+def test_existing_job_request_is_readable_after_gate_closes(run,monkeypatch):
+    _,rid,work,calls,_=run
+    db.execute('UPDATE authorizations SET max_jobs=1 WHERE id=(SELECT authorization_id FROM runs WHERE id=?)',(rid,))
+    snapshot=json.loads(db.query_one('SELECT config_snapshot FROM runs WHERE id=?',(rid,))[0]);snapshot['sandbox_first_version']=1
+    db.execute('UPDATE runs SET config_snapshot=? WHERE id=?',(json.dumps(snapshot),rid))
+    monkeypatch.setattr(job_checks,'image',lambda *args:{'image_checked':True})
+    first=compute.submit(rid,'deduplicated-job',spec('echo ready'),str(work))
+    count=len(calls)
+    db.execute("UPDATE runs SET gate='awaiting_method_approval' WHERE id=?",(rid,))
+    monkeypatch.setattr(job_checks,'image',lambda *args:pytest.fail('旧请求不能重跑远端预检'))
+    again=compute.submit(rid,'deduplicated-job',spec('echo ready'),str(work))
+    assert again['deduplicated'] and again['status']==first['status']
+    assert len(calls)==count

@@ -351,6 +351,14 @@ def submit(run_id: str, operation_id: str, spec: dict, input_directory: str,
                    'remedy': '输入较大；执行器自行决定上传或在已有授权算力中准备环境'}
         db.append_event(run_id, 'controller', 'job.input_warning',
                         {'operation_id': operation_id, **details}, trial_id=run['current_trial_id'])
+    digest = hashlib.sha256(_json([spec, manifest, str(source), frozen_modes]).encode()).hexdigest()
+    prior = db.query_one('SELECT * FROM compute_jobs WHERE operation_id=?',(operation_id,))
+    if prior:
+        if prior['run_id'] != run_id or prior['request_hash'] != digest:
+            raise ComputeError('CONFLICT','操作 ID 已绑定其他请求')
+        return dict(prior) | {'deduplicated':True}
+    if db.query_one("SELECT 1 FROM compute_sandbox_operations WHERE operation_id=? AND action='background'",(operation_id,)):
+        raise ComputeError('OPERATION_CONFLICT','该操作已绑定沙箱后台命令，禁止跨后端重放')
     from . import job_preflight
     if json.loads(run['config_snapshot']).get('sandbox_first_version') == 1:
         from . import job_checks
@@ -359,7 +367,7 @@ def submit(run_id: str, operation_id: str, spec: dict, input_directory: str,
                          if (Path(rel).suffix in ('.py','.sh','.txt') or Path(rel).name in ('INPUT','STRU','KPT'))
                          and (source/rel).stat().st_size <= 2_000_000}
         try:
-            checked = job_checks.static(checked_files,spec,preflight or {})
+            checked = job_checks.static(checked_files,spec,(preflight or {})|{'_file_modes':frozen_modes})
             checked = job_checks.image(run_id,str(spec.get('image_address') or ''),checked)
             db.append_event(run_id,'controller','job.preflight',
                             {'operation_id':operation_id,'status':'passed','mandatory':True,'report':checked},
@@ -392,7 +400,6 @@ def submit(run_id: str, operation_id: str, spec: dict, input_directory: str,
                         {'operation_id': operation_id, 'status': 'advisory',
                          'code': exc.code, 'details': exc.details, 'message': str(exc)},
                         trial_id=run['current_trial_id'])
-    digest = hashlib.sha256(_json([spec, manifest, str(source), frozen_modes]).encode()).hexdigest()
     from . import compute_budget
     price = compute_budget.rate(run_id, 'job', str(spec.get('machine_type', '')))
     # Persist a reservation before materializing/dispatching, under the SQLite writer lock.

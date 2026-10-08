@@ -155,9 +155,6 @@ def static(files: dict[str, bytes], spec: dict, options: dict) -> dict:
         for line in text.splitlines():
             stripped=line.strip()
             if not stripped or stripped.startswith('#'):continue
-            offline_install='--no-index' in line and not re.search(r'(?<![\w/])(?:curl|wget)\s|\bgit\s+clone\b',line)
-            if _NETWORK.search(line) and not offline_install:
-                raise Error('NETWORK_REQUIRED',f'Job无网络；请预置依赖或文件：{name}',{'line':stripped[:300]})
             if re.search(r"\b(?:cp|mv|cat|bash|python\d*)\b[^\n]*'[^']*\$\{[^}]+\}[^']*'",line):
                 raise Error('LITERAL_VARIABLE_PATH',f'单引号阻止路径变量展开：{name}',{'line':stripped[:300]})
             for match in re.finditer(r'(?<![\d>])(?:>|>>|\btee\s+)\s*([\w./-]+)',line):
@@ -174,12 +171,18 @@ def static(files: dict[str, bytes], spec: dict, options: dict) -> dict:
                 if executable in functions or executable.endswith('()'):continue
                 launched_commands=_executables(tokens)
                 for launched in launched_commands:
-                    if launched not in _BUILTINS:commands.add(launched)
+                    if launched not in _BUILTINS and not launched.startswith('./'):commands.add(launched)
                 if launched_commands and launched_commands[-1]!=tokens[0]:
                     tokens=tokens[tokens.index(launched_commands[-1]):];executable=tokens[0]
                 if executable in _BUILTINS or executable.startswith(('$','(',')','{','}')):continue
+                execution=shlex.join(tokens)
+                offline_install='--no-index' in tokens
+                if Path(executable).name in ('curl','wget') or (_NETWORK.search(execution) and not offline_install):
+                    raise Error('NETWORK_REQUIRED',f'Job无网络；请预置依赖或文件：{name}',{'line':stripped[:300]})
                 if executable.startswith('./'):
                     if executable[2:] not in files:raise Error('MISSING_ENTRY','执行脚本未打包：'+executable)
+                    mode=options.get('_file_modes',{}).get(executable[2:])
+                    if mode is not None and not mode&0o111:raise Error('SCRIPT_NOT_EXECUTABLE','入口脚本没有执行权限：'+executable)
                 else:commands.add(executable)
                 if executable.startswith('/'):paths.add(executable)
                 if Path(executable).name in ('bash','sh') or re.fullmatch(r'python[0-9.]*',Path(executable).name):
