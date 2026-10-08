@@ -445,6 +445,13 @@ export interface Submission {
   displayScore?: number | null
   harbor_score?: number | null
   trace_score?: number | null
+  harbor_reward?: number | null
+  trace_decision?: string | null
+  trace_factor?: number | null
+  scoring_source?: string | null
+  score_is_final?: number | null
+  scoring_minutes?: number | null
+  receipt_details?: {deductions?: {code: string; score_effect?: number}[]; missing_evidence?: unknown[]}
   prediction_md?: string | null
   prediction_verdict?: 'confirmed' | 'refuted' | 'unclear' | null
   prediction_note_md?: string | null

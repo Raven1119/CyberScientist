@@ -35,7 +35,7 @@ _NOTABLE = (
     "brain.decision_rejected", "brain.action_rejected", "run.objective_assessment_unknown", "run.final_package_unknown", "run.final_package_checked",
     "guidance.sent", "guidance.acknowledged",
     "guidance.superseded", "prime.error", "prime.approval.rejected",
-    "checkpoint.created", "submission.scored", "submission.score_corrected",
+    "checkpoint.created", "submission.scored", "submission.science_observed", "submission.receipt_observed", "submission.score_corrected",
 )
 
 _SECRET_TOKEN_RE = re.compile(
@@ -202,7 +202,7 @@ def events_through(run_id, from_seq, through_seq):
 
 def score_deltas(events):
     return [{**e["payload"],"source_seq":e["seq"],"source_time":e["recorded_at"]}
-            for e in events if e["type"] in ("submission.scored","submission.score_corrected")]
+            for e in events if e["type"] in ("submission.scored","submission.science_observed","submission.receipt_observed","submission.score_corrected")]
 
 
 def job_states(run_id: str, through_seq: int) -> list[dict]:

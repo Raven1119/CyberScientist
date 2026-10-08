@@ -41,12 +41,12 @@ PHASES = ("created", "running", "pausing", "paused", "blocked",
           "recovering", "finished", "failed", "cancelled")
 
 # 值得触发静默观察的科学变化（心跳/进度/大脑自身输出不在内）
-_SHADOW_TRIGGERS = ("job.observed", "job.unknown", "submission.scored", "submission.score_corrected", "checkpoint.created", "trial.reported_complete",
+_SHADOW_TRIGGERS = ("job.observed", "job.unknown", "submission.scored", "submission.science_observed", "submission.receipt_observed", "submission.score_corrected", "checkpoint.created", "trial.reported_complete",
                     "trial.stalled", "trial.done", "prime.error")
 
 _SPARSE_SHADOW_EVENTS = (
     "trial.stalled", "trial.done", "trial.reported_complete",
-    "submission.scored", "submission.score_corrected", "run.blocked",
+    "submission.scored", "submission.science_observed", "submission.receipt_observed", "submission.score_corrected", "run.blocked",
     "prime.error", "job.unknown", "job.observed",
 )
 _RESEARCH_JOB_STATES = frozenset(("Failed", "Stopped", "Finished"))
@@ -1481,12 +1481,13 @@ class RunController:
         with db.transaction() as conn:
             if conn.execute('SELECT 1 FROM eval_results WHERE run_id=? AND paused=1', (run_id,)).fetchone():
                 return
-            changed = conn.execute("UPDATE runs SET phase='recovering',block_reason='已确认出分，唤醒PI'"
+            changed = conn.execute("UPDATE runs SET phase='recovering',block_reason='已观察到科学反馈，唤醒PI'"
                 " WHERE id=? AND phase='waiting_score'", (run_id,)).rowcount
             if not changed:
                 return
             db.append_event_tx(conn, run_id, 'controller', 'run.score_wake', {
                 'submission_id': submission['id'], 'score': submission['score'],
+                'harbor_score': submission['harbor_score'], 'trace_decision': submission['trace_decision'],
                 'choices': ['finish', 'trace_variant', 'new_trial'], 'automatic_science': False})
         try:
             await self.control(run_id, 'resume', None, 'score-wake-' + submission['id'])

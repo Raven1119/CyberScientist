@@ -56,6 +56,12 @@ def synchronize() -> None:
         if rows:
             conn.execute("INSERT OR REPLACE INTO system_state VALUES('alerts_event_cursor',?)", (str(rows[-1]['event_row']),))
         now = datetime.now(timezone.utc)
+        from .mailboxes import _instant
+        for sub in conn.execute("SELECT * FROM submissions WHERE status='submitted' AND COALESCE(score_is_final,0)=0").fetchall():
+            started=_instant(sub['submitted_at'] or sub['science_observed_at'])
+            if started and (now-started).total_seconds()>7200:
+                run=conn.execute('SELECT * FROM runs WHERE id=?',(sub['run_id'],)).fetchone()
+                if run:_insert(conn,'scoring-slow:'+sub['id'],run,'submission.scoring_slow','平台评分已超过两小时',{'submission_id':sub['id'],'minutes':(now-started).total_seconds()/60})
         for rate in conn.execute("SELECT * FROM model_rate_limits WHERE state IN ('waiting','in_flight')").fetchall():
             from .mailboxes import _instant
             started = _instant(rate['first_at'])

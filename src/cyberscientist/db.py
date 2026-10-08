@@ -598,6 +598,10 @@ def init_db() -> None:
             'preview_package_sha256': 'TEXT', 'worker_job_id': 'TEXT',
             'retry_of': 'TEXT REFERENCES submissions(id)',
             'validation_scope': 'TEXT',
+            'harbor_reward':'REAL', 'trace_factor':'REAL', 'trace_decision':'TEXT',
+            'scoring_source':'TEXT', 'scored_by':'TEXT', 'counts_toward_season':'INTEGER',
+            'score_is_final':'INTEGER', 'receipt_details_json':'TEXT',
+            'science_observed_at':'TEXT', 'receipt_observed_at':'TEXT',
         })
         _ensure_columns(conn, 'mailboxes', {'platform_account_id':'TEXT', 'operator_id':'TEXT',
             'claim_status':"TEXT NOT NULL DEFAULT 'unknown'", 'last_used_at':'TEXT'})

@@ -578,6 +578,11 @@ export default function MailboxPage() {
                     </span>
                     <span>
                       {SUBMISSION_STATUS_LABELS[s.status] ?? s.status} · 分数 {scoreText(s)}
+                      <div className="small-text">科学分 {s.harbor_score ?? '未知'} · 轨迹分 {s.trace_score ?? '未知'} · 判定 {s.trace_decision ?? '未知'}</div>
+                      <div className="small-text">扣分码 {s.receipt_details?.deductions?.map(d => `${d.code} (${d.score_effect ?? '未知'})`).join('、') || '未知'}</div>
+                      {s.scoring_minutes != null && <div className={s.scoring_minutes > 120 && s.score_is_final !== 1 ? 'form-error' : 'small-text'}>
+                        已评分 {s.scoring_minutes.toFixed(0)} 分钟{s.scoring_minutes > 120 && s.score_is_final !== 1 ? ' · 评分超过两小时，请查看平台状态' : ''}
+                      </div>}
                       {s.score_status === 'scored' && ` · ${s.score_confidence === 'confirmed' ? '已确认' : '暂定'}`}
                       {s.score_anomaly && ` · 异常 ${s.score_anomaly}`}
                       {s.scorecard_consistent === 0 && ' · 分项不一致'}

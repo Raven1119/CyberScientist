@@ -295,6 +295,10 @@ def _submission_items(rows) -> list[dict[str, Any]]:
         if item is not None:
             item["platform_feedback"].setdefault(payload["kind"], {
                 "response": payload["response"], "recorded_at": event["recorded_at"]})
+    for item in items.values():
+        item['receipt_details'] = json.loads(item.get('receipt_details_json') or '{}')
+        stamp = _instant(item.get('submitted_at') or item.get('science_observed_at'))
+        item['scoring_minutes'] = max(0, (datetime.now(timezone.utc)-stamp).total_seconds()/60) if stamp else None
     return list(items.values())
 
 
@@ -316,6 +320,8 @@ def _record_feedback(conn, row, kind: str, response: dict[str, Any]) -> bool:
     # an unchanged historical receipt must not undo it; new feedback still gates.
     from . import submission_gate
     submission_gate.observe_feedback_tx(conn, row, response)
+    from . import submission_receipts
+    submission_receipts.observe_tx(conn, row, response)
     db.append_event_tx(conn, row["run_id"], "controller", "submission.platform_feedback", {
         "submission_id": row["id"], "platform_ref": row["platform_ref"],
         "kind": kind, "response": response}, trial_id=row["trial_id"])
@@ -1419,7 +1425,7 @@ def poll_scores(run_id: str | None = None,
                     observed = public_feedback(observed, secret, *config.sensitive_values())
                     if isinstance(observed, dict):
                         attempt = {key: observed[key] for key in
-                                   ("scorecard", "scoringState", "bundleStatus", "updatedAt", "resultsJson", "scored_by", "scoringDetails")
+                                   ("scorecard", "scoringState", "bundleStatus", "updatedAt", "resultsJson", "scored_by", "scoringDetails", "counts_toward_season")
                                    if key in observed}
                         with db.transaction() as conn:
                             if _record_feedback(conn, r, "attempt", attempt):

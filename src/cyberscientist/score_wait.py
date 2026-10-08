@@ -38,5 +38,5 @@ def confirmed(run_id):
     marker = db.query_one('SELECT value FROM system_state WHERE key=?', ('await_score:' + run_id,))
     if not marker:
         return None
-    return db.query_one("SELECT * FROM submissions WHERE id=? AND run_id=? AND score_status='scored'"
-        " AND score_confidence='confirmed'", (marker['value'], run_id))
+    return db.query_one("SELECT * FROM submissions WHERE id=? AND run_id=? AND "
+        "(science_observed_at IS NOT NULL OR (score_status='scored' AND score_confidence='confirmed'))", (marker['value'], run_id))
