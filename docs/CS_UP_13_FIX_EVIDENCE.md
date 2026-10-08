@@ -86,7 +86,7 @@ D-63–D-72 原文已加入 §5。开局 main 比 origin/main 落后 13 个 S4 �
 
 ## W8 — 验证与剩余边界
 
-全量初次1568 passed/3 failed，三项为新默认提示版本和分诊附加字段的旧fixture预期，修正测试使用真实当前版本，不放宽冲突检查；分诊仍核实同一原生会话格式重写两次。最终全量结果完成后补录。迁移为新增列/表，W0一致性before.sqlite及关机副本保留；未重建数据表。每阶段有界审查已核实队列身份、延迟收割上下文、原始配对与parser差异、进程身份和失败停止。
+全量初次1568 passed/3 failed，三项为新默认提示版本和分诊附加字段的旧fixture预期，修正测试使用真实当前版本，不放宽冲突检查；分诊仍核实同一原生会话格式重写两次。最终全量1571 passed、2项既有弃用warnings，933.47秒（final-pytest-green.log）；前端103 passed、构建通过；compileall与git diff --check通过。W0 SQLite quick_check=ok。迁移为新增列/表，W0一致性before.sqlite及关机副本保留；未重建数据表。每阶段有界审查已核实队列身份、延迟收割上下文、原始配对与parser差异、进程身份和失败停止。
 
 硬验收无法完成与替代：输入只有10条新经验，4个ABC标题无精确匹配；已启用实际10条及指定15旧ID，不猜测额外内容。7个bohr帮助命令不存在，用已核实受控研究工具替代。Astra旧CLI被400要求升级，项目内0.161.0收到一次真实简报，但技能工具未成功；后续600秒原生探针WebSocket/HTTPS均网络失败，保留unknown，阶段2仍使用指定模型尝试，不换模型冒充。两Run无封存包，以六Run投影及四Run六包补充验证；缺失原始结果不可补造。独立留出N11/N17/N18没有产物/Worker输入，以真实封存包机械检查替代，不报准确率。ABACUS旧沙箱TLS失败已在网络恢复后以新沙箱真实执行补验，目录新增v2而不覆盖v1。自检warn逐项保留。
 
@@ -99,3 +99,5 @@ D-63–D-72 原文已加入 §5。开局 main 比 origin/main 落后 13 个 S4 �
 用户告知断网已恢复后，公开协议与更新清单均HTTP200。项目内Codex0.161.0 Astra xhigh原生探针18.6057秒，实际cat submission-gate退出0并返回结构化规则；不再把旧网络失败当当前不可用结论。ABACUS独立新沙箱create24.039秒、exec11.102秒，原脚本Si SCF收敛、退出0，原生回执有CS13_SI_SCF_PASSED。登记cs13-abacus-v2（Job与沙箱证据），保留v1及两次失败。证据network-restored-public.json、abacus-sandbox-network-restored.json和w5-abacus-v2-registration.json均只留本机。
 
 网络恢复后的完整W3原生补验：Astra xhigh PI30.190933秒，实际只读submission-gate并选择cs12-sci-py-v1、CPU，确认模板和新增经验；Astra high fast执行器25.567871秒，priority由原生线程回传确认。输入sha及active IDs在授权调用账本对应回执内，零科研。项目设置brain executable指向0.161.0，未修改全局CLI配置。此前600秒超时是历史失败，不能继续当作当前不可用结论。
+
+最终边界：历史缺原始结果、4个ABC来源缺失、7项bohr原生命令缺失及独立留出语义不可观测仍保留；新的Astra原生启动与ABACUS沙箱已实际补验通过。fallback-4只证明此提交的实现及所列证据，不证明正式Worker链路或比赛资格。阶段1零科研Run、零真实参赛提交。

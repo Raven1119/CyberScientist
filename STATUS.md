@@ -595,3 +595,5 @@ CS-UP-13 工作包提交索引（按Git事实，最终W8标签另录）：
 - 2026-10-08T09:57:07+08:00 W3/W5 网络恢复复测（本提交 CS-UP-13）：已实际验证Astra xhigh原生cat技能并返回（18.606秒），ABACUS新沙箱Si SCF退出0、11.102秒。旧TLS/路由失败保留；ABACUS目录新增不可覆盖v2，Job与沙箱两通路现均有真实成功回执。
 
 - 2026-10-08T09:58:39+08:00 W3 原生补验（本提交 CS-UP-13）：Astra xhigh真实PI简报30.191秒，原生读取skill、选择目录镜像/CPU、确认用户模板与新经验；Astra high fast执行器25.568秒，priority回传确认。项目brain executable指向已验证项目内0.161.0，全局CLI未改。旧网络失败保留为历史，不再作为当前阻塞。
+
+- 2026-10-08T10:06:34+08:00 W8 完成（本提交 CS-UP-13，标签lightchaser-fallback-4）：最终全量1571 passed/2 warnings（933.47秒）；前端103 passed、构建、compileall、diff-check通过，W0 SQLite quick_check=ok。W0–W8逐项证据及尚未满足的硬项/替代已记录；Astra和ABACUS网络恢复后的真实补验通过。阶段1没有科研Run或真实参赛提交。
