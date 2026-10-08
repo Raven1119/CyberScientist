@@ -42,6 +42,11 @@ def prepare(provider: str | None, environment: dict | None) -> dict | None:
               'base_url = "https://api.deepseek.com/"\nwire_api = "responses"\n'
               'env_key = "DEEPSEEK_API_KEY"\nrequires_openai_auth = false\n'
               'supports_websockets = false\n')
+    from . import runtime_layout
+    if runtime_layout.version() is not None:
+        public='project_doc_max_bytes = 0\n'+public
+        import shutil
+        if not (home/'skills').exists():shutil.copytree(config.WORKSPACE_ROOT/'skills',home/'skills')
     _write_public(home / 'config.toml', public)
     env = dict(environment if environment is not None else os.environ)
     for name in ('OPENAI_API_KEY', 'CODEX_API_KEY', 'CODEX_ACCESS_TOKEN'):

@@ -22,7 +22,7 @@ from . import config
 
 PREFIXES=('src/cyberscientist/','prompts/','skills/','environments/','challenges/',
           'contracts/','vendor/playground_contracts/','evals/','templates/',
-          'tools/playground-cli/0.1.40/dist/')
+          'tools/playground-cli/0.1.40/')
 FILES={'pyproject.toml','uv.lock','.env.example','config/workspace.example.yaml',
        'start-runtime.sh','tools/playground-cli/0.1.40/package.json',
        'tools/playground-cli/0.1.40/integrity.json'}
