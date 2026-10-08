@@ -92,6 +92,10 @@ c8c1e7f完整回归结果：1596 passed、2既有warnings、1003.60秒，final-n
 
 续行修复的真实验收：#10256于06:23:08Z确认执行器回合结束；另一后处理Job23502646在#10242仍accepted。控制器#10258于06:23:14Z引用终态#10225自动排队一次job_result_available，#10260于06:23:15Z启动PI生命周期审阅。06:29:36Z复查同terminal_event_seq排队计数为1，原操作未重发（idle-job-wake-production-proof.json）。该场景实际覆盖“一个Job终态、另一个在途、执行器已空闲”，不再仅有fake回归证据。本次完整Terra回合包含计算等待共2422.799394秒；纯模型响应延迟未单独测量，不能用此数值冒充纯推理耗时。
 
+23502648审计在第一份日志因正则转义失败，原始记录保留；修正版23502658 / 20855921已Finished。06:45:20Z直接读取Bohrium日志中的JSON：截止差Li −0.07635134701899915、Si −0.004427028585496373、LiSi −0.03216535762362582 meV/atom；形成能差0.016447660357243876 meV/f.u.。先前执行器口头Si −4.43与这份远端数值不一致，未作为验收依据；数值由Bohrium计算，本地只读JSON和哈希（audit-v3-live-numeric-proof.json，日志SHA256 01cfd72c65b0474688e16c4df55638b5057042daf4660a6d5d029055d840d927）。完整电荷/映射判定及k点/展宽对照仍另验。
+
+06:36Z实际再查scorer_manifest仍SCORER_MISSING、local_scores=0、submissions=0。监控把连续墙钟和原赛道截止、原2+1额度及剩余硬性验收事实经cs14-halfway-required-gates-facts-v1持久送PI，没有科学代码或答案；PI #11493采纳并安排在当前Trial并行补验证、可信评分、新沙箱复跑与第一提交封存，#11634于06:46:02Z已送达执行器。该事件证明指导送达，不证明尚未生成的评分/复跑/包通过（halfway-required-gates-guidance.json）。
+
 ### 当前科研验收账本
 
 |环节|已实际核实|尚未验收|

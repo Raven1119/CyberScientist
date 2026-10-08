@@ -919,3 +919,5 @@ CS-UP-14 W3 通用续行修复：原生回合#5571已结束，Si Job终态#5769�
 CS-UP-14 W3 大原生会话恢复：8a00b72基础设施重部署成功后，原Run因thread恢复读取ValueError失败。官方0.161.0 schema说明thread/read的includeTurns返回完整历史；只读原Astra线程实际序列化响应12,710,137字节，超过原8MiB行帧限制。将共享stdio传输限制有限扩为64MiB，继续以LF分帧、超限关闭并唤醒等待者；不截断原始消息、不改日志、不自动重发。52项相关回归包含9MiB完整响应后继续ping及小上限超限拒绝。
 
 同一Run恢复仅扩展现有reopen到已启动且end_reason=runtime_error的failed；原任务安全收尾、native_close_unknown为空、原模型授权和时限、活动容量、原因与幂等操作等保护不变。保留原started_at、授权、事件及远端账本，事件记录previous_end_reason，需另行resume经PI recovery审阅；其他failed仍拒绝。用户只授权一个Run，因此修复基础设施后按原授权恢复，不能新建Run、清空失败历史或延长时钟。此次没有改科学代码、评分器或既有原始记录。
+
+CS-UP-14收尾配置边界：恢复本轮临时测试设置时保留官方CLI方式、项目内CLI路径和D-69，不清除新出现的D-66屏障。旧快照的local_calculation=true不恢复：本轮用户给出的AGENTS明确要求科研依赖验证、科学计算、统计与科学作图在Bohrium完成，当前false保持该边界；应用测试/构建与文件、API、日志、哈希和运行时钟管理仍可本地进行。科学评分称为“本地评分器”不改变其本轮Bohrium执行约束。
