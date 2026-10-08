@@ -22,6 +22,7 @@ export XDG_CONFIG_HOME="$HOME/.config" XDG_DATA_HOME="$HOME/.local/share" XDG_CA
 unset PYTHONPATH
 cd "$ROOT" || exit 2
 PY="$ROOT/.venv/bin/python"
+"$PY" -c 'import json;j=json.load(open(".runtime/validation/authorization.json"));assert j.get("hidden_dependency_sandbox_reserved") and j["used"]["sandboxes"]<=j["budget"]["sandboxes"]' || exit 2
 CURRENT="$($PY -c 'import json;print(json.load(open(".runtime/version.json"))["commit"])')" || exit 2
 HIDDEN="${DEV}.hidden-dependency-$(date +%s)"
 RENAMED=0
