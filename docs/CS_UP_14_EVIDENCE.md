@@ -80,6 +80,8 @@ CLI前置真实只读探针：按产品当前选择逻辑确定实验邮箱及�
 
 原生读取边界诊断：旧8MiB限制下9MiB完整帧回归实际失败（native-frame-red.log），修复后52项协议/控制器/存活回归通过（28.21秒，native-frame-reopen-green.log）。官方0.161.0生成schema后，以thread/read/includeTurns只读原Astra会话，05:32:21Z成功返回同一线程ID及59回合，序列化result为12,710,137字节、SHA256 4361a0f6c83a69ca804b9d0eaeeac3834baa7eaa3bb9f469fd22269784a3db61、墙钟1.471秒；这是重新序列化字节数，不冒充线缆原帧长度。没有模型turn、修改日志或存储响应正文（native-frame-read-only-proof.json）。新上限64MiB有界，超限明确失败且不重发；保留EOF唤醒。runtime_error限定reopen的红回归原INVALID_STATE，绿回归保留同一Run/原授权时钟/未知Job/失败事件，其他failed仍拒绝。完整回归及实际恢复另录；当前科研评分、干净复跑、CLI提交仍未完成。
 
+部署c8c1e7f实际成功：journal 0652b67488104fcd9eff45abf4c97f23，exit0、停机123.299064秒、维护137.720778秒、自检warn无fail、digest代码匹配、native_close_unknown=0。正式控制接口05:36:48Z重开并恢复原Run；恢复前后对比同题Run数1、原授权auth_ae6a3df3f6、started_at、33个Job身份/状态、0提交及#7328失败事件均保留（native-frame-controlled-recovery.json）。#7387于05:37:00Z确认原Astra/Terra线程ID，#7390开始PI recovery审阅，不承诺IPython内存恢复。另64项Codex/协议漂移/安全部署/digest回归42.30秒通过；新增修复完整回归仍在运行。科研、评分与提交未因此宣称通过。
+
 ## W4 验收核对（进行中）
 
 |要求|当前事实|直接证据或剩余步骤|
@@ -93,7 +95,7 @@ CLI前置真实只读探针：按产品当前选择逻辑确定实验邮箱及�
 |W3 CLI上传、harbor_worker、轨迹分和判定|尚未验证|当前0 Attempt；认证/分页通过不能证明POST或正式评分|
 |W3 D-74|条件不满足，保留D-69|d74-two-hour-proof.json和UPGRADE_DESIGN评估；没有更改默认分诊|
 |W3 CLI收割及阈值恢复|尚未验证|尚无确认实验分；当前auto_harvest=false、阈值100，不能提前触发|
-|W4 全量、前端、构建|基线通过；续行修复全量进行中|2f4948e：1585 passed/2 warnings/892.75秒；前端104 passed/22文件/19.64秒、构建通过；新增controller修复已过25/126项相关回归，完整回归待结果|
+|W4 全量、前端、构建|续行修复通过；大帧恢复修复全量进行中|8a00b72：1592 passed/2 warnings/793.46秒；前端104 passed/22文件/19.64秒、构建通过；c8c1e7f已过52/64项相关回归，完整回归待结果|
 |W4 密钥与原始证据隔离|已扫描版本通过；最终再扫|25改动文件基线与真实凭据逐字节无命中、0本地证据入Git；最终报告后须再扫|
 |W4 最终报告、回退文档与fallback-5|尚未完成|本报告持续补证；须在实际闭环或有证据的替代交付后更新回退目标、封存标签并核对远端SHA|
 
