@@ -50,12 +50,14 @@ def _shell_units(text: str, source: str, python_sources: dict[str,str], generate
             else:segment.append(token)
         if segment:segments.append(segment)
         for parts in segments:
-            if parts and Path(parts[0]).name in ('bash','sh') and any(flag in parts for flag in ('-c','-lc')):
+            launched=_executables(parts)
+            executable=launched[-1] if launched else ''
+            if Path(executable).name in ('bash','sh') and any(flag in parts for flag in ('-c','-lc')):
                 flag='-c' if '-c' in parts else '-lc';position=parts.index(flag)
                 if len(parts)>position+1:
                     units.append(shlex.join(parts[:position]))
                     units.extend(_shell_units(parts[position+1],source,python_sources,generated));continue
-            if parts and re.fullmatch(r'python[0-9.]*',Path(parts[0]).name) and '-c' in parts:
+            if re.fullmatch(r'python[0-9.]*',Path(executable).name) and '-c' in parts:
                 position=parts.index('-c')
                 if len(parts)>position+1:python_sources[f'_inline_{len(python_sources)}.py']=parts[position+1]
             units.append(' '.join(part if part in ('>','>>','<','2>','2>>','&>') else shlex.quote(part) for part in parts))
@@ -92,6 +94,21 @@ def _executables(tokens: list[str]) -> list[str]:
     return result
 
 
+def _script_entry(args):
+    """Find a file operand after interpreter options; -c/-m have no file entry."""
+    parts=list(args)
+    while parts:
+        value=parts.pop(0)
+        if value=='--':return parts[0] if parts else None
+        if value in ('-c','-lc','-m','-s','--command'):return None
+        if value in ('-W','-X','-o','-O') and parts and not parts[0].startswith('-'):
+            # Python -O is a flag; Bash -O consumes a shell option name.
+            if value!='-O':parts.pop(0)
+        if value.startswith('-'):continue
+        return value
+    return None
+
+
 def static(files: dict[str, bytes], spec: dict, options: dict) -> dict:
     command = str(spec.get('command') or '')
     texts = {name: raw.decode('utf-8','replace') for name,raw in files.items()}
@@ -102,7 +119,33 @@ def static(files: dict[str, bytes], spec: dict, options: dict) -> dict:
     shell_units=[('command',unit) for unit in _shell_units(command,'command',inline,generated)]
     for name,text in list(texts.items()):
         if name.endswith('.sh'):shell_units.extend((name,unit) for unit in _shell_units(text,name,inline,generated))
+    languages={name:'python' if name.endswith('.py') else 'bash'
+               for name in texts if name.endswith(('.py','.sh'))}
+    # Interpreter inputs can have arbitrary extensions. Infer constant shell
+    # entries before compilation, including a script launched by another script.
+    cwd_by_source={}
+    for source,unit in shell_units:
+        try:tokens=shlex.split(unit,comments=True)
+        except ValueError:continue
+        launched=_executables(tokens)
+        if not launched:continue
+        executable=launched[-1]
+        if executable=='cd' and len(tokens)>1:
+            cwd_by_source[source]=posixpath.normpath(str(PurePosixPath(cwd_by_source.get(source,'.'))/tokens[1]));continue
+        if executable not in tokens:continue
+        args=tokens[tokens.index(executable)+1:]
+        base=Path(executable).name
+        language='python' if re.fullmatch(r'python[0-9.]*',base) else 'bash' if base in ('bash','sh') else None
+        operand=_script_entry(args)
+        if not language or not operand:continue
+        entry=posixpath.normpath(str(PurePosixPath(cwd_by_source.get(source,'.'))/operand))
+        if entry in texts and entry not in languages:
+            languages[entry]=language;cwd_by_source[entry]=cwd_by_source.get(source,'.')
+            if language=='bash':shell_units.extend((entry,part) for part in _shell_units(texts[entry],entry,inline,generated))
+        elif entry in languages and languages[entry]!=language:
+            raise Error('SCRIPT_LANGUAGE_CONFLICT','同一输入文件被不同解释器执行：'+entry)
     texts.update(inline);texts.update(generated)
+    languages.update({name:'python' for name in inline})
     if any(not isinstance(name,str) for name in outputs):
         raise Error('INVALID_OUTPUTS','outputs必须为文件路径列表')
     commands=set();paths=set(options.get('required_paths') or []);packages=set();warnings=[];embedded=[]
@@ -114,7 +157,7 @@ def static(files: dict[str, bytes], spec: dict, options: dict) -> dict:
             if Path(name).is_absolute() or '..' in Path(name).parts:
                 raise Error('INVALID_SOURCE_PATH','输入文件路径越界')
             path=Path(directory)/name;path.parent.mkdir(parents=True,exist_ok=True);path.write_text(text)
-            if name.endswith('.py'):
+            if languages.get(name)=='python':
                 try:py_compile.compile(str(path),doraise=True)
                 except py_compile.PyCompileError as exc:raise Error('INVALID_PYTHON',f'Python语法错误：{name}') from exc
                 tree=ast.parse(text)
@@ -143,7 +186,7 @@ def static(files: dict[str, bytes], spec: dict, options: dict) -> dict:
                         if isinstance(node.func,ast.Attribute) and node.func.attr in ('write_text','write_bytes'):
                             value=node.func.value
                             if isinstance(value,ast.Call) and value.args and isinstance(value.args[0],ast.Constant) and isinstance(value.args[0].value,str):outputs.add(value.args[0].value)
-            if name.endswith('.sh'):
+            if languages.get(name)=='bash':
                 result=subprocess.run(['bash','-n',str(path)],capture_output=True,text=True,timeout=10)
                 if result.returncode:raise Error('INVALID_BASH',f'Bash语法错误：{name}',{'stderr':result.stderr[:2000]})
         result=subprocess.run(['bash','-n','-c',command],capture_output=True,text=True,timeout=10)
@@ -186,11 +229,14 @@ def static(files: dict[str, bytes], spec: dict, options: dict) -> dict:
                 else:commands.add(executable)
                 if executable.startswith('/'):paths.add(executable)
                 if Path(executable).name in ('bash','sh') or re.fullmatch(r'python[0-9.]*',Path(executable).name):
-                    if len(tokens)>1 and not tokens[1].startswith('-'):
-                        entry=tokens[1]
+                    entry=_script_entry(tokens[1:])
+                    if entry:
                         if not entry.startswith('/') and '$' not in entry:
                             resolved=posixpath.normpath(str(PurePosixPath(cwd_by_source.get(name,'.'))/entry))
                             if resolved not in texts:raise Error('MISSING_ENTRY','入口文件未打包：'+resolved)
+                            expected='python' if re.fullmatch(r'python[0-9.]*',Path(executable).name) else 'bash'
+                            if languages.get(resolved)!=expected:
+                                raise Error('SCRIPT_LANGUAGE_UNKNOWN','入口脚本的解释器尚未检查；请使用.py或.sh后缀：'+resolved)
                             cwd_by_source.setdefault(resolved,cwd_by_source.get(name,'.'))
                 if Path(executable).name=='timeout':
                     for token in tokens[1:]:

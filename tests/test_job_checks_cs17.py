@@ -13,6 +13,13 @@ def spec(command='bash task.sh'):
 @pytest.mark.parametrize('files,command,code',[
     ({'task.sh':b'if true; then\necho unfinished\n'},'bash task.sh','INVALID_BASH'),
     ({'task.py':b'for x in\n'},'python task.py','INVALID_PYTHON'),
+    ({'task.txt':b'for x in\n'},'python task.txt','INVALID_PYTHON'),
+    ({'task.txt':b'for x in\n'},'python -O task.txt','INVALID_PYTHON'),
+    ({'task.txt':b'if true; then\n'},'bash task.txt','INVALID_BASH'),
+    ({'task.txt':b'if true; then\n'},'bash -e task.txt','INVALID_BASH'),
+    ({'task.txt':b'import requests\nrequests.get("https://example.test")\n'},'python task.txt','NETWORK_REQUIRED'),
+    ({'task.sh':b'bash payload.txt\n','payload.txt':b'pip install ase\n'},'bash task.sh','NETWORK_REQUIRED'),
+    ({},'env python -c \'import requests; requests.get("https://example.test")\'','NETWORK_REQUIRED'),
     ({'task.sh':b'pip install ase\n'},'bash task.sh','NETWORK_REQUIRED'),
     ({'task.sh':b'git clone https://example.test/source\n'},'bash task.sh','NETWORK_REQUIRED'),
     ({'task.sh':b'curl https://example.test/data\n'},'bash task.sh','NETWORK_REQUIRED'),
@@ -36,6 +43,20 @@ def test_smoke_time_and_missing_smoke_warning():
     with pytest.raises(job_checks.Error) as exc:
         job_checks.static(files,spec(),{'smoke_seconds':101})
     assert exc.value.code=='INSUFFICIENT_TIME'
+
+
+def test_oversized_source_is_blocked_before_remote_probe_and_job_reservation(run,monkeypatch):
+    _,rid,work,calls,_=run
+    snapshot=json.loads(db.query_one('SELECT config_snapshot FROM runs WHERE id=?',(rid,))[0])
+    snapshot['sandbox_first_version']=1
+    db.execute('UPDATE runs SET config_snapshot=? WHERE id=?',(json.dumps(snapshot),rid))
+    db.execute('UPDATE authorizations SET max_jobs=1 WHERE id=(SELECT authorization_id FROM runs WHERE id=?)',(rid,))
+    (work/'task.sh').write_text('#'+('x'*2_000_000)+'\npip install ase\n')
+    monkeypatch.setattr(job_checks,'image',lambda *args:pytest.fail('不能跳过大脚本检查'))
+    with pytest.raises(compute.ComputeError) as exc:compute.submit(rid,'oversized-job',spec(),str(work))
+    assert exc.value.code=='SOURCE_TOO_LARGE'
+    assert not calls
+    assert db.query_one('SELECT count(*) FROM compute_jobs WHERE run_id=?',(rid,))[0]==0
 
 
 @pytest.mark.parametrize('flags,valid',[('0 0 0',False),('1 1 1',True)])

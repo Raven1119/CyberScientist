@@ -363,10 +363,16 @@ def submit(run_id: str, operation_id: str, spec: dict, input_directory: str,
     if json.loads(run['config_snapshot']).get('sandbox_first_version') == 1:
         from . import job_checks
         _authorized(db.get_db(),run_id)  # Remote image probes require current authority too.
-        checked_files = {rel:(source/rel).read_bytes() for rel,_ in manifest
-                         if (Path(rel).suffix in ('.py','.sh','.txt') or Path(rel).name in ('INPUT','STRU','KPT'))
-                         and (source/rel).stat().st_size <= 2_000_000}
         try:
+            oversized = [rel for rel,_ in manifest
+                         if (Path(rel).suffix in ('.py','.sh') or Path(rel).name in ('INPUT','STRU','KPT'))
+                         and (source/rel).stat().st_size > 2_000_000]
+            if oversized:
+                raise job_preflight.PreflightError('SOURCE_TOO_LARGE',
+                    '待检查脚本或科学输入超过2MB；请拆分后重新提交', {'files': oversized})
+            checked_files = {rel:(source/rel).read_bytes() for rel,_ in manifest
+                             if (Path(rel).suffix in ('.py','.sh','.txt') or Path(rel).name in ('INPUT','STRU','KPT'))
+                             and (source/rel).stat().st_size <= 2_000_000}
             checked = job_checks.static(checked_files,spec,(preflight or {})|{'_file_modes':frozen_modes})
             checked = job_checks.image(run_id,str(spec.get('image_address') or ''),checked)
             db.append_event(run_id,'controller','job.preflight',
