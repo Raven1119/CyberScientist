@@ -877,3 +877,9 @@ CS-UP-13 工作包提交索引（按Git事实，最终W8标签另录）：
 
 - CS-UP-17 W2 已实现：真实GPU探针发现bohr 2.7.8的CPU/GPU快捷参数互斥，即使指定镜像也不能并用；已改为本地拒绝，避免无效原生创建预约。
 - CS-UP-17 W2 已实际验证：24项沙箱回归通过（cs17-gpu-shortcuts.log，18.79秒）。官方DeePMD CPU镜像LAMMPS因CUDA库无效失败；改用单一4090快捷模板后dp/LAMMPS可用，真实DP势三原子run 0退出0（deepmd-lammps-smoke.json）。
+
+### CS-UP-17 W4
+- 已实现：自包含 SCF/cell-relax 附件、INPUT/可动标志/最终SCF及弛豫终态检查；组合镜像配方固定六个材料包。原始日志保持不变，固定dpdata旧标题兼容仅使用临时派生副本并记录原哈希。
+- 已实际验证：私有镜像172937构建状态2；六包import通过；最小Si SCF和pybader默认pickle计算、电荷守恒检查退出0（materials-smoke-poll.json）。已登记competition-materials-20261009和runtime_environments；观察耗时14.88963秒。26项模板/预检回归、17项最终模板/能力/环境回归通过（cs17-template-preflight.log、cs17-template-index-final.log）。两轴审查的目录兼容与早期成功误判问题均已修正。
+- 尚未验证：cell-relax模板的实际科学弛豫不作为已验证结果；本卡要求的真实最小SCF和pybader已完成。
+- 阻塞项：pybader的dat输出与当前pandas旧接口不兼容；默认pickle实测通过，限制已登记。初次预检程序误用后台函数名以及重复观察操作ID被真实保护拒绝，失败日志保留；未重放unknown计算。

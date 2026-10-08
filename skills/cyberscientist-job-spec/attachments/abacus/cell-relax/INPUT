@@ -1,0 +1,16 @@
+INPUT_PARAMETERS
+suffix Si
+calculation cell-relax
+ntype 1
+basis_type pw
+ecutwfc 30
+scf_thr 1.0e-6
+scf_nmax 100
+pseudo_dir ./
+symmetry 1
+cal_force 1
+cal_stress 1
+force_thr_ev 0.01
+stress_thr 0.5
+relax_nmax 60
+out_stru 1

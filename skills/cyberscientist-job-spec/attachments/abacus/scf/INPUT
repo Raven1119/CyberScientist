@@ -1,0 +1,12 @@
+INPUT_PARAMETERS
+suffix Si
+calculation scf
+ntype 1
+basis_type pw
+ecutwfc 30
+scf_thr 1.0e-6
+scf_nmax 100
+pseudo_dir ./
+symmetry 1
+cal_force 1
+cal_stress 1
