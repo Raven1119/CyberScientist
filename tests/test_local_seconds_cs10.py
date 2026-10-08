@@ -53,6 +53,10 @@ print(text)
 def test_old_policy_migrates_and_executor_receives_local_science_environment(run):
     rid,_=run
     settings=config.load_settings();settings['policy']['science_compute']='bohrium_only';config.save_settings(settings)
+    assert config.load_settings()['policy']['science_compute']=='sandbox_first'
+    # Explicit legacy settings remain compatible; migrating the new default
+    # itself no longer authorizes seconds-long local scientific work.
+    settings=config.load_settings();settings['policy']['science_compute']='local_seconds_remote_heavy';config.save_settings(settings)
     assert config.load_settings()['policy']['science_compute']=='local_seconds_remote_heavy'
     executor=FakeExecutor();controller=RunController();controller._prime_instances[rid]=executor;controller._prime_sessions[rid]='fake'
     asyncio.run(controller._apply_decision(rid,_decision([{'op':'start_trial','goal':'synthetic local check','success_check':'real output'}],rid=rid),{},None,None))

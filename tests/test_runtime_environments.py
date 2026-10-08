@@ -10,8 +10,10 @@ from test_compute_gateway import run, spec
 
 def test_recipe_is_not_a_verified_environment_and_identity_mismatch_rejected():
     facts = runtime_environments.facts()
-    assert facts[0]['identity']['lean_version'] == '4.32.2'
-    assert facts[0]['status'] == 'unverified' and facts[0]['image'] is None
+    lean = next(item for item in facts if item['id']=='lean-4.32.2')
+    assert lean['identity']['lean_version'] == '4.32.2'
+    assert lean['status'] == 'unverified' and lean['image'] is None
+    assert next(item for item in facts if item['id']=='competition-materials')['status']=='unverified'
     with pytest.raises(runtime_environments.EnvironmentUnavailable):
         runtime_environments.resolve('lean-4.32.2')
     with pytest.raises(runtime_environments.EnvironmentUnavailable):

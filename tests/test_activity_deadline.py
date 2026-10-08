@@ -60,12 +60,14 @@ class HangingBrain:
     def __init__(self, receipt='accepted', close_fails=False):
         self.turn = None; self.cancelled_turn = None; self.closed = False
         self.receipt = receipt; self.close_fails = close_fails; self.late = asyncio.Event()
+        self.started = asyncio.Event()
 
     async def open(self, spec):
         return SessionRef('fixture', 'original')
 
     async def review(self, session, packet):
         self.turn = 'exact-native-turn'
+        self.started.set()
         try:
             await self.late.wait()
             yield BrainEvent('review_result', {'result': {'schema_version': 1,
@@ -89,12 +91,18 @@ class HangingBrain:
 
 @pytest.mark.parametrize('receipt,close_fails', [('accepted', False), ('unknown', False), ('unknown', True)])
 async def test_review_expiry_interrupts_exact_turn_before_cancellation_without_late_submit(receipt, close_fails):
-    ctl, rid = near_deadline()
+    ctl, rid = run();run_clock.start(rid)
     with db.transaction() as conn:
         req_id = collab._enqueue_request_tx(conn, rid, source='requested', blocking=False, trigger='manual')
     req = db.query_one('SELECT * FROM review_requests WHERE id=?', (req_id,))
     brain = HangingBrain(receipt, close_fails)
-    expired = await asyncio.wait_for(ctl._review_with_deadline(rid, req, brain, SessionRef('fixture', 'original')), 1)
+    reviewing=asyncio.create_task(ctl._review_with_deadline(rid, req, brain, SessionRef('fixture', 'original')))
+    # Expire only after the native turn is live. The old 80ms grant could be
+    # consumed by legitimate cold frame construction before this assertion.
+    await asyncio.wait_for(brain.started.wait(),2)
+    run_clock.freeze(rid)
+    db.execute('UPDATE runs SET active_elapsed_seconds=3600 WHERE id=?',(rid,))
+    expired = await asyncio.wait_for(reviewing,2)
     assert expired and brain.cancelled_turn == 'exact-native-turn' and brain.turn is None
     assert brain.closed == (not close_fails)
     assert not db.query('SELECT * FROM submissions') and not db.query('SELECT * FROM guidance')
@@ -102,6 +110,24 @@ async def test_review_expiry_interrupts_exact_turn_before_cancellation_without_l
     event = db.query_one("SELECT payload FROM events WHERE type='brain.interrupt_requested'")
     assert json.loads(event[0])['receipt']['status'] == receipt
     assert bool(resource_coordinator.close_unknowns()) == close_fails
+
+
+async def test_expiry_during_frame_construction_returns_expired_without_starting_native_turn(monkeypatch):
+    from cyberscientist import observation
+    ctl,rid=run();run_clock.start(rid)
+    with db.transaction() as conn:
+        req_id=collab._enqueue_request_tx(conn,rid,source='requested',blocking=False,trigger='manual')
+    req=db.query_one('SELECT * FROM review_requests WHERE id=?',(req_id,))
+    original=observation.build_frame
+    def expire(*args,**kwargs):
+        packet=original(*args,**kwargs);run_clock.freeze(rid)
+        db.execute('UPDATE runs SET active_elapsed_seconds=3600 WHERE id=?',(rid,));return packet
+    monkeypatch.setattr(observation,'build_frame',expire)
+    brain=HangingBrain()
+    assert await ctl._review_with_deadline(rid,req,brain,SessionRef('fixture','original'))
+    assert not brain.started.is_set() and brain.cancelled_turn is None
+    assert db.query_one('SELECT phase,pending_end_reason FROM runs WHERE id=?',(rid,))[:]==('pausing','authorization_expired')
+    assert db.query_one('SELECT status FROM review_requests WHERE id=?',(req_id,))[0]=='obsolete'
 
 
 def test_heartbeat_keeps_running_while_sandbox_expiry_worker_is_blocked(monkeypatch):

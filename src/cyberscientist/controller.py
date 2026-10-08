@@ -4755,6 +4755,11 @@ class RunController:
             if await self._wait_for_active_work(run_id, task, timeout):
                 await task
                 completed = True
+                # Frame construction can exhaust the grant before a native
+                # turn starts. A completed worker does not imply time remains.
+                if self._run_minutes_exceeded(self._require_run(run_id)):
+                    self._expire_active_run(run_id)
+                    return True
                 return False
             current_run = self._require_run(run_id)
             expired = (current_run['pending_end_reason'] == 'authorization_expired'

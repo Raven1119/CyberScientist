@@ -36,7 +36,7 @@ def test_gpu_sandbox_shortcut_preserves_permission_and_rejects_cpu_mix_before_re
     db.execute('UPDATE authorizations SET unlimited_resources=1,allow_sandbox_gpu=1 WHERE run_id=?', (rid,))
     calls=[]
     monkeypatch.setattr(compute, '_native', lambda a, **k: calls.append(a) or receipt('{"ok":true,"data":{"sandboxID":"gpu-fixture"}}'))
-    with pytest.raises(compute.ComputeError, match='显式镜像'): sandboxes.create(rid, 'bad', {'timeout':60,'gpu':'4090','cpu':'8c32g'})
+    with pytest.raises(compute.ComputeError, match='CPU/GPU.*互斥'): sandboxes.create(rid, 'bad', {'timeout':60,'gpu':'4090','cpu':'8c32g'})
     assert not calls and not db.query('SELECT * FROM compute_sandboxes')
     assert sandboxes.create(rid, 'good', {'timeout':60,'gpu':'4090'})['status'] == 'active'
     assert '--gpu' in calls[0] and '--cpu' not in calls[0]
