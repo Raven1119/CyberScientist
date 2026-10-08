@@ -105,6 +105,7 @@ def isolated_workspace(tmp_path, monkeypatch):
     # CS-UP-14 tests select cli and use a controlled native process fixture.
     # Legacy synthetic flows explicitly disable the new initial approval gate.
     # Dedicated approval tests turn it on and exercise the real structural gate.
+    settings["evidence_mode"] = "development"  # Legacy diagnostics explicitly exercise the unchanged development mode.
     settings["science_first_flow"] = False  # Historical score-wait scenarios explicitly retain the old policy.
     settings["progressive_context"] = False  # Historical protocol fixtures keep the old delivery shape.
     settings["initial_method_approval"] = False

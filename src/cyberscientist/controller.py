@@ -3852,37 +3852,44 @@ class RunController:
                 strategies.ensure_trial_plan(run_id, action['goal'], action['success_check'], dict(created))
                 enabled_skills = self._enabled_skills(
                     run_id, settings, run["challenge_id"], 'executor')
-                task_text = (f"目标：{action['goal']}\n"
-                             f"成功判据：{action['success_check']}\n"
-                             f"Run ID：{run_id}；Trial ID：{trial_id}。\n"
-                             f"交付目录：{config.WORKSPACE_DIR / 'runs' / run_id / 'trials' / trial_id}。\n"
-                             "提交包命名 result_package.zip（真实 ARM 包，包含研究轨迹与诚实结果）；"
-                             "该目录允许写入。用检查点报告交付，交由控制器提交。\n"
-                             f"本轮授权与用户目标：{json.dumps(packet.get('authorization'), ensure_ascii=False)}\n"
-                             f"题目与平台契约：{json.dumps(self._challenge_for_run(run), ensure_ascii=False)}\n"
-                             f"产物路径事实（题面提取与评分器验证范围）：{json.dumps(self._artifact_facts(run['challenge_id']), ensure_ascii=False)}\n"
-                             f"{observation.authority_facts(run_id)['capability_summary']}\n"
-                             f"预置环境事实：{json.dumps(observation.authority_facts(run_id).get('runtime_environments', []), ensure_ascii=False)}\n"
-                             f"运行事实（时间、环境、网络、价格及剩余额度）：{json.dumps(observation.authority_facts(run_id).get('operating_facts'), ensure_ascii=False)}\n"
-                             f"公开数据物化状态：{json.dumps(datasets.status(run['challenge_id'])['items'], ensure_ascii=False)}\n"
-                             "提交包会追加真实事件轨迹并接受准入检查；自有 trace.jsonl 只能使用七种合法 step_type，artifact_path 必须是包内现存文件，禁止编造工具调用或费用。\n"
-                             "冻结经验（只使用这份正文；采用时在检查点声明版本）：\n"
-                             f"{experience_context.encode(experience_context.for_trial(run_id,trial_id))}\n"
-                             f"{executor_instruction_suffix()}"
-                             f"{skills_mod.prompt_segment(enabled_skills)}\n"
-                             f"{features.science_instruction()}"
-                             f"本地科学Python：{config.WORKSPACE_ROOT / '.venv/bin/python'}（numpy/scipy/sympy）；不要修改运行内核、供应商协议或评分器。\n"
-                             "使用 PATH 中的 bohr；它会脱敏原生 CLI 错误输出，不得绕过代理执行原始 CLI。\n"
-                             f"Bohrium 项目 ID：{(settings.get('bohrium') or {}).get('project_id') or '未配置'}。"
-                             "认证通过进程环境提供，不得打印、记录或写入提交包。\n")
-                from . import planning
-                task_text += planning.brief_for_run(run_id)
-                from . import environment_catalog
-                task_text += environment_catalog.executor_instructions(run_id)
-                from . import progressive_context
-                if progressive_context.enabled(run_id):
+                from . import planning,progressive_context,evidence_policy
+                lean=evidence_policy.mode(run_id)=='competition'
+                if lean and action.get('fresh_executor_session'):
+                    task_text=''
+                elif lean and progressive_context.enabled(run_id):
                     task_text=progressive_context.executor_prompt(run_id,trial_id,self._challenge_for_run(run),action['goal'],action['success_check'],observation.authority_facts(run_id),enabled_skills,experience_context.for_trial(run_id,trial_id))
                     task_text+=planning.brief_for_run(run_id)
+                else:
+                    task_text = (f"目标：{action['goal']}\n"
+                                 f"成功判据：{action['success_check']}\n"
+                                 f"Run ID：{run_id}；Trial ID：{trial_id}。\n"
+                                 f"交付目录：{config.WORKSPACE_DIR / 'runs' / run_id / 'trials' / trial_id}。\n"
+                                 "提交包命名 result_package.zip（真实 ARM 包，包含研究轨迹与诚实结果）；"
+                                 "该目录允许写入。用检查点报告交付，交由控制器提交。\n"
+                                 f"本轮授权与用户目标：{json.dumps(packet.get('authorization'), ensure_ascii=False)}\n"
+                                 f"题目与平台契约：{json.dumps(self._challenge_for_run(run), ensure_ascii=False)}\n"
+                                 f"产物路径事实（题面提取与评分器验证范围）：{json.dumps(self._artifact_facts(run['challenge_id']), ensure_ascii=False)}\n"
+                                 f"{observation.authority_facts(run_id)['capability_summary']}\n"
+                                 f"预置环境事实：{json.dumps(observation.authority_facts(run_id).get('runtime_environments', []), ensure_ascii=False)}\n"
+                                 f"运行事实（时间、环境、网络、价格及剩余额度）：{json.dumps(observation.authority_facts(run_id).get('operating_facts'), ensure_ascii=False)}\n"
+                                 f"公开数据物化状态：{json.dumps(datasets.status(run['challenge_id'])['items'], ensure_ascii=False)}\n"
+                                 "提交包会追加真实事件轨迹并接受准入检查；自有 trace.jsonl 只能使用七种合法 step_type，artifact_path 必须是包内现存文件，禁止编造工具调用或费用。\n"
+                                 "冻结经验（只使用这份正文；采用时在检查点声明版本）：\n"
+                                 f"{experience_context.encode(experience_context.for_trial(run_id,trial_id))}\n"
+                                 f"{executor_instruction_suffix()}"
+                                 f"{skills_mod.prompt_segment(enabled_skills)}\n"
+                                 f"{features.science_instruction()}"
+                                 f"本地科学Python：{config.WORKSPACE_ROOT / '.venv/bin/python'}（numpy/scipy/sympy）；不要修改运行内核、供应商协议或评分器。\n"
+                                 "使用 PATH 中的 bohr；它会脱敏原生 CLI 错误输出，不得绕过代理执行原始 CLI。\n"
+                                 f"Bohrium 项目 ID：{(settings.get('bohrium') or {}).get('project_id') or '未配置'}。"
+                                 "认证通过进程环境提供，不得打印、记录或写入提交包。\n")
+                    from . import planning
+                    task_text += planning.brief_for_run(run_id)
+                    from . import environment_catalog
+                    task_text += environment_catalog.executor_instructions(run_id)
+                    if progressive_context.enabled(run_id):
+                        task_text=progressive_context.executor_prompt(run_id,trial_id,self._challenge_for_run(run),action['goal'],action['success_check'],observation.authority_facts(run_id),enabled_skills,experience_context.for_trial(run_id,trial_id))
+                        task_text+=planning.brief_for_run(run_id)
                 if action.get('fresh_executor_session'):
                     from . import clean_runs
                     task_text = clean_runs.prompt(self._challenge_for_run(run), action['clean_handoff'], enabled_skills,
@@ -4454,8 +4461,10 @@ class RunController:
         trial_dir = run_dir / "trials" / trial_id
         trial_dir.mkdir(parents=True, exist_ok=True)
         context = experience_context.freeze(run_id,trial_id,f"trial:{trial_id}",role='executor')
+        from . import evidence_policy
+        manifest=evidence_policy.memory_manifest(context,settings)
         (trial_dir / "memory_manifest.json").write_text(
-            json.dumps(context, ensure_ascii=False, indent=2), encoding="utf-8")
+            json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
 
     # ---------- 查询 ----------
     async def curate_run_experience(self, run_id: str, operation_id: str) -> dict:

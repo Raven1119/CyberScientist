@@ -21,7 +21,9 @@ def cross_run_matches(outputs, run_id):
     """Compare code bytes only; common utilities can match without misconduct."""
     if not run_id:
         return {'status':'unknown', 'reason':'本包尚无Run归属'}
-    from . import config, db
+    from . import config, db,evidence_policy
+    if evidence_policy.mode(run_id)=='competition':
+        return {'status':'not_run','reason':'比赛模式省去跨Run逐文件哈希建议；当前提交源与原生会话完整性仍核查'}
     wanted = {hashlib.sha256(raw).hexdigest():name for name,raw in outputs.items()
               if Path(name).suffix in ('.py','.cpp','.c','.rs','.jl','.lean','.sh')}
     matches=[];checked=0;unknown=0;seen=set()

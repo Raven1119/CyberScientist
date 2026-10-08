@@ -525,6 +525,8 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
                 destination[parts[-1]] = json.loads(json.dumps(source[parts[-1]]))
             from . import challenge_models, model_usage
             try:
+                if merged.get('evidence_mode','competition') not in ('competition','development'): raise ValueError('证据模式须为competition或development')
+                if type(merged.get('science_first_flow',True)) is not bool or type(merged.get('progressive_context',True)) is not bool: raise ValueError('流程/上下文开关须为布尔值')
                 if merged.get('clean_run_policy','when_not_accepted') not in ('when_not_accepted','always_after_science'): raise ValueError('干净复跑策略无效')
                 if type(merged.get('initial_method_approval',True)) is not bool: raise ValueError('方法审批开关须为布尔值')
                 if merged.get('submission_transport','cli') not in ('cli','api'): raise ValueError('submission_transport须为cli或api')

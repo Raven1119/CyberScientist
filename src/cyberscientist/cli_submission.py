@@ -164,8 +164,8 @@ def submit(platform, email, secret, package_path, challenge_id, meta):
             on_package(preview_bytes, {'phase': 'preview', 'sha256': preview_hash})
         except Exception as exc:
             raise PlatformError('官方CLI试构建失败：' + str(exc), no_side_effect=True) from exc
-        from . import trace_hints
-        on_feedback('trace_hint', trace_hints.inspect(preview_bytes))
+        from . import evidence_policy
+        on_feedback('trace_hint', evidence_policy.automatic_trace_hint(preview_bytes,meta.get('run_id')))
         if meta.get('run_id'):
             db.append_event(meta['run_id'], 'controller', 'submission.cli_baseline', {
                 'submission_id': meta['submission_id'], 'owner_id': baseline['owner_id'],
