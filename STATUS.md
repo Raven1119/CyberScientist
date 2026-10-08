@@ -654,3 +654,5 @@ CS-UP-13 工作包提交索引（按Git事实，最终W8标签另录）：
 - 2026-10-08T14:47+08:00 W3可信审计及交付推进（本提交 CS-UP-14）：23502648因正则转义失败保留；修正版23502658已Finished。原生Bohrium日志给出Si截止差−0.004427028585496373 meV/atom，先前口头−4.43不采纳，电荷映射细节另验；没有本地科学计算。06:36再查SCORER_MISSING/0科学分/0提交，持久事实cs14-halfway-required-gates-facts-v1被PI #11493采纳，#11634指导已送达，并行科学验证/可信评分/新沙箱复跑/首包；这些交付项尚未实际完成。
 
 - 2026-10-08T15:05:11.738097+08:00 W3通用评分初始化（本提交 CS-UP-14）：已实际验证原生Trial可写、题目目录errno30只读，确认SCORER_MISSING无法由旧工具修复；已实现一次性当前Trial草稿冻结，保留已有评分器只读、哈希来源和Bohrium执行。相关57 passed/24.65秒、初始化/API/技能25 passed/6.16秒，compileall/diff-check通过；全量回归进行中，实际部署及本题评分尚未验证。
+
+- 2026-10-08T15:10:00.981019+08:00 W3评分入口部署实测（代码d471686 CS-UP-14）：main已推送，安全重部署completed、停机124.973秒/维护137.548秒，preflight warn无fail、代码digest匹配且native_close_unknown=0；#13135恢复原Astra/Terra线程、原Run/Trial/started_at。cs14-scorer-initialize-available-v1已持久排队，实际初始化及科学分仍待验证。全新沙箱Li原生回执含弛豫收敛/最终能量/应力，Si仍运行、LiSi尚未开始，完整复跑未验收；全量回归进行中。

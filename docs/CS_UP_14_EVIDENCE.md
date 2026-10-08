@@ -113,6 +113,8 @@ c8c1e7f完整回归结果：1596 passed、2既有warnings、1003.60秒，final-n
 
 新增受能力令牌保护的initialize动作：执行器在当前Trial编写公开规则草稿，后端仅验证和冻结源字节、source_directory及文件哈希，不执行科学代码。已有评分器（含空目录/链接）、历史初始化或评分记录不可覆盖/删除后重建；越界、链接、凭据、非当前Trial、关闭门、重复操作冲突均拒绝。冻结后的科学评分沿用prepare/register可信Bohrium通道；本地候选标尺不能声称官方科学分。原缺失事实和科学自校验仍保留。相关57 passed/24.65秒，初始化/API/技能25 passed/6.16秒（2既有warnings），全量回归与实际部署尚待完成。
 
+d471686已推送main并安全部署，停机124.972829604秒、维护137.547986269秒；preflight warn无fail，digest实际loaded=checkout，native_close_unknown=0。#13135于07:08:13Z恢复原Astra/Terra线程及Trial，原started_at未变；指导cs14-scorer-initialize-available-v1仅queued，不能提前宣称使用。新沙箱Li原生exec回执含Relaxation is converged!/FINAL_ETOT及压力，原回执SHA和8条标记留clean-li-raw-terminal-proof.json；Si仍运行、LiSi未开始，完整复跑待验收。
+
 ## W4 验收核对（进行中）
 
 |要求|当前事实|直接证据或剩余步骤|
