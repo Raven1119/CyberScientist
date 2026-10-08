@@ -547,6 +547,7 @@ class RunController:
                     "challenge_platform_id": challenge['platform_challenge_id'],
                     "solver_fallback": fallback,
                     "automatic_harvest_version": 1, "method_approval_version": 1,
+                    "science_first_version": 1 if settings.get("science_first_flow",True) else 0,
                     "progressive_context_version": 1 if settings.get("progressive_context",True) else 0,
                     "compute_policy_version": 1, "sparse_brain_version": 1,
                     "lifecycle_version": 2, "submission_prediction_version": 1}
@@ -1425,7 +1426,8 @@ class RunController:
         from . import trial_notes
         trial_notes.record_closed(run_id)
         from . import score_wait
-        if score_wait.enter(run_id):
+        snapshot = json.loads(self._require_run(run_id)["config_snapshot"])
+        if snapshot.get("science_first_version") != 1 and score_wait.enter(run_id):
             if queue := self._signals.get(run_id):
                 queue.put_nowait({'type': 'score_wait'})
         if self._require_run(run_id)['phase'] == 'waiting_score':
@@ -2323,6 +2325,11 @@ class RunController:
                 await asyncio.wait_for(old.close(session), timeout=15)
             except Exception:
                 log.exception("Run %s old executor session close failed", run_id)
+                db.execute("INSERT OR REPLACE INTO system_state VALUES(?,?)",
+                           ("native_close_unknown:" + run_id, json.dumps({"role":"executor","session_id":session})))
+                db.append_event(run_id,"controller","executor.close_unknown",{"session_id":session,"fresh":fresh})
+                return False
+            db.execute("DELETE FROM system_state WHERE key=?",("native_close_unknown:" + run_id,))
         try:
             runtime = self._make_prime(self._runtime_settings(run_id))
             if isinstance(runtime, KimiExecutor):
@@ -3002,7 +3009,8 @@ class RunController:
                     sparse=self._sparse_brain(run))
                 packet["protocol"] = "review_result"
                 packet["sparse_brain_version"] = 1 if self._sparse_brain(run) else 0
-            from . import competition_prompts
+            from . import competition_prompts,clean_runs
+            packet['clean_run']=clean_runs.offer(run_id)
             packet['user_prompt']=competition_prompts.packet(run)
             from . import progressive_context
             if progressive_context.enabled(run_id):
@@ -3232,6 +3240,13 @@ class RunController:
         if result.get('research_brief'):
             result = {**result, 'research_brief': json.loads(observation.strip_secrets(
                 json.dumps(result['research_brief'], ensure_ascii=False)))}
+        if result.get("research_brief"):
+            from . import planning
+            try:
+                planning.validate_brief(run_id,result["research_brief"])
+            except ValueError as exc:
+                self._review_failed(run_id,req,mode,str(exc))
+                return
         if result["frame_id"] != frame.get("frame_id"):
             self._review_failed(run_id, req, mode,
                                 "frame_id 不匹配；按审阅失败处理")
@@ -3352,7 +3367,11 @@ class RunController:
         # 事务外：stop 的原生取消 + submit 自动提交 + 空闲边界投递
         if result.get('research_brief'):
             from . import planning
-            planning.record_brief(run_id, result['research_brief'], 'review:' + req['id'])
+            try:
+                planning.record_brief(run_id, result['research_brief'], 'review:' + req['id'])
+            except ValueError as exc:
+                db.append_event(run_id,'brain','brain.action_rejected',{'op':'research_brief','reason':str(exc)})
+                self._enqueue_lifecycle(run_id,trigger='research_brief_rejected',user_guidance=str(exc))
         if result["disposition"] == "intervene":
             g = result["guidance"]
             if g["kind"] == "stop":
@@ -3731,7 +3750,12 @@ class RunController:
 
         if dec.get('research_brief'):
             from . import planning
-            planning.record_brief(run_id, dec['research_brief'], dec['decision_id'])
+            try:
+                planning.record_brief(run_id, dec['research_brief'], dec['decision_id'])
+            except ValueError as exc:
+                db.append_event(run_id,"brain","brain.action_rejected",{"op":"research_brief","reason":str(exc)})
+                self._enqueue_lifecycle(run_id,trigger="research_brief_rejected",user_guidance=str(exc))
+                return
 
         from . import method_approval
         if method_approval.hold(run_id, dec, packet):

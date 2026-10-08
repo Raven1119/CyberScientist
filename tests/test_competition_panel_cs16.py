@@ -44,3 +44,24 @@ def test_panel_preserves_unknown_and_repair_idempotence():
     request={'operation_id':'same','action':'submission_hold','value':True}
     panel.change(rid,request);assert panel.change(rid,request)['deduplicated']
     with pytest.raises(ValueError):panel.change(rid,request|{'value':False})
+
+
+def test_panel_method_tracks_latest_brief_and_policy_uses_best_science():
+    from cyberscientist import planning,clean_runs
+    _seed_challenge();rid=_make_run();_make_package(rid);mailboxes.register_experiment(1)
+    planning.record_brief(rid,{'science_md':'自主改进后的当前方法','environment_choice':{'mode':'from_zero','reason_md':'fixture'}},'new-method')
+    sub=mailboxes.submit_experiment(rid,'trial_mb1',None,'accepted')
+    db.execute("UPDATE submissions SET harbor_score=100,trace_decision='accept' WHERE id=?",(sub['id'],))
+    assert panel.view()['items'][0]['method_summary']=='自主改进后的当前方法'
+    assert not clean_runs.offer(rid)['recommended']
+    settings=config.load_settings();settings['clean_run_policy']='always_after_science';config.save_settings(settings)
+    row=panel.view()['items'][0]
+    assert row['clean_run']['recommended'] and row['clean_run']['best_science']['id']==sub['id']
+    assert row['clean_run']['automatic_execution'] is False
+
+
+def test_submission_model_uses_bound_trial_not_next_model_or_original_snapshot():
+    _seed_challenge();rid=_make_run()
+    db.append_event(rid,'controller','trial.native_session_bound',{'role':'executor','session_id':'actual','model':'gpt-6-astra','provider':'codex'},trial_id='submitted-trial')
+    change(rid,'executor',{'runtime':'codex','provider':'codex','model_id':'gpt-5.6-terra','reasoning_effort':'xhigh','fast_mode':True})
+    assert mailboxes._submission_metadata(rid,'submitted-trial')['model']=='gpt-6-astra'

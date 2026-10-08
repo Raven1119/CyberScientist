@@ -45,3 +45,17 @@ def test_facts_cannot_escape_run(tmp_path):
     rid=seed();root=config.WORKSPACE_DIR/'runs'/rid;root.mkdir(parents=True,exist_ok=True)
     (root/'facts').symlink_to(tmp_path,target_is_directory=True)
     with pytest.raises(ValueError,match='事实目录'):pc.compact(rid,{'challenge':{}})
+
+
+async def test_missing_capabilities_rejects_brief_with_feedback_without_ending_run():
+    from test_mailboxes import _seed_challenge,_make_run
+    from test_decision import valid_decision
+    from cyberscientist.controller import RunController
+    _seed_challenge();rid=_make_run()
+    snapshot=json.loads(db.query_one('SELECT config_snapshot FROM runs WHERE id=?',(rid,))[0]);snapshot['progressive_context_version']=1
+    db.execute("UPDATE runs SET phase='running',gate='open',config_snapshot=? WHERE id=?",(json.dumps(snapshot),rid))
+    ctrl=RunController()
+    await ctrl._apply_decision(rid,valid_decision(run_id=rid,research_brief={'science_md':'方法','environment_choice':{'mode':'from_zero','reason_md':'fixture'}}),{},None,None)
+    assert db.query_one('SELECT phase FROM runs WHERE id=?',(rid,))[0]=='running'
+    assert not db.query_one("SELECT 1 FROM events WHERE run_id=? AND type='research.brief_written'",(rid,))
+    assert db.query_one("SELECT 1 FROM review_requests WHERE run_id=? AND trigger='research_brief_rejected'",(rid,))

@@ -27,7 +27,13 @@ def prompt(challenge, handoff, enabled_skills, capability_index):
             + skills.prompt_segment(enabled_skills) + '\n能力索引：\n' + capability_index)
 
 
-def should_offer(run_id):
+def offer(run_id):
     from . import db
-    latest = db.query_one("SELECT harbor_score,trace_decision FROM submissions WHERE run_id=? AND harbor_score IS NOT NULL ORDER BY harbor_score DESC,created_at DESC LIMIT 1", (run_id,))
-    return bool(latest and (config.load_settings().get('clean_run_policy','when_not_accepted') == 'always_after_science' or latest['trace_decision'] not in (None,'accept')))
+    policy=config.load_settings().get('clean_run_policy','when_not_accepted')
+    latest=db.query_one("SELECT id,harbor_score,trace_decision FROM submissions WHERE run_id=? AND harbor_score IS NOT NULL ORDER BY harbor_score DESC,created_at DESC,rowid DESC LIMIT 1",(run_id,))
+    return {'policy':policy,'recommended':bool(latest and (policy=='always_after_science' or latest['trace_decision'] not in (None,'accept'))),
+            'best_science':dict(latest) if latest else None,'decision_owner':'PI','automatic_execution':False}
+
+
+def should_offer(run_id):
+    return offer(run_id)['recommended']

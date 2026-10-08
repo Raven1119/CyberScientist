@@ -44,6 +44,7 @@ def update_secret(secret_id: str, value: str | None) -> None:
         save_secrets(secrets)
 
 DEFAULT_SETTINGS: dict[str, Any] = {
+    "science_first_flow": True,
     "initial_method_approval": True,
     "progressive_context": True,
     "clean_run_policy": "when_not_accepted",

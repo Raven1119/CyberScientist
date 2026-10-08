@@ -3,7 +3,7 @@ import {api} from './api'
 import {MethodApproval} from './MethodApproval'
 import {CleanRunButton} from './CleanRunButton'
 import {AccountRoles} from './AccountRoles'
-type Row={run_id:string;challenge_id:string;title:string;track:string;phase:string;run_phase:string;current_trial_id:string|null;method_summary:string;scoring_seconds:number|null;next_step:string;submission_held:boolean;mailbox_id:string|null;executor:{model_id:string};receipt:null|{harbor_score:number|null;trace_score:number|null;trace_decision:string|null;receipt_details_json:string;email:string}}
+type Row={clean_run?:{policy:string;recommended:boolean};run_id:string;challenge_id:string;title:string;track:string;phase:string;run_phase:string;current_trial_id:string|null;method_summary:string;scoring_seconds:number|null;next_step:string;submission_held:boolean;mailbox_id:string|null;executor:{model_id:string};receipt:null|{harbor_score:number|null;trace_score:number|null;trace_decision:string|null;receipt_details_json:string;email:string}}
 type Panel={items:Row[];auto_submission:boolean;distributions:unknown[];repairs:{operation_id:string;text_md:string;created_at:string}[];alerts:{id:string;title:string}[]}
 export function CompetitionPanel(){
  const [value,setValue]=useState<Panel|null>(null),[error,setError]=useState(''),[busy,setBusy]=useState(false),[guidance,setGuidance]=useState<Record<string,string>>({}),[accounts,setAccounts]=useState<{id:string;email:string;role:string;status:string}[]>([])
@@ -16,8 +16,8 @@ export function CompetitionPanel(){
  <div className="card-body">{error&&<p role="alert">{error}</p>}
  {value&&<table><thead><tr><th>题目 / 赛道 / 阶段</th><th>方法</th><th>真实回执 / 评分时长 / 账号</th><th>下一步 / 操作</th></tr></thead><tbody>{value?.items.map(r=><tr key={r.run_id}>
  <td>{r.title}<br/>{r.track} · {r.phase}</td><td>{r.method_summary}<MethodApproval runId={r.run_id} onChanged={()=>void refresh()}/></td>
- <td>科学 {r.receipt?.harbor_score??'unknown'} · 轨迹 {r.receipt?.trace_score??'unknown'}<br/>{r.receipt?.trace_decision??'unknown'}<pre>{r.receipt?.receipt_details_json?JSON.stringify(JSON.parse(r.receipt.receipt_details_json).trace_low_score_reasons??[]):'[]'}</pre>{r.scoring_seconds===null?'unknown':`${Math.round(r.scoring_seconds/60)} 分钟`}<br/>{r.receipt?.email??'尚未提交'}</td>
- <td>{r.next_step}<div className="button-row">
+ <td>科学 {r.receipt?.harbor_score??'unknown'} · 轨迹 {r.receipt?.trace_score??'unknown'}<br/>{r.receipt?.trace_decision??'unknown'}<pre>{r.receipt?.receipt_details_json?JSON.stringify(JSON.parse(r.receipt.receipt_details_json).deductions??[]):'[]'}</pre>{r.scoring_seconds===null?'unknown':`${Math.round(r.scoring_seconds/60)} 分钟`}<br/>{r.receipt?.email??'尚未提交'}</td>
+ <td>{r.next_step}{r.clean_run&&<p>干净复跑：{r.clean_run.policy} · {r.clean_run.recommended?'建议 PI 评估':'暂未触发'}</p>}<div className="button-row">
  <button aria-label={`${r.title}启动`} disabled={busy||r.run_phase!=='created'} onClick={()=>void act(`/api/v1/runs/${r.run_id}/start`,{})}>启动</button>
  <button aria-label={`${r.title}暂停`} disabled={busy||r.run_phase!=='running'} onClick={()=>void control(r,'pause')}>暂停</button>
  <button aria-label={`${r.title}恢复`} disabled={busy||!['paused','recovering'].includes(r.run_phase)} onClick={()=>void control(r,'resume')}>恢复</button>

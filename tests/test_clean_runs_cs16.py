@@ -52,3 +52,15 @@ def test_policy_default_and_no_score_no_automatic_clean_run():
     _seed_challenge();rid=_make_run()
     assert config.DEFAULT_SETTINGS['clean_run_policy']=='when_not_accepted'
     assert not clean_runs.should_offer(rid)
+
+async def test_unknown_old_close_retains_handle_and_prevents_new_trial(monkeypatch):
+    _seed_challenge();rid=_make_run();db.execute("UPDATE runs SET phase='running',gate='open' WHERE id=?",(rid,))
+    class Old:
+        async def close(self,sid):raise RuntimeError('synthetic close unknown')
+    old=Old();ctrl=RunController();ctrl._prime_instances[rid]=old;ctrl._prime_sessions[rid]='old'
+    monkeypatch.setattr(ctrl,'_make_prime',lambda settings:(_ for _ in ()).throw(AssertionError('must not start')))
+    action={'op':'start_trial','goal':'fresh','success_check':'complete','fresh_executor_session':True,'clean_handoff':HANDOFF}
+    await ctrl._apply_decision(rid,valid_decision(run_id=rid,actions=[action]),{},None,None)
+    assert ctrl._prime_instances[rid] is old and ctrl._prime_sessions[rid]=='old'
+    assert not db.query('SELECT * FROM trials WHERE run_id=?',(rid,))
+    assert db.query_one('SELECT 1 FROM system_state WHERE key=?',('native_close_unknown:'+rid,))

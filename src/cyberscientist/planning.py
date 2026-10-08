@@ -68,17 +68,22 @@ def startup(run_id: str, challenge: dict) -> dict:
     return context
 
 
-def record_brief(run_id: str, brief: dict, decision_id: str) -> dict:
+def validate_brief(run_id: str, brief: dict) -> dict:
+    if not isinstance(brief,dict):raise ValueError('研究简报必须为对象')
     safe = json.loads(redact(json.dumps(brief, ensure_ascii=False), config.sensitive_values()))
-    from . import progressive_context
+    from . import progressive_context,environment_catalog
     if progressive_context.enabled(run_id) and not (isinstance(safe.get('selected_capabilities'),list) and safe['selected_capabilities'] and all(isinstance(v,str) and v.strip() for v in safe['selected_capabilities'])):
         raise ValueError('研究简报必须填写selected_capabilities能力ID列表')
+    if environment_catalog.enabled() and not safe.get('environment_choice') and environment_catalog.current(run_id)['mode'] == 'unknown':
+        raise ValueError('首份研究简报必须给出environment_choice：选择目录起点或明确from_zero')
+    return safe
+
+
+def record_brief(run_id: str, brief: dict, decision_id: str) -> dict:
+    safe=validate_brief(run_id,brief)
     from . import environment_catalog
-    if environment_catalog.enabled():
-        if not safe.get('environment_choice') and environment_catalog.current(run_id)['mode'] == 'unknown':
-            raise ValueError('首份研究简报必须给出environment_choice：选择目录起点或明确from_zero')
-        if safe.get('environment_choice'):
-            environment_catalog.choose(run_id, safe['environment_choice'])
+    if environment_catalog.enabled() and safe.get('environment_choice'):
+        environment_catalog.choose(run_id,safe['environment_choice'])
     body = '# PI 研究简报\n\n' + '\n\n'.join(
         f"## {key}\n\n" + (value if isinstance(value, str) else
                               json.dumps(value, ensure_ascii=False, indent=2))

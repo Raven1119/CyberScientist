@@ -328,8 +328,8 @@ def _record_feedback(conn, row, kind: str, response: dict[str, Any]) -> bool:
     return True
 
 
-def _submission_metadata(run_id: str) -> dict[str, Any]:
-    """Model identity follows the frozen Run, not today's connection settings."""
+def _submission_metadata(run_id: str, trial_id: str | None = None) -> dict[str, Any]:
+    """Prefer the submitted Trial native identity; legacy Runs use their snapshot."""
     run = db.query_one("SELECT mode,config_snapshot FROM runs WHERE id=?", (run_id,))
     settings = json.loads(run["config_snapshot"]).get("settings", {})
     executor = settings.get("executor") or {}
@@ -337,6 +337,11 @@ def _submission_metadata(run_id: str) -> dict[str, Any]:
     label = {"codex": "Codex", "kimi": "Kimi Code", "prime": "Prime Agent",
              "demo": "Demo"}.get(runtime, "unknown")
     model = "demo" if runtime == "demo" else executor.get("model_id")
+    binding=db.query_one("SELECT payload FROM events WHERE run_id=? AND trial_id=? AND source='controller' AND type='trial.native_session_bound' ORDER BY seq DESC LIMIT 1",(run_id,trial_id)) if trial_id else None
+    if binding:
+        actual=json.loads(binding[0])
+        model=actual.get("model") or model
+        label={"codex":"Codex","kimi":"Kimi Code","prime":"Prime Agent"}.get(actual.get("runtime") or actual.get("provider"),label)
     return {"model": model, "harness": f"CyberScientist ({label})"}
 
 
@@ -919,7 +924,7 @@ def _perform_submission(sid: str, platform: MailboxPlatform, challenge_id: str,
             meta={"on_stage": stage, "on_feedback": feedback, "on_package": official_package, "run_id": row["run_id"],
                   "trial_id": row["trial_id"], "submission_id": sid,
                   "package_bytes": frozen_bytes,
-                  "trace": _form_trace(frozen_bytes), **_submission_metadata(row["run_id"]),
+                  "trace": _form_trace(frozen_bytes), **_submission_metadata(row["run_id"],row["trial_id"]),
                   **({'resume_attempt_id': resume_attempt_id} if resume_attempt_id else {})})
         # Only explicit definitive rejection without a remote side effect releases quota.
         status = "submitted" if receipt.get("accepted") is True else "unknown"

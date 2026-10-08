@@ -14,6 +14,7 @@ class Executor:
         return ActionReceipt(status='accepted',detail='synthetic compute accepted',operation_id='fixture')
 
 async def test_propose_approve_compute_submit_early_science_iterate_rotate(monkeypatch):
+    settings=config.load_settings();settings["science_first_flow"]=True;config.save_settings(settings)
     _seed_challenge();rid=_make_run(max_submissions=4)
     snapshot=json.loads(db.query_one('SELECT config_snapshot FROM runs WHERE id=?',(rid,))[0])
     snapshot['settings']['initial_method_approval']=True
@@ -34,7 +35,13 @@ async def test_propose_approve_compute_submit_early_science_iterate_rotate(monke
     _make_package(rid,trial['id'],'{"version":1,"synthetic":true}')
     db.execute("UPDATE trials SET status='done' WHERE id=?",(trial['id'],))
     monkeypatch.setattr(local_scoring,'score_candidate',lambda *a,**k:(_ for _ in ()).throw(AssertionError('local score must not gate submission')))
-    first=mailboxes.submit_experiment(rid,trial['id'],None,'science-first')
+    from httpx import ASGITransport,AsyncClient
+    from cyberscientist import api
+    monkeypatch.setattr(api,'controller',ctrl)
+    async with AsyncClient(transport=ASGITransport(app=api.create_app()),base_url='http://fixture') as client:
+        response=await client.post(f'/api/v1/runs/{rid}/submissions',json={'trial_id':trial['id'],'operation_id':'science-first'})
+    assert response.status_code==200
+    first=response.json()
     assert first['status']=='submitted'
     assert db.query_one('SELECT phase FROM runs WHERE id=?',(rid,))[0]=='running'
     # PI can continue before the receipt is final; no automatic score_wait.
@@ -43,6 +50,9 @@ async def test_propose_approve_compute_submit_early_science_iterate_rotate(monke
     await ctrl._apply_decision(rid,decision,{},None,None)
     second_trial=db.query_one('SELECT current_trial_id FROM runs WHERE id=?',(rid,))[0]
     assert second_trial!=trial['id'] and len(executor.prompts)==2
+    ctrl.notify_run_change(rid)
+    assert db.query_one('SELECT status FROM trials WHERE id=?',(second_trial,))[0]=='active'
+    assert db.query_one('SELECT phase FROM runs WHERE id=?',(rid,))[0]=='running'
     with db.transaction() as conn:
         mailboxes._record_feedback(conn,conn.execute('SELECT * FROM submissions WHERE id=?',(first['id'],)).fetchone(),'attempt',{'scoringState':{'scoreIsFinal':False},'scorecard':{'harbor_score':75}})
     assert db.query_one("SELECT 1 FROM review_requests WHERE run_id=? AND trigger='submission_feedback' AND status='pending'",(rid,))

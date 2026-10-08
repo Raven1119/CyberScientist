@@ -11,7 +11,7 @@ def state(run_id, key, fallback=None):
 
 
 def view():
-    from . import alerts,features,platform_scores
+    from . import alerts,features,platform_scores,clean_runs
     rows=[]
     for run in db.query("SELECT r.*,c.title FROM runs r JOIN challenges c ON c.id=r.challenge_id WHERE r.id=(SELECT r2.id FROM runs r2 WHERE r2.challenge_id=r.challenge_id ORDER BY r2.created_at DESC,r2.rowid DESC LIMIT 1) ORDER BY r.created_at DESC"):
         snapshot=json.loads(run['config_snapshot']);method=method_approval.state(run['id'])
@@ -20,6 +20,9 @@ def view():
         phase='等待批准' if run['gate']=='awaiting_method_approval' else '暂停' if run['phase'] in ('paused','pausing') else '完成' if run['phase'] in ('finished','failed','cancelled') else '干净复跑' if clean else '探索'
         brief=db.query_one("SELECT payload FROM events WHERE run_id=? AND type='research.brief_written' ORDER BY seq DESC LIMIT 1",(run['id'],))
         proposal=method.get('proposal') or {}
+        current=json.loads(brief['payload']).get('brief',{}) if brief else {}
+        summary=(current.get('method_proposal') or {}).get('method_md') or current.get('method_md') or current.get('science_md') or current.get('ranked_methods') or proposal.get('method_md','尚未提案')
+        if not isinstance(summary,str):summary=json.dumps(summary,ensure_ascii=False)
         next_step='等待初始方法批准' if phase=='等待批准' else state(run['id'],'panel_next','由 PI 根据科学检查与真实回执决定')
         elapsed=None
         if receipt and receipt['submitted_at']:
@@ -27,7 +30,7 @@ def view():
             start=_instant(receipt['submitted_at']);end=_instant(receipt['scored_at']) if receipt['score_is_final'] else datetime.now(timezone.utc)
             elapsed=max(0,(end-start).total_seconds()) if start and end else None
         rows.append({'run_id':run['id'],'challenge_id':run['challenge_id'],'title':run['title'],'track':snapshot.get('competition',{}).get('round_id','单题'),'phase':phase,'run_phase':run['phase'],'current_trial_id':run['current_trial_id'],
-                     'method_summary':proposal.get('method_md','尚未提案')[:300],'method':method,'receipt':{k:receipt[k] for k in ('id','harbor_score','trace_score','trace_decision','receipt_details_json','score_is_final','email')} if receipt else None,'scoring_seconds':elapsed,'next_step':next_step,'submission_held':state(run['id'],'submission_hold',False),'mailbox_id':state(run['id'],'preferred_mailbox'),
+                     'method_summary':summary[:300],'clean_run':clean_runs.offer(run['id']),'method':method,'receipt':{k:receipt[k] for k in ('id','harbor_score','trace_score','trace_decision','receipt_details_json','score_is_final','email')} if receipt else None,'scoring_seconds':elapsed,'next_step':next_step,'submission_held':state(run['id'],'submission_hold',False),'mailbox_id':state(run['id'],'preferred_mailbox'),
                      'executor':state(run['id'],'executor_override',snapshot['settings'].get('executor',{}))})
     # Public aggregation cache only; never expose author identities or ranking rows.
     with platform_scores._lock:
