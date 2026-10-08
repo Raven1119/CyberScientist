@@ -704,3 +704,5 @@ CS-UP-13 工作包提交索引（按Git事实，最终W8标签另录）：
 - 2026-10-08T10:59:12.148528+00:00 W4链路取证交付（代码aaa4133 / 本提交 CS-UP-14）：全局author视图实读10个历史Attempt、最新10-07，题目完整分页仍无10-08匹配；网络被发送前拦截的官方CLI预演准确构造中央POST/multipart4822字节、带认证、包/原生字节不变，没有实际重发。此项仅验证本地处理及请求构造，不把通用“无法连接worker”归因当事实。真实链路继续UNKNOWN，缺原首次stderr和权威未存储回执；unknown预约/原时钟/额度不改。原件保留在.package-checks/cs-up-14。仅交付代码/证据和fallback-5基线，不将标签当Worker验收；科研、收割、彩排二及阶段4停止。
 
 - 2026-10-08T11:07:14.269772+00:00 W4标签与交付核对（本提交 CS-UP-14）：main及注释标签lightchaser-fallback-5已推送，远端剥离SHA=e0b46b2453121fc51405b0d91fe0354c3eb77306；fallback-4仍为ad9bb076128815f543a8519c10db4ca9b47c1038。两个远端指针逐项一致，delivery-tags-proof.json及22项私有证据SHA清单留本地；36个改动受控文件凭据比对0命中/0原件入Git，tracked工作区在本追加前干净，用户未跟踪文件未动。代码基线已交付，但用户最新“打通提交链路”目标仍未满足：首次真实提交unknown、尚无正式Worker回执；后续仅处理该阻塞，不推进科研或其他阶段。
+
+- 2026-10-08T11:11:30.432667+00:00 提交链路复查（本提交 CS-UP-14）：已部署后端真实POST /api/v1/submissions/poll按该Run只读查询，#26412/11:10:53Z仍absence_observed、candidates/matches空、retry_allowed=false。提交status/stage/ref/预约及sealed SHA前后完全一致，原Run仍finished/authorization_expired；没有新建Run、Attempt、计算或延长时钟。原缺失stderr/权威未存储证明的同一阻塞第二轮复现；此轮仅复核、没有使真实链路更接近成功，不计作功能进展。证据chain-blocker-second-turn-proof.json，保持目标active，不提前称通过或blocked。
