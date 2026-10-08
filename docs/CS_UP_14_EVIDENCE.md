@@ -121,6 +121,8 @@ d471686已推送main并安全部署，停机124.972829604秒、维护137.5479862
 
 初始化真实调用#14274/#14280/#14287均在清单验证拒绝，未冻结；原通用反馈误称远端副作用unknown，执行器停止盲重试。API回归0.85秒复现后，只对initialize的受控拒绝明确none及原操作ID，其他执行unknown不变，技能补整数1示例。71项相关回归28.78秒、16项初始化/unknown保持回归7.55秒（2既有warnings）通过；新源码全量进行中、实际部署待验。草稿仅作公开低置信度契约代理，不解释成完整科学正确性；实际科学自校验另取Bohrium原件。
 
+1e026d8已推送并于07:51安全部署，停机123.598986783秒、维护136.514518152秒，preflight warn，digest匹配、native_close_unknown=0；#14569恢复原Astra/Terra线程。fixed-draft-manifest-validation.json记录只读清单验证及真实源哈希，没有执行科学代码或冻结。新指导cs14-scorer-validation-no-remote-effect-fix-v1已queued；仍0评分/0提交。
+
 ## W4 验收核对（进行中）
 
 |要求|当前事实|直接证据或剩余步骤|

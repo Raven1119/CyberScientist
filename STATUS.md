@@ -662,3 +662,5 @@ CS-UP-13 工作包提交索引（按Git事实，最终W8标签另录）：
 - 2026-10-08T15:32:41.351656+08:00 W3清洁复跑/评分指导实测（本提交 CS-UP-14）：全新沙箱Si原生exec回执trial_de05641608_clean_si_native_tail_13含三步SCF、压力23.208648/−15.207451/−0.019365 kbar及Relaxation is converged!/FINAL_ETOT，原回执SHA留clean-si-raw-terminal-proof.json；Li与Si终态已有真实记录，LiSi已启动但完整复跑尚未验证。PI #13871指导guidance_649336ff10已经checkpoint实际sent且acknowledged，初始化和科学分仍0。补验23502690退出143/Failed原件保留，未据此归因为科学失败；0提交/0收割。
 
 - 2026-10-08T15:48:43.210915+08:00 W3初始化反馈修复（本提交 CS-UP-14）：实际#14274/#14280/#14287三次校验拒绝前没有冻结评分器/远端动作，通用反馈却标unknown，执行者停止盲重试。0.85秒红回归复现；初始化校验拒绝现在明确remote_effect=none并返回原operation_id，其他评分执行unknown/不重发保留；技能新增整数1契约示例。相关71 passed/28.78秒，初始化与unknown保留16 passed/7.55秒（2既有warnings），compileall/diff-check/凭据扫描通过；新源码全量进行中、实际部署待验。当前草稿只读清单校验通过但科学代码未执行/未冻结，评分仍0。
+
+- 2026-10-08T15:54:00.787972+08:00 W3反馈修复部署实测（代码1e026d8 CS-UP-14）：main已推送；安全重部署completed、停机123.599秒/维护136.515秒、preflight warn、digest匹配/native_close_unknown=0，#14569恢复原Astra/Terra线程。修正草稿同清单只读验证通过，仍未冻结/科学评分0；cs14-scorer-validation-no-remote-effect-fix-v1已持久queued。新源码全量进行中；科学流程、首包/提交/收割继续原Run，时钟和额度未重置。
