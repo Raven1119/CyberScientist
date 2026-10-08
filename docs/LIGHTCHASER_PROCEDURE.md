@@ -168,29 +168,28 @@
 7. **赛末 2 小时内**：只修影响提交和收割的问题，其他记下来赛后处理。
 8. **告知**：在日志中记录时间、根因、改动、停机时长和效果，写进 `docs/LIGHTCHASER_HOTFIX_LOG.md`，并用一句话告诉用户。
 
-## 六、提交链路切换（官方 CLI）
+## 六、官方 CLI 提交与故障处理
 
-CS-UP-13 W6只读调查，尚未切换应用提交链路。已安装@paper2arm/playground-cli 0.1.33，dist/index.js SHA256 d231fefe0f11a481866aeae399906fc587e75d95c0cf08ff405b3f6f7ee48b03。来源package.json指向Osgood001/playground-cli；当前npm registry为https://registry.npmmirror.com，全局安装锁记录缺失，最初安装命令unknown。没有安装、升级或改全局配置。
+项目内官方CLI0.1.39位于.package-checks/playground-cli-0.1.39/package/dist/index.js。下载自官方latest.json给出的包URL，tarball SHA256 3ea6a15807ed3ca00f6a88b07fa5165ec0a8413251c3a8efdabc580c2e58c023，实收121215字节；全局0.1.33及配置未改。更新时先GET默认latest清单、核对tarball哈希并在项目内解包，不运行全局安装脚本。清单无签名，哈希只证明与清单一致。
 
-官方CLI自带update-check只检查更新，不执行安装（源码1167–1222、4574）。2026-10-08只读GET默认更新地址http://nwjs1473070.bohrium.tech:50003/latest.json，返回0.1.39，tarball路径/packages/paper2arm-playground-cli-0.1.39.tgz，声明SHA256 3ea6a15807ed3ca00f6a88b07fa5165ec0a8413251c3a8efdabc580c2e58c023。安装脚本支持PLAYGROUND_NPM_PREFIX；阶段2将下载核对哈希并只在项目内解包，不执行全局脚本。最新清单本身没有签名，供应来源不能由哈希证明。只读副本在.package-checks/cs-up-13/pg-latest和pg-installer。
+AgentMaster只读调查：host/submission.py:30–42使用submit --challenge-id --outputs --trace --model --harness；:64–80只把邮箱令牌放PLAYGROUND_TOKEN；:141–198先记录submitting再调用CLI，失败保守计数。169个command.json记录证实这些参数（含不同轮次和dry-run，不能等同169个有效评分）。原始安装命令及历史Worker环境配置unknown；当前已安装包源码默认Worker为http://47.92.88.121:443/api。其stage_trace_upload会过滤传输错误，违反本轮不得改原始记录的要求，本系统不采用该过滤做法。
 
-Worker必须同时设置PLAYGROUND_ALLOW_WORKER_API_OVERRIDE=1及PLAYGROUND_WORKER_API_BASE=http://47.92.88.121:443/api（源码1336–1348）。--worker-api-base仅用于task-package上传，不配置比赛submit（2488）。令牌由--token-env或配置tokenEnv选择，Worker可另用--worker-token-env，未提供时回落平台令牌（1350–1368、3700–3707）。只向子进程环境注入，不写配置、命令行或日志。
-
-submit --help列出--challenge-id、--outputs、--trace、--raw-messages、--model、--harness、--bundle-out、--dry-run。已封存包使用--bundle与可选--attempt-id。源码3502、3576生成新包时把raw消息写为raw_messages.jsonl；已有--bundle分支不会把--raw-messages重新写入ZIP（3708–3739）。因此原生最终Trial日志必须在封存前进入包，不能靠追加参数修改已封存哈希。--trace用于身份与轨迹读取，manifest必须与封存快照一致，科学产物、原生会话和投影轨迹分别保留。
-
-手动命令模板（令牌由可信后端进程环境注入CS_PLAYGROUND_SUBMIT_TOKEN，模板不包含密钥）：
+0.1.39源码1376–1379配置Worker：PLAYGROUND_ALLOW_WORKER_API_OVERRIDE=1和PLAYGROUND_WORKER_API_BASE必须同时存在。设置--worker-api-base只用于task包上传。令牌通过--token-env/--worker-token-env指定环境变量，单个可信子进程注入，用完释放，不写配置/参数/日志。已封存包使用--bundle、--trace和--manifest；已有包分支3860–3901不会重写raw消息，科学产物及原生日志必须在封存之前装入原包，不能靠--raw-messages修改已封存ZIP。
 
 ```bash
 PLAYGROUND_NO_UPDATE_CHECK=1 PLAYGROUND_ALLOW_WORKER_API_OVERRIDE=1 \
 PLAYGROUND_WORKER_API_BASE=http://47.92.88.121:443/api \
-playground submit --challenge-id ENDED_TOPIC_ID --bundle sealed/package.zip \
+node .package-checks/playground-cli-0.1.39/package/dist/index.js submit \
+  --challenge-id ENDED_TOPIC_ID --bundle sealed/package.zip \
   --trace FINAL_TRIAL_NATIVE.jsonl --manifest sealed/arm_manifest.json \
   --token-env CS_PLAYGROUND_SUBMIT_TOKEN --worker-token-env CS_PLAYGROUND_SUBMIT_TOKEN
 ```
 
-Codex原生日志读取及转换在loadTrace（1068）、convertCodexEvents/convertModernCodexRollout与cmdTraceConvert（3431）中。modern response_item先识别；旧event流的opencodeEventLike把任意type=error识别为OpenCode（589），其分支先于codexEventLike（956、1068），从而丢掉其他Codex事件。原始记录不得删改；有问题时新开干净Trial。现有离线诊断仅在临时副本修转换分支，不能将它当官方CLI真实提交验证。阶段2要在0.1.39与真实三种模型日志上复核。
+CS_PLAYGROUND_SUBMIT_TOKEN仅由后端环境注入，模板不含实际值。CLI创建Attempt后上传同一ZIP到Worker /uploads；stdout成功只证明这次传输回执，须另查正式评分来源harbor_worker、轨迹分、判定和missing_worker_submission。源码3958保留同一Attempt的三次内置上传重试；外层不得重复调用CLI补发unknown，也不得自动切API再次创建。
 
-应用改动入口为mailbox_platform.submit_once与mailboxes._perform_submission。后者继续负责题目存在性、封存哈希、授权、D-64队列和D-66屏障；收割通过同一入口。CLI createAttempt再worker/uploads（3742–3784），不提供幂等键，且上传内部会对408/429/5xx最多三次重试（3800）。unknown只能按邮箱+题目只读列Attempt对账，不自动重发；不能把HTTP上传成功说成harbor_worker出分。阶段2需据新版协议保留这些保护并使transport可回退。
+转换复核（0.1.39源码607、974–978、1052）：现代Codex rollout在response_item分支优先，真实Terra/Astra/DeepSeek日志分别转换9/8/902步，工具配对1/1、1/1、423/423，原文件SHA未变。旧Codex event流仍受type=error误判OpenCode的缺陷影响：合成干净输入2步，加一条传输错误后只剩1条error，工具证据丢失。不能删错误或重写原生日志；另开干净会话，原失败原样归档。CLI生成新包的writeRawMessages还会加session_start/脱敏，已有包路径避免重写，系统需封存原始字节并单独扫描密钥。
+
+系统改造入口mailbox_platform与mailboxes._perform_submission；题目存在性、封存SHA、D-64间隔、D-66屏障和收割窗口继续统一准入。W2完成后默认submission_transport=cli，api只作显式回退。unknown先按邮箱身份+题目分页只读对账；没有权威未存储证明时保持unknown，不通过重发试探。缺原生记录或含密钥时停止提交，做干净Trial，不能从其他Run借轨迹。
 
 ## 七、汇报格式
 
