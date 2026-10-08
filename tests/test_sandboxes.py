@@ -65,6 +65,14 @@ def test_authorization_flag_and_budget_boundaries(run):
     assert sum(a[:2]==['sandbox','create'] for a in calls)==1
 
 
+def test_native_gpu_cpu_shortcuts_are_rejected_before_reservation(run):
+    _,rid,_,calls,_=run
+    with pytest.raises(compute.ComputeError,match='互斥'):
+        sandboxes.create(rid,'invalid-hardware',{'image':'fixture','cpu':'4c8g','gpu':'4090','timeout':60})
+    assert not calls
+    assert db.query_one('SELECT 1 FROM compute_sandboxes WHERE operation_id=?',('invalid-hardware',)) is None
+
+
 def test_ownership_paths_exec_events_and_cleanup(run):
     c,rid,work,calls,_=run
     sid=sandboxes.create(rid,'owned',{'timeout':600})['sandbox_id']
