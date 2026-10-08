@@ -84,6 +84,8 @@ CLI前置真实只读探针：按产品当前选择逻辑确定实验邮箱及�
 
 c8c1e7f完整回归结果：1596 passed、2既有warnings、1003.60秒，final-native-frame-pytest.log；native-frame-test-source.json的五个关键源码/测试哈希复核一致，后续仅报告修改。前端自104项测试及构建通过后无代码变化。05:38:55Z直接核对23502561回收的app/outputs六项文件及各SHA，public_contract_validation.json实际为PASS/issues=[]；只证明六件文件与公开契约，科学分和干净复跑仍未验收（candidate-six-files-proof.json）。PI #7431/7432在同Run启动承接Trial trial_de05641608，沿用原Terra会话、原授权及累计2+1额度；新环境冒烟首版失败保留，修正版23502592实际运行中。截至05:49Z，local_scores=0、submissions=0，不能提前宣称评分闭环。
 
+恢复后原生日志转换补验：05:53:38Z取原Terra日志当前完整字节快照12,115,596字节（SHA256 aabce7510161963b22d3dfc6d4b06bee700a5d7999f84f19460d99b74f76c9bc），官方0.1.39在无认证临时HOME转换exit0，共1370步：observation18、thought224、tool_call564、tool_result564。临时快照字节及原文件相同长度前缀均未变化，没有过滤错误、切片或拼接。原会话仍在执行，因此不据此宣称最终工具全配对、最终Trial封存或正式轨迹分；封存后须按真实包再检验（active-native-conversion-proof.json）。承接Trial新环境冒烟23502592已Finished，23502607收敛诊断仍Running，评分记录与提交仍为0。
+
 ## W4 验收核对（进行中）
 
 |要求|当前事实|直接证据或剩余步骤|
