@@ -7,6 +7,9 @@ import logging
 from typing import Any, AsyncIterator, Callable
 
 log = logging.getLogger("cyberscientist.jsonrpc")
+# Native thread/resume returns the saved turns in one LF-delimited frame.
+# Keep a finite bound while allowing ordinary multi-hour research histories.
+MAX_FRAME_BYTES = 64 * 1024 * 1024
 
 
 class ProtocolError(Exception):
@@ -33,7 +36,7 @@ class JsonRpcStdio:
         self.proc = await asyncio.create_subprocess_exec(
             *self.argv, stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-            env=self.env, cwd=self.cwd, limit=8 * 1024 * 1024)
+            env=self.env, cwd=self.cwd, limit=MAX_FRAME_BYTES)
         self._reader_task = asyncio.create_task(self._read_loop())
         # A8：stderr 必须持续消费，否则管道写满会阻塞子进程
         self._stderr_task = asyncio.create_task(self._drain_stderr())
@@ -71,6 +74,11 @@ class JsonRpcStdio:
                     await self._dispatch(msg)
         except (OSError, ValueError) as exc:
             failure = ProtocolError(f"{self.name} 读取协议失败: {type(exc).__name__}")
+            if isinstance(exc, ValueError) and str(exc) in (
+                    'Separator is not found, and chunk exceed the limit',
+                    'Separator is found, but chunk is longer than limit'):
+                failure = ProtocolError(f"{self.name} JSON-RPC 帧超过 {MAX_FRAME_BYTES} 字节上限；"
+                                        "保留原会话与在途状态，未自动重发")
         finally:
             # EOF must wake stream consumers too, not only pending requests.
             for fut in self._pending.values():

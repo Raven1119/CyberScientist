@@ -76,6 +76,10 @@ CLI前置真实只读探针：按产品当前选择逻辑确定实验邮箱及�
 
 本题local_scoring.scorer_manifest在04:47:22Z实际返回SCORER_MISSING（尚无scorer目录），不是已调用后的科学0分。事实已交PI；现有local-scorer技能提供公开契约初建、冻结和prepare_job/register_job可信登记；已有评分器在Run中保持只读，隐藏规则保持unknown，不拿自报数字代替系统或Worker评分。
 
+续行修复8a00b72全量1592 passed、2既有warnings（793.46秒），日志final-idle-job-wake-pytest.log。实际重部署journal 6707b999c1c34ca6ba4cb641107ebccd：基础设施exit0、停机132.311774秒、维护148.260191秒，digest匹配，自检warn无fail、native_close_unknown为空。然而原Run于05:12:34.837741Z失败，#7328记录codex-app-server读取协议ValueError；不能将基础设施成功称为科研恢复成功。
+
+原生读取边界诊断：旧8MiB限制下9MiB完整帧回归实际失败（native-frame-red.log），修复后52项协议/控制器/存活回归通过（28.21秒，native-frame-reopen-green.log）。官方0.161.0生成schema后，以thread/read/includeTurns只读原Astra会话，05:32:21Z成功返回同一线程ID及59回合，序列化result为12,710,137字节、SHA256 4361a0f6c83a69ca804b9d0eaeeac3834baa7eaa3bb9f469fd22269784a3db61、墙钟1.471秒；这是重新序列化字节数，不冒充线缆原帧长度。没有模型turn、修改日志或存储响应正文（native-frame-read-only-proof.json）。新上限64MiB有界，超限明确失败且不重发；保留EOF唤醒。runtime_error限定reopen的红回归原INVALID_STATE，绿回归保留同一Run/原授权时钟/未知Job/失败事件，其他failed仍拒绝。完整回归及实际恢复另录；当前科研评分、干净复跑、CLI提交仍未完成。
+
 ## W4 验收核对（进行中）
 
 |要求|当前事实|直接证据或剩余步骤|

@@ -93,6 +93,31 @@ async def test_large_json_line_is_not_truncated():
         await rpc.stop()
 
 
+async def test_resumed_thread_response_larger_than_eight_mib_preserves_connection():
+    rpc = await _start()
+    try:
+        payload = 'x' * (9 * 1024 * 1024)
+        result = await rpc.request('thread/resume', {'saved_thread': payload}, timeout=10)
+        assert result['echo']['saved_thread'] == payload
+        assert (await rpc.request('ping', {'alive': True}))['echo']['alive']
+    finally:
+        await rpc.stop()
+
+
+async def test_frame_limit_still_fails_closed_and_wakes_streams(monkeypatch):
+    from cyberscientist import jsonrpc_stdio
+    monkeypatch.setattr(jsonrpc_stdio, 'MAX_FRAME_BYTES', 256)
+    rpc = await _start()
+    try:
+        with pytest.raises(ProtocolError, match='256 字节上限'):
+            await rpc.request('thread/resume', {'saved_thread': 'x' * 1024}, timeout=5)
+        with pytest.raises(ProtocolError, match='256 字节上限'):
+            await asyncio.wait_for(rpc.notifications().__anext__(), 1)
+        assert rpc._pending == {}
+    finally:
+        await rpc.stop()
+
+
 async def test_eof_wakes_stream_consumers():
     rpc = await _start()
     try:

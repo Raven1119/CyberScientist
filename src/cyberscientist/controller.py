@@ -854,8 +854,9 @@ class RunController:
                 if previous_op and previous_op["run_id"] == run_id \
                         and previous_op["kind"] == "control.reopen":
                     return {"status": "confirmed", "deduplicated": True}
-            if run["phase"] not in ('cancelled', 'finished') or not run["started_at"]:
-                raise ControllerError("INVALID_STATE", "仅已结束或取消且曾启动的 Run 可以续跑")
+            runtime_failed = run['phase'] == 'failed' and run['end_reason'] == 'runtime_error'
+            if (run["phase"] not in ('cancelled', 'finished') and not runtime_failed) or not run["started_at"]:
+                raise ControllerError("INVALID_STATE", "仅曾启动且已结束、取消或运行时失败的 Run 可以续跑")
             if self._tasks.get(run_id) and not self._tasks[run_id].done():
                 raise ControllerError('RECOVERABLE', '原 Run 会话仍在安全收尾，稍后续跑')
             if db.query_one('SELECT 1 FROM system_state WHERE key=?', ('native_close_unknown:' + run_id,)):
@@ -868,7 +869,8 @@ class RunController:
             with db.transaction() as conn:
                 self._check_active_capacity(conn, config.load_settings(), run_limits.unlimited(run_id, conn=conn))
                 previous = conn.execute(
-                    "SELECT ended_at,phase FROM runs WHERE id=? AND phase IN ('cancelled','finished')",
+                    "SELECT ended_at,phase,end_reason FROM runs WHERE id=? AND (phase IN ('cancelled','finished')"
+                    " OR (phase='failed' AND end_reason='runtime_error'))",
                     (run_id,)).fetchone()
                 if not previous:
                     raise ControllerError("INVALID_STATE", "Run 状态已变化")
@@ -892,6 +894,7 @@ class RunController:
                     ("已重开；等待原生 recovery 审阅", run_id))
                 db.append_event_tx(conn, run_id, "controller", "run.reopened", {
                     "previous_phase": previous['phase'], "previous_ended_at": previous["ended_at"],
+                    "previous_end_reason": previous['end_reason'],
                     "reason": _redact(text),
                     "notice": "保留原授权、运行时钟与 Job 账本；未自动重提或改写远端任务"})
             return {"status": "confirmed", "detail": "已进入 recovering；请恢复原 Run"}

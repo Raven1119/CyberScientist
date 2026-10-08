@@ -211,6 +211,47 @@ async def test_cancelled_run_reopen_preserves_original_clock_and_trace():
     assert reopened["payload"]["previous_ended_at"] == ended_at
 
 
+async def test_runtime_failed_run_reopens_without_new_run_or_replayed_compute():
+    _seed_challenge()
+    c = _controller()
+    rid = c.create_run('DEMO_CHALLENGE')['id']
+    c.authorize(rid, 'demo', False, 0, 30, 0, None)
+    started = db.utcnow()
+    db.execute("UPDATE runs SET phase='failed',started_at=?,ended_at=?,"
+               "end_reason='runtime_error' WHERE id=?", (started, started, rid))
+    authorization = db.query_one('SELECT authorization_id FROM runs WHERE id=?', (rid,))[0]
+    failure = db.append_event(rid, 'controller', 'run.runtime_error',
+                              {'error': 'ProtocolError: native transport read failed'})
+    db.execute("INSERT INTO compute_jobs(operation_id,run_id,trial_id,request_hash,"
+               "spec_json,input_directory,status,created_at,updated_at)"
+               " VALUES('unsettled',?,'trial','hash','{}','.','unknown',?,?)",
+               (rid, started, started))
+    result = await c.control(rid, 'reopen', '修复原生传输后继续原授权', 'reopen-runtime-error')
+    assert result['status'] == 'confirmed'
+    assert db.query_one('SELECT COUNT(*) FROM runs')[0] == 1
+    row = db.query_one('SELECT * FROM runs WHERE id=?', (rid,))
+    assert row['phase'] == 'recovering'
+    assert row['started_at'] == started and row['authorization_id'] == authorization
+    assert db.query_one('SELECT status FROM compute_jobs WHERE operation_id=?', ('unsettled',))[0] == 'unknown'
+    assert db.query_one('SELECT COUNT(*) FROM compute_jobs')[0] == 1
+    assert db.query_one('SELECT type FROM events WHERE run_id=? AND seq=?', (rid, failure['seq']))[0] == 'run.runtime_error'
+    reopened = next(e for e in db.events_after(rid, 0) if e['type'] == 'run.reopened')
+    assert reopened['payload']['previous_end_reason'] == 'runtime_error'
+
+
+async def test_other_failed_run_is_not_reopened_as_runtime_recovery():
+    _seed_challenge()
+    c = _controller()
+    rid = c.create_run('DEMO_CHALLENGE')['id']
+    c.authorize(rid, 'demo', False, 0, 30, 0, None)
+    db.execute("UPDATE runs SET phase='failed',started_at=?,end_reason='scientific_failure' WHERE id=?",
+               (db.utcnow(), rid))
+    with pytest.raises(ControllerError) as error:
+        await c.control(rid, 'reopen', '不能伪装成运行时恢复', 'reject-non-runtime-reopen')
+    assert error.value.code == 'INVALID_STATE'
+    assert db.query_one('SELECT phase FROM runs WHERE id=?', (rid,))[0] == 'failed'
+
+
 async def test_control_operation_id_dedup():
     """同一 operation_id 的并发控制请求只受理一次。"""
     _seed_challenge()
