@@ -36,6 +36,8 @@ def test_public_examples_and_native_ciphertext_are_not_credentials(tmp_path, mon
         {'type': 'event_msg', 'payload': {'text': '{"access_key":"YOUR_BOHR_ACCESS_KEY", "authorization":"Bearer YOUR_PLAYGROUND_API_KEY"}'}},
         {'type': 'event_msg', 'payload': {'text': 'export BOHR_ACCESS_KEY=<YOUR_BOHR_ACCESS_KEY>'}},
         {'type': 'event_msg', 'payload': {'text': 'curl -H "Authorization: Bearer abc_..."'}},
+        {'type': 'event_msg', 'payload': {'text': r'export BOHR_ACCESS_KEY=...\npython3 sdbx.py doctor --json'}},
+        {'type': 'event_msg', 'payload': {'text': r'export BOHR_ACCESS_KEY=<YOUR_BOHR_ACCESS_KEY>\npython3 sdbx.py doctor --json'}},
     ], monkeypatch)
     from cyberscientist import cli_submission
     output = io.BytesIO()
@@ -50,6 +52,7 @@ def test_public_examples_and_native_ciphertext_are_not_credentials(tmp_path, mon
 @pytest.mark.parametrize('text', [
     'sk-private-test-value', 'Bearer actual-unknown-token',
     'export BOHR_ACCESS_KEY=actual-unknown-value python run.py',
+    r'export BOHR_ACCESS_KEY=actual-unknown-value\npython run.py',
     '{"api_key":"actual-unknown-value"}',
     'https://files.example/data?access_key=actual-unknown-value',
     'https%3A%2F%2Ffiles.example%2Fdata%3Faccess_key%3Dactual-unknown-value',

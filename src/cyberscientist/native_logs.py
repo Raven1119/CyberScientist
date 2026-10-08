@@ -9,7 +9,7 @@ from . import config, db, observation, bohr_proxy
 
 _TOKEN = re.compile(r'(?<![A-Za-z0-9_-])(?:sk-|AKIA|ghp_|gho_|xoxb-|AIza)[A-Za-z0-9_.-]+')
 _BEARER = re.compile(r'(?i)\bBearer\s+([A-Za-z0-9_.~+/=-]+)')
-_ENV = re.compile(r'(?i)\b(?:BOHR_ACCESS_KEY|ACCESS_KEY|CS_TOOL_TOKEN|API_KEY)\s*=\s*([^\s"\']+)')
+_ENV = re.compile(r'(?i)\b(?:BOHR_ACCESS_KEY|ACCESS_KEY|CS_TOOL_TOKEN|API_KEY)\s*=\s*([^\s"\'\\]+)')
 _JSON_CREDENTIAL = re.compile(r'(?i)"(?:' + bohr_proxy._CREDENTIAL_FIELD + r')"\s*:\s*"([^"]*)"')
 _PLACEHOLDERS = {'...', '***', '[redacted]', 'your_api_key', 'your_access_key', 'your_token'}
 
