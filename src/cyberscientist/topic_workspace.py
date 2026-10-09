@@ -101,11 +101,11 @@ def pending_mutations(sid):
 
 def before_mutation(run_id, sid, timeout=0):
     """Caller holds the shared lock; preserve the window for a final snapshot."""
+    from . import sandbox_background
+    sandbox_background._authorized(run_id, max(1, timeout))
     fact = current(run_id)
     if fact.get('sandbox_id') != sid or fact['mode'] != 'sandbox':
         return
-    from . import sandbox_background
-    sandbox_background._authorized(run_id, max(1, timeout))
     if sandboxes._seconds_left(sandboxes._owned(run_id, sid)) <= timeout + 300:
         raise compute.ComputeError('SANDBOX_SYNC_WINDOW', '常驻沙箱进入文件同步窗口；请用同镜像Job')
     if fact.get('checkpoint'):
@@ -259,8 +259,10 @@ def _work(run_id: str, body: dict) -> dict:
         return compute.submit(run_id,op,body.get('spec'),body.get('input_directory'),body.get('preflight'))
     stage_id = 'twi_' + hashlib.sha256((run_id + '\0' + op).encode()).hexdigest()[:40]
     staged_work = db.query_one('SELECT status FROM operations WHERE operation_id=?', (stage_id,))
-    if staged_work and staged_work['status'] != 'confirmed':
-        raise compute.ComputeError('WORKSPACE_SYNC_UNKNOWN', '该工作输入传输未确认；不重新上传或执行')
+    if staged_work:
+        if staged_work['status'] != 'confirmed':
+            raise compute.ComputeError('WORKSPACE_SYNC_UNKNOWN', '该工作输入传输未确认；不重新上传或执行')
+        raise compute.ComputeError('WORKSPACE_OPERATION_INCOMPLETE', '已准备的输入尚未启动，工作目录可能已变化；请用新的operation_id重新准备')
     fact = ensure(run_id)
     if fact['mode'] in ('not_selected', 'renewing'):
         return fact
@@ -280,22 +282,14 @@ def _work(run_id: str, body: dict) -> dict:
             source = compute._path(compute._run(run_id), body['input_directory'])
             source_sha = _fingerprint(source)
             digest = hashlib.sha256(json.dumps([command, timeout, str(source), source_sha]).encode()).hexdigest()
-            prior = db.query_one('SELECT * FROM operations WHERE operation_id=?', (stage_id,))
-            if prior and prior['payload_hash'] != digest:
-                raise compute.ComputeError('OPERATION_CONFLICT', '工作输入已变化，需使用新的operation_id')
-            if prior and prior['status'] != 'confirmed':
-                raise compute.ComputeError('WORKSPACE_SYNC_UNKNOWN', '该工作输入传输未确认；不重新上传或执行')
-            if prior and json.loads(prior['request_summary'])['sandbox_id'] != fact['sandbox_id']:
-                raise compute.ComputeError('OPERATION_CONFLICT', '工作输入属于旧沙箱；需使用新的operation_id')
-            if not prior:
-                db.execute("INSERT INTO operations(operation_id,run_id,kind,status,request_summary,payload_hash,created_at) VALUES(?,?,'topic.work_input','unknown',?,?,?)",
-                           (stage_id, run_id, json.dumps({'sandbox_id': fact['sandbox_id']}), digest, db.utcnow()))
-                staged = sandboxes.transfer(run_id, 'write', fact['sandbox_id'], REMOTE,
-                                            local_path=str(source), operation_id=stage_id)
-                if staged['status'] == 'completed' and _fingerprint(source) == source_sha:
-                    db.execute("UPDATE operations SET status='confirmed' WHERE operation_id=?", (stage_id,))
-                else:
-                    raise compute.ComputeError('WORKSPACE_SYNC_UNKNOWN', '工作输入同步未确认；未执行命令、不重新上传')
+            db.execute("INSERT INTO operations(operation_id,run_id,kind,status,request_summary,payload_hash,created_at) VALUES(?,?,'topic.work_input','unknown',?,?,?)",
+                       (stage_id, run_id, json.dumps({'sandbox_id': fact['sandbox_id']}), digest, db.utcnow()))
+            staged = sandboxes.transfer(run_id, 'write', fact['sandbox_id'], REMOTE,
+                                        local_path=str(source), operation_id=stage_id)
+            if staged['status'] == 'completed' and _fingerprint(source) == source_sha:
+                db.execute("UPDATE operations SET status='confirmed' WHERE operation_id=?", (stage_id,))
+            else:
+                raise compute.ComputeError('WORKSPACE_SYNC_UNKNOWN', '工作输入同步未确认；未执行命令、不重新上传')
         _record(run_id, fact | {'checkpoint': None})
         return sandbox_background.start(run_id, fact['sandbox_id'], body.get('command'),
                                         body.get('timeout'), body.get('operation_id'), cwd=REMOTE)

@@ -221,3 +221,35 @@ def test_unknown_old_delete_has_job_fallback_without_delete_replay(run, monkeypa
     assert result['fallback']=='job' and len(submitted)==1
     assert topic_workspace.current(rid)['old_delete_status']=='unknown'
     assert not any(c[:2]==['sandbox','delete'] for c in calls)
+
+
+def test_confirmed_upload_without_launch_cannot_reuse_changed_remote_inputs(run, monkeypatch):
+    _, rid, work, calls, _ = run
+    choose(monkeypatch);topic_workspace.ensure(rid)
+    uploads=[]
+    monkeypatch.setattr(sandboxes,'transfer',lambda *a,**kw:uploads.append(kw) or {'status':'completed'})
+    launches=[]
+    def refused(*args,**kwargs):
+        launches.append(args)
+        raise compute.ComputeError('RUN_NOT_RUNNING','pause before background reservation')
+    monkeypatch.setattr(sandbox_background,'start',refused)
+    body={'operation_id':'prepared-input','command':'pwd','timeout':30,'input_directory':str(work)}
+    with pytest.raises(compute.ComputeError):topic_workspace.work(rid,body)
+    assert db.query_one("SELECT status FROM operations WHERE kind='topic.work_input'")[0]=='confirmed'
+    # A later request may change remote files; a retry cannot execute cached inputs.
+    with pytest.raises(compute.ComputeError) as failure:topic_workspace.work(rid,body)
+    assert failure.value.code=='WORKSPACE_OPERATION_INCOMPLETE'
+    assert len(uploads)==len(launches)==1 and not any('--background' in c for c in calls)
+
+
+def test_job_fallback_state_never_bypasses_mutation_authorization(run,monkeypatch):
+    _, rid, _, calls, _ = run
+    choose(monkeypatch);fact=topic_workspace.ensure(rid)
+    topic_workspace._record(rid,fact|{'mode':'job'})
+    db.execute("UPDATE runs SET gate='paused' WHERE id=?",(rid,))
+    before=len(calls)
+    with pytest.raises(compute.ComputeError):
+        sandboxes.transfer(rid,'write',fact['sandbox_id'],'/bohr-workspace/blocked.txt',content='blocked')
+    with pytest.raises(compute.ComputeError):
+        sandboxes.execute(rid,fact['sandbox_id'],'echo blocked',10)
+    assert len(calls)==before
