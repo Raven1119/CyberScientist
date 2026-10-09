@@ -205,3 +205,15 @@
 - 阻塞项：无。初次命令引用不存在的 test_model_usage.py，没有执行测试；实际专项初次 1 failed/4 passed 是测试 fixture 目录已存在，改用独立 runtime fixture 后通过。原错误摘要与失败日志在 `w10-test-command-error.txt`、`w10-tests-initial.log`，通过在 `w10-tests.log`。
 
 彩排只读统计命令：`python scripts/native_token_usage.py --root /home/wmywb/CyberScientist-comp --run-id <Run ID>`；可加 `--since <ISO>` 与 `--timezone Asia/Shanghai`。脚本供监控在开发目录运行，不给科研模型引入开发依赖。
+
+## W11：完整验证与交付（进行中）
+
+- 已实现：发布快照提交信息使用本卡标记；preflight 检查五个已启用比赛技能，明确停用的经验不再误报缺失，未登记的缺失仍告警。最终审查补齐 native cwd、直接 workdir、code-mode workdir、限定名 read_file 及 shell cd 的凭据相对路径检测。
+- 已实际验证：`npm test -- --run` → 25 文件/126 passed，21.83 秒；`npm run build` → TypeScript/Vite 通过，66 modules，2.37 秒。日志 `w11-frontend-full.log`、`w11-frontend-build.log`。最终审查专项 45 passed/13.55 秒；新版 Job 技能专项 16 passed/13.49 秒。`compileall -q src tests checks scripts` 与 `git diff --check` 均 exit 0；`w11-checks.json`。八个内容文件再次与本卡附录逐字比较一致，SHA 清单 `w11-source-exact-content.json`。
+- 已实际验证：第一轮全量为修正审查问题中断，608 passed；第二轮按用户停止请求中断，1677 passed/1 failed，失败为旧技能测试仍要求已被授权原文删除的 v4/本地秒级/环境目录。将断言更新为实际的新预检与赛道时限要求，未修改技能原文；两轮分别保留 `w11-backend-initial-interrupted.log`、`w11-backend-stopped-with-old-assertion.log`，均不算全量通过。恢复后的全量从头执行，记录在 `w11-backend-full.log`。
+- 已实际验证：发布前保存 135 个经验文件的 SHA，供发布后证明数据未覆盖；GitHub CLI 当前确认源码仓库 isPrivate=false、比赛快照仓库 isPrivate=true。只将本卡运行时投递到授权的私有快照仓库，源码逐项提交留在本地；候选标签的源码 SHA 与快照 SHA 将分别核对，不冒称相同。
+- 已实际验证：有界代码审查覆盖停用经验判定、技能门禁、旧别名及凭据工作目录输入；原生报文与科研产出不改写，检测只记录读取意图，没有执行凭据读取。用于部署后验收的脚本放在开发目录私有证据区，比赛目录不新增验证残留。
+- 已实际验证：最终完整后端命令 `PATH=<Node22>:<comp runtime bin>:$PATH .venv/bin/pytest -q`，exit 0，1884 passed/4 skipped/2 warnings，1359.90 秒。四项均为 `test_trace_diagnostics.py` 的固定旧 CLI 夹具；Node22 的 bin 中新版 playground 先于用户旧 CLI，被 SHA 门禁拒绝。旧 CLI SHA d231fefe0f11a481866aeae399906fc587e75d95c0cf08ff405b3f6f7ee48b03、companion 及 S30/S32/S33、H7 历史证据均实际存在。
+- 已实际验证：私有证据区只为测试建立指向已核实旧 CLI 的 PATH 链接，不改全局 CLI/配置；`PATH=<historical-test-bin>:<Node22>:<comp runtime bin>:$PATH .venv/bin/pytest -q -ra tests/test_trace_diagnostics.py` → 7 passed/3.44 秒、0 skip，四项全部补验。总计 1888 个唯一用例均已实际通过，额外三项是重复验证，不额外计数。日志 `w11-historical-diagnostics-tests.log`；初次 PATH 仍由 Node22 中新版 CLI 抢先的 3 passed/4 skipped 保留在 `w11-historical-diagnostics-first-path.log`。没有排除、关闭或改写这些测试。
+- 尚未验证：候选版 3 的冷启动/目录迁移/22 原生技能、实际新 Run 的控制器角色注入和离线 CLI 构建、私有快照和标签，以及 RH-02 新赛道的模板版本。按依赖完成后补记真实回执。
+- 阻塞项：当前无；上述完整、补验与中断结果分别记录，不能混写为某一次全量 1888 passed。

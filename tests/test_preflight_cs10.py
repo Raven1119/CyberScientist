@@ -152,6 +152,16 @@ def test_wrong_mailbox_owner_and_duplicate_token_are_failures(monkeypatch):
     assert 'same-platform-account' not in json.dumps(results) and '@example.invalid' not in json.dumps(results)
 
 
+def test_intentionally_disabled_scorer_is_not_required_by_new_competition_readiness(monkeypatch):
+    from cyberscientist import skills
+    enabled = ['cyberscientist-trace-writing','cyberscientist-clean-rerun','cyberscientist-submission-gate',
+        'cyberscientist-job-spec','cyberscientist-sandbox']
+    monkeypatch.setattr(skills,'effective_for',lambda *a,**k:enabled)
+    items={x['name']:x for x in preflight.content_checks(config.load_settings())}
+    assert items['skills_loaded']['status']=='pass'
+    assert items['skills_loaded']['facts']['missing']==[]
+
+
 async def test_codex_unknown_account_shape_never_passes(monkeypatch):
     from cyberscientist import codex_protocol,jsonrpc_stdio
     unknown={}

@@ -51,6 +51,27 @@ def test_global_home_aliases_and_credential_directories_are_watched(tmp_path, mo
     assert paths and all(path.startswith(str(home) + '/') for path in paths)
 
 
+@pytest.mark.parametrize('kind', ['native_cwd', 'direct_workdir', 'code_mode_workdir', 'code_mode_read_file', 'shell_cd'])
+def test_tool_working_directory_overrides_initial_session_for_relative_reads(tmp_path, monkeypatch, kind):
+    root = tmp_path/'CyberScientist-comp'
+    monkeypatch.setattr(config,'WORKSPACE_ROOT',root)
+    session = root/'workspace/runs/synthetic/trials/synthetic'
+    if kind == 'native_cwd':
+        item = {'type':'commandExecution','cwd':str(root),'command':'cat .env'}
+    elif kind == 'direct_workdir':
+        item = {'type':'dynamicToolCall','tool':'exec_command',
+            'arguments':{'workdir':str(root),'cmd':'cat .env'}}
+    elif kind == 'code_mode_workdir':
+        item = {'type':'dynamicToolCall','tool':'exec',
+            'arguments':{'code':f'await tools.exec_command({{workdir:"{root}",cmd:"cat .env"}})'}}
+    elif kind == 'code_mode_read_file':
+        item = {'type':'dynamicToolCall','tool':'exec',
+            'arguments':{'code':f'await tools.mcp__filesystem__read_file({{path:"{root}/.env"}})'}}
+    else:
+        item = {'type':'commandExecution','command':f'cd "{root}" && cat .env'}
+    assert credential_watch.referenced_paths(item,cwd=str(session)) == [str(root/'.env')]
+
+
 async def test_started_native_call_alerts_before_result_and_preserves_original_log(run, tmp_path, monkeypatch):
     controller, rid, _, _, _ = run
     root = tmp_path / 'CyberScientist-comp'

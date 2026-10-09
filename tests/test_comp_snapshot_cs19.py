@@ -78,3 +78,4 @@ def test_push_replaces_read_only_export_bytes(tmp_path, monkeypatch):
     assert result['private'] and result['scan']['hit_count']==0
     assert readonly.read_bytes()==(root/'src/cyberscientist/cli.py').read_bytes()
     assert git('status','--porcelain')==''
+    assert git('log','-1','--format=%s').endswith(' CS-UP-20')

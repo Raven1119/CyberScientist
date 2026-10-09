@@ -167,7 +167,7 @@ def push(root: Path) -> dict:
                 temporary.replace(destination)
             command(['git', 'add', '--', *sorted(tracked | files)])
             command(['git', 'diff', '--cached', '--check'])
-            command(['git', 'commit', '-m', 'snapshot: publish competition runtime ' + result['commit'] + ' CS-UP-19'])
+            command(['git', 'commit', '-m', 'snapshot: publish competition runtime ' + result['commit'] + ' CS-UP-20'])
             helper = '!"' + gh + '" auth git-credential'
             git = ['git', '-c', 'credential.helper=', '-c', 'credential.helper=' + helper]
             command([*git, 'push', 'origin', 'main'])

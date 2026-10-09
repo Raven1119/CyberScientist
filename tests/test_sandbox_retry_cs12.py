@@ -88,7 +88,8 @@ def test_job_spec_builtin_and_key_operating_facts():
     root=Path(__file__).resolve().parents[1]
     text=(root/'skills/cyberscientist-job-spec/SKILL.md').read_text()
     for term in ('/personal','/share','占位符','input_directory','可执行权限','python3 -I -c',
-                 'preflight.entry','research_job','v4','GPU','沙箱','本地秒级','环境目录','冒烟','对象存储','分块','SHA','unknown'):
+                 'preflight.entry','research_job','GPU','沙箱','冒烟','对象存储','分块','SHA','unknown',
+                 '自动预检','不过就直接返回原因，不消耗 Job','不能越过赛道结束时间'):
         assert term in text
     assert 'cyberscientist-job-spec' in skills.BUILTIN_EXECUTOR_SKILLS
     assert 'cyberscientist-job-spec' in {s['id'] for s in skills.scan_catalog()}

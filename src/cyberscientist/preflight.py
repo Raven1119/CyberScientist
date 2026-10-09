@@ -284,10 +284,15 @@ def content_checks(settings):
     state = features.enabled('auto_submission')
     active = {row['experience_id'] for row in db.query('SELECT experience_id FROM experience_heads WHERE active_revision_id IS NOT NULL')}
     expected = {path.stem for path in (config.EXPERIENCE_DIR / 'global').glob('lc_*.md')}
+    retired = {row['experience_id'] for row in db.query('SELECT h.experience_id FROM experience_heads h '
+        'JOIN experience_revisions r ON r.id=h.head_revision_id '
+        "WHERE h.active_revision_id IS NULL AND json_extract(r.frontmatter,'$.status')='retired'")}
+    expected -= retired
     missing = sorted(expected - active)
     effective = skills.effective_for(db.get_db(), settings, None, role='executor')
     identifiers = [item['id'] if isinstance(item, dict) else item for item in effective]
-    required = {'cyberscientist-trace-writing', 'cyberscientist-clean-rerun', 'cyberscientist-submission-gate', 'cyberscientist-local-scorer'}
+    required = {'cyberscientist-trace-writing', 'cyberscientist-clean-rerun', 'cyberscientist-submission-gate',
+                'cyberscientist-job-spec', 'cyberscientist-sandbox'}
     missing_skills = sorted(required - set(identifiers))
     return [_item('auto_submission', 'pass' if state else 'warn', '自动提交已启用' if state else '自动提交已暂停；科研可继续', enabled=state),
             _item('experiences_loaded', 'pass' if not missing else 'warn', '本次lc经验有效修订', expected=len(expected), missing=missing),
