@@ -134,6 +134,8 @@ def thread_params(spec: dict[str, Any], model: str | None,
             # Only the controller's capability-scoped bridge is pre-authorized.
             # New/future tools stay unavailable until explicitly integrated.
             allowed_tools = COLLAB_TOOLS if writable else BRAIN_TOOLS
+            if writable and spec.get('evidence_mode')=='competition':
+                allowed_tools=tuple(name for name in allowed_tools if name!='research_trace_narrative_check')
             cfg["mcp_servers"][server["name"]].update({
                 "enabled_tools": list(allowed_tools),
                 "tools": {name: {"approval_mode": "approve"}

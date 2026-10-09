@@ -10,6 +10,33 @@ from . import trace_narrative, trace_projection, trace_selection
 
 TRACE = "traces/cyberscientist_merged.jsonl"
 DATA = "provenance/data_inputs.json"
+OUTPUT_PACKAGE_INSTRUCTION = ('结果包只放题面输出契约中的文件，包内路径与契约一致（去掉开头的 /app/）；'
+                              '清单和轨迹由系统补齐，不要自己编写轨迹文件、叙述文件或 ARM 清单。')
+
+
+def _supply_manifest(files: dict[str, bytes], run_id: str) -> dict[str, bytes]:
+    root=trace_selection.bundle_root(files)
+    if root+'arm_manifest.json' in files:
+        return files
+    # An outputs-only archive has no wrapper directory. Retain support for a
+    # conventional single wrapper that contains outputs/, but never call
+    # outputs/ itself the ARM bundle root.
+    if root in ('outputs/','app/','traces/','trace/','provenance/') or not any(
+            name.startswith(root+'outputs/') for name in files):
+        root=''
+    from . import artifact_contracts, submission_outputs
+    facts=artifact_contracts.for_run(run_id)
+    contract=submission_outputs.contract_for_run(run_id)
+    paths=(contract or {}).get('paths') or [name[len(root):] for name in files
+        if name.startswith(root+'outputs/') and not name.endswith('/')]
+    paths=sorted({submission_outputs.source_path(path) for path in paths})
+    if not paths:
+        raise ValueError('缺少题面输出契约和 outputs 产物，无法生成结果清单')
+    manifest={'arm_version':'1.1','paper':{'title':facts['title']},
+              'entrypoint':'','expected_outputs':[
+                  {'name':path,'path':path,'type':'data'} for path in paths]}
+    return files | {root+'arm_manifest.json':json.dumps(
+        manifest,ensure_ascii=False,sort_keys=True,separators=(',',':')).encode()}
 
 
 def preflight_files(files: dict[str, bytes]) -> list[str]:
@@ -44,6 +71,7 @@ def seal(source: bytes, run_id: str, trial_id: str | None, through_seq: int,
         if len(names) != len(set(names)):
             raise ValueError("duplicate archive member")
         files = {name: archive.read(name) for name in names}
+    files = _supply_manifest(files, run_id)
     errors = preflight_files(files)
     if errors:
         raise ValueError('; '.join(errors))

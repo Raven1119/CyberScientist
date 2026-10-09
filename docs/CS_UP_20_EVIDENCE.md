@@ -89,3 +89,13 @@
 | lc_visible_creation | 题目特定的代码要在轨迹里可见地创建，不重放现成文件（N17/N18/蒸馏） | # 在轨迹里写出代码，而不是运行现成的代码 v8 新增两条，触发后 accept 率都是 0： - **N17**：实质产物在轨迹之前就已存在。评分器的说明是："重放或检查已经完成的源码和推导文件，不能证明当前轨迹产出了解答。" - **N18**：过程证据低于底线，不能越过满分 |
 
 前后接口回执、旧历史列表和不变指纹在 `.package-checks/cs-up20/experience-targets-{before,after}.json`、`untouched-active-global.json`、`skills-enabled.json`，不含凭据，不进入 Git。
+
+## W2：系统补齐结果包
+
+- 已实现：缺清单时从冻结题面/输出路径生成 ARM 1.1 最小清单；没有真实入口脚本则 entrypoint 为空，不编造执行；已有清单沿用原封存绑定逻辑，原科学字段不覆盖。outputs-only 不再误判 outputs/ 为外层包目录；仍支持单层包目录。
+- 已实现：探索、干净复跑及旧非渐进首条提示都要求只交题面文件，不自写清单、轨迹、叙述。比赛执行者的 Codex 白名单和 MCP 桥列表均去掉叙述检查，开发旧接口保留。
+- 已实际验证：官方 CLI 输入是暂存的题面输出与原生记录；试构建包中没有 `traces/cyberscientist_merged.jsonl`、`trace_narrative.jsonl`，科学文件与原生输入 SHA 逐项匹配。此测试真实执行固定官方 CLI 0.1.40，只使用明确 synthetic 原生 fixture 和只读账号 fixture，未访问真实账号、未建 Attempt，不宣称真实研究或上传。
+- 已实际验证：`PATH=/home/wmywb/CyberScientist-comp/.runtime/bin:$PATH .venv/bin/pytest -q tests/test_output_only_package_cs20.py tests/test_trace_narrative.py tests/test_cli_submission_cs14.py tests/test_submission_outputs_cs15.py tests/test_mcp_bridge.py tests/test_role_prompts_cs19.py tests/test_clean_runs_cs16.py` → 73 passed/23.71 秒；补加真实提交预检入口覆盖后，单文件 7 passed/2.38 秒。源码编译与 diff 检查通过。
+- 已实际验证：输出-only ZIP 完成预检、封存、schema 检查、科学输出暂存与真实 CLI 离线试构建；源 ZIP、产物和 native fixture 字节未变；已有清单科学字段保持原值；新探索/复跑提示要求一致。
+- 尚未验证：新比赛运行时上的实际原生会话构建，留到 W9/W11；本卡无真实提交授权。
+- 阻塞项：无。初次测试缺 Node PATH，随后 fixture 只有 session_meta 导致 CLI 无可归一化步骤；改用已安装 Linux Node 和明确标识的消息 fixture 后通过。两次失败日志分别保留于 `w2-tests-initial.log`、`w2-tests-second.log`；通过日志为 `.package-checks/cs-up20/w2-tests.log`、`w2-preflight-tests.log`。

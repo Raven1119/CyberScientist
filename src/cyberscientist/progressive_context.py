@@ -98,6 +98,7 @@ def compact(run_id,packet):
 
 def executor_prompt(run_id,trial_id,challenge,goal,success,authority,enabled_skills,experience):
     from . import skills
+    from .package_seal import OUTPUT_PACKAGE_INSTRUCTION
     data={'challenge':challenge,'goal':goal,'success_check':success,'authority':authority,'experience':experience}
     reference=_store(run_id,data)
     return ('选择方法和环境前先查能力索引。\n'
@@ -108,4 +109,5 @@ def executor_prompt(run_id,trial_id,challenge,goal,success,authority,enabled_ski
             + '经验索引：'+encode(experience_index((experience or {}).get('items',[])))+'\n'
             + '完整事实：'+encode(reference)+'，PI可通过research_files读取；执行者可用research_operating_facts/research_environment/research_experience按需读取。\n'
             + skills.prompt_segment(enabled_skills)+'\n'
-            + f'交付目录：{config.WORKSPACE_DIR / "runs" / run_id / "trials" / trial_id}。结果包result_package.zip，真实原生轨迹由系统绑定，禁止编造工具调用、结果或费用。')
+            + f'交付目录：{config.WORKSPACE_DIR / "runs" / run_id / "trials" / trial_id}。结果包result_package.zip，真实原生轨迹由系统绑定，禁止编造工具调用、结果或费用。\n'
+            + OUTPUT_PACKAGE_INSTRUCTION)

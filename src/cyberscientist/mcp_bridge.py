@@ -263,9 +263,12 @@ def _handle(msg: dict) -> dict | None:
         return {"jsonrpc": "2.0", "id": mid, "result": {}}
     if method == "tools/list":
         role = os.environ.get("CS_TOOL_ROLE", "executor")
+        executor_tools = [tool for tool in _TOOLS if not (
+            os.environ.get('CS_EVIDENCE_MODE')=='competition' and
+            tool['name']=='research_trace_narrative_check')]
         return {"jsonrpc": "2.0", "id": mid, "result": {
             "tools": _PUBLIC_TOOLS if os.environ.get('CS_PUBLIC_RESEARCH_PROBE') else
-                [_FILES_TOOL, _SHARED_TOOL, _VARIANT_TOOL, _REVIEW_TOOL, _TRACE_TOOL, _DATA_TOOL, _SCORES_TOOL, _NARRATIVE_TOOL, _FACTS_TOOL, _EXPERIENCE_TOOL, *_PUBLIC_TOOLS] if role == "brain" else _TOOLS}}
+                [_FILES_TOOL, _SHARED_TOOL, _VARIANT_TOOL, _REVIEW_TOOL, _TRACE_TOOL, _DATA_TOOL, _SCORES_TOOL, _NARRATIVE_TOOL, _FACTS_TOOL, _EXPERIENCE_TOOL, *_PUBLIC_TOOLS] if role == "brain" else executor_tools}}
     if method == "tools/call":
         params = msg.get("params", {})
         name = params.get("name")

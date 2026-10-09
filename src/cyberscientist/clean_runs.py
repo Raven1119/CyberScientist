@@ -22,13 +22,15 @@ def validate(handoff):
 def prompt(challenge, handoff, enabled_skills, capability_index, *, run_id, trial_id,
            delivery_directory, environment_index):
     validate(handoff)
+    from .package_seal import OUTPUT_PACKAGE_INSTRUCTION
     return ('方法来自本方此前的探索。\n按方法真实重算，不读取此前探索代码或数值产物。'
             + PARAMETER_POLICY + '\n'
             f'Run ID：{run_id}；Trial ID：{trial_id}。\n'
             f'交付目录：{delivery_directory}；结果包名：result_package.zip。\n'
             '真实原生轨迹由系统绑定，禁止编造。\n'
-            '固定完成判据：产出题面输出契约中的全部文件，写好结果包，用 research_checkpoint 报 stage=trial_complete。\n'
-            '题面：\n' + json.dumps(challenge, ensure_ascii=False) + '\n'
+            + OUTPUT_PACKAGE_INSTRUCTION + '\n'
+            + '固定完成判据：产出题面输出契约中的全部文件，写好结果包，用 research_checkpoint 报 stage=trial_complete。\n'
+            + '题面：\n' + json.dumps(challenge, ensure_ascii=False) + '\n'
             + '\n'.join(f'{label}（{key}）：{handoff[key]}' for key, label in zip(FIELDS, ('流程', '参数', '验证', '故障'))) + '\n'
             + skills.prompt_segment(enabled_skills) + '\n能力索引：\n' + capability_index
             + '\n环境索引（镜像与本题沙箱）：\n' + json.dumps(environment_index, ensure_ascii=False))

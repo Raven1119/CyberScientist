@@ -408,6 +408,7 @@ class RunController:
             "run_id": run_id,
             "working_directory": str(run_dir),
             "instructions": role_prompts.role('executor'),
+            "evidence_mode": settings.get('evidence_mode','development'),
         }
         if runtime == "prime":
             # Prime 专有：项目隔离 session 目录 + 环境 allowlist + 模型选择
@@ -449,6 +450,7 @@ class RunController:
                 "env": [
                     {"name": "CS_TOOL_TOKEN", "value": token},
                     {"name": "CS_TOOL_ROLE", "value": "executor"},
+                    {"name": "CS_EVIDENCE_MODE", "value": spec['evidence_mode']},
                     {"name": "CS_API_URL",
                      "value": f"http://{app_cfg['host']}:{app_cfg['port']}"},
                 ],
@@ -3914,7 +3916,7 @@ class RunController:
                 strategies.ensure_trial_plan(run_id, action['goal'], action['success_check'], dict(created))
                 enabled_skills = self._enabled_skills(
                     run_id, settings, run["challenge_id"], 'executor')
-                from . import planning,progressive_context,evidence_policy
+                from . import planning,progressive_context,evidence_policy,package_seal
                 lean=evidence_policy.mode(run_id)=='competition'
                 if lean and action.get('fresh_executor_session'):
                     task_text=''
@@ -3926,7 +3928,7 @@ class RunController:
                                  f"成功判据：{action['success_check']}\n"
                                  f"Run ID：{run_id}；Trial ID：{trial_id}。\n"
                                  f"交付目录：{config.WORKSPACE_DIR / 'runs' / run_id / 'trials' / trial_id}。\n"
-                                 "提交包命名 result_package.zip（真实 ARM 包，包含研究轨迹与诚实结果）；"
+                                 "提交包命名 result_package.zip（题面要求的输出文件）；"
                                  "该目录允许写入。用检查点报告交付，交由控制器提交。\n"
                                  f"本轮授权与用户目标：{json.dumps(packet.get('authorization'), ensure_ascii=False)}\n"
                                  f"题目与平台契约：{json.dumps(self._challenge_for_run(run), ensure_ascii=False)}\n"
@@ -3935,7 +3937,7 @@ class RunController:
                                  f"预置环境事实：{json.dumps(observation.authority_facts(run_id).get('runtime_environments', []), ensure_ascii=False)}\n"
                                  f"运行事实（时间、环境、网络、价格及剩余额度）：{json.dumps(observation.authority_facts(run_id).get('operating_facts'), ensure_ascii=False)}\n"
                                  f"公开数据物化状态：{json.dumps(datasets.status(run['challenge_id'])['items'], ensure_ascii=False)}\n"
-                                 "提交包会追加真实事件轨迹并接受准入检查；自有 trace.jsonl 只能使用七种合法 step_type，artifact_path 必须是包内现存文件，禁止编造工具调用或费用。\n"
+                                 f"{package_seal.OUTPUT_PACKAGE_INSTRUCTION}\n"
                                  "冻结经验（只使用这份正文；采用时在检查点声明版本）：\n"
                                  f"{experience_context.encode(experience_context.for_trial(run_id,trial_id))}\n"
                                  f"{executor_instruction_suffix()}"

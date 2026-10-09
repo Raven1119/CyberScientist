@@ -19,6 +19,8 @@ class TraceSelection:
 def bundle_root(files: Mapping[str, bytes]) -> str:
     names = tuple(files)
     top = {name.split("/", 1)[0] for name in names}
+    if top == {'outputs'}:
+        return ''
     return (next(iter(top)) + "/" if len(top) == 1 and
             all("/" in name for name in names) else "")
 
