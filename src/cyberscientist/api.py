@@ -188,6 +188,8 @@ class ExperienceReview(BaseModel):
 
 
 def create_app(web_dist: Path | None = None) -> FastAPI:
+    from . import role_prompts
+    role_prompts.validate_roles()
     from . import backend_identity
     backend_identity.record_startup()
     config.ensure_dirs()

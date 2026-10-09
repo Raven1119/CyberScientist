@@ -31,10 +31,8 @@ _BRAIN_PROMPT_PATH = (Path(__file__).resolve().parent.parent.parent.parent
 
 
 def _brain_instruction() -> str:
-    try:
-        return features.render_science_policy(_BRAIN_PROMPT_PATH.read_text(encoding="utf-8").strip())
-    except OSError:
-        return ""
+    from .. import role_prompts
+    return features.render_science_policy(role_prompts.read(_BRAIN_PROMPT_PATH))
 
 
 def _question_prompt(packet: dict[str, Any]) -> str:

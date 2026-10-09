@@ -1046,3 +1046,9 @@ CS-UP-13 工作包提交索引（按Git事实，最终W8标签另录）：
 - 已实际验证：264项发布文件哈希一致，271导出文件扫描0，23启用技能；快照安全回归3 passed/1.17秒。私库https://github.com/Raven1119/CyberScientist-comp main=f5f9b571b44694fbc19d541fdf9dafd2bf82cecb，远端读回一致；已立即通知用户。
 - 尚未验证：后续W2–W8；每次release后的新快照尚待执行。
 - 阻塞项：无。初次AccessKey函数名误报已修扫描值模式，原始发布文件未修改。
+
+### CS-UP-19 W2前置核查 / W4角色接线
+- 已实现：PI/executor角色文件逐字采用附录A/B；会话spec加载developerInstructions，新开与续用同路径；角色缺失/空文件阻止后端启动及新Run。协作提示词读取失败不再吞掉错误；未被代码加载的旧brain/prime归档到docs/archive/prompts，仍使用的collaboration两文件保留。
+- 已实际验证：角色/原生协议/PI环境34 passed/8.53秒；原文SHA回归7项另复测。比赛后端用start-runtime.sh加现有Node PATH冷启动，PID1636454；自检19项中17pass、tracks/warmup两warn、0fail（74.11秒含等待启动）。平台当前GET确认选题weighted-random-forest为S4 round1、closed，结束于2026-08-01。
+- 尚未验证：W4三个真实原生前帧、W2实际批准/执行/干净复跑/试构建/续用，留待W5接线后在唯一冒烟中核查。
+- 阻塞项：第一次冷启动因隔离HOME找不到Node退出，保留私有日志；启动脚本PATH依赖将在W6修复，不能记成首轮无故障。未调用模型或创建资源。
