@@ -31,3 +31,15 @@
 初审2项：同步快照漏掉后续写入、删除unknown永久堵塞Job。复审1项：已确认上传缓存可能使用后来覆盖的远端输入。均已修正：预留同步窗口，当前快照哈希及未决变更守卫；未知删除保留预约、同镜像Job通路；不复用未启动准备操作。最终只读审查无新增阻断。
 
 两轴合计：Standards发现5项、Spec发现3项（部分重合），已修复，最终各0新增阻断。审查不等同全量测试或真实双箱换箱。最新100项相关回归77.65秒通过；最后的归属/时限错误顺序专项1项1.74秒通过。
+
+## 最终结果与交付
+
+用户通知“已认领”后再次真实读回：五账号全部confirmed。第五Agent已有后端安全令牌，不需再取令牌或重新绑定。实际隐藏开发目录后的账号项补验通过：操作者及五账号/auth/me均200，身份、归属和确认5/5，退出0，trap恢复原目录。未重复完整冒烟，外部变更0。私有证据`claims-after-user-confirmation.json`、`account-hidden-result.json`、`account-hidden-progress.log`、`account-only-hidden.log`。
+
+冻结完整后端1780项通过、2条依赖弃用警告、1176.37秒；前端25文件123项22.54秒及生产构建通过。日志保存在开发私有检查目录`accept-frozen-final-suite.log`、`accept-final-focused-3.log`、`accept-web-tests.log`、`accept-web-build.log`，失败/主动中断的早期日志也保留。
+
+真实执行ops release，比赛目录运行代码版本`1285f164b878cd5ba7839554762680314de59d43`，后端PID1619959、运行指纹`57254a21ad7ed51a1bf5091d2cf5b7d07ddc341f5370a29a8ab01f29144da1ec`。发布自检无fail，状态warn：`tracks`与`sandbox_image_warmup`提示保留，不额外创建资源消除提示。前端地址仍http://localhost:8765。发布后的这次提交仅补充证据文档，运行代码与冻结测试代码相同。
+
+发布前后48Run/14提交/163Job/5邮箱相同，设置、密钥、.env、全部经验字节哈希一致；旧LiSi仍unknown_archived、预约已释放、评分unknown。用户全局Codex配置SHA保持`70a6d5d136d6eeefad64c9ef083e5dce6e05eae5b1ee36c687569c9914fbe173`，开发后端继续禁用。完整发布结果及前后状态保存在`release-result.json`、`release-before-state.json`、`release-after-state.json`。
+
+剩余证据边界：平台物理最大寿命unknown，采用已实测支持7天保守上限；真实双箱恢复未测；原Si云端Job仍Failed，科学收敛/正常终态与修正日志检查已验证，未追加第二Job。这些不能由fixture或完整单元测试替代。唯一沙箱、唯一Si Job、用户追加唯一Agent注册均已执行；没有新增科研Run、彩排或Lightchaser提交。停止等待设计助手的内容交付，未执行CS-UP-19。
