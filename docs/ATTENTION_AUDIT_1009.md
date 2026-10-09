@@ -25,9 +25,9 @@ PI默认Astra xhigh/fast，执行者Terra(gpt-6.1-sol) high/fast。post_review�
 
 | 角色 | 原生线程 | 原生字节 | 前八帧角色标记 | 开发绝对路径命中 | 全局AGENTS命中 | 比赛外技能命中 |
 |---|---|---:|---|---:|---:|---|
-| PI | `01a11fab-c781-7703-8403-e410413e6736` | 1488745 | True | 0 | 0 | {"checkpoint": 26, "resume": 24} |
+| PI | `01a11fab-c781-7703-8403-e410413e6736` | 1489613 | True | 0 | 0 | {"checkpoint": 26, "resume": 24} |
 | 探索执行者 | `01a11fab-dde5-7202-ae1d-9a9c7324f310` | 1361666 | True | 0 | 0 | {"brainstorm": 4, "checkpoint": 15, "distill": 4, "orchestrate": 4, "reflect": 4, "resume": 11, "wrap-up": 4} |
-| 干净复跑执行者 | `01a11fe5-9115-7963-8200-888a697597f4` | 821291 | True | 0 | 0 | {"checkpoint": 11, "resume": 1} |
+| 干净复跑执行者 | `01a11fe5-9115-7963-8200-888a697597f4` | 824091 | True | 0 | 0 | {"checkpoint": 11, "resume": 1} |
 
 | 角色 | 原生文件:行 / 轮 | 帧种类 | 字节数 | 内容摘要 | 判定 | 建议 |
 |---|---|---|---:|---|---|---|

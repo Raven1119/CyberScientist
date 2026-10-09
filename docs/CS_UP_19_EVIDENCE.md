@@ -9,7 +9,7 @@
 - 发布版本：1285f164b878cd5ba7839554762680314de59d43。264个发布文件逐项复核清单SHA，另导出版本、发布清单、脱敏设置、脱敏Codex配置、23个启用技能清单、两层目录名称/大小，共271文件。
 - 完整导出清单：[export-manifest.json](https://github.com/Raven1119/CyberScientist-comp/blob/f5f9b571b44694fbc19d541fdf9dafd2bf82cecb/snapshot/export-manifest.json)。
 - 现有已知秘密扫描与ASP、API token、Bearer凭据、AccessKey值、长base64/JWT、私钥块扫描：271文件、0命中。初次扫描将代码中的函数名判为AccessKey值；修正为凭据值模式后重扫，未修改清单文件字节。位置记录留在本机私有证据，不输出匹配值。
-- 导出目录/home/wmywb/CyberScientist-comp-export，与比赛目录分离；比赛目录没有.git。未导出auth.json、秘密库、数据库、运行工作区、原生记录、虚拟环境、日志、备份或历史归档。两层目录树只包含名称、类型和大小。
+- 导出目录/home/wmywb/CyberScientist-comp-export，与比赛目录分离；初始记录中“比赛目录没有.git”未经正确确认；最终隐藏复验发现无提交/无远端的Git残留，已于17:46完整移到比赛外0700私有归档，原始证据保留。此次及最终快照未导出.git内容。未导出auth.json、秘密库、数据库、运行工作区、原生记录、虚拟环境、日志、备份或历史归档。两层目录树只包含名称、类型和大小。
 - 命令：tools/export_comp_snapshot.py --root /home/wmywb/CyberScientist-comp --output /home/wmywb/CyberScientist-comp-export；GitHub建私库、推送main、repo view、ls-remote。
 - 安全回归：tests/test_comp_snapshot_cs19.py，3 passed in 1.17s；覆盖原始字节、凭据排除/脱敏、违规清单、清单字节失配、扫描不回显。
 
@@ -68,7 +68,7 @@ fresh线程新Trial目录先于开会话创建为空，供应商之后创建只�
 CODEX_HOME=~/CyberScientist-comp/.runtime/codex codex login
 ```
 
-尚未验证：用户自行登录后两侧最小会话；不以原有共享登录冒充独立性。隐藏开发目录后的复验在最终测试结束后执行，避免把正在跑测试的源路径移走。
+尚未验证：用户自行登录后两侧最小会话；不以原有共享登录冒充独立性。隐藏依赖复验与全量测试使用两个独立文件系统视图：验证进程内把开发路径覆盖为空只读目录，宿主开发目录始终保持可见，测试源文件不移动。初始真实改名因驱动中断未执行trap，17:29:30已完整恢复，不能把该次计为通过。
 
 ## W7 巡检与输入门禁
 
@@ -77,3 +77,53 @@ CODEX_HOME=~/CyberScientist-comp/.runtime/codex codex login
 maintain_due忙锁即跳过，独立周期任务与提交/存活链分开；真实线程关机仍受resource_coordinator管理。测试使用另线程持Run锁以及让巡检等待的应用lifespan，确认一秒内返回/提交推进，不用提示词替代结构隔离。cell-relax缺force_thr_ev或stress_thr，在check_inputs运行前明确列缺项；force_thr不替代。65 passed / 34.11秒，真实云Job未重复执行。
 
 pg-*只读报告：[REPORT.md](https://github.com/Raven1119/cs-private/blob/e8238ab/reviews/pg_skills/REPORT.md)，32项逐目录调查、两项指定SHA仅相同/不同、七项逐字全文；8文件密钥扫描零命中，未启用任何pg技能。
+
+
+## W3 完整注意力审计
+
+[ATTENTION_AUDIT_1009.md](ATTENTION_AUDIT_1009.md)逐项列出三条真实原生会话的166项可见上下文输入/历史与来源、UTF-8 payload字节数、角色缺失/污染判断；加上每轮模板与未调用只读审查角色的模板/输出契约。供应商基础指令、角色developerInstructions、能力/技能索引、用户任务、工具输出均计入；不把event_msg重复日志和加密推理算成上下文文本。
+
+六个本方技能逐字阅读；冒烟经验停用前126条active正文共427640字节逐项读过并定位59处规则字面命中，不修改提示词/技能/经验正文。三条会话前八帧角色标记3/3；开发绝对路径、全局AGENTS路径及已知内容0命中。比赛外技能名称字面命中**并非0**：探索执行者曾读到旧ARM合同的安装说明（brainstorm、distill、orchestrate、reflect、wrap-up），报告逐帧定位；供应商resume/checkpoint普通词另外列出。原生扫描实际结果与原生技能扫描名单不同，不把索引隔离通过写成全文零命中。文字由设计助手交付，本卡只列不改。
+
+## W6 隐藏依赖复验与工作区恢复
+
+首次脚本真实改名开发目录后，验证驱动在会话中断时退出，EXIT trap没有执行。于17:29:30确认驱动已消失后完整恢复开发目录；原路径、任务卡、Git跟踪文件都在，失败/恢复回执留在比赛`.runtime/validation/cs-up-19/hidden/interruption-restored.json`。未把中断轮计为通过。
+
+替代方法：独立Linux user/mount namespace中，将开发路径bind mount为空只读目录；用户侧原工作区不变。该视图同时覆盖比赛后端、原生会话、工具桥、CLI与缓存重部署/回退；不是只检查配置未引用路径。首次命名空间尝试不能读宿主/proc/cwd，正确拒绝了旧进程身份；在宿主确认安全关机后才冷启动，身份门禁未放松。后续驱动独立后台运行并保存进程指纹，不再改名用户目录。
+
+| 验证项 | 实际结果 | 私有回执 |
+|---|---|---|
+| 冷启动 | 144.54秒，自检warn、0 fail；开发路径实际为空/只读 | hidden-ns/cold.json |
+| 前端 | WebBridge实际打开CyberScientist；首次Chrome连接时机失败保留，2秒轮询后通过 | hidden-ns/browser.json |
+| 原生握手 | 原PI Astra xhigh、clean执行者Terra fast，priority一致；仅握手，新增模型turn 0 | hidden-ns/native.json |
+| 系统工具 | 20个广告工具逐个实际调用，20返回、0传输失败；12成功/8安全拒绝。空输入/缺失目标不等于科学操作成功 | hidden-ns/tools.json |
+| 官方CLI试构建 | built、dry_run=true、submission_created=false，数据库计数不变 | hidden-ns/preview.json |
+| Job预检 | 真实静态预检；本卡Job0，未重复旧卡真实弛豫计算 | hidden-ns/job.json |
+| 身份与版本 | 操作者及5/5 active账号/auth/me通过；Codex0.161.0、Node22.17.0、官方CLI0.1.40、bohr2.7.8 | hidden-ns/identities.json |
+
+真实沙箱创建、现场命令、文件同步及删除使用W2的两份同题证据；隐藏视图不再创建资源，也不把静态Job预检冒充真实Job。旧卡已经完成的迁移完整冒烟和真实Si Job不重复。
+
+隐藏重部署首次prepare失败：比赛根目录残留.git（无HEAD提交、无refs、无远端，9103暂存条目），令发布错误选择Git导出分支。整个.git原样移至比赛之外私有归档，模式0700，未删除、未导出内容；W1早先未正确确认的“没有.git”已更正。重部署/回退/恢复最终结果以下续记。
+
+## 验收边界和设计助手交付项
+
+- Codex凭据账户/刷新令牌指纹比较仍为相同。按卡要求，用户自行在比赛CODEX_HOME登录后，才有授权验证两侧最小会话；本卡不代登录、不复制凭据。上面的登录命令供用户后续执行。
+- 只读审查者的真实原生帧未验证：本卡真实模型授权只含PI与执行者W2。采用真实模板和输出schema审计，不能把静态模板称为真实会话。
+- 原生全文比赛外技能名称零命中未满足，旧合同/供应商普通词来源已定位。文字按W3交设计助手，未擦除或改写真实原生记录。
+- 本次结果是契约通路，科学正确性、评分、正式参赛有效性均未验证；真实提交0，不向Lightchaser或其他未结束题提交，不跑排练。
+
+
+## W8 测试冻结与有界审查
+
+最终功能代码冻结于`e0f56c8b6956810172fbe391203ce6be6cd82f11`；此后只修改验收文档。完整后端：`.venv/bin/python -m pytest -q`，**1822 passed、2 warnings、1170.04秒**；这次重新全量覆盖最终模板裁剪。之前1188.04秒的同数量通过结果保留，首次27失败/1788通过与主动停止的一轮均不作为最终通过证据。两条警告来自Starlette/httpx与anyio弃用。
+
+前端：`npm test`（项目脚本为vitest run及固定环境/worker参数），25文件/**123 passed**、21.71秒；`npm run build`通过、630ms。旧测试fixture的重复React key/Router future警告保留，本卡没有改前端通用逻辑。`.venv/bin/python -m compileall -q src tests`、启动/隐藏脚本`bash -n`及`git diff --check`均通过。两份角色文件与卡附录全文再次逐字比较一致。
+
+阶段有界两轴代码审查发现的/app重复前缀剥除和暂存路径碰撞已修正，专项13项与完整后端同时覆盖；模板旧缓存裁剪先失败后修正，29项与最终全量覆盖。真实产物与原生绑定、源包不改写、0提交均有负例和真实CLI回执；没有用提示词替代目录或白名单结构。
+
+报告秘密扫描覆盖STATUS、注意力报告、证据报告全文，以及DECISIONS新增行，4文件0命中。整份旧DECISIONS形状扫描有2处历史公开数据集名中task-子串误命中（380/395行），均与HEAD原文一致且没有已知秘密值命中；逐项定位保留，不改产品扫描器或旧历史来制造整文件零命中。运行快照独立执行全部文件扫描，零命中才允许推送。
+
+
+隐藏复验最终回执：17:49:56无Git重部署完成；17:52:48回退至`01a3627405441d3807352da3ab6e9a84f373f4ae`完成；17:55:42恢复`e0f56c8b6956810172fbe391203ce6be6cd82f11`完成；17:55:45最后审计完成，驱动退出0。两次release各自动推私有快照，回退快照`42b6face29061d1748d6e97d084d18a486c1a527`、恢复快照`8d2ecc275aede4b46280a77ee489bd9c39d0ffae`；各244运行文件/251导出文件/23技能，密钥扫描0。隔离进程实际看到开发目录为空，宿主目录始终可见。
+
+最后审计：开发路径/全局AGENTS命中0；比赛外技能名仍有上述真实字面命中，不能宣称全文全部0。Runs49、Trials130、Jobs163、Sandboxes67、Submissions14、Mailboxes5与隔离基线相同；workspace/runs只有本次Run，evals与旧challenges目录不存在。经验只改了本次clean Trial的工具检查点笔记，发布没有覆盖经验；该笔记被检查点重新激活后，结束前再次经API停用，正文不变、历史保留。最终有效索引45项，三条冒烟策略/经验选入0；Run为recovering、resume_on_startup=0，不会自动模型恢复。功能隐藏复验通过；全文无关技能名零命中属于明确未满足的文字验收项。
