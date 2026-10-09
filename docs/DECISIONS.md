@@ -984,3 +984,5 @@ CS-UP-15 W2：当前官方 /api/docs/agent-integration 明确PathB用POST /auth/
 - D-84：干净复跑交接为流程、参数、验证、故障四段，独立空工作目录，首条消息补齐交付信息。
 
 执行顺序按W1→W8记录；W2第5步明确依赖W4/W5修正，因此先开展W2前置核查，完成后续必要接线后回到同一个W2冒烟Run完成该步，不用旧三段流程替代，不另开额外Run。扫描凭据值与已知秘密，源代码中的前缀字面量、未调用函数名不是凭据；发布清单原始文件保持字节一致。
+
+CS-UP-19 W4审查：原生developerInstructions已确认仅Codex app-server支持。Kimi ACP/Prime已有适配器忽略spec.instructions，不能编造会话字段或把每轮正文拼接冒充会话级指令。本卡比赛目录只允许已确认的Codex PI/执行者（授权Astra/Terra），不支持的比赛选择在启动/建Run/会话重建前拒绝并说明原因；开发端原有引擎功能保留，非Codex角色指令尚未验证，不宣称覆盖。Standards无硬标准阻断，Spec发现1项覆盖边界，采用该结构门禁闭合。

@@ -23,3 +23,12 @@ def role(name: str) -> str:
 def validate_roles() -> None:
     for name in ('pi', 'executor'):
         role(name)
+
+
+def validate_runtime(settings: dict) -> None:
+    from . import runtime_layout
+    if runtime_layout.version() is None:
+        return
+    for name in ('brain', 'executor'):
+        if settings[name].get('runtime') != 'codex':
+            raise ValueError('比赛角色开发者指令目前仅验证Codex原生协议；' + name + '需选择Codex')

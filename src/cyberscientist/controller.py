@@ -303,6 +303,7 @@ class RunController:
                     brain_dir: Path) -> dict[str, Any]:
         """New Runs get a brain-only read capability; old Runs keep their snapshot."""
         from . import role_prompts
+        role_prompts.validate_runtime(settings)
         run = self._require_run(run_id)
         import sys as _sys
         from .codex_protocol import native_brain_environment
@@ -387,6 +388,7 @@ class RunController:
     def _prime_spec(self, run_id: str, settings: dict[str, Any]) -> dict[str, Any]:
         """执行器启动参数：工作目录 + 运行时专有配置。"""
         from . import role_prompts
+        role_prompts.validate_runtime(settings)
         import os
         run = self._require_run(run_id)
         # An executor may write relative paths. Give every Run its own cwd,
@@ -548,6 +550,10 @@ class RunController:
             if current.get("runtime") != choice["runtime"]:
                 current["executable"] = ""  # use that runtime's Linux discovery path
             current.update(choice)
+        try:
+            role_prompts.validate_runtime(settings)
+        except ValueError as exc:
+            raise ControllerError('ROLE_RUNTIME_UNSUPPORTED', str(exc)) from exc
         run_id = _rid("run")
         # 协作配置在创建时快照化（settings.shadow + 本次开关）
         shadow_cfg = dict(settings.get("shadow") or {})

@@ -49,6 +49,20 @@ def test_legacy_prompt_read_failures_are_not_silenced(tmp_path, monkeypatch):
     assert executor_instruction_suffix().strip()
 
 
+def test_competition_rejects_engines_without_confirmed_native_role_injection(monkeypatch):
+    from cyberscientist import runtime_layout
+    settings = config.load_settings()
+    settings['brain']['runtime'] = settings['executor']['runtime'] = 'codex'
+    monkeypatch.setattr(runtime_layout, 'version', lambda: {'commit': 'fixture'})
+    role_prompts.validate_runtime(settings)
+    for role in ('brain', 'executor'):
+        original = settings[role]['runtime']
+        settings[role]['runtime'] = 'kimi'
+        with pytest.raises(ValueError, match='仅验证Codex'):
+            role_prompts.validate_runtime(settings)
+        settings[role]['runtime'] = original
+
+
 def test_role_bodies_match_authorized_appendices():
     import hashlib
     expected = {'pi': '5ce5de29f6aeb677aea7a4cc794fe3395a58da5f9bf98bbfa004c9ef14994d64', 'executor': 'e02a437f888f9b475490f3349f8c738215428dfdeb50f660de180620495806a3'}

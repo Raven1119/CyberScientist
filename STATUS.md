@@ -1058,3 +1058,9 @@ CS-UP-13 工作包提交索引（按Git事实，最终W8标签另录）：
 - 已实际验证：clean/Decision/role相关26 passed/8.18秒；新增测试在start与prompt两处断言新目录为空、交付信息完整、不泄露PI goal探索数值、封包仅新原生字节；字段缺失/空/超长负例已覆盖。
 - 尚未验证：W2真实干净线程产物/官方CLI试构建及续用。
 - 阻塞项：无新增资源；W4审查发现Kimi/Prime不消费spec.instructions，当前Astra/Terra原生Codex接线通过；将加比赛启动门禁并准确说明其他提供商支持边界，不编造协议字段。
+
+### CS-UP-19 W4审查闭合
+- 已实现：比赛启动、新Run有效模型选择、PI/executor会话spec均拒绝未确认developerInstructions协议的非Codex运行时；不改变开发端Kimi/Prime协议，不编造字段。
+- 已实际验证：两轴固定提交审查Standards硬阻断0/Spec覆盖缺口1；修正后角色/clean17 passed/5.12秒。原文追加验证7 passed/5.15秒。
+- 尚未验证：三个真实原生标记随W2验证；非Codex会话级角色指令未验证且比赛门禁明确拒绝。
+- 阻塞项：凭据同源只报相同/不同，未复制或打印指纹；用户自行隔离登录后才可验独立性。
