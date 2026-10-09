@@ -2128,6 +2128,10 @@ class RunController:
                 trial_id = db.query_one('SELECT trial_id FROM native_turn_trials WHERE run_id=? AND turn_id=?', (run_id, turn_id))[0]
             elif ev.get('trial_attribution') == 'unknown':
                 trial_id = None
+            if etype == 'credentials_touched':
+                from . import credential_watch
+                credential_watch.record(run_id, trial_id, ev)
+                return
             if turn_id and trial_id != run['current_trial_id']:
                 db.append_event(run_id, 'prime', 'prime.' + etype, _runtime_event_payload(ev), trial_id=trial_id)
                 return  # Late notifications cannot complete or abort a newer Trial.

@@ -30,6 +30,9 @@ class _Session:
     turn_id: str | None = None
     busy: bool = False
     rate_generation: int = 0
+    cwd: str | None = None
+    home: str | None = None
+    codex_home: str | None = None
 
 
 class CodexExecutor:
@@ -56,9 +59,10 @@ class CodexExecutor:
 
     async def start(self, spec: dict[str, Any]) -> str:
         from .. import model_providers
+        environment = model_providers.prepare(self.provider, process_environment(spec))
         rpc = JsonRpcStdio([self.executable, "app-server"],
                            cwd=spec.get("working_directory"),
-                           env=model_providers.prepare(self.provider, process_environment(spec)), name="codex-exec")
+                           env=environment, name="codex-exec")
         try:
             await rpc.start()
             await initialize(rpc)
@@ -81,7 +85,8 @@ class CodexExecutor:
         except BaseException:
             await rpc.stop()
             raise
-        sess = _Session(rpc=rpc, thread_id=tid)
+        sess = _Session(rpc=rpc, thread_id=tid, cwd=spec.get('working_directory'),
+                        home=(environment or {}).get('HOME'), codex_home=(environment or {}).get('CODEX_HOME'))
 
         async def report(payload: dict[str, Any]) -> None:
             await sess.queue.put({"type": "approval.request", **payload})
@@ -213,6 +218,12 @@ class CodexExecutor:
                     item = params.get("item", {})
                     itype = item.get("type")
                     completed = method == "item/completed"
+                    from .. import credential_watch
+                    paths = credential_watch.referenced_paths(item, cwd=sess.cwd,
+                        home=sess.home, codex_home=sess.codex_home)
+                    if paths:
+                        await emit({'type': 'credentials_touched', 'paths': paths,
+                            'session_id': sess.thread_id, 'item_id': item.get('id')})
                     if itype in ("agentMessage", "agent_message") and completed:
                         await emit({"type": "execution.progress",
                                               "detail": item.get("text", ""),

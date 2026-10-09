@@ -147,3 +147,31 @@
 | cs13-abacus-v1 | abacus-plane-wave-v1 |
 | cs13-abacus-v2 | abacus-plane-wave-v2 |
 | cs13-materials-v1 | materials-python-v1 |
+
+## W7：凭据路径与早期告警
+
+- 已实际验证：只枚举文件名并做 exists/access/stat 检查，没有读取凭据内容；完整路径/存在清单在 `.package-checks/cs-up20/credential-paths-before.json`。比赛 HOME 的同类凭据文件存在数为 0，无多余明文副本可移；全局目录未改。下表只报告路径与存在状态。
+- 已实现：当前比赛 Codex 执行器在原生工具开始事件上检查输入中的显式读取路径，包括 commandExecution、MCP 与 0.161 code-mode 的 dynamicToolCall；发现即发 `credentials_touched`，在控制器持久化、前端通用告警及 PI 观察摘要中可见。相同 session/item 去重，迟到的旧 Trial 通知仍按其归属记录，不自动暂停或新建 Trial。
+- 已实现：告警仅含路径与 session/item/turn 身份，不保存命令或结果；不打开凭据，不修改供应商原生记录。观察的是原生报文中显式路径读取意图，不确认访问成功，无法判定未在输入中显式出现的间接访问。
+- 已实际验证：先用 0.161 CLI 自带 `app-server generate-json-schema --experimental` 确认工具字段（私有 `codex-schema/`）；专项 26 passed/8.92 秒。补加全局 HOME/凭据目录与协作回归后，`.venv/bin/pytest -q tests/test_credential_watch_cs20.py tests/test_codex_runtime.py tests/test_collaboration.py tests/test_ops_cs10.py` → 109 passed/63.37 秒，日志 `w7-full-tests.log`。覆盖开始事件先于结果、代码模式、全局和比赛路径、一次告警、普通文件/输出/纯元数据不误报、Run 继续 running、原生字节哈希不变。
+- 尚未验证：新比赛进程实际告警接入，随 W11 发布；本卡不令真实执行者读取凭据来制造验证。Kimi/Prime 的原生接入未增加此检测，本次比赛选用 Codex。
+- 阻塞项：同一系统用户权限本身没有隔离；如记录真的读到密钥，需要干净 Trial，不能改写原始记录。有界审查核对检查只使用原生输入、告警不含秘密、事务去重与 Trial 归属；diff 检查通过。
+
+| 路径 | 存在 |
+|---|---|
+| /home/wmywb/CyberScientist-comp/.cyberscientist/secrets.json | 是 |
+| /home/wmywb/CyberScientist-comp/.env | 是 |
+| /home/wmywb/CyberScientist-comp/.runtime/codex/auth.json | 是 |
+| /home/wmywb/.codex/auth.json | 是 |
+| /home/wmywb/.playground/config.json | 否 |
+| /home/wmywb/.config/playground | 是 |
+| /home/wmywb/.config/playground/agents/agentmaster-02.env | 是 |
+| /home/wmywb/.config/playground/agents/agentmaster-03.env | 是 |
+| /home/wmywb/.config/playground/agents/agentmaster-probe-01.env | 是 |
+| /home/wmywb/.config/playground/credentials.env | 否 |
+| /home/wmywb/.bohr/config、.bohr/config.json、.config/bohr/config.json、.config/bohrium/config.json、.bohrium/config.json | 均否 |
+| /home/wmywb/.bohrium/bohr | 是 |
+| /home/wmywb/CyberScientist-comp/.runtime/home/.codex/auth.json | 否 |
+| /home/wmywb/CyberScientist-comp/.runtime/home/.playground/config.json | 否 |
+| /home/wmywb/CyberScientist-comp/.runtime/home/.config/playground（含 agents/ 与 credentials.env） | 否 |
+| /home/wmywb/CyberScientist-comp/.runtime/home 下 .bohr、.bohrium、.config/bohr、.config/bohrium | 均否 |
