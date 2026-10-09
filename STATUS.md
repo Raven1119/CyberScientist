@@ -1363,3 +1363,6 @@ CS-UP-13 工作包提交索引（按Git事实，最终W8标签另录）：
 - 尚未验证：结果包、PI提交审阅、真实提交/回执与干净复跑；科学收敛不足的判断由PI审阅，监控没有改写结果或代做科学决定。
 - 已实际验证：18:33:44Z完成检查点cp_bc0d3fe6bb触发PI第9轮审阅，18:35:35Z完成（108.642秒/7次只读），PI认为SCF阈值、离散收敛与积分复核仍不足，未发kind=submit。新Trial trial_4c5ae9af1c同方法继续验证，实际复用Terra/high/priority原线程；原Trial reported_complete不等于科学验收，不是干净复跑。新产生同题trial_note条目需在收尾一并经接口停用。
 - 尚未验证：修复后的实际Job预检、严格配对收敛与积分、PI提交决定及平台回执；本题仍真实沙箱创建2/Job0/提交0，继续原协议。
+- 已实际验证：18:41:27Z真实Job预检trial4_strict_pair_cpu_v1拦下单引号变量路径LITERAL_VARIABLE_PATH，数据库和原生工具响应均含具体line明细；reservation_created=false/possible_remote_effect=none。执行者自行修正路径，未建Job、未预约额度；这项验证覆盖错误明细传达，完整Job准入仍待通过。
+- 已实际验证：18:42:05Z真实预检继续拦未登记atomic.stdout/tight.stdout，无预约；执行者补齐后18:42:22Z强制预检passed（syntax_checked/image_checked=true），18:42:27Z唯一Job23515079/bohr20868308实际接收，18:43:20Z平台查询Running，资源c16_m16_cpu/10GB/180分钟/同镜像。当前真实沙箱创建2/Job1/提交0，准入修复已走到真实创建，科学结果尚未产生。
+- 已实际验证：旧辅助检查的MISSING_ENTRY/run.sh非阻断提示与冻结输入不符，18:43:52Z实际目录存在run.sh/6681字节输入，记录交设计助手。18:42:38Z资源检查点已报告，guidance_8d0890b487因Trial变化标superseded，不能当已ACK；当前没有为非阻断提示额外热修复。
