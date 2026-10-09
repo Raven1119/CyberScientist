@@ -235,3 +235,5 @@
 - 已有去重位于 mailboxes._record_feedback：完全相同的旧回执不会撤销显式恢复，真正变化的非标准反馈仍暂停。专项命令 .venv/bin/pytest -q tests/test_submission_gate_cs13.py -k nonstandard_feedback → 4 passed/6 deselected，5.84秒。该验证为应用测试；原生记录与旧提交均未改写，未重新提交。私有清单位于 .package-checks/rh02/pre-rh-*.json。
 
 补充复核：恢复后的版本31又被同步为32=false。三份旧反馈仅增加顶层status=scored，保护内容完全相同，仍在_record_feedback再次调用保护。原4项专项只证明完全相同反馈去重，不证明该生命周期变化安全；RH-02前置热修复补充这一真实反例，旧结论与失败时间保留。
+
+RH-02热修复commit37012a6已推送源码main，候选3标签保持91ecfd3。相关命令`.venv/bin/pytest -q tests/test_submission_gate_cs13.py tests/test_mailboxes.py tests/test_mailbox_platform.py`实测82 passed/30.58秒；完整新回执和终态投影保留，首次/真实变化的保护证据仍暂停。
