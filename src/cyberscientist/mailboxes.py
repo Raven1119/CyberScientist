@@ -405,6 +405,44 @@ def register_experiment(count: int, *, pending_claim: bool = False) -> dict[str,
     return {"items": items, "is_demo": platform.is_demo, "errors": errors}
 
 
+def import_agent_token(token: str) -> dict[str, Any]:
+    """Bind a user-provided token only after checking both identities."""
+    if not isinstance(token, str) or not token.strip() or len(token) > 4096 or any(c in token for c in '\r\n'):
+        raise MailboxError('INVALID_CREDENTIAL', '请输入有效的Agent令牌')
+    token = token.strip()
+    platform = _platform()
+    if not isinstance(platform, BohriumPlaygroundPlatform) or not platform.operator_token:
+        raise MailboxError('MISSING_CREDENTIAL', '需先配置真实平台的操作者凭据')
+    try:
+        owner = platform._http('GET', '/auth/me', token=platform.operator_token)
+        who = platform._http('GET', '/auth/me', token=token)
+    except PlatformError as exc:
+        raise MailboxError('AUTH_CHECK_FAILED', str(public_feedback(str(exc), token, platform.operator_token))) from None
+    if (not isinstance(owner, dict) or not isinstance(who, dict)
+            or owner.get('userType') != 'human' or not owner.get('id')
+            or who.get('userType') != 'agent' or not who.get('id')
+            or str(who.get('operatorId')) != str(owner['id'])
+            or who.get('operatorConfirmed') is not True):
+        raise MailboxError('IDENTITY_MISMATCH', '令牌须属于已由当前操作者认领的Agent')
+    with config.mutation_lock, db.transaction() as conn:
+        rows = conn.execute('SELECT * FROM mailboxes WHERE platform=? AND platform_account_id=?',
+                            (platform.name, str(who['id']))).fetchall()
+        if len(rows) > 1 or rows and rows[0]['role'] != 'experiment':
+            raise MailboxError('CONFLICT', '该平台身份已存在冲突的账号登记')
+        mid = rows[0]['id'] if rows else _rid('mbox')
+        ref = _store_secret('mailbox_' + mid, token)
+        if rows:
+            conn.execute("UPDATE mailboxes SET secret_ref=?,operator_id=?,claim_status='confirmed' WHERE id=?",
+                         (ref, str(owner['id']), mid))
+        else:
+            conn.execute('INSERT INTO mailboxes(id,role,email,platform,secret_ref,status,submission_limit,is_demo,created_at,platform_account_id,operator_id,claim_status) '
+                         "VALUES(?,'experiment',?,?,?,'active',?,0,?,?,?,'confirmed')",
+                         (mid, who.get('email') or who.get('name') or str(who['id']), platform.name,
+                          ref, config.load_settings()['mailbox']['submission_limit'], db.utcnow(),
+                          str(who['id']), str(owner['id'])))
+    return _row(db.query_one('SELECT * FROM mailboxes WHERE id=?', (mid,)))
+
+
 def refresh_claims():
     results=[]
     for row in db.query("SELECT * FROM mailboxes WHERE is_demo=0 AND status='active'"):

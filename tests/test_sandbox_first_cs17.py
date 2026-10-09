@@ -20,7 +20,7 @@ def test_persistent_workspace_is_single_and_uses_pi_image(run, monkeypatch):
     assert topic_workspace.ensure(rid)==fact
     assert sum(c[:2]==['sandbox','create'] for c in calls)==1
     assert fact['lifetime_seconds'] <= 1200
-    assert fact['renewal']=='unavailable_in_native_cli'
+    assert fact['renewal']=='replace_same_image'
     assert any(x['id']=='topic-sandbox' for x in capabilities.index(rid))
     sandboxes.cleanup_run(rid)
     assert topic_workspace.ensure(rid)['mode']=='job'

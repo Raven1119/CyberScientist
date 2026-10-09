@@ -285,6 +285,8 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
             while not stop.is_set():
                 controller.scan_score_waits()
                 try:
+                    from . import topic_workspace
+                    await asyncio.to_thread(topic_workspace.maintain_due)
                     await asyncio.to_thread(sandboxes.expire_due)
                     await asyncio.to_thread(sandboxes.reconcile_pending_creates)
                     from . import submission_gate
@@ -1820,6 +1822,10 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
     @app.post('/api/v1/mailboxes/claims/refresh')
     async def refresh_claims():
         return await asyncio.to_thread(mailboxes.refresh_claims)
+
+    @app.post('/api/v1/mailboxes/agent-token')
+    async def import_agent_token(body: dict[str, Any]):
+        return await asyncio.to_thread(mailboxes.import_agent_token, body.get('token'))
 
     @app.delete("/api/v1/mailboxes/{mailbox_id}")
     async def disable_mailbox(mailbox_id: str) -> dict[str, Any]:

@@ -3,7 +3,7 @@ import { vi, test, expect, afterEach } from 'vitest'
 import { AccountRoles } from './AccountRoles'
 import { api } from './api'
 afterEach(cleanup)
-vi.mock('./api', () => ({api: {get:vi.fn(),put:vi.fn()}}))
+vi.mock('./api', () => ({api: {get:vi.fn(),put:vi.fn(),post:vi.fn()}}))
 test('shows pending owner claim, changes role and controls harvest through API', async () => {
   vi.mocked(api.get).mockImplementation(async path => path.endsWith('mailboxes') ? {items:[{id:'a',email:'test',status:'active',role:'experiment',claim_status:'pending'}]} : {features:{auto_harvest:false}} as never)
   vi.mocked(api.put).mockResolvedValue({} as never)
@@ -20,4 +20,16 @@ test('checks latest version and only offers a manual update notice', async () =>
   render(<AccountRoles />)
   fireEvent.click(screen.getByLabelText('检查官方CLI更新'))
   await screen.findByText('官方CLI有新版本 0.1.41，当前 0.1.40；需人工升级')
+})
+test('imports an owned agent token, clears the field, and refreshes accounts', async () => {
+  vi.mocked(api.get).mockImplementation(async path => path.endsWith('mailboxes') ? {items:[]} : {features:{}} as never)
+  vi.mocked(api.post).mockResolvedValue({email:'owned-agent'} as never)
+  render(<AccountRoles />)
+  const input = screen.getByLabelText('已认领Agent的令牌') as HTMLInputElement
+  expect(input.type).toBe('password')
+  fireEvent.change(input,{target:{value:'fixture-agent-token'}})
+  fireEvent.click(screen.getByText('核验并绑定Agent'))
+  await screen.findByText('owned-agent 身份已核验并绑定')
+  expect(api.post).toHaveBeenCalledWith('/api/v1/mailboxes/agent-token',{token:'fixture-agent-token'})
+  await waitFor(() => expect(input.value).toBe(''))
 })

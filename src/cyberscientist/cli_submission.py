@@ -111,6 +111,12 @@ def submit(platform, email, secret, package_path, challenge_id, meta):
             pinned_cli()
         content = meta['package_bytes']
         manifest, raw, provenance = _files(content)
+        model = next((value.strip() for value in
+                      (meta.get('model_id'), meta.get('model'), provenance.get('model'))
+                      if isinstance(value, str) and value.strip()
+                      and value.strip().lower() != 'unknown'), None)
+        if not model:
+            raise ValueError('缺少真实模型标识，拒绝官方CLI提交；未发送')
         transport = getattr(platform, 'transport', None)
         if transport:
             from . import track_transport
@@ -148,7 +154,7 @@ def submit(platform, email, secret, package_path, challenge_id, meta):
         package = directory / 'official.zip'
         command = [executable, 'submit', '--api-base', platform.base_url,
             '--challenge-id', challenge_id, '--outputs', str(outputs), '--trace', str(native),
-            '--raw-messages', str(native), '--model', meta.get('model_id') or meta.get('model') or provenance.get('model') or 'unknown',
+            '--raw-messages', str(native), '--model', model,
             '--harness', meta.get('harness') or 'Codex', '--bundle-out', str(package),
             '--run-id', meta.get('submission_id') or hashlib.sha256(content).hexdigest(),
             '--token-env', 'CS_PLAYGROUND_SUBMIT_TOKEN', '--worker-token-env', 'CS_PLAYGROUND_SUBMIT_TOKEN']

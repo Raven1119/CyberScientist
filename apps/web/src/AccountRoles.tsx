@@ -8,6 +8,8 @@ export function AccountRoles() {
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
   const [cliNotice, setCliNotice] = useState('')
+  const [agentToken, setAgentToken] = useState('')
+  const [bindingNotice, setBindingNotice] = useState('')
   const refresh = useCallback(async () => {
     try {
       const [accounts, settings] = await Promise.all([
@@ -31,9 +33,24 @@ export function AccountRoles() {
     catch (e) { setError(String(e)) }
     finally { setBusy(false) }
   }
+  const bindAgent = async () => {
+    setBusy(true); setError(''); setBindingNotice('')
+    try {
+      const result = await api.post<Mailbox>('/api/v1/mailboxes/agent-token', {token: agentToken})
+      setBindingNotice(`${result.email} 身份已核验并绑定`)
+      await refresh()
+    } catch (e) { setError(String(e)) }
+    finally { setAgentToken(''); setBusy(false) }
+  }
   return <article className="card" aria-label="账号角色和认领状态">
     <div className="card-head"><h2>比赛账号</h2></div>
     <div className="card-body">
+      <label htmlFor="agent-token">已认领Agent的令牌</label>
+      <input id="agent-token" type="password" autoComplete="off" value={agentToken}
+        onChange={e => setAgentToken(e.target.value)} />
+      <button type="button" className="btn" disabled={busy || !agentToken.trim()}
+        onClick={() => void bindAgent()}>核验并绑定Agent</button>
+      {bindingNotice && <p role="status">{bindingNotice}</p>}
       <button type="button" className="btn" aria-label="切换收割开关" disabled={busy} onClick={() => void toggle()}>
         收割{enabled ? '已开启' : '已关闭'}
       </button>

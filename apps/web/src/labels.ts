@@ -206,6 +206,7 @@ export const KIND_LABELS: Record<string, string> = {
 
 export const SUBMISSION_STATUS_LABELS: Record<string, string> = {
   unknown: '待提交',
+  unknown_archived: '未知已归档（不重发）',
   created: '已创建',
   submitted: '已提交',
   failed: '提交失败',

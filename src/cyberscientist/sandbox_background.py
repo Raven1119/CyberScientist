@@ -10,6 +10,11 @@ import time
 from . import compute, db, sandboxes
 
 
+def command_digest(command, timeout, cwd=None):
+    values = [command, timeout] if cwd is None else [command, timeout, cwd]
+    return hashlib.sha256(sandboxes._json(values).encode()).hexdigest()
+
+
 def _authorized(run_id: str, timeout: int) -> None:
     from . import power, run_clock
     run=compute._run(run_id)
@@ -21,7 +26,7 @@ def _authorized(run_id: str, timeout: int) -> None:
 
 
 def start(run_id: str, sandbox_id: str, command: str, timeout: int,
-          operation_id: str) -> dict:
+          operation_id: str, *, cwd: str | None = None) -> dict:
     box = sandboxes._owned(run_id, sandbox_id)
     run = compute._run(run_id)
     if run['phase'] != 'running' or run['gate'] != 'open':
@@ -33,13 +38,18 @@ def start(run_id: str, sandbox_id: str, command: str, timeout: int,
     if not isinstance(operation_id, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,100}', operation_id):
         raise compute.ComputeError('INVALID_OPERATION', '后台执行需要稳定 operation_id')
     _authorized(run_id,timeout)
-    digest = hashlib.sha256(sandboxes._json([command,timeout]).encode()).hexdigest()
+    digest = command_digest(command, timeout, cwd)
     directory = '/tmp/cyberscientist-background/' + operation_id
     quoted = shlex.quote(directory)
+    execution = command
+    if cwd is not None:
+        if cwd != '/bohr-workspace':
+            raise compute.ComputeError('INVALID_PATH', '常驻工作目录必须为比赛工作目录')
+        execution = 'cd ' + shlex.quote(cwd) + ' && ' + command
     # Native timeout=0 applies only to the launch RPC. Bound the actual process
     # separately, and publish its exit code atomically after flushing the log.
     wrapper = (f'mkdir -p {quoted} && '
-               f'timeout --signal=TERM --kill-after=5 {timeout} bash -c {shlex.quote(command)} '
+               f'timeout --signal=TERM --kill-after=5 {timeout} bash -c {shlex.quote(execution)} '
                f'>{quoted}/output.log 2>&1; code=$?; '
                f'printf "%s\\n" "$code" >{quoted}/exit.tmp; '
                f'mv {quoted}/exit.tmp {quoted}/exit')
@@ -56,9 +66,9 @@ def start(run_id: str, sandbox_id: str, command: str, timeout: int,
             return {'operation_id': operation_id, 'status': previous['status'],
                     'deduplicated': True, 'poll_action': 'poll'}
         conn.execute('INSERT INTO compute_sandbox_operations'
-                     '(operation_id,run_id,sandbox_id,action,status,started_at,command_sha256)'
-                     " VALUES(?,?,?,'background','running',?,?)",
-                     (operation_id, run_id, sandbox_id, db.utcnow(), digest))
+                     '(operation_id,run_id,sandbox_id,action,status,started_at,command_sha256,receipt_json)'
+                     " VALUES(?,?,?,'background','running',?,?,?)",
+                     (operation_id, run_id, sandbox_id, db.utcnow(), digest, sandboxes._json({'cwd': cwd})))
         db.append_event_tx(conn, run_id, 'controller', 'sandbox.background_started',
                            {'operation_id': operation_id, 'sandbox_id': sandbox_id,
                             'command': sandboxes._clean(command), 'timeout': timeout},
@@ -77,7 +87,7 @@ def start(run_id: str, sandbox_id: str, command: str, timeout: int,
     node = sandboxes._data(sandboxes._body(receipt))
     pid = node.get('pid') if isinstance(node, dict) else None
     status = 'running' if receipt.get('ok') and type(pid) is int and pid > 0 else 'unknown'
-    raw = sandboxes._json({'launch': safe, 'pid': pid, 'directory': directory, 'timeout': timeout})
+    raw = sandboxes._json({'launch': safe, 'pid': pid, 'directory': directory, 'timeout': timeout, 'cwd': cwd})
     db.execute("UPDATE compute_sandbox_operations SET status=CASE WHEN status IN ('completed','failed','cancelled') THEN status ELSE ? END,receipt_json=?,receipt_sha256=?"
                ' WHERE operation_id=?', (status, raw, hashlib.sha256(raw.encode()).hexdigest(), operation_id))
     status=db.query_one('SELECT status FROM compute_sandbox_operations WHERE operation_id=?',(operation_id,))[0]

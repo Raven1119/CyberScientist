@@ -1,0 +1,19 @@
+# 10-09 验收后补丁证据
+
+用户转达11:30设计助手意见：原CS-NIGHT-1009整体验收通过，五项例外记录于[DECISIONS](DECISIONS.md)。原[交付报告](CS_NIGHT_1009_REPORT.md)描述当时证据，不追改历史失败。本轮仅授权一个测试沙箱、一个Si短弛豫Job、归档、账号核验和发布；没有新科研Run、比赛提交、注册或彩排。
+
+| 补丁 | 已实现与实际证据 | 验收限制/替代 |
+|---|---|---|
+| 1 旧LiSi | `sub_ccc1b19416` status/stage=`unknown_archived`，释放预约、停止轮询、追加授权归档事件；外部提交调用0 | 远端存储和评分仍unknown，不重发 |
+| 2 寿命/换箱 | 唯一沙箱请求604800秒，远端start/end分别2026-10-09T03:34:32Z和2026-10-16T03:34:32Z；随后删除并只读确认。常驻申请受寿命、Run和额度限制，预留同步窗口；空闲工作目录前后全文件哈希核对，同镜像换箱恢复后再次核对；失败回退Job，unknown不重放 | 7天未被截短，只证明支持7天，物理最大值unknown。以已证实7天作为保守上限。换箱恢复仅fixture验证，未另建两个真实沙箱，保留缺口 |
+| 3 Si弛豫 | 唯一Job23511409实际ABACUS cell-relax，11:40:29–11:40:32，5个SCF收敛帧；最终力0/阈值0.01 eV/Angstrom、应力0.303826/阈值0.5 kbar，最终能量-212.0305897858216326 eV；最终弛豫收敛及Finish结束标记齐全 | 平台Job=`Failed`：ABACUS正常结束后旧dpdata读原子数字段失败。修正为原始终态摘要检查，并对该原日志只读回放通过；未追加第二Job，不将Failed改为成功，不独立声明结构/能量准确性 |
+| 4 CLI模型 | 非空真实模型值缺失/unknown时在HTTP和CLI发送之前拒绝；覆盖6种无效输入和发送前门禁 | 无实际提交，使用拒绝路径与回归测试验证 |
+| 5 账号 | 两个已提供Agent各/auth/me 200，归属90229且operatorConfirmed=true，绑定已有邮箱；新增前端密码输入与身份核验绑定接口。第三个提供令牌/auth/me 200但身份human、id90229，未绑成Agent | 当前三实验加一收割。第三新Agent缺有效令牌，五账号验收不满足；不能重复人类账号或注册补数。只补验现有账号隐藏依赖，其他步骤沿用上次证据 |
+
+修正版cell-relax检查要求最后SCF收敛，最终力/应力摘要出现在弛豫收敛之前，最终能量在弛豫收敛之后、Finish之前。拒绝缺结束标记、最终未收敛、超阈值、NaN、阈值不符、终止后补写指标等假成功。它读取ABACUS报告的收敛标准，不再依赖旧版帧解析器。
+
+原始ZIP SHA256 `71a932f06e4cdcf9fa27c6ac19e55f7f4f1379ddcc32e1e9cb7e67ab33029919`，原始运行日志SHA256 `6cfb6dbfdaa3ebef674fc9b9d809e3d5622ff1944ad78917e25838dd9e494301`。原件不修改；回放仅解析已下载输出文本，不在本地重算科研结果。
+
+私有原件在比赛目录`.runtime/validation/post-accept-1009/`，不入Git：`unknown-archived.json`、`lifetime-{request,create,describe,delete,delete-reconciliation,result}.json`、`lifetime-observation.json`、`cell-relax/final.json`、`cell-relax/original-log-verification.json`、下载ZIP、两个Agent绑定摘要及`third-agent-identity.json`。原生秘密只保存在后端0600存储。
+
+相关回归64项24.81秒；前端25文件123项22.54秒；生产构建通过。完整后端、两轴审查、最终发布和账号隐藏补验结果完成后追加，不以专项测试代替完整验收。
