@@ -95,11 +95,32 @@ async def test_confirmed_close_and_failed_fresh_start_cannot_leave_running_stale
               'fresh_executor_session': True, 'clean_handoff': HANDOFF}
     await controller._apply_decision(rid, valid_decision(run_id=rid, actions=[action]), {}, None, None)
     assert rid not in controller._prime_instances and rid not in controller._prime_sessions
-    assert db.query_one('SELECT phase FROM runs WHERE id=?', (rid,))['phase'] != 'running'
+    assert controller._executor_busy[rid] is False
+    assert db.query_one('SELECT phase FROM runs WHERE id=?', (rid,))['phase'] == 'paused'
     assert not db.query('SELECT * FROM trials WHERE run_id=?', (rid,))
 
 
-async def test_real_run_loop_dispatches_resume_after_confirmed_handle_removal(monkeypatch):
+async def test_busy_restart_failure_clears_only_confirmed_closed_busy_state(monkeypatch):
+    _seed_challenge(); rid = _make_run()
+    db.execute("UPDATE runs SET phase='running',gate='open',executor_thread_id='old' WHERE id=?", (rid,))
+    class Old:
+        async def close(self, sid):
+            return None
+    class Failed:
+        async def start(self, spec):
+            raise RuntimeError('fixture start failed')
+    controller = RunController(); controller._prime_instances[rid] = Old()
+    controller._prime_sessions[rid] = 'old'; controller._executor_busy[rid] = True
+    monkeypatch.setattr(controller, '_make_prime', lambda settings: Failed())
+    assert await controller._restart_prime_session(rid) is False
+    assert controller._executor_busy[rid] is False
+    controller._pause_needs_attention(rid, 'fixture')
+    assert db.query_one('SELECT phase FROM runs WHERE id=?', (rid,))['phase'] == 'paused'
+    assert db.query_one("SELECT 1 FROM events WHERE run_id=? AND type='executor.close_confirmed'", (rid,))
+
+
+@pytest.mark.parametrize('case', ['resume', 'pausing_closed'])
+async def test_real_run_loop_dispatches_resume_after_confirmed_handle_removal(monkeypatch, case):
     import asyncio
     from cyberscientist.brains.base import SessionRef
     _seed_challenge(); rid = _make_run()
@@ -129,16 +150,25 @@ async def test_real_run_loop_dispatches_resume_after_confirmed_handle_removal(mo
     async def dispatch(signal, run_id, q, **context):
         if signal['type'] == 'fixture-remove-confirmed-handle':
             controller._prime_instances.pop(rid); controller._prime_sessions.pop(rid)
-            db.execute("UPDATE runs SET phase='running' WHERE id=?", (rid,))
-            await q.put({'type': 'resume'})
+            if case == 'resume':
+                db.execute("UPDATE runs SET phase='running' WHERE id=?", (rid,))
+                await q.put({'type': 'resume'})
+            else:
+                sid = db.query_one('SELECT executor_thread_id FROM runs WHERE id=?', (rid,))[0]
+                db.append_event(rid, 'controller', 'executor.close_confirmed', {'session_id': sid})
+                db.execute("UPDATE runs SET phase='pausing' WHERE id=?", (rid,))
+                await q.put({'type': 'fixture-confirm-pause'})
         else:
             assert context['prime'] is None and context['prime_sid'] is None
-            await real(signal, run_id, q, **context)
-            assert rid in controller._prime_instances
+            if case == 'resume':
+                await real(signal, run_id, q, **context)
+                assert rid in controller._prime_instances
+            else:
+                assert db.query_one('SELECT phase FROM runs WHERE id=?', (rid,))[0] == 'paused'
             db.execute("UPDATE runs SET phase='finished',end_reason='fixture-stop' WHERE id=?", (rid,))
     monkeypatch.setattr(controller, '_handle_signal_with_deadline', dispatch)
     await queue.put({'type': 'fixture-remove-confirmed-handle'})
     await asyncio.wait_for(controller._run_loop(rid, queue), timeout=5)
-    assert len(calls) == 2
+    assert len(calls) == (2 if case == 'resume' else 1)
     assert db.query_one('SELECT phase FROM runs WHERE id=?', (rid,))['phase'] == 'finished'
     assert not db.query_one("SELECT 1 FROM events WHERE run_id=? AND type='run.runtime_error'", (rid,))

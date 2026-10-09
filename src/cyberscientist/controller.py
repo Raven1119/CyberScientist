@@ -1943,10 +1943,20 @@ class RunController:
                     self._expire_active_run(run_id, notify=False)
                     phase = "pausing"
                 if phase == "pausing":
-                    receipt = await self._prime_instances[run_id].abort(
-                        self._prime_sessions[run_id])
+                    runtime = self._prime_instances.get(run_id)
+                    session = self._prime_sessions.get(run_id)
+                    if runtime is None:
+                        from .prime import ActionReceipt
+                        closed = db.query_one("SELECT payload FROM events WHERE run_id=? AND type='executor.close_confirmed' ORDER BY seq DESC LIMIT 1", (run_id,))
+                        known_closed = bool(closed and json.loads(closed['payload']).get('session_id') == run['executor_thread_id'])
+                        unknown = db.query_one('SELECT 1 FROM system_state WHERE key IN (?,?)',
+                            ('native_close_unknown:' + run_id, 'native_close_unknown:executor-pause:' + run_id))
+                        receipt = ActionReceipt(status='confirmed' if known_closed and not unknown else 'unknown',
+                            detail='会话关闭已确认' if known_closed and not unknown else '缺少会话句柄，关闭状态未知')
+                    else:
+                        receipt = await runtime.abort(session)
                     confirmed = receipt.status == 'confirmed'
-                    if not confirmed or db.query_one('SELECT 1 FROM system_state WHERE key=?', ('native_close_unknown:executor-pause:' + run_id,)):
+                    if runtime is not None and (not confirmed or db.query_one('SELECT 1 FROM system_state WHERE key=?', ('native_close_unknown:executor-pause:' + run_id,))):
                         confirmed = False  # An idle turn cannot clear a failed process close.
                         try:
                             await asyncio.wait_for(self._prime_instances[run_id].close(self._prime_sessions[run_id]), 15)
@@ -2355,8 +2365,10 @@ class RunController:
                 db.append_event(run_id,"controller","executor.close_unknown",{"session_id":session,"fresh":fresh})
                 return False
             db.execute("DELETE FROM system_state WHERE key=?",("native_close_unknown:" + run_id,))
+            db.append_event(run_id, 'controller', 'executor.close_confirmed', {'session_id': session})
             self._prime_instances.pop(run_id, None)
             self._prime_sessions.pop(run_id, None)
+            self._executor_busy[run_id] = False
         try:
             runtime = self._make_prime(self._runtime_settings(run_id))
             if isinstance(runtime, KimiExecutor):
