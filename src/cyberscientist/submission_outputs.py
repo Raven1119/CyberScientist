@@ -9,16 +9,22 @@ import zipfile
 from . import native_logs, trace_selection
 
 
-def output_path(value):
+def source_path(value):
     if not isinstance(value, str):
         raise ValueError('输出路径须为字符串')
+    app_path = value.startswith(('/app/', 'app/'))
     value = value.removeprefix('/app/').removeprefix('app/')
-    if not value.startswith('outputs/') or '\\' in value:
-        raise ValueError('输出契约须位于 /app/outputs 或 outputs')
+    if (not value.startswith('outputs/') and not app_path) or '\\' in value:
+        raise ValueError('输出契约须为明确的 /app 文件或 outputs 文件')
     path = PurePosixPath(value)
-    if any(part in ('..', '.') for part in value.split('/')) or path.is_absolute():
+    if any(part in ('..', '.', '') for part in value.split('/')) or path.is_absolute():
         raise ValueError('输出路径越界')
     return path.as_posix()
+
+
+def output_path(value):
+    path = source_path(value)
+    return path if path.startswith('outputs/') else 'outputs/' + path
 
 
 def stage(content, directory, manifest, *, contract=None):
@@ -29,7 +35,8 @@ def stage(content, directory, manifest, *, contract=None):
             path = item.get('path') or item.get('name')
             if isinstance(path, str) and ('outputs/' in path):
                 declared.append(output_path(path))
-    paths = sorted(set(output_path(p) for p in contract['paths'])) if contract else sorted(set(declared))
+    specifications = {output_path(p): source_path(p) for p in contract['paths']} if contract else {p:p for p in declared}
+    paths = sorted(specifications)
     if not paths:
         raise ValueError('缺少题面输出契约及执行者明确产物清单；未发送')
     hashes = {}
@@ -37,7 +44,8 @@ def stage(content, directory, manifest, *, contract=None):
         names = archive.namelist()
         root = trace_selection.bundle_root({name: b'' for name in names})
         for path in paths:
-            matches = [n for n in names if n in (root + path, root + 'app/' + path)]
+            source = specifications[path]
+            matches = [n for n in names if n in (root + source, root + 'app/' + source)]
             if len(matches) != 1:
                 raise ValueError('契约产物缺失或重复：' + path)
             entry = archive.getinfo(matches[0])
@@ -78,5 +86,5 @@ def contract_for_run(run_id):
         return contract
     # Explicit task output paths are useful even when no JSON schema is supplied.
     inspected = artifact_contracts.inspect('', task_content=facts['content'])
-    paths = [p for p in inspected['task_paths'] if p.startswith(('/app/outputs/', 'app/outputs/', 'outputs/'))]
+    paths = [p for p in inspected['task_paths'] if p.startswith(('/app/', 'app/', 'outputs/'))]
     return {'paths': paths} if paths else None

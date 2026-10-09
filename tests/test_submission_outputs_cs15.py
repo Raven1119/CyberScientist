@@ -25,6 +25,22 @@ def test_task_contract_excludes_undeclared_private_and_normalizes_app_path(tmp_p
         outputs.verify_built(package({'outputs/a.json':'{"n":2}'}),staged['sha256'])
 
 
+def test_explicit_app_root_output_is_staged_alone_with_cli_prefix(tmp_path):
+    content=package({'submission.json':'{"witness":1}','contract_report.json':'diagnostic','private.env':'secret'})
+    stage=tmp_path/'stage'
+    staged=outputs.stage(content,stage,{},contract={'paths':['/app/submission.json']})
+    assert staged['included']==['outputs/submission.json']
+    assert [p.name for p in stage.iterdir()]==['submission.json']
+    outputs.verify_built(package({'outputs/submission.json':'{"witness":1}'}),staged['sha256'])
+    with pytest.raises(ValueError):outputs.stage(content,stage,{},contract={'paths':['/app/../private.env']})
+
+
+def test_fenced_write_directive_is_available_as_task_contract():
+    from cyberscientist import artifact_contracts
+    text='Write exactly one machine-readable witness to:\n\n```text\n/app/submission.json\n```\n'
+    assert artifact_contracts.inspect('',task_content=text)['task_paths']==['/app/submission.json']
+
+
 @pytest.mark.parametrize('files,contract',[
     ({'outputs/a.json':'bad json'},{'paths':['outputs/a.json'],'json_schemas':{'outputs/a.json':{'type':'object'}}}),
     ({'outputs/a.json':'{}'},{'paths':['outputs/missing.json']}),

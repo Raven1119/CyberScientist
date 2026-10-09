@@ -16,10 +16,19 @@ def preview(request):
                      (request.get('mailbox_id'),platform.name))
     if not row:raise ValueError('试构建需要明确可用的邮箱')
     package=mailboxes._resolve_package(run_id,trial_id,request['package_path'])
-    content=package.read_bytes()
-    return cli_submission.submit(platform,row['email'],config.resolve_secret(row['secret_ref']),
-        str(package),mailboxes._run_challenge_id(run_id),
-        {'package_bytes':content,'run_id':run_id,'trial_id':trial_id,'dry_run':True})
+    checked=mailboxes.preflight_submission(run_id,trial_id,str(package))
+    if checked['error_code']:
+        raise ValueError('试构建封存预检失败：' + checked['error_code'])
+    content=checked['sealed_bytes']
+    from .mailbox_platform import PlatformError
+    try:
+        result=cli_submission.submit(platform,row['email'],config.resolve_secret(row['secret_ref']),
+            str(package),mailboxes._run_challenge_id(run_id),
+            {'package_bytes':content,'run_id':run_id,'trial_id':trial_id,'dry_run':True})
+    except PlatformError as exc:
+        raise ValueError(str(exc)) from exc
+    return result | {'source_package_sha256':checked['source_package_sha256'],
+                     'sealed_package_sha256':checked['sealed_package_sha256']}
 
 
 def submit(request):

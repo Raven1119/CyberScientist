@@ -1115,3 +1115,10 @@ CS-UP-13 工作包提交索引（按Git事实，最终W8标签另录）：
 - 已实际验证：宿主/自检/快照/发布51 passed/68.31秒。Playwright真实Chromium按aria-label“批准初始方法”点击，真实后端HTTP200，2.19秒；未替换HTTP响应。旧告警挡住UI，临时在本页抑制close回调再关闭dialog，100条历史告警后端仍未确认，没有改旧账本。SSE使networkidle等待超时的首次浏览器检查未记通过，改为domcontentloaded后执行实际点击。
 - 尚未验证：探索trial_8a3d91e3ca真实sandbox/产物/试构建与干净复跑；已由原生执行者接收任务。
 - 阻塞项：凭据独立性仍待用户自行登录。未新建第二个Run、未创建Job/提交。
+
+### CS-UP-19 W2封存与根目录契约修正
+- 已实现：ops dry-run先封存绑定真实原生记录，再调用官方CLI；source包不改写，失败给明确错误。支持明确题面/app根文件与fenced write指令，仅暂存唯一声明科学输出，CLI outputs前缀映射保留字节/哈希，不加入源码和诊断报告。
+- 已实际验证：探索沙箱真实小命令及脚本生成、契约检查、result_package.zip/trial_complete，PI实际读取文件和执行回执后等待；本轮新沙箱1个且已由执行者释放。系统实际封存375236 bytes，原生1,359,034 bytes、绑定原探索线程和Terra模型，schema error_code=null；原包不含原生记录是预期，不能要求模型伪造。
+- 已实际验证：封存/CLI/输出32 passed/11.44秒，/app白名单28项另通过；新增preview负例对真实封存入口检查byte-exact绑定、源包不改、0提交、仅--dry-run。旧CLI fixture补齐新身份探针后73 passed/24.45秒；之前全量27失败/1788通过是旧mock未提供进程身份，失败保留，不把该次记为全量通过。preview初测元组取值错误失败后修fixture，未放松断言。
+- 尚未验证：更新后比赛端实际dry-run、干净复跑和同版本release续用，随后执行。
+- 阻塞项：凭据同源；全量需在最终代码重新冻结后再跑。

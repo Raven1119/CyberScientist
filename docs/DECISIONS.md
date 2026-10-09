@@ -986,3 +986,9 @@ CS-UP-15 W2：当前官方 /api/docs/agent-integration 明确PathB用POST /auth/
 执行顺序按W1→W8记录；W2第5步明确依赖W4/W5修正，因此先开展W2前置核查，完成后续必要接线后回到同一个W2冒烟Run完成该步，不用旧三段流程替代，不另开额外Run。扫描凭据值与已知秘密，源代码中的前缀字面量、未调用函数名不是凭据；发布清单原始文件保持字节一致。
 
 CS-UP-19 W4审查：原生developerInstructions已确认仅Codex app-server支持。Kimi ACP/Prime已有适配器忽略spec.instructions，不能编造会话字段或把每轮正文拼接冒充会话级指令。本卡比赛目录只允许已确认的Codex PI/执行者（授权Astra/Terra），不支持的比赛选择在启动/建Run/会话重建前拒绝并说明原因；开发端原有引擎功能保留，非Codex角色指令尚未验证，不宣称覆盖。Standards无硬标准阻断，Spec发现1项覆盖边界，采用该结构门禁闭合。
+
+### CS-UP-19 W2实际通路修正
+- 真实PI工具调用发现Codex0.161的code-mode-host遗漏。原官方wheel中的Codex SHA与比赛二进制一致后，迁移同包非凭据宿主/资源/rg/元数据；不混用全局0.148宿主、不复制凭据。启动自检新增宿主检查。
+- ops dry-run必须先通过真实提交同一封存入口绑定原生记录；不要求执行者伪造raw_messages或native_session。只试构建，不预占、不创建submission。
+- 官方CLI统一把暂存文件放outputs/，题面本例明确为/app/submission.json。系统从明确的fenced write指令提取唯一白名单，源文件submission.json字节不变映射为CLI的outputs/submission.json；不加入辅助报告/源码。这里只验证官方CLI试构建，不据此宣称Worker落点或科学接受。其他未声明root文件不能借此上传。
+- 只读审查者本轮没有真实模型调用授权，W3按专用模板/输出契约还原并明确未实测。凭据独立性按卡要求等用户自行登录后验证，不能代登录。

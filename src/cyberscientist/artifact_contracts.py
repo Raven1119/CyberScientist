@@ -33,6 +33,9 @@ def inspect(challenge_id: str, sealed: bytes | None = None, *, task_content: str
     content = task_content if task_content is not None else (row['content'] if row else '')
     paths = sorted({match.group(1) for line in content.splitlines()
                     if _OUTPUT.search(line) for match in _PATH.finditer(line)})
+    # A write directive may put its one literal path on the next fenced line.
+    fenced = re.findall(r'(?mi)^write[^\n]*(?:witness|output|submission|file)[^\n]*:\s*\n\s*```[^\n]*\n\s*([A-Za-z0-9_./-]+\.(?:txt|json|jsonl|lean|csv|npz|npy|zip|pdf|png))\s*\n```', content)
+    paths = sorted(set(paths) | set(fenced))
     result: dict[str, Any] = {
         'task_paths': paths, 'task_paths_source': 'output-related task text; extraction may be incomplete',
         'scorer_paths': [], 'status': 'unavailable', 'missing': [],

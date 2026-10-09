@@ -48,6 +48,9 @@ async def test_real_http_status_digest_projection_and_since_validation():
 
 
 def test_cli_digest_prints_text_and_encodes_since(monkeypatch,capsys):
+    from cyberscientist import redeploy
+    monkeypatch.setattr(redeploy, 'request', lambda *args, **kwargs: {'fixture_health': True})
+    monkeypatch.setattr(redeploy, 'process_identity', lambda health, root: (1, 'fixture'))
     calls=[]
     monkeypatch.setattr(cli.urllib.request,'urlopen',lambda request,**kwargs:calls.append(request.full_url) or io.BytesIO(json.dumps({'text':'OPS line\nsecond line'}).encode()))
     monkeypatch.setattr(sys,'argv',['cyberscientist','ops','digest','--since','2026-10-06T10:00:00+08:00'])

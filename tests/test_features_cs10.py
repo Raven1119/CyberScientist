@@ -33,6 +33,9 @@ async def test_every_switch_on_off_http_restart_and_partial_save(name):
 @pytest.mark.parametrize('name', features.NAMES)
 @pytest.mark.parametrize('state',['on','off'])
 def test_cli_switch_uses_backend_without_raw_secret_output(monkeypatch,capsys,name,state):
+    from cyberscientist import redeploy
+    monkeypatch.setattr(redeploy, 'request', lambda *args, **kwargs: {'fixture_health': True})
+    monkeypatch.setattr(redeploy, 'process_identity', lambda health, root: (1, 'fixture'))
     from cyberscientist import cli
     calls=[]
     def urlopen(request,timeout):
