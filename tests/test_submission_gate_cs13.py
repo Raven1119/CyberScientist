@@ -80,6 +80,38 @@ def test_defaults_and_policy_validation():
     db.init_db();db.init_db()
 
 
+@pytest.mark.parametrize('response',[
+    {'resultsJson': {'error_code': 'missing_worker_submission'}},
+    {'scored_by': 'nonstandard-submission-guard:v8'},
+    {'scoringDetails': {'source': 'nonstandard-submission-guard'}},
+    {'resultsJson': '{"error_code":"missing_worker_submission"}'},
+])
+def test_recovered_historical_guard_status_update_keeps_receipt_without_repausing(response):
+    rid, source = seed(20)
+    with db.transaction() as conn:
+        row = conn.execute('SELECT * FROM submissions WHERE id=?', (source['id'],)).fetchone()
+        assert mailboxes._record_feedback(conn, row, 'attempt', response)
+    assert gate.paused()
+    features.switch('auto_submission', True)
+
+    updated = {**response, 'status': 'scored'}
+    with db.transaction() as conn:
+        assert mailboxes._record_feedback(conn, row, 'attempt', updated)
+    gate.synchronize_pause()
+    assert not gate.paused() and features.enabled('auto_submission')
+    observed = db.query_one(
+        "SELECT payload FROM events WHERE run_id=? AND type='submission.platform_feedback'"
+        " ORDER BY seq DESC LIMIT 1", (rid,))
+    assert json.loads(observed['payload'])['response'] == updated
+    receipt = db.query_one('SELECT receipt_details_json FROM submissions WHERE id=?', (source['id'],))
+    assert json.loads(receipt['receipt_details_json'])['platform_status'] == 'scored'
+
+    # A changed guard observation after recovery still closes the submission gate.
+    with db.transaction() as conn:
+        assert mailboxes._record_feedback(conn, row, 'attempt', {**updated, 'revision': 2})
+    assert gate.paused()
+
+
 async def test_settings_feature_and_queue_http_roundtrip():
     from httpx import ASGITransport, AsyncClient
     from cyberscientist import api

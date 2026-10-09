@@ -343,12 +343,18 @@ def _record_feedback(conn, row, kind: str, response: dict[str, Any]) -> bool:
         " AND json_extract(payload,'$.submission_id')=?"
         " AND json_extract(payload,'$.kind')=? ORDER BY seq DESC LIMIT 1",
         (row["run_id"], row["id"], kind)).fetchone()
-    if previous and json.loads(previous["payload"])["response"] == response:
+    previous_response = json.loads(previous["payload"])["response"] if previous else None
+    if previous_response == response:
         return False
     # An explicit recovery acknowledges observations already recorded. Re-reading
-    # an unchanged historical receipt must not undo it; new feedback still gates.
+    # the same receipt with only its lifecycle status changed must not undo it.
+    # Preserve the full observation; changed guard evidence still pauses.
     from . import submission_gate
-    submission_gate.observe_feedback_tx(conn, row, response)
+    if previous_response is None or (
+        {key: value for key, value in previous_response.items() if key != "status"}
+        != {key: value for key, value in response.items() if key != "status"}
+    ):
+        submission_gate.observe_feedback_tx(conn, row, response)
     from . import submission_receipts
     submission_receipts.observe_tx(conn, row, response)
     db.append_event_tx(conn, row["run_id"], "controller", "submission.platform_feedback", {

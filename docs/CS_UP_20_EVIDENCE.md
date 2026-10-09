@@ -233,3 +233,5 @@
 - 链路修复已有真实标准 Worker 证据：应用提交 Attempt50211 / Worker27828，实际发送包 SHA ab837a062a1adcc8ec52f14ecf4fc5db8b5c42f8ab41e10d6a3e1c991a98d8ec 与 Worker 核验一致；scored_by=playground-worker/harbor-lbg+trace-score-cli、harbor reward=1、轨迹82.425、accept、final=true。此次只读核对已有回执，没有新建验证提交。仍保留其 N11/N14 扣分和不计季事实。
 - 前端在“提交排队与保护”点击“恢复自动提交”，读回设置版本30的 auto_submission=true、system_state 暂停记录0、待发队列0；重新加载后界面显示“自动提交已启用”。后续仅为 RH 创建容量临时改 max_active_runs=3，版本31仍 true，其余功能及 Run 默认设置字段相同。
 - 已有去重位于 mailboxes._record_feedback：完全相同的旧回执不会撤销显式恢复，真正变化的非标准反馈仍暂停。专项命令 .venv/bin/pytest -q tests/test_submission_gate_cs13.py -k nonstandard_feedback → 4 passed/6 deselected，5.84秒。该验证为应用测试；原生记录与旧提交均未改写，未重新提交。私有清单位于 .package-checks/rh02/pre-rh-*.json。
+
+补充复核：恢复后的版本31又被同步为32=false。三份旧反馈仅增加顶层status=scored，保护内容完全相同，仍在_record_feedback再次调用保护。原4项专项只证明完全相同反馈去重，不证明该生命周期变化安全；RH-02前置热修复补充这一真实反例，旧结论与失败时间保留。
