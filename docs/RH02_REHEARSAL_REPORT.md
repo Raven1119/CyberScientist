@@ -166,7 +166,7 @@
 
 20:39:31Z对原生进程和日志尾帧再次核验：PI1806150与执行者1806422均存活，仍属比赛后台1805645；PI最后一轮18:35:35Z正常task_complete，执行者尚无终态，最后工具结果20:36:39Z、活动20:37:14Z。20:40:40Z执行者再次报告原Job实际平台时长2443/1357秒，不把短时原生安静当会话结束，也未重启或新建Job。20:41:22Z原生account/rateLimits/read实时首次读回已用51%/剩余49%，比用户已用49%基准增加2个百分点，59%停止线尚差8个百分点，model_turns=0/tool_calls=0；完整科学验收与首次提交仍待完成。
 
-20:57:42.953Z第9次原生CLI自动重试，21:00:17.752Z原线程平台查询工具completed；21:00:27.464Z原生第3922行的真实工具输出两条命令均exit_code=0，k网格Job23515243/bohr20868462为phase=completed/terminal=true/exitCode=0/errorInfo空/spendTime2435，截断Job23515239仍phase=running/terminal=false。控制器20:58:15.482Z已实际观察k网格Job为Finished；完整下载与科学验收另列，未将平台终态当SCF通过。原生错误具体原因仍unknown，未重启或重放Job。额度检查20:56/20:57Z两次超时，20:58:30Z及21:00:22Z重新实时成功、仍已用51%；运维摘要20:58:51Z代码匹配/告警0/自动提交true/暂停false，无关旧unknown沙箱未重放。
+20:57:42.953Z第10次原生CLI自动重试（此前误记9次，全量复核已补计20:35事件），21:00:17.752Z原线程平台查询工具completed；21:00:27.464Z原生第3922行的真实工具输出两条命令均exit_code=0，k网格Job23515243/bohr20868462为phase=completed/terminal=true/exitCode=0/errorInfo空/spendTime2435，截断Job23515239仍phase=running/terminal=false。控制器20:58:15.482Z已实际观察k网格Job为Finished；完整下载与科学验收另列，未将平台终态当SCF通过。原生错误具体原因仍unknown，未重启或重放Job。额度检查20:56/20:57Z两次超时，20:58:30Z及21:00:22Z重新实时成功、仍已用51%；运维摘要20:58:51Z代码匹配/告警0/自动提交true/暂停false，无关旧unknown沙箱未重放。
 
 21:01:22.689Z k网格Job完整out.zip取回，40,106,012字节/SHA256=8a3fd20e3c762a949a7358b8142b9ea44a6e27437df82e6d6db3373a530a21ff；21:03:21Z独立只读核对与下载回执相符（1/1）。执行者k4_summary.json报告FM/AFM严格阶段各6步，density_error=7.30223e-9/8.71418e-9、两支收敛标记true，能差0.14101253373155487 eV。其21:02:45Z说明相对3×3×3的变动0.26119 meV略高于自己预设0.2 meV目标，如实保留此差异，完整科学验收仍待PI，监控未做科学计算或改写结果。
 
@@ -204,6 +204,10 @@
 22:05:13.522Z执行者trial_4c5ae9af1c报告完成（cp_1f3990921c），原Trial累计约3小时29分38秒；第10轮guidance_2715cb6172同时superseded、ACK为空，不能记为执行者已采纳。PI第11轮rev_0737ee1578于22:05:14.081Z开始、22:07:28Z完成，实际审阅latency127.066秒/trace_reads2；确认严格SCF、截断及周期积分已有支持，仍认为展宽敏感性显著，未发起提交，而是新建trial_a994721590继续最多一个有界探索CPU Job并预留两项干净复跑资源。22:07:28.959Z原执行者线程01a12173-2392-74e0-8c75-f8ca76960cc8再次绑定Terra/high/fast、observed_tier=priority，不是干净复跑。新方法验证由PI决定，监控未干预科学。后续代码/产物和第8个Job尚待实际出现，不能把PI计划当真实创建。私有pi11-readback-0607.json/pi11-decision-0608.json。
 
 当前收尾题内经验清单已增至3条：strategy_run_c726779523、trial_note_trial_3d3c35213d、trial_note_trial_4c5ae9af1c；均仍active，收尾条件未触发，尚未停用。新Trial记录、全局经验和无关Run不会据此一并停用；结束时按新产生的本Run题内记录重新核对。私有topic-experience-inventory-0608.json。
+
+22:16Z全量复核原生CLI重试累计12次，补计此前漏记的20:35:56.212953Z（seq3155）与21:49:42.393880Z（seq4160）；20:57:42Z当时实际为第10次，旧9次结论已更正。两次漏计后的实际成功命令分别20:37:14.758285Z/21:49:58.363953Z、exit_code0。最新第12次22:11:14.014192Z（seq4543）后，原新回合22:13:58.514064Z成功命令exit_code0，恢复后继续同一Trial。具体原生错误内容未暴露，不能据此归为登录、429或供应商故障；没有重启/重登/重放Job。私有native-retries-full-0615.json与事件原记录。
+
+22:14:57Z批量上传8份旧Trial产物被INVALID_PATH/HTTP409拒绝，possible_remote_effect=none、没有远程写入，当前Trial脚本上传成功。22:15:39Z执行者明确自行复制只读副本到本Trial imports/，保留原件再诊断；这是现有路径隔离的拒绝及执行者修复，不是干净复跑，监控没有改路径门禁、科学脚本或产物。私有triala-upload-failures-0616.json；实际后续上传与诊断结果待核对。
 
 ## 5. 提交与回执
 
