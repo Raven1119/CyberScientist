@@ -101,12 +101,13 @@ def pending_mutations(sid):
 
 def before_mutation(run_id, sid, timeout=0):
     """Caller holds the shared lock; preserve the window for a final snapshot."""
+    box = sandboxes._owned(run_id, sid)
     from . import sandbox_background
     sandbox_background._authorized(run_id, max(1, timeout))
     fact = current(run_id)
     if fact.get('sandbox_id') != sid or fact['mode'] != 'sandbox':
         return
-    if sandboxes._seconds_left(sandboxes._owned(run_id, sid)) <= timeout + 300:
+    if sandboxes._seconds_left(box) <= timeout + 300:
         raise compute.ComputeError('SANDBOX_SYNC_WINDOW', '常驻沙箱进入文件同步窗口；请用同镜像Job')
     if fact.get('checkpoint'):
         _record(run_id, fact | {'checkpoint': None})

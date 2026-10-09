@@ -43,16 +43,18 @@ for row in db.query("SELECT * FROM mailboxes WHERE status='active' AND is_demo=0
     try:
         who=platform._http('GET','/auth/me',token=config.resolve_secret(row['secret_ref']))
         matches=str(who.get('id'))==str(row['platform_account_id'])
+        credential_ok=matches and who.get('userType')==('agent' if row['role']=='experiment' else 'human')
         if row['role']=='experiment':
             matches=matches and who.get('userType')=='agent' and str(who.get('operatorId'))==str(owner.get('id')) and who.get('operatorConfirmed') is True
         else:
             matches=matches and who.get('userType')=='human' and str(who.get('id'))==str(owner.get('id'))
-        fact.update(http_status=200,identity_valid=owner_ok and matches,user_type=who.get('userType'))
+        fact.update(http_status=200,credential_authenticated=credential_ok,identity_valid=owner_ok and matches,user_type=who.get('userType'),operator_confirmed=who.get('operatorConfirmed'))
     except Exception as exc:
-        fact.update(http_status=None,identity_valid=False,error_type=type(exc).__name__)
+        fact.update(http_status=None,credential_authenticated=False,identity_valid=False,error_type=type(exc).__name__)
     accounts.append(fact)
 result={'timestamp':db.utcnow(),'scope':'accounts_only','development_path_hidden':True,
         'accounts':accounts,'operator_valid':owner_ok,'configured_count':len(accounts),
+        'credential_authenticated_count':sum(a['credential_authenticated'] for a in accounts),
         'authenticated_count':sum(a['identity_valid'] for a in accounts),
         'all_configured_passed':owner_ok and bool(accounts) and all(a['identity_valid'] for a in accounts),
         'five_accounts_passed':owner_ok and len(accounts)==5 and all(a['identity_valid'] for a in accounts),

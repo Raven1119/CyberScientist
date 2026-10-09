@@ -593,13 +593,12 @@ def execute(run_id: str, sandbox_id: str, command: str, timeout: int,
             operation_id: str | None = None, *, _workspace_read_only: bool = False) -> dict:
     from . import topic_workspace
     with topic_workspace._locks[run_id]:
-        if not _workspace_read_only and type(timeout) is int and timeout > 0:
-            topic_workspace.before_mutation(run_id, sandbox_id, timeout)
-        return _execute(run_id, sandbox_id, command, timeout, operation_id)
+        return _execute(run_id, sandbox_id, command, timeout, operation_id,
+                        _workspace_read_only=_workspace_read_only)
 
 
 def _execute(run_id: str, sandbox_id: str, command: str, timeout: int,
-             operation_id: str | None = None) -> dict:
+             operation_id: str | None = None, *, _workspace_read_only: bool = False) -> dict:
     row = _owned(run_id,sandbox_id)
     if row['status'] != 'active':
         raise compute.ComputeError('SANDBOX_NOT_ACTIVE','沙箱未处于 active')
@@ -608,6 +607,9 @@ def _execute(run_id: str, sandbox_id: str, command: str, timeout: int,
     op = operation_id or 'sx_'+uuid.uuid4().hex
     if not re.fullmatch(r'[A-Za-z0-9_-]{1,100}',op):
         raise compute.ComputeError('INVALID_OPERATION','执行操作 ID 无效')
+    if not _workspace_read_only:
+        from . import topic_workspace
+        topic_workspace.before_mutation(run_id, sandbox_id, timeout)
     with db.transaction() as conn:
         current = conn.execute('SELECT status FROM compute_sandboxes WHERE run_id=? AND sandbox_id=?',
                                (run_id,sandbox_id)).fetchone()
@@ -665,8 +667,6 @@ def transfer(run_id: str, action: str, sandbox_id: str, remote_path: str,
              operation_id: str | None = None) -> dict:
     from . import topic_workspace
     with topic_workspace._locks[run_id]:
-        if action == 'write':
-            topic_workspace.before_mutation(run_id, sandbox_id)
         return _transfer(run_id, action, sandbox_id, remote_path, local_path=local_path,
                          content=content, operation_id=operation_id)
 
@@ -712,6 +712,9 @@ def _transfer(run_id: str, action: str, sandbox_id: str, remote_path: str,
                    [{'path':'inline-content','bytes':len(content.encode()),
                      'sha256':hashlib.sha256(content.encode()).hexdigest()}]
                    if content is not None else [])
+    if action == 'write':
+        from . import topic_workspace
+        topic_workspace.before_mutation(run_id, sandbox_id)
     with db.transaction() as conn:
         current = conn.execute('SELECT status FROM compute_sandboxes WHERE run_id=? AND sandbox_id=?',
                                (run_id,sandbox_id)).fetchone()
