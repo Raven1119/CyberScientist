@@ -1317,3 +1317,6 @@ CS-UP-13 工作包提交索引（按Git事实，最终W8标签另录）：
 - 阻塞项：本次前端断连属于真实后台锁卡住，不能用旧健康200替代当前验收；原生完整关闭ACK无法取得，保留为强制恢复例外。
 
 - 已实际验证：新增并发写入保护回归与两项锁顺序测试3 passed/1.12秒；20个并发秘密更新全部保留、所有读取均完整版本，使用隔离fixture未触及真实密钥。compileall、diff检查和有界审查通过。
+
+- 已实际验证：锁逆序热修复494d0e8已推送源码main、比赛发布completed，preflight warn/0 fail，私有快照da086f555363818434c0c70784992b704eb1fbd4已推送；比赛唯一后台PID1799503，136经验文件及Codex配置SHA不变。16:49:24Z health HTTP200，WebBridge实际打开localhost:8765并读到Run running；16:49:18Z恢复，PI/执行者原线程ID均逐项相同，未新建沙箱/Job/提交。
+- 已实际验证：前端本题执行器默认标题原为Sol（不代表已冻结Run），通过“编辑本题模型”保存Terra/high/fast，PI Astra/xhigh/fast；Run冻结配置及原生实际模型仍Terra。ops digest正常：自动提交true/队列0/暂停false，加载版本匹配、告警0、native_close_unknown0；此持久标记0不替代强制关闭缺少ACK的事实。
