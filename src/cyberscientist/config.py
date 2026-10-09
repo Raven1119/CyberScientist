@@ -185,8 +185,10 @@ def save_settings(settings: dict[str, Any]) -> None:
     os.replace(tmp, SETTINGS_PATH)
 
 
-@serialized_mutation
 def load_secrets() -> dict[str, str]:
+    # save_secrets atomically replaces the file, so readers see a complete
+    # version without mutation_lock. Ledger transactions also read secrets
+    # for redaction; taking that lock here inverts strategy's config -> DB order.
     ensure_dirs()
     if not SECRETS_PATH.exists():
         return {}

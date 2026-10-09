@@ -65,3 +65,37 @@ RH-02热修复commit37012a6已推送源码main，候选3标签保持91ecfd3。�
 前端问题补记：发布时同端口后端冷启动约两分多钟，用户浏览器实际ERR_CONNECTION_REFUSED；健康与首页HTTP200后，WebBridge重新navigate实际渲染成功。模型草稿人工覆盖会随刷新丢失，因此启动前重新选择Terra并核对，实际Run配置已冻结为Terra。设置页面首次渲染使用默认值，待请求读回再操作；前端自检缓存仍显示发布前的自动暂停事实，实时开关读回已true，未把缓存当当前状态。
 
 用量初查：控制事件里的PI native_log_path暂为null，按同一事件session_id定位唯一原生文件，使用W10脚本已有--session pi=FILE补入统计，不改原生记录或数据库。执行者尚未发起工作回合，记录文件暂不可用，其用量保持unknown。
+
+初始方法：2026-10-09T16:23:24.271415Z提案version1，前端完整复制并以monitor批准于2026-10-09T16:25:04.138985+00:00。核对四项均满足：题面固定方法/数值下限和FM/链内AFM、三个输出与全部字段/单位、无其他参赛者解答、已登记环境与CPU沙箱/Job合理。具体最终数值由批准后的实测决定，监控未添加科学参数或改写产出。
+
+方法提案原文：
+```json
+{
+  "method_md": "批准后由执行者按 research_brief.work_package 独立实现：生成并验证 22 原子实验原胞，按配位识别 Co_oct/Co_pris；在 ABACUS 中进行无 U、无 SOC 的自旋极化 PBE 平面波 FM 与指定链内 AFM 自洽计算；实测确定配对收敛参数；从两自旋 cube 做带周期边界的球积分和全胞积分；解析同一定义的总能并生成题定 JSON。先验证科学和契约，再请求真实提交，之后按回执改进并完成新的干净会话复跑。",
+  "parameters_md": "结构参数与方法严格采用题面。ecutwfc≥100 Ry，Γ 中心 k 网格≥3×3×3，展宽≤0.02 Ry；具体最终数值、混合参数及收敛阈值由获批后的首轮实测决定。Co_oct/Co_pris 使用不同非零初始磁矩，AFM 只反转一枚 Co_pris，不固定最终总磁矩。两构型同赝势、晶胞、截断、k 网格、展宽及能量定义。球半径先由非重叠几何规则冻结。CPU 为首选，长计算使用同镜像 Job，遵守 16 CPU/16 GB/10 GB 及两个并发限制。",
+  "basis_md": "最高依据是 ReviewPacket.challenge.content。已读来源论文 [Eyert 等](https://arxiv.org/html/cond-mat/0401004) 支持配位导致自旋态差异与氧极化；其 LDA/ASW 与链间磁序不替代题面要求。已读 [ABACUS 电荷密度文档](https://abacus.deepmodeling.com/en/latest/advanced/elec_properties/charge.html)、[自旋文档](https://abacus.deepmodeling.com/en/latest/advanced/scf/spin.html) 和 [STRU 文档](https://abacus.deepmodeling.com/en/latest/advanced/input_files/stru.html)，据此安排输入和积分检查。初始批准要求来自 PI 流程及用户提示词；本次仅进行了只读检索，没有代码实现或科学试算。原始中子论文全文、镜像本题冒烟及最终数值参数仍为 unknown。",
+  "outputs_md": "/app/outputs/structure_report.json 保存原胞与配位证据；/app/outputs/magnetic_moments.json 包含 Co_oct:{moment,mean_Co_O,radius_bohr}、Co_pris:{moment,mean_Co_O,radius_bohr}、O:{moment,radius_bohr}、total_moment；/app/outputs/magnetic_stability.json 包含 E_FM、E_AFM、dE_AFM_minus_FM、ground_state。磁矩 μB、键长 Å、半径 Bohr、能量 eV/22原子胞。附带真实输入、日志、密度积分与收敛证据以及自旋态说明。",
+  "capabilities": [
+    "competition-materials-assets-20261009",
+    "ABACUS-materials-offline",
+    "research_environment",
+    "research_sandbox",
+    "research_job",
+    "cyberscientist-sandbox",
+    "cyberscientist-job-spec",
+    "cyberscientist-trace-writing",
+    "cyberscientist-submission-gate",
+    "cyberscientist-clean-rerun"
+  ]
+}
+```
+
+格式异常：首份决策的method_proposal在根层，被既有schema拒绝；一次原生格式重写将其移到research_brief内，16:21:46→16:23:24约98秒自动修正。没有热修改提示词、科学内容或原生记录；未通过格式验证前审批门禁始终关闭。
+
+探索启动：Trial trial_3d3c35213d创建于16:25:44Z；CPU常驻沙箱2c4g在16:26:51Z确认active，实际expires_at=2026-10-10T02:10:31Z。首个环境调用HTTP422因choice形状缺必填，被执行者自行纠正；实际运行烟测通过可执行/MPI/Python依赖，随后题面示例赝势目录不存在导致停止，执行者正按批准的方法核验镜像内实际PBE赝势。科学值尚未产生，监控未修科学脚本。
+
+原生初查：双方v2首帧与priority已实际确认；PI前八帧技能出现两份比赛清单，共43条列项、唯一22技能，没有比赛外技能，重复展示作为注意力事实保留。全局~/.codex/AGENTS.md实测0字节，不能以空字符串全文搜索制造验收；实际开发AGENTS标题、开发路径和比赛外技能均未进入当前角色记录。此后还需完成整轮全文抽查。应用review packet发生context.compacted（254873→44527字节），W10原生统计当前compaction=0；二者分别记录，不混为供应商上下文压缩。
+
+前端中断2：2026-10-09T16:32:04Z之后无新事件，首页和health连接后无响应，比赛PID1789906主线程futex等待，数据库只读可用。代码存在策略更新config→DB与告警事务DB→密钥读取config的锁逆序；两项受控并发测试在旧代码复现失败，取消只读load_secrets锁后通过，写入仍串行并原子替换，另验证并发更新不漏键、读到完整版本。未取得现场Python栈，具体现场持锁线程unknown，不把静态和复现实验当现场栈证据。相关回归52次通过/18.64秒，含两项重复收集，共50唯一用例。原失败日志保留。
+
+GUI和安全关机HTTP均无响应，按热修复授权采用精确进程恢复：确认最后trial3_write_stru_repair及所有沙箱操作completed、无Job/提交，再核对PID/cwd/进程组，TERM后仍不退出才KILL。136经验文件、配置SHA与两个原生线程标识已留证，未改DB恢复意图或重做已完成写入。没有can_shutdown=true或原生关闭ACK，明确作为强制恢复边界；正常ops release待端口确实释放后进行。科研脚本/参数/已保存输出未由监控修改。
