@@ -1320,3 +1320,5 @@ CS-UP-13 工作包提交索引（按Git事实，最终W8标签另录）：
 
 - 已实际验证：锁逆序热修复494d0e8已推送源码main、比赛发布completed，preflight warn/0 fail，私有快照da086f555363818434c0c70784992b704eb1fbd4已推送；比赛唯一后台PID1799503，136经验文件及Codex配置SHA不变。16:49:24Z health HTTP200，WebBridge实际打开localhost:8765并读到Run running；16:49:18Z恢复，PI/执行者原线程ID均逐项相同，未新建沙箱/Job/提交。
 - 已实际验证：前端本题执行器默认标题原为Sol（不代表已冻结Run），通过“编辑本题模型”保存Terra/high/fast，PI Astra/xhigh/fast；Run冻结配置及原生实际模型仍Terra。ops digest正常：自动提交true/队列0/暂停false，加载版本匹配、告警0、native_close_unknown0；此持久标记0不替代强制关闭缺少ACK的事实。
+
+- 已实际验证：恢复后约7分钟连续事件推进，2026-10-09T16:56:35Z首页/health均HTTP200；前端本题标题读回Terra。PI恢复审阅4轮，总沙箱创建1/Job0/提交0，远程FM SCF已进入初始化但收敛结果未产生；保留科学unknown并继续RH-02。
