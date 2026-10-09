@@ -20,6 +20,11 @@ class EnvironmentUnavailable(ValueError):
 def recipe(environment_id: str) -> dict:
     if not re.fullmatch(r'[A-Za-z0-9_.-]{1,100}', environment_id):
         raise EnvironmentUnavailable('无效环境标识')
+    aliases=config.WORKSPACE_ROOT/'environments/aliases.json'
+    if aliases.is_file():
+        environment_id=json.loads(aliases.read_text()).get(environment_id,environment_id)
+    if not re.fullmatch(r'[A-Za-z0-9_.-]{1,100}',environment_id):
+        raise EnvironmentUnavailable('环境别名越界')
     root = config.WORKSPACE_ROOT / 'environments' / environment_id
     descriptor = root / 'environment.json'
     if root.is_symlink() or descriptor.is_symlink() or not descriptor.is_file():

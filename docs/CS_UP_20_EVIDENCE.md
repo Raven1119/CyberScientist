@@ -126,3 +126,24 @@
 - 已实际验证：两个状态各连续轮询两次，未停轮询、未改变 running、未编造分数；冲突最终标志不关闭人工复核；旧等待标记可唤醒而没有分数。后端相关 18 passed/5.74 秒；前端比赛面板/邮箱页 21 passed，两个状态和告警显示已覆盖。
 - 尚未验证：真实平台人工复核状态，本卡没有真实提交授权。
 - 阻塞项：无。初次两项失败暴露“用最终标志推断 completed 覆盖人工复核”的问题，已修正并复测；原失败 `w5-tests-initial.log` 与通过 `w5-tests.log`、`w5-frontend-tests.log` 均在 `.package-checks/cs-up20/`。
+
+## W6：环境标识与旧别名
+
+- 已实现：配方目录 `cs-up-12` → `scientific-runtimes`，`cs-up-13` → `abacus-materials`；`environments/aliases.json` 保留旧名字查询，不用符号链接。环境目录的十个内部 ID 按下表迁移，能力/环境索引只显示新 ID；经旧 ID 新选择时冻结新 ID。
+- 已实现：旧目录数据库行、descriptor 原文字节/SHA、冒烟回执和历史选择事件保留；新条目仅改 ID 并重新计算 descriptor SHA。旧选择仍恢复原镜像/命令/回执；重复启动幂等；新名字或别名冲突明确失败，不覆盖。远端镜像地址不改，未创建镜像或科研资源。
+- 已实际验证：`.venv/bin/pytest -q tests/test_environment_aliases_cs20.py tests/test_environment_catalog_cs10.py tests/test_runtime_environments.py` → 19 passed/7.38 秒；`tests/test_progressive_context_cs16.py tests/test_content_import_cs20.py` → 8 passed/2.49 秒。覆盖旧数据库启动迁移、不可变历史、旧 Run 恢复、索引仅新名、冲突回滚、路径越界与注册别名。日志 `w6-tests.log`、`w6-context-tests.log`；有界审查核对事务、身份与路径约束，diff 检查通过。
+- 尚未验证：比赛后端实际目录与启动迁移留 W11 发布核对，当前 4ef48d7 后端仍显示旧名。迁移前实际 13 条目录清单在 `.package-checks/cs-up20/environment-catalog-before.json`，不把临时数据库测试当实际迁移。
+- 阻塞项：无，继续 W7。
+
+| 旧 ID（保留别名） | 新 ID |
+|---|---|
+| cs10-private-python-v1 | python-minimal-private-v1 |
+| cs10-public-python-v1 | python-3-10-public-v1 |
+| cs12-lean-mathlib-v1 | lean-mathlib-v1 |
+| cs12-pyscf-v1 | pyscf-v1 |
+| cs12-sci-py-v1 | sci-python-v1 |
+| cs12-torch-cpu-v1 | pytorch-cpu-v1 |
+| cs12-torch-cuda-v1 | pytorch-cuda-v1 |
+| cs13-abacus-v1 | abacus-plane-wave-v1 |
+| cs13-abacus-v2 | abacus-plane-wave-v2 |
+| cs13-materials-v1 | materials-python-v1 |

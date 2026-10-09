@@ -666,6 +666,7 @@ def init_db() -> None:
         _ensure_columns(conn, "runs", RUN_V2_COLUMNS)
         conn.execute('CREATE TABLE IF NOT EXISTS environment_saves (operation_id TEXT PRIMARY KEY,run_id TEXT NOT NULL,status TEXT NOT NULL,resource_id TEXT,recipe_json TEXT NOT NULL,smoke_command TEXT NOT NULL,recipe_sha256 TEXT NOT NULL,cost_status TEXT NOT NULL,receipt_json TEXT NOT NULL,created_at TEXT NOT NULL,updated_at TEXT NOT NULL)')
         conn.execute('CREATE TABLE IF NOT EXISTS environment_catalog_entries (id TEXT PRIMARY KEY,descriptor_json TEXT NOT NULL,sha256 TEXT NOT NULL,registered_at TEXT NOT NULL)')
+        conn.execute('CREATE TABLE IF NOT EXISTS environment_catalog_aliases (alias TEXT PRIMARY KEY,entry_id TEXT NOT NULL REFERENCES environment_catalog_entries(id),created_at TEXT NOT NULL)')
         _ensure_columns(conn, 'authorizations', {'max_environment_saves': 'INTEGER NOT NULL DEFAULT 0'})
         _ensure_columns(conn, 'authorizations', {'unlimited_resources': 'INTEGER NOT NULL DEFAULT 0'})
         conn.executescript('''CREATE TABLE IF NOT EXISTS competition_prompt_versions (
@@ -725,6 +726,8 @@ def init_db() -> None:
         # Exhaustion was previously global to an email. Per-challenge quota is
         # derived from submissions, so those historical accounts become usable.
         conn.execute("UPDATE mailboxes SET status='active' WHERE status='exhausted'")
+        from . import environment_catalog
+        environment_catalog.migrate_legacy_ids(conn)
         conn.commit()
         _migrate_experience_revisions(conn)
         conn.commit()

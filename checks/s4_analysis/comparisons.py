@@ -180,7 +180,7 @@ def current_head_rows(root):
 
 
 def environment_inventory(root):
-    workspace=Path(__file__).resolve().parents[2];directory=workspace/'environments/cs-up-12'
+    workspace=Path(__file__).resolve().parents[2];directory=workspace/'environments/scientific-runtimes'
     head=current_head_rows(root)
     features={r['attempt_id']:r for r in read_table('data/trace_features.csv')};topics={r['challenge_id']:r for r in read_table('data/challenges.csv')}
     output=[];packages=defaultdict(set)

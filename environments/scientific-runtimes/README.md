@@ -30,7 +30,7 @@ Torch CPU 清单还需 `--extra-index-url https://download.pytorch.org/whl/cpu`�
 : "${BOHRIUM_PROJECT_ID:?请设置已授权项目ID}"
 bohr image build --name cs12-sci-py-reproduction \
   --project-id "$BOHRIUM_PROJECT_ID" \
-  --dockerfile environments/cs-up-12/sci-py.Dockerfile \
+  --dockerfile environments/scientific-runtimes/sci-py.Dockerfile \
   --desc 'Pinned public scientific starting environment' \
   -y --no-interactive -o json
 ```

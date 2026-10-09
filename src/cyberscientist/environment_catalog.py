@@ -11,6 +11,39 @@ import re
 
 from . import config, db, observation
 
+LEGACY_IDS = {
+    'cs10-private-python-v1':'python-minimal-private-v1',
+    'cs10-public-python-v1':'python-3-10-public-v1',
+    'cs12-lean-mathlib-v1':'lean-mathlib-v1',
+    'cs12-pyscf-v1':'pyscf-v1',
+    'cs12-sci-py-v1':'sci-python-v1',
+    'cs12-torch-cpu-v1':'pytorch-cpu-v1',
+    'cs12-torch-cuda-v1':'pytorch-cuda-v1',
+    'cs13-abacus-v1':'abacus-plane-wave-v1',
+    'cs13-abacus-v2':'abacus-plane-wave-v2',
+    'cs13-materials-v1':'materials-python-v1',
+}
+
+
+def migrate_legacy_ids(conn):
+    """Administrative migration; immutable old descriptors and receipts stay."""
+    for alias,canonical in LEGACY_IDS.items():
+        old=conn.execute('SELECT * FROM environment_catalog_entries WHERE id=?',(alias,)).fetchone()
+        if old is None:continue
+        descriptor=json.loads(old['descriptor_json']);descriptor['id']=canonical
+        raw=json.dumps(descriptor,ensure_ascii=False,sort_keys=True)
+        digest=hashlib.sha256(raw.encode()).hexdigest()
+        existing=conn.execute('SELECT sha256 FROM environment_catalog_entries WHERE id=?',(canonical,)).fetchone()
+        if existing and existing['sha256']!=digest:
+            raise ValueError('环境目录新标识已被不同内容占用：'+canonical)
+        prior_alias=conn.execute('SELECT entry_id FROM environment_catalog_aliases WHERE alias=?',(alias,)).fetchone()
+        if prior_alias and prior_alias['entry_id']!=canonical:
+            raise ValueError('环境目录旧标识已指向不同起点：'+alias)
+        conn.execute('INSERT OR IGNORE INTO environment_catalog_entries VALUES(?,?,?,?)',
+            (canonical,raw,digest,db.utcnow()))
+        conn.execute('INSERT OR IGNORE INTO environment_catalog_aliases VALUES(?,?,?)',
+            (alias,canonical,db.utcnow()))
+
 
 def enabled() -> bool:
     value = config.load_settings().get('features', {}).get('environment_catalog', True)
@@ -54,15 +87,19 @@ def register_verified(entry: dict, receipts: list[dict]) -> dict:
             raise ValueError('目录起点不可覆盖；维护时使用新标识，Run不能保存新版本')
         conn.execute('INSERT OR IGNORE INTO environment_catalog_entries VALUES(?,?,?,?)',
                      (entry['id'], raw, digest, db.utcnow()))
-    return data | {'sha256': digest}
+        migrate_legacy_ids(conn)
+    return get(entry['id'])
 
 
 def items() -> list[dict]:
     return [json.loads(row['descriptor_json']) | {'sha256': row['sha256']}
-            for row in db.query('SELECT * FROM environment_catalog_entries ORDER BY id')]
+            for row in db.query('SELECT * FROM environment_catalog_entries e WHERE NOT EXISTS '
+                '(SELECT 1 FROM environment_catalog_aliases a WHERE a.alias=e.id) ORDER BY id')]
 
 
 def get(entry_id: str) -> dict:
+    alias=db.query_one('SELECT entry_id FROM environment_catalog_aliases WHERE alias=?',(entry_id,))
+    if alias:entry_id=alias['entry_id']
     entry = next((item for item in items() if item['id'] == entry_id), None)
     if not entry:
         raise ValueError('环境目录起点不存在：' + str(entry_id))
@@ -83,6 +120,7 @@ def choose(run_id: str, choice: dict, *, source: str = 'brain') -> dict:
     safe = json.loads(observation.strip_secrets(json.dumps(choice, ensure_ascii=False)))
     if safe['mode'] == 'catalog':
         entry = get(safe.get('entry_id'))
+        safe['entry_id']=entry['id']
         safe['catalog_sha256'] = entry['sha256']
     elif safe.get('entry_id'):
         raise ValueError('from_zero不能同时指定目录条目')

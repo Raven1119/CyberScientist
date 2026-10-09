@@ -59,6 +59,11 @@ def summary(run_id: str | None = None) -> str:
     # Show the chosen environment, then recent distinct images. Alphabetical
     # truncation previously hid newly verified materials/ABACUS environments.
     chosen = environment_catalog.current(run_id).get('entry_id') if run_id else None
+    if chosen:
+        try:
+            chosen = environment_catalog.get(chosen)['id']
+        except ValueError:
+            pass
     ranked = sorted(entries, key=lambda e: (e['id'] == chosen, e['last_verified_at']), reverse=True)
     images = set()
     for entry in ranked:
