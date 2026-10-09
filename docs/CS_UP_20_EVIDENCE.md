@@ -184,3 +184,12 @@
 - 已实际验证：前后 Runs49、Trials130、Jobs163、Sandboxes67、Submissions14 完全相同，新科研/提交数量 0。日志 `.package-checks/cs-up20/w8-clean-cold-start.jsonl`。有界审查核对归档范围、运行时无引用和旧历史未重写；diff 检查通过。
 - 尚未验证：候选版 3 的新代码冷启动留 W11 发布；本项验证清理后的当前比赛版本。
 - 阻塞项：无。初次清理把 validation 误认为文件，检查即停止，未移动任何项；初次冷启动使用 60 秒窗口超时，但同 PID 存活，继续观察到健康，未重复拉起。随后完成目录归档并从清理后状态重跑上述完整冷启动；初始失败与同进程观察日志保留。
+
+## W9：两端登录与最小原生回合
+
+- 已实际验证：两端账户 ID 均为 `e1668cec-d8d7-4fcf-b1a8-2e679322df56`（相同）；刷新令牌指纹不同。只输出这一比较结论，没有输出指纹/令牌，没有复制凭据。比较证据 `.package-checks/cs-up20/w9-auth-comparison.json`。
+- 已实际验证：开发、比赛均使用项目内 Codex CLI 0.161.0；各自原登录目录，比赛 CODEX_HOME 为 `.runtime/codex`。真实最小回合全部 completed、回复 READY，工具调用 0；原生目录、session/turn 身份及字节 SHA 在私有 `w9-{competition-pi,competition-executor,development-pi}.json`。没有创建 Run、Job、沙箱或 Attempt。
+- 已实际验证：比赛 Astra xhigh PI 28.04 秒，比赛 Terra xhigh 执行者 32.36 秒，开发 Astra xhigh 16.62 秒；三会话 native model/list 支持 priority，thread/start 返回 priority、enabled=true；不把配置值冒充确认。
+- 已实际验证：以当前源码角色文件作为 developerInstructions 的三个最小验证会话，原生前八帧均有对应 roles/pi 或 roles/executor v2。原生文件未改。运行命令 `.venv/bin/python .package-checks/cs-up20/w9-native-probe.py`；返回 0，标准错误为空。辅助脚本只做一次最小回合/目标、拒绝工具请求、关闭原进程，不写全局配置、不代登录。
+- 尚未验证：新比赛后端实际创建 Run 时自动注入 v2 与物理 22 个技能，仍留 W11；本项是原生认证与角色传递验证，不把手动注入声明为已发布后端的真实 Run 验证。
+- 阻塞项：无；比赛登录有效，不进入设备/安装身份排障或请求重登录分支。有界审查核对本机认证目录、会话参数与原生结果，diff 检查通过，继续 W10。
