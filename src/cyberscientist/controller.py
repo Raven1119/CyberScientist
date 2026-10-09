@@ -2002,8 +2002,8 @@ class RunController:
                                     {"detail": "长时间无事件；Run 保持运行，等待新信号"})
                     continue
                 await self._handle_signal_with_deadline(signal, run_id, q,
-                                          prime=self._prime_instances[run_id],
-                                          prime_sid=self._prime_sessions[run_id])
+                                          prime=self._prime_instances.get(run_id),
+                                          prime_sid=self._prime_sessions.get(run_id))
         except asyncio.CancelledError:
             raise
         except Exception as exc:

@@ -97,3 +97,48 @@ async def test_confirmed_close_and_failed_fresh_start_cannot_leave_running_stale
     assert rid not in controller._prime_instances and rid not in controller._prime_sessions
     assert db.query_one('SELECT phase FROM runs WHERE id=?', (rid,))['phase'] != 'running'
     assert not db.query('SELECT * FROM trials WHERE run_id=?', (rid,))
+
+
+async def test_real_run_loop_dispatches_resume_after_confirmed_handle_removal(monkeypatch):
+    import asyncio
+    from cyberscientist.brains.base import SessionRef
+    _seed_challenge(); rid = _make_run()
+    db.execute("UPDATE runs SET phase='paused',gate='open' WHERE id=?", (rid,))
+    controller = RunController(); queue = asyncio.Queue(); calls = []
+    class Brain:
+        async def open(self, spec):
+            return SessionRef(runtime='fixture', session_id='brain')
+        async def close(self, session):
+            pass
+    class Prime:
+        async def start(self, spec):
+            calls.append('start'); return 'thread-' + str(len(calls))
+        async def close(self, session):
+            pass
+        async def events(self, session):
+            await asyncio.Event().wait()
+            yield {}
+    async def idle(*args):
+        await asyncio.Event().wait()
+    monkeypatch.setattr(controller, '_require_model_authorization', lambda rid: None)
+    monkeypatch.setattr(controller, '_make_brain', lambda settings: Brain())
+    monkeypatch.setattr(controller, '_make_prime', lambda settings: Prime())
+    monkeypatch.setattr(controller, '_review_worker', idle)
+    monkeypatch.setattr(controller, '_enqueue_lifecycle', lambda *args, **kwargs: None)
+    real = controller._handle_signal_with_deadline
+    async def dispatch(signal, run_id, q, **context):
+        if signal['type'] == 'fixture-remove-confirmed-handle':
+            controller._prime_instances.pop(rid); controller._prime_sessions.pop(rid)
+            db.execute("UPDATE runs SET phase='running' WHERE id=?", (rid,))
+            await q.put({'type': 'resume'})
+        else:
+            assert context['prime'] is None and context['prime_sid'] is None
+            await real(signal, run_id, q, **context)
+            assert rid in controller._prime_instances
+            db.execute("UPDATE runs SET phase='finished',end_reason='fixture-stop' WHERE id=?", (rid,))
+    monkeypatch.setattr(controller, '_handle_signal_with_deadline', dispatch)
+    await queue.put({'type': 'fixture-remove-confirmed-handle'})
+    await asyncio.wait_for(controller._run_loop(rid, queue), timeout=5)
+    assert len(calls) == 2
+    assert db.query_one('SELECT phase FROM runs WHERE id=?', (rid,))['phase'] == 'finished'
+    assert not db.query_one("SELECT 1 FROM events WHERE run_id=? AND type='run.runtime_error'", (rid,))

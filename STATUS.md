@@ -1070,3 +1070,9 @@ CS-UP-13 工作包提交索引（按Git事实，最终W8标签另录）：
 - 已实际验证：两轴W5审查Standards2项/Spec1项（恢复缺口重合），对应负例已加；最新角色/clean18 passed/5.09秒，包含确认关闭后新建失败不得残留running句柄。快照/clean/发布36 passed/10.07秒；官方CLI/发布38 passed/13.42秒。
 - 尚未验证：真实W2及冻结全量，继续推进。
 - 阻塞项：无新增模型、沙箱、Job或提交。
+
+### CS-UP-19 W5恢复循环复核
+- 已实现：主循环用安全读取分派缺句柄状态，让用户resume进入原有会话重建分支，不因KeyError变成runtime_error。
+- 已实际验证：Standards复核发现1项新增恢复阻断，已修；clean11 passed/3.66秒，新负例实际经过_run_loop的信号分派和resume重建，最终finished且无runtime_error（应用fake，无真实模型）。Spec原缺口已闭合。
+- 尚未验证：真实W2与全量，未改变其验收边界。
+- 阻塞项：无。
