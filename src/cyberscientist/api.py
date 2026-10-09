@@ -195,6 +195,8 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
     backend_identity.record_startup()
     config.ensure_dirs()
     db.init_db()
+    from . import preflight
+    preflight.record_startup_checks()
     if 'tools/playground-cli/0.1.40' in config.load_settings()['playground'].get('cli_executable', ''):
         from . import cli_submission
         # Startup integrity is local; public latest is a separate explicit check.
@@ -288,8 +290,6 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
             while not stop.is_set():
                 controller.scan_score_waits()
                 try:
-                    from . import topic_workspace
-                    await asyncio.to_thread(topic_workspace.maintain_due)
                     await asyncio.to_thread(sandboxes.expire_due)
                     await asyncio.to_thread(sandboxes.reconcile_pending_creates)
                     from . import submission_gate
@@ -315,6 +315,19 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
                     await asyncio.to_thread(alerts.synchronize)
                 except Exception:
                     logger.exception('Harvest and alert scheduling failed')
+                try:
+                    await asyncio.wait_for(stop.wait(), 15)
+                except asyncio.TimeoutError:
+                    pass
+
+        async def _workspace_loop() -> None:
+            from . import topic_workspace, resource_coordinator
+            import logging
+            while not stop.is_set():
+                try:
+                    await resource_coordinator.tracked_thread(topic_workspace.maintain_due)
+                except Exception:
+                    logging.getLogger('cyberscientist.api').exception('Topic workspace maintenance failed')
                 try:
                     await asyncio.wait_for(stop.wait(), 15)
                 except asyncio.TimeoutError:
@@ -362,6 +375,7 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
         task = asyncio.create_task(_poll_loop())
         clock_task = asyncio.create_task(_clock_loop())
         watch_task = asyncio.create_task(_watch_loop())
+        workspace_task = asyncio.create_task(_workspace_loop())
         evaluation_task = asyncio.create_task(_evaluation_loop())
         job_recovery_task = asyncio.create_task(_job_recovery_loop())
         try:
@@ -372,9 +386,10 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
             task.cancel()
             clock_task.cancel()
             watch_task.cancel()
+            workspace_task.cancel()
             evaluation_task.cancel()
             job_recovery_task.cancel()
-            await asyncio.gather(task, clock_task, watch_task, evaluation_task, job_recovery_task, return_exceptions=True)
+            await asyncio.gather(task, clock_task, watch_task, workspace_task, evaluation_task, job_recovery_task, return_exceptions=True)
             await job_recovery.drain()
             await auto_harvest.drain()
             from . import leaderboards

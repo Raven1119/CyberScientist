@@ -17,3 +17,17 @@ def test_old_success_cannot_hide_final_failure_or_truncation():
     module.require_terminal(good,'cell-relax')
     for text in (good.replace('Finish Time : now',''),good.replace('Relaxation is converged!','Relaxation is not converged yet!'),good+'#SCF IS NOT CONVERGED#\n',good+'#SCF IS CONVERGED#\n'):
         with pytest.raises(ValueError):module.require_terminal(text,'cell-relax')
+
+
+@pytest.mark.parametrize('missing',['force_thr_ev','stress_thr'])
+def test_relaxation_threshold_is_rejected_before_execution(tmp_path, missing):
+    import subprocess, sys
+    template=ROOT/'cell-relax'
+    text='\n'.join(line for line in (template/'INPUT').read_text().splitlines()
+                   if not line.strip().startswith(missing))
+    if missing=='force_thr_ev':text+='\nforce_thr 0.01\n'
+    (tmp_path/'INPUT').write_text(text)
+    result=subprocess.run([sys.executable,str(template/'check_inputs.py')],cwd=tmp_path,
+                          capture_output=True,text=True,timeout=5)
+    assert result.returncode != 0
+    assert 'Missing INPUT parameters: '+missing in result.stderr

@@ -13,6 +13,8 @@ from test_collaboration import _seed_challenge
 @pytest.fixture
 def run(monkeypatch):
     _seed_challenge()
+    db.execute("INSERT INTO runtime_observations VALUES('sandbox-lifetime-ceiling',?,?)",
+               (json.dumps({'effective_ceiling_seconds':604800}), db.utcnow()))
     settings=config.load_settings();settings['bohrium']['project_id']=88474
     settings['bohrium']['access_key_secret_ref']='local:fake-sandbox-key'
     config.save_settings(settings)

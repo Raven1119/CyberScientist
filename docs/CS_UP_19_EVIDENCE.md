@@ -47,3 +47,11 @@ CODEX_HOME=~/CyberScientist-comp/.runtime/codex codex login
 ```
 
 尚未验证：用户自行登录后两侧最小会话；不以原有共享登录冒充独立性。移出目录后的实际冷启动和隐藏依赖测试随后执行。
+
+## W7 巡检与输入门禁
+
+比赛数据库寿命观察读回`effective_ceiling_seconds=604800`。没有记录或值无效时不返回3600；比赛启动记录自检失败并持久化前端告警，显式检查同样失败。已有记录未修改。
+
+maintain_due忙锁即跳过，独立周期任务与提交/存活链分开；真实线程关机仍受resource_coordinator管理。测试使用另线程持Run锁以及让巡检等待的应用lifespan，确认一秒内返回/提交推进，不用提示词替代结构隔离。cell-relax缺force_thr_ev或stress_thr，在check_inputs运行前明确列缺项；force_thr不替代。65 passed / 34.11秒，真实云Job未重复执行。
+
+pg-*只读报告：[REPORT.md](https://github.com/Raven1119/cs-private/blob/e8238ab/reviews/pg_skills/REPORT.md)，32项逐目录调查、两项指定SHA仅相同/不同、七项逐字全文；8文件密钥扫描零命中，未启用任何pg技能。

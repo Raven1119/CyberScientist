@@ -76,7 +76,7 @@ def test_relaxation_checks_final_metrics_and_rejects_incomplete_or_false_success
 def test_expiry_replacement_restores_identical_files_once(run, monkeypatch, tmp_path):
     _, rid, _, calls, _ = run
     choose(monkeypatch)
-    db.execute("INSERT INTO runtime_observations VALUES('sandbox-lifetime-ceiling',?,?)", (json.dumps({'effective_ceiling_seconds':600}), db.utcnow()))
+    db.execute("INSERT OR REPLACE INTO runtime_observations VALUES('sandbox-lifetime-ceiling',?,?)", (json.dumps({'effective_ceiling_seconds':600}), db.utcnow()))
     fact = topic_workspace.ensure(rid)
     assert fact['lifetime_seconds'] == 600
     remote = tmp_path / 'remote'; remote.mkdir(); (remote / 'state.json').write_text('{"checkpoint":3}')

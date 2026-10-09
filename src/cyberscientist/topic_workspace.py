@@ -25,8 +25,13 @@ def _record(run_id, fact):
 
 def lifetime_ceiling() -> int:
     row = db.query_one("SELECT payload_json FROM runtime_observations WHERE kind='sandbox-lifetime-ceiling'")
-    value = json.loads(row[0]).get('effective_ceiling_seconds') if row else None
-    return value if type(value) is int and value > 0 else 3600
+    try:
+        value = json.loads(row[0]).get('effective_ceiling_seconds') if row else None
+    except (ValueError, TypeError, AttributeError):
+        value = None
+    if type(value) is not int or value <= 0:
+        raise ValueError('缺少有效的沙箱寿命实测记录；请完成寿命检查后再启动沙箱')
+    return value
 
 
 def _fingerprint(path):
@@ -214,7 +219,10 @@ def maintain_due():
     results = []
     for row in db.query("SELECT id FROM runs WHERE phase='running' AND gate='open'"):
         rid = row['id']
-        with _locks[rid]:
+        lock = _locks[rid]
+        if not lock.acquire(blocking=False):
+            continue
+        try:
             fact = current(rid)
             if fact['mode'] == 'renewing':
                 results.append(_ensure(rid)); continue
@@ -232,6 +240,8 @@ def maintain_due():
                     db.append_event(rid, 'controller', 'topic.workspace_sync_failed', {'error_type': type(exc).__name__})
             if left < 30:
                 results.append(_rotate(rid, fact))
+        finally:
+            lock.release()
     return results
 
 

@@ -4,6 +4,10 @@ from pathlib import Path
 params={parts[0]:parts[1] for line in Path('INPUT').read_text().splitlines()
         if len(parts:=line.split('#')[0].split())>1}
 required={'calculation','basis_type','ecutwfc','scf_thr','scf_nmax'}
+if params.get('calculation') in ('relax','cell-relax'):
+    required.add('force_thr_ev')
+if params.get('calculation') == 'cell-relax':
+    required.add('stress_thr')
 missing=required-params.keys()
 if missing:raise SystemExit('Missing INPUT parameters: '+','.join(sorted(missing)))
 if params['calculation'] in ('relax','cell-relax'):

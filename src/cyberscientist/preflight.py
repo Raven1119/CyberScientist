@@ -193,7 +193,37 @@ def drift_check():
 
 def cached():
     row = db.query_one("SELECT payload_json FROM runtime_observations WHERE kind='preflight'")
-    return json.loads(row['payload_json']) if row else None
+    result = json.loads(row['payload_json']) if row else None
+    from . import runtime_layout
+    if runtime_layout.version() is not None:
+        item = sandbox_lifetime_check()
+        result = result or {'observed_at': db.utcnow(), 'items': [], 'status': 'warn'}
+        result['items'] = [v for v in result['items'] if v['name'] != 'sandbox_lifetime'] + [item]
+        if item['status'] == 'fail':
+            result['status'] = 'fail'
+    return result
+
+
+def sandbox_lifetime_check():
+    from . import topic_workspace
+    try:
+        value = topic_workspace.lifetime_ceiling()
+    except ValueError as exc:
+        return _item('sandbox_lifetime', 'fail', str(exc))
+    return _item('sandbox_lifetime', 'pass', '沙箱寿命实测记录有效', effective_ceiling_seconds=value)
+
+
+def record_startup_checks():
+    from . import alerts, runtime_layout
+    if runtime_layout.version() is None:
+        return
+    item = sandbox_lifetime_check()
+    db.execute('INSERT OR REPLACE INTO runtime_observations VALUES(?,?,?)',
+               ('startup-sandbox-lifetime', json.dumps(item, ensure_ascii=False), db.utcnow()))
+    if item['status'] == 'fail':
+        with db.transaction() as conn:
+            alerts._insert(conn, 'startup:sandbox-lifetime', {'id': None, 'challenge_id': None},
+                           'system.sandbox_lifetime_missing', '沙箱寿命检查失败', item)
 
 
 def track_checks():
@@ -267,6 +297,9 @@ async def _run(connection_checker, health_checker):
             'warn' if any(item['created_success_at'] is None for item in images) else 'pass',
             '各镜像最近一次沙箱创建成功时间；平台缓存有效期和重新预热周期unknown', images=images)
     checks.append(asyncio.to_thread(sandbox_creation_check));names.append('sandbox_image_warmup')
+    from . import runtime_layout
+    if runtime_layout.version() is not None:
+        checks.append(asyncio.to_thread(sandbox_lifetime_check));names.append('sandbox_lifetime')
     checks.append(asyncio.to_thread(content_checks, settings));names.append('loaded_content')
     values = await asyncio.gather(*checks, return_exceptions=True)
     items = []

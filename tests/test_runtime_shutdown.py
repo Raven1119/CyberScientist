@@ -48,6 +48,9 @@ async def test_app_lifespan_awaits_cancelled_poller(monkeypatch):
     startup_reconciled = False
     async def pending_thread_call(*args, **kwargs):
         nonlocal startup_reconciled
+        from cyberscientist import topic_workspace
+        if args and args[0] is topic_workspace.maintain_due:
+            return []  # Independent workspace worker finishes; poller blocks below.
         if not startup_reconciled:
             startup_reconciled = True
             return {'changed_run_ids': []}
