@@ -24,6 +24,8 @@
 |120 Ry配对扫描启动|2026-10-09 18:12:16.401、18:12:22.472|2026-10-10 02:12:16.401、02:12:22.472|执行者自行启动FM/AFM各8 rank，同一16 CPU沙箱；18:27:20Z两分支均已到第14步，尚未完成|
 |探索完成声明与PI再验证|2026-10-09 18:33:44.693→18:35:35.168|2026-10-10 02:33:44.693→02:35:35.168|完成检查点触发PI第9轮审阅；未批准提交，继续同方法数值验证，未进入干净复跑|
 |首个真实Job接收并运行|2026-10-09 18:42:27.178→18:43:20.502|2026-10-10 02:42:27.178→02:43:20.502|Job23515079（bohr20868308）；强制预检通过，先Scheduling后实际Running，科学结果待产生|
+|首个Job失败及日志取回|2026-10-09 18:45:05.962→18:46:38.939|2026-10-10 02:45:05.962→02:46:38.939|Open MPI slot不足16，ABACUS未启动；日志与out.zip真实取回，失败Job保留计数|
+|8-rank替代Job接收|2026-10-09 18:47:10.002|2026-10-10 02:47:10.002|Job23515081（bohr20868309），随后平台Running；ABACUS实际启动与科学结果待日志确认|
 
 题目：site-projected-magnetic-moments-and-spin-state-ass-9640ab85；本地ID local_a28928e48aae。题面实时读取成功，平台结束时间为2026-08-08 12:00 UTC；赛道练习时钟另设，不修改旧题或旧赛道的历史时钟。
 
@@ -75,7 +77,7 @@
 
 ## 4. 算力与预检
 
-方法已批准；截至18:43:52Z本题实际沙箱创建2、另1次本地not_started失败，Job1/Running、提交0、镜像构建0。100 Ry两支粗基线已有完成回执，PI要求进一步严格收敛与积分复核，尚无完整科学验收。先前ABACUS输入解析失败由执行者纠正，远程wrapper退出0不能当科学成功。模板预算：600分钟、10 Job、4总Attempt、4沙箱并发、环境保存0、沙箱累计2400分钟；另通过给PI的备注明确沙箱总创建次数≤4及镜像构建0。并发字段不冒充平台总创建硬限额，监控按实际创建账本核对总数。
+方法已批准；截至18:48:48Z本题实际沙箱创建2、另1次本地not_started失败，Job2（1 Failed、1平台Running）、提交0、镜像构建0。100 Ry两支粗基线已有完成回执，PI要求进一步严格收敛与积分复核，尚无完整科学验收。先前ABACUS输入解析失败由执行者纠正，远程wrapper退出0不能当科学成功。模板预算：600分钟、10 Job、4总Attempt、4沙箱并发、环境保存0、沙箱累计2400分钟；另通过给PI的备注明确沙箱总创建次数≤4及镜像构建0。并发字段不冒充平台总创建硬限额，监控按实际创建账本核对总数。
 
 17:51:09Z FM粗基线日志读回，TOTAL Time=436、Exit status=0，实际19步；chgs1.cube与chgs2.cube各7,246,157字节，restart密度9,853,880字节。该阶段scf_thr=1e-4，由执行者选择作为密度重启起点，不能当最终精度达标。随后自行从真实密度重启收紧至1e-7；17:53:59Z只读ps回执显示对应MPI/ABACUS进程存活、计算进程约98% CPU，不因轮询未完成就重启。time -v的Maximum RSS=233252 kB不是16个MPI进程的总内存峰值。AFM、收敛误差和积分验证尚未完成。
 
@@ -88,6 +90,10 @@
 18:41:27.209Z新Trial实际Job预检trial4_strict_pair_cpu_v1合法拦下LITERAL_VARIABLE_PATH：`cp 'OUT.${branch}/running_scf.log' tight_running_scf.log`的单引号阻止变量展开。事件与原生工具回执均保留具体line明细，possible_remote_effect=none、reservation_created=false，证明错误明细在真实工具响应可见；尚未证明完整Job准入通过。18:41:37Z执行者已明确自行修正此路径，再按无远程副作用的同一操作ID预检；监控未改科学脚本。
 
 18:42:05.835Z后续预检拦OUTPUTS_NOT_REGISTERED（atomic.stdout、tight.stdout），仍无预约；执行者补齐后18:42:22.425Z强制预检passed，syntax_checked/image_checked均true，实际命令和镜像路径登记齐全。唯一预约于18:42:22.427Z建立，18:42:27.178Z平台接收Job23515079（bohr20868308），18:43:20.502Z实际查询Running；c16_m16_cpu/10GB/180分钟、同镜像，科学执行结果尚未产生。旧辅助检查同时给MISSING_ENTRY/run.sh非阻断提示，18:43:52Z只读核对冻结输入目录确有run.sh、input_bytes=6681，记录辅助检查与冻结输入不一致，原因待定位，交设计助手；未为非阻断问题另开热修复。18:42:38Z新资源检查点已报告，旧指导guidance_8d0890b487因Trial变化标superseded，不能写成执行者ACK采纳。
+
+18:45:05.962Z该Job实际转Failed；18:46:11.022Z STDOUTERR日志、18:46:38.939Z out.zip真实取回。STDOUTERR已打印PAIR_BRANCH_BEGIN，说明入口执行；fm/atomic.stdout为0字节，fm/atomic.time明确Open MPI不能提供所请求16个slot，启动ABACUS前exit1（time报告0.04秒）。不把基础设施MPI启动失败写成SCF失败或科学不收敛。执行者自行决定改为8 rank再提交，监控未修改方法/脚本。旧辅助MISSING_ENTRY的来源已定位为辅助files集合仅收.py/.txt，遗漏run.sh；强制扫描包含.sh，且实际入口已执行，此非阻断提示交设计助手。
+
+18:47:10.002Z替代操作trial4_strict_pair_cpu_v2_np8实际接收，平台Job23515081/bohr20868309；18:47:21.739Z查询Running且平台说明仍Preparing input files and computation environment，不能把Running等同于ABACUS已启动。原失败Job保持独立记录，当前总Job2，不重复提交unknown操作。费用最初平台回报0.00/currency unknown，仍可能滞后，不能据此承诺免费或费用已结清。
 
 18:04:35Z运维摘要实际确认loaded=checkout=b327bab、告警0、自动提交true/队列0/暂停false、原生关闭unknown持久标记0。一条全局旧沙箱trial9-clean-replay-create为unknown，与本Run无关，未重放。before_window指赛末自动收割窗口，代码没有据此禁止普通实验提交；未改时钟或提交额度。摘要中的Codex 44%采样时间仍为17:07:57Z，不能代替17:50Z原生46%观察。digest默认是文本，初次按JSON解析失败；原输出留存并按文本读取，未将解析失败写成接口失败。
 

@@ -1366,3 +1366,5 @@ CS-UP-13 工作包提交索引（按Git事实，最终W8标签另录）：
 - 已实际验证：18:41:27Z真实Job预检trial4_strict_pair_cpu_v1拦下单引号变量路径LITERAL_VARIABLE_PATH，数据库和原生工具响应均含具体line明细；reservation_created=false/possible_remote_effect=none。执行者自行修正路径，未建Job、未预约额度；这项验证覆盖错误明细传达，完整Job准入仍待通过。
 - 已实际验证：18:42:05Z真实预检继续拦未登记atomic.stdout/tight.stdout，无预约；执行者补齐后18:42:22Z强制预检passed（syntax_checked/image_checked=true），18:42:27Z唯一Job23515079/bohr20868308实际接收，18:43:20Z平台查询Running，资源c16_m16_cpu/10GB/180分钟/同镜像。当前真实沙箱创建2/Job1/提交0，准入修复已走到真实创建，科学结果尚未产生。
 - 已实际验证：旧辅助检查的MISSING_ENTRY/run.sh非阻断提示与冻结输入不符，18:43:52Z实际目录存在run.sh/6681字节输入，记录交设计助手。18:42:38Z资源检查点已报告，guidance_8d0890b487因Trial变化标superseded，不能当已ACK；当前没有为非阻断提示额外热修复。
+- 已实际验证：18:45:05Z首Job23515079转Failed，18:46:11Z日志和18:46:38Z out.zip真实取回。入口已执行PAIR_BRANCH_BEGIN；atomic.stdout为0字节，atomic.time明确MPI slot不足16、启动ABACUS前exit1（0.04秒），不是SCF失败。执行者自行选择8 rank再提交，原失败Job保留额度计数。辅助MISSING_ENTRY来源已定位为.py/.txt扫描遗漏.sh，非阻断且实际入口已执行，交设计助手。
+- 已实际验证：18:47:10Z执行者8-rank替代操作trial4_strict_pair_cpu_v2_np8接收，Job23515081/bohr20868309；18:47:21Z平台Running且Preparing input files and computation environment，ABACUS实际启动待日志确认。当前Job2（1 Failed、1 Running）/真实沙箱创建2/提交0；原失败Job与日志保留，初报0.00费用可能滞后，不当免费证明。
