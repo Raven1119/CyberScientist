@@ -175,3 +175,12 @@
 | /home/wmywb/CyberScientist-comp/.runtime/home/.playground/config.json | 否 |
 | /home/wmywb/CyberScientist-comp/.runtime/home/.config/playground（含 agents/ 与 credentials.env） | 否 |
 | /home/wmywb/CyberScientist-comp/.runtime/home 下 .bohr、.bohrium、.config/bohr、.config/bohrium | 均否 |
+
+## W8：验证残留归档与冷启动
+
+- 已实际验证：15 项移至 `/home/wmywb/CyberScientist-private-archive/cs-up20/w8-20261009T133207Z`（0700）：`validate-{audit-hidden.sh,audit.py,baseline.py,browser.py,identities.py,native.py,preview.py,sandbox-repair.py,sandbox.py,tools.py}`、`validation/`、`validation-native.log`、`reference-map.json`、`client-install{,-2}.log`。源 `.runtime` 对 validate-/validation 前缀搜索为 0；当前运行时代码及启动脚本无这些残留路径引用。
+- 已实际验证：使用同一文件系统的 `os.rename`，不复制；validation 整目录按 inode/device/文件名/大小核对，不读取其中的秘密文件。其他验证脚本/日志按原 SHA 核对。私有完整清单在归档 `manifest.json` 和 `.package-checks/cs-up20/w8-cleanup.json`。运行依赖、版本、锁文件、启动器、运行日志及用户简历提交回执保留。
+- 已实际验证：清理后经已核实 PID、safe-shutdown=true、端口释放，再冷启动原比赛版本 4ef48d7。新 PID 1748742，启动等待 135.60 秒；只读对账 ready；完整 preflight 为 warn、0 fail，总耗时 159.36 秒。身份、全部平台账号、Bohrium、Codex、原生宿主、fast、寿命记录、公共工具和代码自检通过；警告为旧赛道/镜像预热事实/已停用经验，不伪称全部 pass。
+- 已实际验证：前后 Runs49、Trials130、Jobs163、Sandboxes67、Submissions14 完全相同，新科研/提交数量 0。日志 `.package-checks/cs-up20/w8-clean-cold-start.jsonl`。有界审查核对归档范围、运行时无引用和旧历史未重写；diff 检查通过。
+- 尚未验证：候选版 3 的新代码冷启动留 W11 发布；本项验证清理后的当前比赛版本。
+- 阻塞项：无。初次清理把 validation 误认为文件，检查即停止，未移动任何项；初次冷启动使用 60 秒窗口超时，但同 PID 存活，继续观察到健康，未重复拉起。随后完成目录归档并从清理后状态重跑上述完整冷启动；初始失败与同进程观察日志保留。
