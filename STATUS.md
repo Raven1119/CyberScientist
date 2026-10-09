@@ -1108,3 +1108,10 @@ CS-UP-13 工作包提交索引（按Git事实，最终W8标签另录）：
 - 已实际验证：已结束S4旧题weighted-random-forest当前GET/未曾导入0、未曾Run0；创建唯一run_f9a4404816、local_4a948751，实际URL导入2.50秒。比赛默认Astra xhigh/Terra high fast；授权模型30turn、90分钟、沙箱2/170分钟/10元、Job0、提交0、镜像0，只做契约占位通路。
 - 尚未验证：实际方法提案/批准、两个Trial、两次dry-run及发布续用；后台等待PI开局。
 - 阻塞项：独立登录仍待用户；只读文件错误与恢复证据保留，未将首次推送记为成功。
+
+### CS-UP-19 W2工具宿主与实际批准
+- 已实际验证：首次PI真实工具调用失败：比赛codex-code-mode-host缺失；PI将简报写在wait.reason，未触发审批。暂停同一Run，核对原官方0.161.0 wheel中的Codex与比赛二进制SHA完全一致后，只迁移同包宿主/资源/rg/包元数据（非凭据），续用原PI线程并只向PI发恢复指导。后续research.brief_written/method.proposed真实事件与awaiting_method_approval已出现。
+- 已实现：启动/显式自检增加Codex工具宿主可执行性检查，缺失记fail并前端告警，不能只用RPC握手冒充工具可用。
+- 已实际验证：宿主/自检/快照/发布51 passed/68.31秒。Playwright真实Chromium按aria-label“批准初始方法”点击，真实后端HTTP200，2.19秒；未替换HTTP响应。旧告警挡住UI，临时在本页抑制close回调再关闭dialog，100条历史告警后端仍未确认，没有改旧账本。SSE使networkidle等待超时的首次浏览器检查未记通过，改为domcontentloaded后执行实际点击。
+- 尚未验证：探索trial_8a3d91e3ca真实sandbox/产物/试构建与干净复跑；已由原生执行者接收任务。
+- 阻塞项：凭据独立性仍待用户自行登录。未新建第二个Run、未创建Job/提交。

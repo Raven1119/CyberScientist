@@ -71,3 +71,13 @@ def test_real_observation_is_returned_without_hour_fallback():
     db.execute('INSERT INTO runtime_observations VALUES(?,?,?)',
                ('sandbox-lifetime-ceiling',json.dumps({'effective_ceiling_seconds':604800}),db.utcnow()))
     assert topic_workspace.lifetime_ceiling()==604800
+
+
+def test_codex_code_mode_host_missing_fails_preflight(tmp_path, monkeypatch):
+    from cyberscientist import config
+    settings=config.load_settings()
+    for role in ('brain','executor'):settings[role]['executable']=str(tmp_path/'codex')
+    monkeypatch.setattr(config,'load_settings',lambda:settings)
+    assert preflight.codex_helpers_check()['status']=='fail'
+    host=tmp_path/'codex-code-mode-host';host.write_text('fixture');host.chmod(0o755)
+    assert preflight.codex_helpers_check()['status']=='pass'

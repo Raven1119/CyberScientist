@@ -2,6 +2,7 @@
 from __future__ import annotations
 import asyncio
 import json
+import os
 import shutil
 import subprocess
 import time
@@ -196,10 +197,10 @@ def cached():
     result = json.loads(row['payload_json']) if row else None
     from . import runtime_layout
     if runtime_layout.version() is not None:
-        item = sandbox_lifetime_check()
         result = result or {'observed_at': db.utcnow(), 'items': [], 'status': 'warn'}
-        result['items'] = [v for v in result['items'] if v['name'] != 'sandbox_lifetime'] + [item]
-        if item['status'] == 'fail':
+        items = [sandbox_lifetime_check(), codex_helpers_check()]
+        result['items'] = [v for v in result['items'] if v['name'] not in ('sandbox_lifetime', 'codex_helpers')] + items
+        if any(item['status'] == 'fail' for item in items):
             result['status'] = 'fail'
     return result
 
@@ -213,17 +214,31 @@ def sandbox_lifetime_check():
     return _item('sandbox_lifetime', 'pass', '沙箱寿命实测记录有效', effective_ceiling_seconds=value)
 
 
+def codex_helpers_check():
+    from pathlib import Path
+    settings = config.load_settings()
+    missing = []
+    for role in ('brain', 'executor'):
+        executable = settings[role].get('executable')
+        host = Path(executable).parent / 'codex-code-mode-host' if executable else None
+        if host is None or not host.is_file() or not os.access(host, os.X_OK):
+            missing.append(role)
+    return _item('codex_helpers', 'fail' if missing else 'pass',
+                 'Codex原生工具宿主缺失，不能运行工具' if missing else 'Codex原生工具宿主已安装', missing_roles=missing)
+
+
 def record_startup_checks():
     from . import alerts, runtime_layout
     if runtime_layout.version() is None:
         return
-    item = sandbox_lifetime_check()
-    db.execute('INSERT OR REPLACE INTO runtime_observations VALUES(?,?,?)',
-               ('startup-sandbox-lifetime', json.dumps(item, ensure_ascii=False), db.utcnow()))
-    if item['status'] == 'fail':
-        with db.transaction() as conn:
-            alerts._insert(conn, 'startup:sandbox-lifetime', {'id': None, 'challenge_id': None},
-                           'system.sandbox_lifetime_missing', '沙箱寿命检查失败', item)
+    for name, item, title in (('sandbox-lifetime', sandbox_lifetime_check(), '沙箱寿命检查失败'),
+                              ('codex-helpers', codex_helpers_check(), '原生工具宿主检查失败')):
+        db.execute('INSERT OR REPLACE INTO runtime_observations VALUES(?,?,?)',
+                   ('startup-' + name, json.dumps(item, ensure_ascii=False), db.utcnow()))
+        if item['status'] == 'fail':
+            with db.transaction() as conn:
+                alerts._insert(conn, 'startup:' + name, {'id': None, 'challenge_id': None},
+                               'system.' + name.replace('-', '_') + '_missing', title, item)
 
 
 def track_checks():
@@ -300,6 +315,7 @@ async def _run(connection_checker, health_checker):
     from . import runtime_layout
     if runtime_layout.version() is not None:
         checks.append(asyncio.to_thread(sandbox_lifetime_check));names.append('sandbox_lifetime')
+        checks.append(asyncio.to_thread(codex_helpers_check));names.append('codex_helpers')
     checks.append(asyncio.to_thread(content_checks, settings));names.append('loaded_content')
     values = await asyncio.gather(*checks, return_exceptions=True)
     items = []
