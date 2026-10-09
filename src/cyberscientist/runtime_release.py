@@ -21,12 +21,17 @@ import uuid
 from . import config
 
 PREFIXES=('src/cyberscientist/','prompts/','skills/','environments/',
-          'contracts/','vendor/playground_contracts/','templates/',
+          'contracts/','vendor/playground_contracts/',
           'tools/playground-cli/0.1.40/')
 FILES={'pyproject.toml','uv.lock','.env.example','config/workspace.example.yaml',
-       'start-runtime.sh','tools/playground-cli/0.1.40/package.json',
+       'start-runtime.sh','templates/lightchaser-user-prompt.md','tools/playground-cli/0.1.40/package.json',
        'tools/playground-cli/0.1.40/integrity.json'}
 _NUMBER=re.compile(r'(?<!\w)(?:CS-UP-\d+[A-Za-z]*|D-\d+)(?!\w)')
+
+
+def retired_release_path(name: str) -> bool:
+    return name.startswith(('evals/', 'challenges/')) or name in (
+        'templates/experience.md', 'templates/trial.md')
 
 
 def allowed(name: str) -> bool:
@@ -258,7 +263,7 @@ def publish(stage: Path, root: Path, manifest: dict):
     for path in set(manifest['files']) | set(previous_files):
         # Removed evaluation/scorer roots were release-owned, never Run data.
         if PurePosixPath(path).is_absolute() or '..' in PurePosixPath(path).parts or (
-                not runtime_path(path) and not path.startswith(('evals/', 'challenges/'))):
+                    not runtime_path(path) and not retired_release_path(path)):
             raise ValueError('旧发布清单含非运行时路径')
         if path.startswith('tools/'):owned.add('tools/playground-cli/0.1.40')
         elif path.startswith('config/'):owned.add(path)
@@ -346,7 +351,7 @@ def _release_locked(commit: str, *, root: Path, port: int, timeout=180, source: 
                 manifest=json.loads((cached/'manifest.json').read_text())
                 if manifest['commit']!=sha:raise ValueError('发布缓存版本不匹配')
                 for name,digest in manifest['files'].items():
-                    legacy = name.startswith(('evals/', 'challenges/'))
+                    legacy = retired_release_path(name)
                     relative = PurePosixPath(name)
                     if relative.is_absolute() or '..' in relative.parts or (not runtime_path(name) and not legacy):
                         raise ValueError('发布缓存路径越界')

@@ -92,7 +92,8 @@ def test_publish_rejects_cache_traversal_and_tampering_before_mutation(tmp_path)
 def test_publish_removes_old_owned_evaluation_roots_and_preserves_research(tmp_path):
     root=tmp_path/'comp';stage=tmp_path/'stage'
     files={'src/cyberscientist/cli.py':'new code'}
-    old={'evals/suite.json':'old evaluation','challenges/old/reference.json':'old reference'}
+    old={'evals/suite.json':'old evaluation','challenges/old/reference.json':'old reference',
+         'templates/experience.md':'old experience template','templates/trial.md':'old trial template'}
     for name,body in files.items():
         path=stage/name;path.parent.mkdir(parents=True,exist_ok=True);path.write_text(body)
     for name,body in old.items():
@@ -105,6 +106,9 @@ def test_publish_removes_old_owned_evaluation_roots_and_preserves_research(tmp_p
     runtime_release.publish(stage,root,{'commit':'a'*40,'files':{
         name:hashlib.sha256(body.encode()).hexdigest() for name,body in files.items()}})
     assert not (root/'evals').exists() and not (root/'challenges').exists()
+    assert not (root/'templates/experience.md').exists() and not (root/'templates/trial.md').exists()
+    assert runtime_release.allowed('templates/lightchaser-user-prompt.md')
+    assert not runtime_release.allowed('templates/trial.md')
     assert mutable.read_text()=='current topic'
     assert list((root/'.runtime/previous').glob('*/evals/suite.json'))
 

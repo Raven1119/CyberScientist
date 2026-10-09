@@ -51,7 +51,7 @@ fresh线程新Trial目录先于开会话创建为空，供应商之后创建只�
 | environments | 保留 | environment_catalog、compute与环境预检读取 |
 | contracts | 保留 | decision.schema、collaboration.schema、experience-policy和mailboxes读取arm_protocol |
 | vendor/playground_contracts | 保留 | 官方协议/评分器快照，public research及drift检查 |
-| templates | 保留 | competition读取lightchaser-user-prompt；其他trial/experience模板保留为交付资料，逐文件进一步裁剪待设计验收 |
+| templates/lightchaser-user-prompt.md | 保留 | competition.py实际读取赛道用户提示；未被运行代码读取的experience.md/trial.md移出，缓存验证后裁剪 |
 | tools/playground-cli/0.1.40 | 保留 | 固定官方CLI；integrity、package元数据与dist读取 |
 | apps/web/dist | 保留 | API静态前端读取；每次从指定commit构建 |
 | pyproject.toml、uv.lock、启动脚本、示例配置 | 保留 | 独立环境锁定、迁移/发布和冷启动 |
