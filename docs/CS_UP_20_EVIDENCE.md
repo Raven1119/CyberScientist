@@ -223,3 +223,13 @@
 - 已实际验证：首次发布快照b2cc2dd29c690a74ca71b3af1de687b32ff2ea8c后，刷新含隔离配置的私有快照301993e3c5350ece7237aa5978f34df37fb0fec2；245运行文件/252导出文件/22技能，扫描0，远端main核对成功。候选3本地源码标签指向91ecfd3，私有快照远端标签peeled SHA为301993e3；两种SHA分别记录，未推送公开源码仓库。比赛缓存release-aliases映射候选3到91ecfd3；`w11-final-snapshot.json`、`w11-tags.json`。暂存源码扫描的两处api_token形状命中是未变化的历史paper2arm-task数据集标识，严格按原HEAD同一行及前缀复核，已知秘密命中0，原文保留；`w11-staged-scan-review.json`。
 - 尚未验证：RH-02 新赛道提示的新版本/冻结与完整科学闭环，按既有决定在下一步前端创建赛道后完成模板发布，不更改三个已结束赛道。
 - 阻塞项：当前无；上述完整、补验与中断结果分别记录，不能混写为某一次全量 1888 passed。
+
+
+## RH-02 前置复核（用户授权推送与恢复自动提交）
+
+- 开发仓库 main 已从 eaf1891 快进推送到 9789931f8c3ec4ff0ce4082307d628e88e9b9c8e；GitHub refs 读回一致，远端 CS_UP_20_EVIDENCE.md 第 190 行已含 W9 登录结论。公开源码标签 lightchaser-candidate-3 的 peeled SHA 为 91ecfd39717c6b91bd37b88523b01d2c242ee744；私有比赛快照的同名标签仍为 301993e3，二者分别记录。只有三份跟踪文档进入本次补充提交，用户简历、任务文件、原生记录、凭据和私有回执未入 Git。
+- 自动提交关闭确实由链路保护触发。数据库留有 auto_submission_paused=1；六次 submission.nonstandard 事件全部发生在 2026-10-08 10:36–11:11（+08），旧提交没有 Worker job_id，其中 Attempt 49916 明确返回 missing_worker_submission / playground-worker/nonstandard-submission-guard。没有新增同类事件。
+- 私有快照 b2cc2dd 的设置版本24为 true，301993e 的版本29为 false。后端生命周期维护及评分轮询调用 submission_gate.synchronize_pause，将数据库暂停标记同步为配置 false；W11 两次临时 Run 容量调整共四次设置保存解释其余版本增长。没有逐版本25–28的留存快照，以上是从两端快照、现有控制流和实际操作清单复核的结论，不伪称每个中间版本都有独立审计记录。
+- 链路修复已有真实标准 Worker 证据：应用提交 Attempt50211 / Worker27828，实际发送包 SHA ab837a062a1adcc8ec52f14ecf4fc5db8b5c42f8ab41e10d6a3e1c991a98d8ec 与 Worker 核验一致；scored_by=playground-worker/harbor-lbg+trace-score-cli、harbor reward=1、轨迹82.425、accept、final=true。此次只读核对已有回执，没有新建验证提交。仍保留其 N11/N14 扣分和不计季事实。
+- 前端在“提交排队与保护”点击“恢复自动提交”，读回设置版本30的 auto_submission=true、system_state 暂停记录0、待发队列0；重新加载后界面显示“自动提交已启用”。后续仅为 RH 创建容量临时改 max_active_runs=3，版本31仍 true，其余功能及 Run 默认设置字段相同。
+- 已有去重位于 mailboxes._record_feedback：完全相同的旧回执不会撤销显式恢复，真正变化的非标准反馈仍暂停。专项命令 .venv/bin/pytest -q tests/test_submission_gate_cs13.py -k nonstandard_feedback → 4 passed/6 deselected，5.84秒。该验证为应用测试；原生记录与旧提交均未改写，未重新提交。私有清单位于 .package-checks/rh02/pre-rh-*.json。
