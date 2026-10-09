@@ -99,3 +99,14 @@
 - 已实际验证：输出-only ZIP 完成预检、封存、schema 检查、科学输出暂存与真实 CLI 离线试构建；源 ZIP、产物和 native fixture 字节未变；已有清单科学字段保持原值；新探索/复跑提示要求一致。
 - 尚未验证：新比赛运行时上的实际原生会话构建，留到 W9/W11；本卡无真实提交授权。
 - 阻塞项：无。初次测试缺 Node PATH，随后 fixture 只有 session_meta 导致 CLI 无可归一化步骤；改用已安装 Linux Node 和明确标识的消息 fixture 后通过。两次失败日志分别保留于 `w2-tests-initial.log`、`w2-tests-second.log`；通过日志为 `.package-checks/cs-up20/w2-tests.log`、`w2-preflight-tests.log`。
+
+## W3：平台明确拒收
+
+- 已实现：CLI 非零退出只把明确的 429+提交上限与明确的包校验拒收分类；普通 429、创建记录校验、网络错误仍 unknown。记录独立 rejection 事件和前端告警；不自动重发。
+- 已实现：账号身份与冻结平台/origin/题目键共同标记本题用尽；不禁用该账号的其他题。下一项新提交换账号；已排队的同账号请求发送前也重新检查。原同哈希账号绑定只在原账号明确用尽时允许换账号。
+- 已实现：拒收无 Attempt ID 时释放本地预约；Worker 拒收而已知 Attempt ID 时保留 ID 和额度，记 failed，避免把远端已创建记录写成未存储。普通未知仍走原对账。
+- 已实现：比赛面板显示本题各账号已确认 Attempt 次数、额度占用和用尽标记；次数合并完整分页的 CLI 基线与本地已知远端 ID，去重；不把未知预约算成已确认提交。
+- 已实际验证：相关后端回归 64 passed/20.38 秒；追加计数/比赛面板覆盖 19 passed/5.37 秒；最后的发送前门禁专项 14 passed/3.61 秒。两种拒收、幂等不重发、下次换账号、不同题不串用、已知 Attempt 的预约保留、分页基线次数均为明确 synthetic 协议测试。
+- 已实际验证：`PATH=/home/wmywb/.local/share/node-v22.17.0-linux-x64/bin:$PATH npm --prefix apps/web test -- --run src/CompetitionPanel.test.tsx` → 11 passed；次数/用尽状态渲染和现有操作覆盖。
+- 尚未验证：平台真实拒收，本卡真实提交额度为 0，不能人为触发；RH-02 若出现则据真实回执核对。
+- 阻塞项：无。日志在 `.package-checks/cs-up20/w3-{tests,extra-tests,final-tests,frontend-tests}.log`；最初 npm 不在当前 PATH，改用已有 Linux 安装，不安装或修改全局配置。

@@ -28,3 +28,8 @@ test('renders persisted real-receipt deduction codes',async()=>{
  vi.mocked(api.get).mockImplementation(async path=>path.endsWith('mailboxes')?{items:[]}:{items:[{...row,receipt:{harbor_score:100,trace_score:82.425,trace_decision:'accept',receipt_details_json:JSON.stringify({deductions:[{code:'N11',reason:'fixture'},{code:'N14',reason:'fixture'}]}),email:'本人账号'}}],auto_submission:true,distributions:[],repairs:[],alerts:[]} as never)
  render(<CompetitionPanel/>);expect((await screen.findByText(/N11/)).textContent).toContain('N14')
 })
+
+test('shows each account topic count and explicit exhaustion',async()=>{
+ vi.mocked(api.get).mockImplementation(async path=>path.endsWith('mailboxes')?{items:[]}:{items:[{...row,account_usage:[{mailbox_id:'a',email:'账号甲',submitted:10,used:10,limit:10,exhausted:true},{mailbox_id:'b',email:'账号乙',submitted:2,used:3,limit:10,exhausted:false}]}],auto_submission:true,distributions:[],repairs:[],alerts:[]} as never)
+ render(<CompetitionPanel/>);expect((await screen.findByText(/账号甲：已确认提交/)).textContent).toContain('提交上限已用尽');expect(screen.getByText(/账号乙：已确认提交/).textContent).toContain('2 次')
+})

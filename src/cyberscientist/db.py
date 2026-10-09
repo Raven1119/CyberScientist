@@ -621,6 +621,10 @@ def init_db() -> None:
         })
         _ensure_columns(conn, 'mailboxes', {'platform_account_id':'TEXT', 'operator_id':'TEXT',
             'claim_status':"TEXT NOT NULL DEFAULT 'unknown'", 'last_used_at':'TEXT'})
+        conn.executescript('''CREATE TABLE IF NOT EXISTS mailbox_target_exhaustions (
+            account_identity TEXT NOT NULL,target_key TEXT NOT NULL,submission_id TEXT NOT NULL,
+            reason TEXT NOT NULL,created_at TEXT NOT NULL,
+            PRIMARY KEY(account_identity,target_key));''')
         conn.executescript('''CREATE TABLE IF NOT EXISTS submission_validation_scopes (
             id TEXT PRIMARY KEY,grant_sha256 TEXT NOT NULL,grant_json TEXT NOT NULL,created_at TEXT NOT NULL);''')
         conn.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_submission_one_retry ON submissions(retry_of) WHERE retry_of IS NOT NULL')

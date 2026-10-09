@@ -31,6 +31,9 @@ def synchronize() -> None:
                      'harvest.failed': '自动收割失败', 'harvest.unknown': '自动收割状态不明'}.get(kind)
             if kind=='harvest.started' and payload.get('last_mailbox_quota'):
                 title='自动收割开始：使用本题主邮箱最后一次额度'
+            if kind=='submission.rejected':
+                title=('本题账号提交上限已用尽，下次换账号' if payload.get('rejection_kind')=='submission_limit'
+                       else '平台拒收结果包：'+str(payload.get('reason') or '包未通过校验'))
             if kind.endswith(('.error', '.failed')) or kind in ('submission.unknown', 'prime.crashed') or (kind == 'job.observed' and payload.get('status') == 'Failed'):
                 title = '研究操作出错或状态不明'
             if kind in ('submission.scored', 'submission.score_corrected'):

@@ -17,6 +17,18 @@ from .mailbox_platform import PlatformError, public_feedback
 WORKER = 'http://47.92.88.121:443/api'
 
 
+def explicit_rejection(exit_code, diagnostic):
+    if exit_code == 0:
+        return None
+    text='\n'.join(str(diagnostic.get(key) or '') for key in ('stderr','stdout_preview'))
+    if re.search(r'\b429\b',text) and re.search(
+            r'提交上限|submission limit|at most\s+\d+\s+submissions',text,re.I):
+        return 'submission_limit'
+    if re.search(r'提交包未通过校验|包未通过校验|bundle (?:validation failed|failed validation|did not pass validation)|bundle_validation_failed',text,re.I):
+        return 'bundle_validation'
+    return None
+
+
 def account_attempts(platform, secret, challenge_id):
     identity = platform._http('GET', '/auth/me', token=secret)
     owner = identity.get('user', identity) if isinstance(identity, dict) else {}
@@ -227,6 +239,10 @@ def submit(platform, email, secret, package_path, challenge_id, meta):
                         'worker_job_id': receipt['bundle_response'].get('job_id') or receipt['bundle_response'].get('jobId')}
         match = re.search(r'--attempt-id\s+(\d+)', proc.stderr)
         if match: on_stage('cli_unknown', match[1])
+        rejected=explicit_rejection(proc.returncode,diagnostic)
+        if rejected:
+            raise PlatformError('平台明确拒收：'+rejected+'；'+diagnostic['stderr'][:1000],
+                no_side_effect=not bool(match),rejection_kind=rejected)
         raise PlatformError('官方CLI未确认同包上传，保留unknown；须完整分页对账'
                             + f'；exit_code={proc.returncode}；' + diagnostic['stderr'][:300])
 

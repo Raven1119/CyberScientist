@@ -34,9 +34,11 @@ from . import config
 
 class PlatformError(Exception):
     """只有确认未产生远端副作用才允许释放预占。"""
-    def __init__(self, message: str, *, no_side_effect: bool = False):
+    def __init__(self, message: str, *, no_side_effect: bool = False,
+                 rejection_kind: str | None = None):
         super().__init__(message)
         self.no_side_effect = no_side_effect
+        self.rejection_kind = rejection_kind
 
 
 def public_feedback(value: Any, *secrets: str | None) -> Any:

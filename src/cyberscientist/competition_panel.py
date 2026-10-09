@@ -12,6 +12,8 @@ def state(run_id, key, fallback=None):
 
 def view():
     from . import alerts,features,platform_scores,clean_runs
+    from . import mailboxes
+    usage=mailboxes.mailbox_usage()['items']
     rows=[]
     for run in db.query("SELECT r.*,c.title FROM runs r JOIN challenges c ON c.id=r.challenge_id WHERE r.id=(SELECT r2.id FROM runs r2 WHERE r2.challenge_id=r.challenge_id ORDER BY r2.created_at DESC,r2.rowid DESC LIMIT 1) ORDER BY r.created_at DESC"):
         snapshot=json.loads(run['config_snapshot']);method=method_approval.state(run['id'])
@@ -30,6 +32,9 @@ def view():
             start=_instant(receipt['submitted_at']);end=_instant(receipt['scored_at']) if receipt['score_is_final'] else datetime.now(timezone.utc)
             elapsed=max(0,(end-start).total_seconds()) if start and end else None
         rows.append({'run_id':run['id'],'challenge_id':run['challenge_id'],'title':run['title'],'track':snapshot.get('competition',{}).get('round_id','单题'),'phase':phase,'run_phase':run['phase'],'current_trial_id':run['current_trial_id'],
+                     'account_usage':[item for item in usage if json.dumps([
+                         item['target_platform'],item['target_origin'],item['platform_challenge_id']],
+                         separators=(',',':'))==mailboxes._challenge_key(db.get_db(),run['id'])],
                      'method_summary':summary[:300],'clean_run':clean_runs.offer(run['id']),'method':method,'receipt':{k:receipt[k] for k in ('id','harbor_score','trace_score','trace_decision','receipt_details_json','score_is_final','email')} if receipt else None,'scoring_seconds':elapsed,'next_step':next_step,'submission_held':state(run['id'],'submission_hold',False),'mailbox_id':state(run['id'],'preferred_mailbox'),
                      'executor':state(run['id'],'executor_override',snapshot['settings'].get('executor',{}))})
     # Public aggregation cache only; never expose author identities or ranking rows.

@@ -116,7 +116,9 @@ def mailbox_usage() -> dict[str, Any]:
         for mailbox in db.query('SELECT id,email,role FROM mailboxes ORDER BY role,created_at'):
             items.append({'mailbox_id':mailbox['id'],'email':mailbox['email'],'role':mailbox['role'],
                           'platform_challenge_id':target[2],'target_platform':target[0],'target_origin':target[1],
-                          'challenge_title':title,'used':_used_for(db.get_db(),mailbox['id'],key),'limit':limit})
+                          'challenge_title':title,'used':_used_for(db.get_db(),mailbox['id'],key),'limit':limit,
+                          'exhausted':_exhausted_for(db.get_db(),mailbox['id'],key),
+                          'submitted':_submitted_for(db.get_db(),mailbox['id'],target)})
     return {'items':items,'limit':limit}
 
 
@@ -152,6 +154,33 @@ def _used_for(conn: sqlite3.Connection, mailbox_id: str, challenge_key: str) -> 
     target=json.loads(challenge_key)
     rows=conn.execute('SELECT '+_target_columns()+" FROM submissions s JOIN runs r ON r.id=s.run_id JOIN challenges c ON c.id=r.challenge_id JOIN mailboxes m ON m.id=s.mailbox_id WHERE (lower(trim(m.email)),m.platform)=(SELECT lower(trim(email)),platform FROM mailboxes WHERE id=?) AND s.reservation_released=0",(mailbox_id,)).fetchall()
     return sum(list(s)==target for s in rows)
+
+
+def _account_identity(conn, mailbox_id):
+    row=conn.execute('SELECT platform,platform_account_id,email FROM mailboxes WHERE id=?',
+                     (mailbox_id,)).fetchone()
+    return json.dumps([row['platform'],row['platform_account_id'] or row['email'].strip().lower()],
+                      separators=(',',':'))
+
+
+def _exhausted_for(conn, mailbox_id, target_key):
+    return conn.execute('SELECT 1 FROM mailbox_target_exhaustions WHERE account_identity=? AND target_key=?',
+        (_account_identity(conn,mailbox_id),target_key)).fetchone() is not None
+
+
+def _submitted_for(conn, mailbox_id, target):
+    identifiers={str(row['platform_ref']) for row in _target_submissions(
+        conn,None,mailbox_id=mailbox_id,target=target) if row['platform_ref']}
+    rows=conn.execute('SELECT e.payload,'+_target_columns()+
+        " FROM events e JOIN submissions s ON s.id=json_extract(e.payload,'$.submission_id')"
+        " JOIN runs r ON r.id=s.run_id JOIN challenges c ON c.id=r.challenge_id"
+        " JOIN mailboxes m ON m.id=s.mailbox_id WHERE e.type='submission.cli_baseline'"
+        " AND (lower(trim(m.email)),m.platform)=(SELECT lower(trim(email)),platform FROM mailboxes WHERE id=?)",
+        (mailbox_id,)).fetchall()
+    for row in rows:
+        if [row['target_platform'],row['target_origin'],row['target_topic']]==target:
+            identifiers.update(str(value) for value in json.loads(row['payload']).get('attempt_ids',[]))
+    return len(identifiers)
 
 
 def _instant(value: str | None) -> datetime | None:
@@ -475,11 +504,15 @@ def select_experiment(conn, run_id, accounts, digest=None):
     """Rotate within a topic and prefer the least recently used account."""
     policy=config.load_settings()['submission_policy']
     target=json.loads(_challenge_key(conn,run_id))
+    key=json.dumps(target,separators=(',',':'))
+    accounts=[account for account in accounts if not _exhausted_for(conn,account['id'],key)]
     history=[s for s in _target_submissions(conn,run_id) if not s['is_harvest']]
     last=max(history,key=lambda s:s['created_at'])['mailbox_id'] if history else None
     prior_hash=[s for s in history if digest and s['package_sha256']==digest]
     if prior_hash:
-        return next((m for m in accounts if m['id']==prior_hash[0]['mailbox_id']),None)
+        original=prior_hash[0]['mailbox_id']
+        selected=next((m for m in accounts if m['id']==original),None)
+        if selected or not _exhausted_for(conn,original,key):return selected
     eligible=[m for m in accounts if m['id']!=last] if len(accounts)>1 else accounts
     from . import competition_panel
     preferred=competition_panel.state(run_id,'preferred_mailbox')
@@ -926,11 +959,17 @@ def _perform_submission(sid: str, platform: MailboxPlatform, challenge_id: str,
             db.execute('UPDATE submissions SET official_package_path=?,official_package_sha256=? WHERE id=?',
                        (path.relative_to(config.WORKSPACE_DIR).as_posix(), digest, sid))
         db.append_event(row['run_id'], 'controller', 'submission.official_package', info | {'submission_id': sid, 'sha256': digest}, trial_id=row['trial_id'])
+    rejection_kind=None
     stage("prepared")
     try:
         from . import power
         if power.shutdown_requested():
             raise PlatformError('安全关机已停止新增提交；未发送', no_side_effect=True)
+        with db.transaction() as conn:
+            exhausted=_exhausted_for(conn,row['mailbox_id'],_challenge_key(conn,row['run_id']))
+        if exhausted:
+            raise PlatformError('该账号在本题已被平台明确拒收为提交上限用尽；未发送',
+                no_side_effect=True,rejection_kind='submission_limit')
         frozen_bytes = (config.WORKSPACE_DIR / row["package_path"]).read_bytes()
         if hashlib.sha256(frozen_bytes).hexdigest() != row["package_sha256"]:
             raise PlatformError("冻结提交包哈希不匹配，未发送",no_side_effect=True)
@@ -975,7 +1014,8 @@ def _perform_submission(sid: str, platform: MailboxPlatform, challenge_id: str,
         if receipt.get("receipt"):
             stage("submitted" if status == "submitted" else "unknown", receipt["receipt"])
     except Exception as exc:
-        status = "failed" if (isinstance(exc, PlatformError) and exc.no_side_effect
+        rejection_kind=exc.rejection_kind if isinstance(exc,PlatformError) else None
+        status = "failed" if (rejection_kind or isinstance(exc, PlatformError) and exc.no_side_effect
                               and not resume_attempt_id) else "unknown"
         # External response bodies can contain credentials; record only classified errors.
         from .observation import strip_secrets
@@ -986,7 +1026,17 @@ def _perform_submission(sid: str, platform: MailboxPlatform, challenge_id: str,
                      (status,"pending" if status == "submitted" else "unknown",error,
                       db.utcnow() if status == "submitted" else None,sid))
         conn.execute('UPDATE submission_queue SET state=?,updated_at=? WHERE submission_id=?', (status,db.utcnow(),sid))
-        if status == "failed" and not current["reservation_released"] and not resume_attempt_id:
+        if rejection_kind:
+            conn.execute('UPDATE submissions SET stage=? WHERE id=?',('rejected_'+rejection_kind,sid))
+            if rejection_kind=='submission_limit':
+                conn.execute('INSERT OR IGNORE INTO mailbox_target_exhaustions VALUES(?,?,?,?,?)',
+                    (_account_identity(conn,row['mailbox_id']),_challenge_key(conn,row['run_id']),sid,error,db.utcnow()))
+            db.append_event_tx(conn,row['run_id'],'controller','submission.rejected',{
+                'submission_id':sid,'mailbox_id':row['mailbox_id'],'reason':error,
+                'rejection_kind':rejection_kind,'automatic_resend':False,
+                'next_account':rejection_kind=='submission_limit'},trial_id=row['trial_id'])
+        if status == "failed" and not current["reservation_released"] and not resume_attempt_id and (
+                not rejection_kind or not current['platform_ref']):
             conn.execute("UPDATE submissions SET reservation_released=1 WHERE id=?",(sid,))
         if continuation_operation_id:
             conn.execute('UPDATE operations SET status=? WHERE operation_id=?',
