@@ -113,3 +113,7 @@ Job准入阻塞：16:59:23Z预检拦未登记abacus.stdout，执行者补登记�
 中途注意力抽查（17:09Z）：PI235行/执行者830行，开发目录绝对路径（用目录边界区分比赛目录）、pg-*、CS-UP-/D-编号、指定他人仓库、全局AGENTS标题均0。PI凭据路径名称0，执行者12次：.env/secrets.json/auth.json出现在只读查看compute.py的输入文件排除列表，原生日志事件投影和工具原输出重复展示；没有读取这些文件的命令，credentials_touched事件0。此计数不是零命中验收，整轮结束再次统计。未改原生字节。
 
 首个本地自然小时（00:00+08桶，实际从00:15:51开始，含17分钟管线中断）：执行者input10,437,119/cached10,216,960/output23,656/reasoning8,216；PI input1,518,859/cached1,354,880/output18,981/reasoning3,238。reasoning已含output，缓存已含input。01:00桶当前执行者input3,281,051/cached3,255,552/output5,233，仅为截至01:05的部分；后续不能拿部分桶冒充整小时。原生compaction0、unknown_observations空；PI模型轮数4截至该用量快照，后续恢复/指导追加回合另行更新。
+
+17:24Z进度复核：WebBridge实际读取localhost:8765研究页，运行中/Terra/Job0/沙箱2；自动提交版本34仍true，方法approved。16c16g创建在17:19:59Z本地CLI协议KeyError，not_started=true且无远程ID；17:20:53Z第二个真实远程沙箱确认active，同批准镜像的4090模板实际16 CPU/64 GB，expires_at=2026-10-09T20:20:15Z。Run已允许沙箱GPU，Job的16 CPU/16 GB限额不能冒充沙箱资源限额；执行者使用其CPU运行ABACUS，监控未做科学选择。账本共3行，但实际远程创建2次、未启动失败1次；Job0/提交0/镜像构建0。17:21:54Z16-rank计算启动，17:24:16Z远程日志已进入第4次SCF迭代，尚未收敛，暂不报告科学结果。
+
+指导接收边界：截至17:24Z，guidance_9524aee4c5于17:10:59Z ACK accepted；guidance_52297c77db为sent且ACK为空，guidance_2e4dc166a5仍queued。执行者仍称Job被预检阻挡，但发布后的真实预检尚未再次调用，不能断言修复已在真实Job验证，也不能把PI生成指导当执行者已采纳。当前替代资源已有实际迭代，不以待确认指导或低CPU烟测慢作为立即停止依据；后续继续观察传达是否形成管线阻塞。
