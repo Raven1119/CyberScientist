@@ -162,7 +162,9 @@ def push(root: Path) -> dict:
                 (repository / name).unlink()
             for name in files:
                 destination = repository / name; destination.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(stage / name, destination)
+                temporary = destination.with_name(destination.name + '.snapshot-pending')
+                shutil.copy2(stage / name, temporary)
+                temporary.replace(destination)
             command(['git', 'add', '--', *sorted(tracked | files)])
             command(['git', 'diff', '--cached', '--check'])
             command(['git', 'commit', '-m', 'snapshot: publish competition runtime ' + result['commit'] + ' CS-UP-19'])

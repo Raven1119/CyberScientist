@@ -52,3 +52,29 @@ def test_scanner_reports_positions_without_printing_values(tmp_path, monkeypatch
     assert snapshot.scan(tmp_path)['hit_count'] == 0
     (tmp_path / 'bad.txt').write_text('another-private-value')
     assert snapshot.scan(tmp_path, known_values=['another-private-value'])['hit_count'] == 1
+
+
+def test_push_replaces_read_only_export_bytes(tmp_path, monkeypatch):
+    import subprocess
+    root=runtime(tmp_path);repo=tmp_path/'CyberScientist-comp-export'
+    snapshot.export(root,repo)
+    real_run=subprocess.run
+    def git(*args):
+        return real_run(['git',*args],cwd=repo,capture_output=True,text=True,check=True).stdout.strip()
+    git('init','-b','main');git('config','user.name','Fixture');git('config','user.email','fixture@example.invalid')
+    git('remote','add','origin','https://github.com/Raven1119/CyberScientist-comp.git')
+    git('add','.');git('commit','-m','fixture initial export')
+    readonly=repo/'src/cyberscientist/cli.py';readonly.chmod(0o444)
+    binary=tmp_path/'gh';binary.write_text('fixture')
+    monkeypatch.setattr(snapshot.shutil,'which',lambda name:str(binary))
+    def process(argv,**kwargs):
+        if argv[0]==str(binary):
+            return subprocess.CompletedProcess(argv,0,json.dumps({'isPrivate':True,'url':'https://github.com/Raven1119/CyberScientist-comp'}),'')
+        if 'push' in argv:return subprocess.CompletedProcess(argv,0,'','')
+        if 'ls-remote' in argv:return subprocess.CompletedProcess(argv,0,git('rev-parse','HEAD')+'\trefs/heads/main','')
+        return real_run(argv,**kwargs)
+    monkeypatch.setattr(snapshot.subprocess if hasattr(snapshot,'subprocess') else subprocess,'run',process)
+    result=snapshot.push(root)
+    assert result['private'] and result['scan']['hit_count']==0
+    assert readonly.read_bytes()==(root/'src/cyberscientist/cli.py').read_bytes()
+    assert git('status','--porcelain')==''
