@@ -63,6 +63,9 @@ def final_score(body: Any) -> float | None:
     """Only an explicit finality claim and a finite numeric score are usable."""
     if not isinstance(body, dict):
         return None
+    from . import submission_receipts
+    if submission_receipts.platform_status(body) in submission_receipts.REVIEW_STATES:
+        return None
     state = body.get("scoringState")
     if not isinstance(state, dict) or state.get("scoreIsFinal") is not True:
         return None

@@ -36,6 +36,8 @@ def synchronize() -> None:
                        else '平台拒收结果包：'+str(payload.get('reason') or '包未通过校验'))
             if kind=='submission.harbor_missing':
                 title='回执没有 harbor 科学分，可能是赛后补交的评分路径'
+            if kind=='submission.manual_review':
+                title='平台人工复核中：轮询继续，研究可继续迭代'
             if kind.endswith(('.error', '.failed')) or kind in ('submission.unknown', 'prime.crashed') or (kind == 'job.observed' and payload.get('status') == 'Failed'):
                 title = '研究操作出错或状态不明'
             if kind in ('submission.scored', 'submission.score_corrected'):
@@ -63,6 +65,7 @@ def synchronize() -> None:
         now = datetime.now(timezone.utc)
         from .mailboxes import _instant
         for sub in conn.execute("SELECT * FROM submissions WHERE status='submitted' AND COALESCE(score_is_final,0)=0").fetchall():
+            if sub['platform_status'] in ('pending_review','needs_review'):continue
             started=_instant(sub['submitted_at'] or sub['science_observed_at'])
             if started and (now-started).total_seconds()>7200:
                 run=conn.execute('SELECT * FROM runs WHERE id=?',(sub['run_id'],)).fetchone()

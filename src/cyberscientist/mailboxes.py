@@ -1533,7 +1533,7 @@ def poll_scores(run_id: str | None = None,
                     observed = public_feedback(observed, secret, *config.sensitive_values())
                     if isinstance(observed, dict):
                         attempt = {key: observed[key] for key in
-                                   ("scorecard", "scoringState", "bundleStatus", "updatedAt", "resultsJson", "scored_by", "scoringDetails", "counts_toward_season")
+                                   ("status", "state", "scorecard", "scoringState", "bundleStatus", "updatedAt", "resultsJson", "scored_by", "scoringDetails", "counts_toward_season")
                                    if key in observed}
                         with db.transaction() as conn:
                             if _record_feedback(conn, r, "attempt", attempt):
@@ -1564,6 +1564,9 @@ def poll_scores(run_id: str | None = None,
             with db.transaction() as conn:
                 if _record_feedback(conn, r, "score", details):
                     changed_runs.add(r["run_id"])
+        from . import submission_receipts
+        if submission_receipts.platform_status(attempt) in submission_receipts.REVIEW_STATES:
+            score=None
         if score is None:
             still_unknown += 1
             db.execute('UPDATE submissions SET score_last_polled_at=? WHERE id=? AND package_sha256=? AND package_path=? AND platform_ref=?', (now,r['id'],r['package_sha256'],r['package_path'],r['platform_ref']))
@@ -1602,7 +1605,7 @@ def poll_scores(run_id: str | None = None,
                          " scored_at=COALESCE(scored_at,?),stage='scored',score_confidence=?,"
                          " score_first_seen_at=?,score_last_changed_at=?,score_anomaly=?,"
                          " scorecard_consistent=?,harbor_score=?,trace_score=?,"
-                         " score_last_polled_at=? WHERE id=?",
+                         " score_last_polled_at=?,platform_status=CASE WHEN platform_status IN ('pending_review','needs_review') THEN 'completed' ELSE platform_status END WHERE id=?",
                          (score,now,confidence,first_seen,last_changed,anomaly,consistent,
                           harbor,trace,now,r['id']))
             if current['prediction_verdict'] and (changed_score or confidence!='confirmed'):

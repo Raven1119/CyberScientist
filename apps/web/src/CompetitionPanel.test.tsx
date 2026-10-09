@@ -33,3 +33,8 @@ test('shows each account topic count and explicit exhaustion',async()=>{
  vi.mocked(api.get).mockImplementation(async path=>path.endsWith('mailboxes')?{items:[]}:{items:[{...row,account_usage:[{mailbox_id:'a',email:'账号甲',submitted:10,used:10,limit:10,exhausted:true},{mailbox_id:'b',email:'账号乙',submitted:2,used:3,limit:10,exhausted:false}]}],auto_submission:true,distributions:[],repairs:[],alerts:[]} as never)
  render(<CompetitionPanel/>);expect((await screen.findByText(/账号甲：已确认提交/)).textContent).toContain('提交上限已用尽');expect(screen.getByText(/账号乙：已确认提交/).textContent).toContain('2 次')
 })
+
+test.each(['pending_review','needs_review'])('renders manual review for %s',async platform_status=>{
+ vi.mocked(api.get).mockImplementation(async path=>path.endsWith('mailboxes')?{items:[]}:{items:[{...row,receipt:{platform_status,harbor_score:null,trace_score:null,trace_decision:null,receipt_details_json:'{}',email:'本人账号'}}],auto_submission:true,distributions:[],repairs:[],alerts:[{id:'review',title:'平台人工复核中'}]} as never)
+ render(<CompetitionPanel/>);expect(await screen.findByText('人工复核中')).toBeTruthy();expect(screen.getByRole('alert').textContent).toContain('人工复核中')
+})

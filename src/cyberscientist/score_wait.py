@@ -39,4 +39,5 @@ def confirmed(run_id):
     if not marker:
         return None
     return db.query_one("SELECT * FROM submissions WHERE id=? AND run_id=? AND "
-        "(science_observed_at IS NOT NULL OR (score_status='scored' AND score_confidence='confirmed'))", (marker['value'], run_id))
+        "(science_observed_at IS NOT NULL OR platform_status IN ('pending_review','needs_review')"
+        " OR (score_status='scored' AND score_confidence='confirmed'))", (marker['value'], run_id))

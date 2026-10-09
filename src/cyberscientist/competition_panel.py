@@ -27,7 +27,7 @@ def view():
         if not isinstance(summary,str):summary=json.dumps(summary,ensure_ascii=False)
         next_step='等待初始方法批准' if phase=='等待批准' else state(run['id'],'panel_next','由 PI 根据科学检查与真实回执决定')
         elapsed=None
-        if receipt and receipt['submitted_at']:
+        if receipt and receipt['submitted_at'] and receipt['platform_status'] not in ('pending_review','needs_review'):
             from .mailboxes import _instant
             start=_instant(receipt['submitted_at']);end=_instant(receipt['scored_at']) if receipt['score_is_final'] else datetime.now(timezone.utc)
             elapsed=max(0,(end-start).total_seconds()) if start and end else None
@@ -35,7 +35,7 @@ def view():
                      'account_usage':[item for item in usage if json.dumps([
                          item['target_platform'],item['target_origin'],item['platform_challenge_id']],
                          separators=(',',':'))==mailboxes._challenge_key(db.get_db(),run['id'])],
-                     'method_summary':summary[:300],'clean_run':clean_runs.offer(run['id']),'method':method,'receipt':{k:receipt[k] for k in ('id','harbor_score','trace_score','trace_decision','receipt_details_json','score_is_final','email')} if receipt else None,'scoring_seconds':elapsed,'next_step':next_step,'submission_held':state(run['id'],'submission_hold',False),'mailbox_id':state(run['id'],'preferred_mailbox'),
+                     'method_summary':summary[:300],'clean_run':clean_runs.offer(run['id']),'method':method,'receipt':{k:receipt[k] for k in ('id','harbor_score','trace_score','trace_decision','receipt_details_json','score_is_final','platform_status','email')} if receipt else None,'scoring_seconds':elapsed,'next_step':next_step,'submission_held':state(run['id'],'submission_hold',False),'mailbox_id':state(run['id'],'preferred_mailbox'),
                      'executor':state(run['id'],'executor_override',snapshot['settings'].get('executor',{}))})
     # Public aggregation cache only; never expose author identities or ranking rows.
     with platform_scores._lock:

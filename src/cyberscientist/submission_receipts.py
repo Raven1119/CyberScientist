@@ -3,12 +3,23 @@ import json
 import math
 from . import db
 
+REVIEW_STATES = ('pending_review','needs_review')
+
 
 def _object(value):
     if isinstance(value, str):
         try: value=json.loads(value)
         except ValueError: return {}
     return value if isinstance(value,dict) else {}
+
+
+def platform_status(body):
+    body=_object(body);state=_object(body.get('scoringState'))
+    statuses=[source[key] for source in (state,_object(body.get('scoringDetails')),
+        _object(body.get('resultsJson')),body) for key in ('status','state')
+        if isinstance(source.get(key),str) and 0<len(source[key])<=80]
+    review=next((value for value in statuses if value in REVIEW_STATES),None)
+    return review or (statuses[0] if statuses else None)
 
 
 def parse(body):
@@ -18,6 +29,7 @@ def parse(body):
     details=_object(body.get('scoringDetails'))
     state=_object(body.get('scoringState'))
     result={}
+    if status:=platform_status(body):result['platform_status']=status
     for key in ('harbor_reward','harbor_score','trace_score','trace_factor'):
         sources=(card,results,details,body) if key!='trace_factor' else (details,results,card,body)
         for source in sources:
@@ -38,7 +50,7 @@ def parse(body):
 
 def summary(value):
     """Bounded PI payload; original fields stay in private database feedback."""
-    short={k:value.get(k) for k in ('harbor_reward','harbor_score','trace_score','trace_factor','trace_decision','scoring_source','score_is_final','display_score')}
+    short={k:value.get(k) for k in ('harbor_reward','harbor_score','trace_score','trace_factor','trace_decision','scoring_source','score_is_final','display_score','platform_status')}
     short={k:v[:100] if isinstance(v,str) else v for k,v in short.items()}
     short['deductions']=[{'code':str(d.get('code'))[:100],'score_effect':d.get('score_effect') if type(d.get('score_effect')) in (float,int) else None} for d in value.get('deductions',[])[:12] if isinstance(d,dict)]
     short['missing_evidence']=[str(v)[:100] for v in value.get('missing_evidence',[])[:4]]
@@ -59,12 +71,17 @@ def observe_tx(conn,row,body):
     from . import trace_hints
     trace_hints.record_tx(conn,row,merged)
     when=db.utcnow()
-    columns={key:incoming[key] for key in ('harbor_reward','harbor_score','trace_score','trace_factor','trace_decision','scoring_source','scored_by','counts_toward_season','score_is_final') if key in incoming}
+    columns={key:incoming[key] for key in ('harbor_reward','harbor_score','trace_score','trace_factor','trace_decision','scoring_source','scored_by','counts_toward_season','score_is_final','platform_status') if key in incoming}
     columns.update(receipt_details_json=json.dumps(merged,ensure_ascii=False),receipt_observed_at=when)
     science_changed=any(key in incoming and previous.get(key)!=incoming[key] for key in ('harbor_reward','harbor_score'))
     if science_changed:columns['science_observed_at']=current['science_observed_at'] or when
     conn.execute('UPDATE submissions SET '+','.join(key+'=?' for key in columns)+' WHERE id=?',(*columns.values(),row['id']))
     payload={'submission_id':row['id'],'platform_ref':row['platform_ref'],'receipt_summary':summary(merged)}
+    review_changed=merged.get('platform_status') in REVIEW_STATES and previous.get('platform_status')!=merged['platform_status']
+    if review_changed:
+        db.append_event_tx(conn,row['run_id'],'controller','submission.manual_review',
+            payload | {'platform_status':merged['platform_status'],'reason':'人工复核中；轮询继续，PI可按原授权继续迭代。'},
+            trial_id=row['trial_id'])
     if science_changed:
         db.append_event_tx(conn,row['run_id'],'controller','submission.science_observed',payload,trial_id=row['trial_id'])
     has_receipt=(merged.get('score_is_final') is True or merged.get('trace_score') is not None
@@ -78,7 +95,7 @@ def observe_tx(conn,row,body):
     trace_changed=any(k in incoming and previous.get(k)!=incoming[k] for k in ('trace_score','trace_decision','deductions','missing_evidence'))
     if trace_changed:
         db.append_event_tx(conn,row['run_id'],'controller','submission.receipt_observed',payload,trial_id=row['trial_id'])
-    if science_changed or trace_changed:
+    if science_changed or trace_changed or review_changed:
         run=conn.execute('SELECT phase FROM runs WHERE id=?',(row['run_id'],)).fetchone()
         if run and run['phase']=='running' and not conn.execute("SELECT 1 FROM review_requests WHERE run_id=? AND source='lifecycle' AND trigger='submission_feedback' AND status='pending'",(row['run_id'],)).fetchone():
             from . import collab

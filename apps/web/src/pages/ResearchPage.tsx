@@ -2037,6 +2037,8 @@ function SubmissionsPanel({
                 >
                   {s.status === 'failed'
                     ? '提交失败'
+                    : ['pending_review','needs_review'].includes(s.platform_status ?? '')
+                      ? '人工复核中'
                     : s.score_status === 'scored'
                       ? `得分 ${s.score}`
                       : `分数${SCORE_STATUS_LABELS[s.score_status] ?? '未知'}`}

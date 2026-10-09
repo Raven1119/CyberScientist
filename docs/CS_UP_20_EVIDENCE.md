@@ -118,3 +118,11 @@
 - 已实际验证：`.venv/bin/pytest -q tests/test_scoring_metadata_cs20.py tests/test_progressive_context_cs16.py tests/test_receipts_cs15.py tests/test_competition_panel_cs16.py tests/test_clean_runs_cs16.py` → 32 passed/9.53 秒，日志 `.package-checks/cs-up20/w4-tests.log`。
 - 尚未验证：发布后新 PI/执行者真实原生帧，随 W9/W11；真实缺 harbor 回执不在本卡零提交授权内。
 - 阻塞项：无。
+
+## W5：人工复核
+
+- 已实现：原始 pending_review/needs_review 单独登记；比赛面板、研究页及邮箱页显示“人工复核中”，发持久告警；不显示仍在评分的时长告警。PI 正常研究不被暂停，旧等待评分流程也可根据人工复核事实唤醒 PI，分数仍 unknown。
+- 已实现：保持后台轮询；同一次观察中的人工复核状态优先于冲突的最终展示分标志，不能误记评分终态。真实明确终态到来后可恢复普通终态处理。
+- 已实际验证：两个状态各连续轮询两次，未停轮询、未改变 running、未编造分数；冲突最终标志不关闭人工复核；旧等待标记可唤醒而没有分数。后端相关 18 passed/5.74 秒；前端比赛面板/邮箱页 21 passed，两个状态和告警显示已覆盖。
+- 尚未验证：真实平台人工复核状态，本卡没有真实提交授权。
+- 阻塞项：无。初次两项失败暴露“用最终标志推断 completed 覆盖人工复核”的问题，已修正并复测；原失败 `w5-tests-initial.log` 与通过 `w5-tests.log`、`w5-frontend-tests.log` 均在 `.package-checks/cs-up20/`。

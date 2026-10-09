@@ -35,7 +35,7 @@ _NOTABLE = (
     "brain.decision_rejected", "brain.action_rejected", "run.objective_assessment_unknown", "run.final_package_unknown", "run.final_package_checked",
     "guidance.sent", "guidance.acknowledged",
     "guidance.superseded", "prime.error", "prime.approval.rejected",
-    "checkpoint.created", "submission.scored", "submission.science_observed", "submission.receipt_observed", "submission.score_corrected",
+    "checkpoint.created", "submission.scored", "submission.science_observed", "submission.receipt_observed", "submission.score_corrected", "submission.manual_review",
 )
 
 _SECRET_TOKEN_RE = re.compile(

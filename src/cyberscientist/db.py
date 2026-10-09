@@ -618,6 +618,7 @@ def init_db() -> None:
             'scoring_source':'TEXT', 'scored_by':'TEXT', 'counts_toward_season':'INTEGER',
             'score_is_final':'INTEGER', 'receipt_details_json':'TEXT',
             'science_observed_at':'TEXT', 'receipt_observed_at':'TEXT',
+            'platform_status':'TEXT',
         })
         _ensure_columns(conn, 'mailboxes', {'platform_account_id':'TEXT', 'operator_id':'TEXT',
             'claim_status':"TEXT NOT NULL DEFAULT 'unknown'", 'last_used_at':'TEXT'})
