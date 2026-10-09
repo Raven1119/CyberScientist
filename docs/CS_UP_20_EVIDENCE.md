@@ -193,3 +193,15 @@
 - 已实际验证：以当前源码角色文件作为 developerInstructions 的三个最小验证会话，原生前八帧均有对应 roles/pi 或 roles/executor v2。原生文件未改。运行命令 `.venv/bin/python .package-checks/cs-up20/w9-native-probe.py`；返回 0，标准错误为空。辅助脚本只做一次最小回合/目标、拒绝工具请求、关闭原进程，不写全局配置、不代登录。
 - 尚未验证：新比赛后端实际创建 Run 时自动注入 v2 与物理 22 个技能，仍留 W11；本项是原生认证与角色传递验证，不把手动注入声明为已发布后端的真实 Run 验证。
 - 阻塞项：无；比赛登录有效，不进入设备/安装身份排障或请求重登录分支。有界审查核对本机认证目录、会话参数与原生结果，diff 检查通过，继续 W10。
+
+## W10：原生用量统计与当前限额
+
+- 已实现：`scripts/native_token_usage.py` 为 stdlib 只读脚本；从控制器 session.configuration 按 Run 发现原生日志（SQLite mode=ro/query_only），或显式指定 role=JSONL；统计每角色/小时的 input/output/reasoning/cached token、PI 轮数与首/末请求输入、整轮输入总量及 compaction 观察。只输出计数/身份，日志正文不进入报告，不调用模型、不读认证文件或写账本。
+- 已实现：相邻累计快照求差，重复事件/同文件去重；--since 仍读前面的基线；累计回退、没有此前指标基线、缺失字段/文件/截断 JSON 均列 unknown，不把未观察当 0。reasoning 已包含在 output，不重复加总；跨小时请求按用量观察时刻归属，不声称精确拆分请求期间耗时。PI 单轮数据为与选定区间相交的完整可见轮次。
+- 已实际验证：`.venv/bin/pytest -q tests/test_native_token_usage_cs20.py` → 6 passed/1.89 秒，覆盖跨小时、多轮输入、重复、since 基线、压缩/重置未知、后来才出现的指标、缺失/截断不泄露正文、数据库及原生字节只读。有界审查核对指标子集、基线与 readonly 连接，diff 检查通过。
+- 已实际验证：真实运行脚本读取 W9 比赛两原生记录：21:00+08 小时 PI input 16643/output 5/reasoning 0、执行者 input 13597/output 5/reasoning 0，PI 1 轮首请求 input 16643，未知观察 0；前后 native SHA 不变。证据 `w10-real-native-usage.json`；这些是最小验证回合，不是科研吞吐量样本。
+- 已实际验证：2026-10-09T13:46:23Z，通过比赛原生 `account/rateLimits/read` 只读查询，codex primary usedPercent=40、windowDurationMins=10080、resetsAt=1792049561（2026-10-15T07:32:41Z）；无 secondary 字段。原生接口未给绝对 token 容量，容量 unknown，不从百分比编造 token 上限。`w10-rates.json`，model_turns=0。
+- 尚未验证：RH-02 的真实研究用量与 24 小时并发估算，随彩排收集；无绝对配额时是否够用仍可能 unknown。
+- 阻塞项：无。初次命令引用不存在的 test_model_usage.py，没有执行测试；实际专项初次 1 failed/4 passed 是测试 fixture 目录已存在，改用独立 runtime fixture 后通过。原错误摘要与失败日志在 `w10-test-command-error.txt`、`w10-tests-initial.log`，通过在 `w10-tests.log`。
+
+彩排只读统计命令：`python scripts/native_token_usage.py --root /home/wmywb/CyberScientist-comp --run-id <Run ID>`；可加 `--since <ISO>` 与 `--timezone Asia/Shanghai`。脚本供监控在开发目录运行，不给科研模型引入开发依赖。
