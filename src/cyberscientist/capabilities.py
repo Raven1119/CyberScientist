@@ -33,6 +33,7 @@ def summary(run_id: str | None = None) -> str:
         lines.append('技能ID前缀' + prefix + '：' + _names(names, 250))
     lines.append('环境ID：' + _names([e['id'] for e in entries], 350))
     lines.append('镜像/包/冒烟完整事实：research_environment list/restore；计算：research_job/research_sandbox；LKM：research_lkm。')
+    lines.append('research_job/research_sandbox/research_environment：执行者工具，PI 在简报中选择、由执行者使用。')
     lines.extend(f"工具链 {item['id']}：{item['use']}；{item['location']}" for item in toolchain_items())
     for channel, fact in machine_catalog.facts().items():
         names = [x.get('skuEnName') or x.get('sku_name') for x in fact['items']]
@@ -85,6 +86,9 @@ def index(run_id=None):
         ('research_environment','环境目录与恢复'),('research_lkm','公开科学摘要检索'),
         ('research_web_search','网页检索'),('research_web_read','读取网页'),
         ('research_experience','按ID读取经验正文')))
+    for item in entries:
+        if item['id'] in ('research_job', 'research_sandbox', 'research_environment'):
+            item['use'] += '；执行者工具，PI 在简报中选择、由执行者使用'
     if run_id:
         from . import topic_workspace
         fact=topic_workspace.current(run_id)

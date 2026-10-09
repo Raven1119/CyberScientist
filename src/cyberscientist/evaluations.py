@@ -42,6 +42,9 @@ def _sha(value: Any) -> str:
 
 
 def catalog(suite: str) -> list[dict[str, Any]]:
+    from . import runtime_layout
+    if runtime_layout.version() is not None:
+        raise EvaluationError('比赛运行时不提供开发评测目录')
     if suite not in ('fast', 'hard'):
         raise EvaluationError('suite 必须是 fast 或 hard')
     entries = json.loads(CATALOG.read_text())['challenges']

@@ -124,7 +124,7 @@ def main() -> None:
     for command in (ops_redeploy, ops_status, ops_digest, ops_events, ops_alerts, ops_shutdown, ops_resume, ops_submit): command.add_argument('--port', type=int, default=None)
     ops_release.add_argument('--port',type=int,default=None)
     for command in (ops_switch,ops_redeploy,ops_release,ops_status,ops_digest,ops_events,ops_alerts,ops_shutdown,ops_resume,ops_submit):
-        command.add_argument('--target',choices=('dev','comp'),default='comp' if command==ops_release else 'dev')
+        command.add_argument('--target',choices=('dev','comp'),default='comp' if command==ops_release else None)
     evaluation = sub.add_parser('eval', help='运行或生成本地评测报告')
     evaluation_sub = evaluation.add_subparsers(dest='eval_command', required=True)
     eval_run = evaluation_sub.add_parser('run', help='启动一层评测')
@@ -140,6 +140,9 @@ def main() -> None:
     if args.command == 'ops':
         from . import config, features, observation
         from . import runtime_layout,runtime_release
+        if args.target is None:
+            args.target = 'comp' if (runtime_layout.version() is not None or
+                (config.DATA_DIR/'runtime-migrated.json').is_file()) else 'dev'
         root=runtime_layout.competition_root() if args.target=='comp' else config.WORKSPACE_ROOT
         if args.target=='comp':
             settings_path=root/'.cyberscientist/settings.json'
@@ -153,6 +156,12 @@ def main() -> None:
             if not commit:parser.error('比赛版本未知，请给出commit')
             result=runtime_release.release(commit,root=root,port=port,timeout=args.timeout,
                 source=root if args.ops_command=='redeploy' else None)
+            if args.ops_command == 'release' and result['status'] == 'completed':
+                from . import runtime_snapshot
+                try:
+                    result['snapshot'] = runtime_snapshot.push(root)
+                except (OSError, ValueError, RuntimeError) as exc:
+                    result.update(status='snapshot_failed', snapshot_error=str(exc), release_completed=True)
             print(observation.strip_secrets(json.dumps(result,ensure_ascii=False)))
             raise SystemExit(0 if result['status']=='completed' else 1)
         if args.ops_command == 'redeploy':
@@ -161,12 +170,12 @@ def main() -> None:
             print(json.dumps(result, ensure_ascii=False))
             raise SystemExit(0 if result['status'] == 'completed' else 1)
         method = 'GET'; body = None
-        if args.target=='comp':
-            from . import redeploy
-            try:redeploy.process_identity(redeploy.request(port,'/api/v1/health',timeout=5),root=root)
-            except (OSError,ValueError,RuntimeError) as exc:
-                print(observation.strip_secrets('比赛后端身份未确认：'+str(exc)),file=sys.stderr)
-                raise SystemExit(2)
+        from . import redeploy
+        try:redeploy.process_identity(redeploy.request(port,'/api/v1/health',timeout=5),root=root)
+        except (OSError,ValueError,RuntimeError) as exc:
+            label = '比赛后端身份未确认：' if args.target == 'comp' else '开发后端未运行或身份不匹配：'
+            print(observation.strip_secrets(label+str(exc)),file=sys.stderr)
+            raise SystemExit(2)
         if args.ops_command == 'submit':
             path = '/api/v1/ops/submit'; method = 'POST'
             body = {k: getattr(args,k) for k in ('run_id','trial_id','package_path','operation_id','mailbox_id','retry_of')}

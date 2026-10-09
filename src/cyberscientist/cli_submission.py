@@ -80,9 +80,17 @@ def pinned_cli():
     return directory / 'dist/index.js'
 
 
+def node_executable():
+    pinned = config.WORKSPACE_ROOT / '.runtime/bin/node'
+    candidate = str(pinned) if pinned.is_file() else shutil.which('node')
+    if not candidate:
+        raise ValueError('未找到Linux Node；比赛目录需准备.runtime/bin/node')
+    return candidate
+
+
 def readiness(*, latest=False):
     executable = pinned_cli()
-    command = [shutil.which('node') or str(Path.home()/'.local/bin/node'), str(executable), '--version']
+    command = [node_executable(), str(executable), '--version']
     proc = subprocess.run(command, capture_output=True, text=True, timeout=10,
                           env=dict(os.environ, PLAYGROUND_NO_UPDATE_CHECK='1'))
     if proc.returncode or proc.stdout.strip() != '0.1.40': raise ValueError('官方CLI实际版本不符')
@@ -158,7 +166,7 @@ def submit(platform, email, secret, package_path, challenge_id, meta):
             '--harness', meta.get('harness') or 'Codex', '--bundle-out', str(package),
             '--run-id', meta.get('submission_id') or hashlib.sha256(content).hexdigest(),
             '--token-env', 'CS_PLAYGROUND_SUBMIT_TOKEN', '--worker-token-env', 'CS_PLAYGROUND_SUBMIT_TOKEN']
-        if executable.endswith('.js'): command = [shutil.which('node') or str(Path.home()/'.local/bin/node'), *command]
+        if executable.endswith('.js'): command = [node_executable(), *command]
         try:
             preview = subprocess.run([*command, '--dry-run'], env=env, capture_output=True, text=True, timeout=600)
             if preview.returncode != 0: raise ValueError(observation.strip_secrets(preview.stderr)[:1000])

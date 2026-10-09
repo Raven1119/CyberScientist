@@ -17,6 +17,9 @@ from cyberscientist.controller import RunController
     (['resume'],'/ops/resume','POST',{'status':'ready'}),
 ])
 def test_each_cli_command_path_and_secret_output(monkeypatch,capsys,arguments,path,method,result):
+    from cyberscientist import redeploy
+    monkeypatch.setattr(redeploy, 'request', lambda *args, **kwargs: {'fixture_health': True})
+    monkeypatch.setattr(redeploy, 'process_identity', lambda health, root: (1, 'fixture'))
     calls=[];config.update_secret('fixture','secret-for-cli-output')
     def fetch(request,timeout):
         calls.append(request);return io.BytesIO(json.dumps({**result,'error':'secret-for-cli-output'}).encode())
@@ -27,6 +30,9 @@ def test_each_cli_command_path_and_secret_output(monkeypatch,capsys,arguments,pa
 
 @pytest.mark.parametrize('command,result,exit_code', [('shutdown',{'can_shutdown':False},1),('resume',{'status':'unknown'},1)])
 def test_unknown_operation_nonzero_exit(monkeypatch,command,result,exit_code):
+    from cyberscientist import redeploy
+    monkeypatch.setattr(redeploy, 'request', lambda *args, **kwargs: {'fixture_health': True})
+    monkeypatch.setattr(redeploy, 'process_identity', lambda health, root: (1, 'fixture'))
     monkeypatch.setattr(cli.urllib.request,'urlopen',lambda *a,**k:io.BytesIO(json.dumps(result).encode()))
     monkeypatch.setattr(sys,'argv',['cyberscientist','ops',command])
     with pytest.raises(SystemExit) as exc:cli.main()

@@ -89,6 +89,26 @@ def test_publish_rejects_cache_traversal_and_tampering_before_mutation(tmp_path)
     assert not root.exists()
 
 
+def test_publish_removes_old_owned_evaluation_roots_and_preserves_research(tmp_path):
+    root=tmp_path/'comp';stage=tmp_path/'stage'
+    files={'src/cyberscientist/cli.py':'new code'}
+    old={'evals/suite.json':'old evaluation','challenges/old/reference.json':'old reference'}
+    for name,body in files.items():
+        path=stage/name;path.parent.mkdir(parents=True,exist_ok=True);path.write_text(body)
+    for name,body in old.items():
+        path=root/name;path.parent.mkdir(parents=True,exist_ok=True);path.write_text(body)
+    mutable=root/'workspace/challenges/current/description.md'
+    mutable.parent.mkdir(parents=True);mutable.write_text('current topic')
+    cache=root/'.runtime/releases/old/manifest.json'
+    cache.parent.mkdir(parents=True);cache.write_text(json.dumps({'files':old}))
+    (root/'.runtime/version.json').write_text(json.dumps({'commit':'old'}))
+    runtime_release.publish(stage,root,{'commit':'a'*40,'files':{
+        name:hashlib.sha256(body.encode()).hexdigest() for name,body in files.items()}})
+    assert not (root/'evals').exists() and not (root/'challenges').exists()
+    assert mutable.read_text()=='current topic'
+    assert list((root/'.runtime/previous').glob('*/evals/suite.json'))
+
+
 def test_official_dry_build_never_sends_or_reserves(tmp_path,monkeypatch):
     from test_cli_submission_cs14 import prepare,bundle,fake_build
     from cyberscientist import cli_submission,db

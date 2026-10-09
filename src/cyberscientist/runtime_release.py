@@ -20,8 +20,8 @@ import uuid
 
 from . import config
 
-PREFIXES=('src/cyberscientist/','prompts/','skills/','environments/','challenges/',
-          'contracts/','vendor/playground_contracts/','evals/','templates/',
+PREFIXES=('src/cyberscientist/','prompts/','skills/','environments/',
+          'contracts/','vendor/playground_contracts/','templates/',
           'tools/playground-cli/0.1.40/')
 FILES={'pyproject.toml','uv.lock','.env.example','config/workspace.example.yaml',
        'start-runtime.sh','tools/playground-cli/0.1.40/package.json',
@@ -197,6 +197,7 @@ def start_runtime(root: Path, port: int, commit: str, timeout: float):
     if not executable.is_file():raise RuntimeError('比赛独立Python环境尚未安装')
     environment=dict(os.environ);environment.update(HOME=str(home),CODEX_HOME=str(codex),
         XDG_CONFIG_HOME=str(home/'.config'),XDG_DATA_HOME=str(home/'.local/share'),XDG_CACHE_HOME=str(home/'.cache'))
+    environment['PATH'] = str(root / '.runtime/bin') + os.pathsep + environment.get('PATH', '')
     environment.pop('PYTHONPATH',None)
     output=(root/'.runtime/backend.log').open('ab')
     try:process=subprocess.Popen([str(executable),str(root/'.runtime/cyberscientist_launch.py'),
@@ -225,8 +226,19 @@ def publish(stage: Path, root: Path, manifest: dict):
         if path.is_symlink() or hashlib.sha256(path.read_bytes()).hexdigest()!=digest:
             raise ValueError('暂存文件与封存清单不匹配：'+name)
     backup=root/'.runtime/previous'/uuid.uuid4().hex;backup.mkdir(parents=True)
+    previous_files = {}
+    previous_version = root / '.runtime/version.json'
+    if previous_version.is_file():
+        previous = json.loads(previous_version.read_text())
+        previous_manifest = root / '.runtime/releases' / previous['commit'] / 'manifest.json'
+        if previous_manifest.is_file():
+            previous_files = json.loads(previous_manifest.read_text())['files']
     owned=set()
-    for path in manifest['files']:
+    for path in set(manifest['files']) | set(previous_files):
+        # Removed evaluation/scorer roots were release-owned, never Run data.
+        if PurePosixPath(path).is_absolute() or '..' in PurePosixPath(path).parts or (
+                not runtime_path(path) and not path.startswith(('evals/', 'challenges/'))):
+            raise ValueError('旧发布清单含非运行时路径')
         if path.startswith('tools/'):owned.add('tools/playground-cli/0.1.40')
         elif path.startswith('config/'):owned.add(path)
         else:owned.add(PurePosixPath(path).parts[0])
@@ -240,6 +252,8 @@ def publish(stage: Path, root: Path, manifest: dict):
                 (backup/name).parent.mkdir(parents=True,exist_ok=True);shutil.move(str(target),str(backup/name))
             changed.append(name)
             source=stage/name
+            if not source.exists():
+                continue
             target.parent.mkdir(parents=True,exist_ok=True)
             if source.is_dir():shutil.copytree(source,target)
             else:shutil.copy2(source,target)

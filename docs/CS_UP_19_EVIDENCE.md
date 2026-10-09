@@ -16,3 +16,34 @@
 ## 未完成验收
 
 W2–W8继续执行；W2第5步依赖W4/W5接线。
+
+## W6 机械修复与发布目录依赖
+
+已实现：迁移后ops默认比赛端、显式dev核对进程身份；PI能力索引三个计算入口明确由执行者调用；比赛专用Node放在`.runtime/bin/node`（不进Git），启动脚本及发布启动均优先此目录。官方CLI取同一Node，避免隔离HOME后丢失可执行文件。专项61 passed / 18.37秒，日志为私有`w6-tests.log`。
+
+| 目录 | 处理 | 实际读取依据 |
+|---|---|---|
+| src/cyberscientist | 保留 | Python应用、原生协议适配器及运行时工具桥import |
+| prompts/roles、prompts/collaboration | 保留 | role_prompts、kimi及controller会话开发者指令 |
+| skills | 保留 | skills索引及read、Job模板附件；原生CODEX_HOME技能同步 |
+| environments | 保留 | environment_catalog、compute与环境预检读取 |
+| contracts | 保留 | challenge_import、输出契约与提交暂存校验 |
+| vendor/playground_contracts | 保留 | 官方协议/评分器快照，public research及drift检查 |
+| templates | 保留 | 官方提交模板及数据格式验证 |
+| tools/playground-cli/0.1.40 | 保留 | 固定官方CLI；integrity、package元数据与dist读取 |
+| apps/web/dist | 保留 | API静态前端读取；每次从指定commit构建 |
+| pyproject.toml、uv.lock、启动脚本、示例配置 | 保留 | 独立环境锁定、迁移/发布和冷启动 |
+| evals | 移出 | 开发评估目录；比赛端显式拒绝开发评估目录入口 |
+| challenges | 移出 | 仓库旧题参考数据；当前题从workspace/challenges读取，旧历史记录另行归档 |
+| docs、tests、开发工具、旧brain/prime | 不发布 | 不属于比赛运行时 |
+| experience、workspace、设置/数据库、HOME、CODEX_HOME凭据 | 运行时数据 | 不属于发布所有权，发布不覆盖、不导出内容 |
+
+发布同时清理上一版清单拥有、这一版已移除的目录，备份放`.runtime/previous`；回归确认新题工作数据保持。每次成功ops release后自动扫描并更新私有比赛快照，扫描失败或推送失败如实报告`release_completed`，不冒充快照成功。
+
+凭据独立性：本次账户ID、刷新令牌哈希比较均为“相同”，只保存比较结果，不保存值或指纹。用户需自行执行：
+
+```bash
+CODEX_HOME=~/CyberScientist-comp/.runtime/codex codex login
+```
+
+尚未验证：用户自行登录后两侧最小会话；不以原有共享登录冒充独立性。移出目录后的实际冷启动和隐藏依赖测试随后执行。

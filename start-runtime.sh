@@ -10,5 +10,6 @@ export CODEX_HOME="$runtime_root/.runtime/codex"
 export XDG_CONFIG_HOME="$HOME/.config"
 export XDG_DATA_HOME="$HOME/.local/share"
 export XDG_CACHE_HOME="$HOME/.cache"
+export PATH="$runtime_root/.runtime/bin:$PATH"
 unset PYTHONPATH
 exec .venv/bin/python .runtime/cyberscientist_launch.py serve "$@"

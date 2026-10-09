@@ -1,12 +1,9 @@
-import importlib.util
 import json
 from pathlib import Path
 
 import pytest
 
-spec = importlib.util.spec_from_file_location('comp_snapshot', Path(__file__).parents[1] / 'tools/export_comp_snapshot.py')
-snapshot = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(snapshot)
+from cyberscientist import runtime_snapshot as snapshot
 
 
 def runtime(tmp_path):
@@ -53,3 +50,5 @@ def test_scanner_reports_positions_without_printing_values(tmp_path, monkeypatch
     assert 'known-private-value' not in json.dumps(result)
     (tmp_path / 'bad.txt').write_text('access_key = get_bohrium_environment_key().strip()\npattern = "asp_"\n')
     assert snapshot.scan(tmp_path)['hit_count'] == 0
+    (tmp_path / 'bad.txt').write_text('another-private-value')
+    assert snapshot.scan(tmp_path, known_values=['another-private-value'])['hit_count'] == 1
