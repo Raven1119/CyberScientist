@@ -1052,3 +1052,9 @@ CS-UP-13 工作包提交索引（按Git事实，最终W8标签另录）：
 - 已实际验证：角色/原生协议/PI环境34 passed/8.53秒；原文SHA回归7项另复测。比赛后端用start-runtime.sh加现有Node PATH冷启动，PID1636454；自检19项中17pass、tracks/warmup两warn、0fail（74.11秒含等待启动）。平台当前GET确认选题weighted-random-forest为S4 round1、closed，结束于2026-08-01。
 - 尚未验证：W4三个真实原生前帧、W2实际批准/执行/干净复跑/试构建/续用，留待W5接线后在唯一冒烟中核查。
 - 阻塞项：第一次冷启动因隔离HOME找不到Node退出，保留私有日志；启动脚本PATH依赖将在W6修复，不能记成首轮无故障。未调用模型或创建资源。
+
+### CS-UP-19 W5：四段干净复跑接线
+- 已实现：clean_handoff严格要求method_md/parameters_md/validation_md/pitfalls_md，四段同一校验；首条消息按流程/参数/验证/故障顺序附Run/Trial/交付目录/结果包/原生绑定/固定完成判据/环境索引。fresh线程在新Trial空目录启动，不复制经验memory_manifest；恢复clean线程继续原Trial目录。PI旧提示中的参数限制按卡内原句更新，recommended包附四段字段与规则。
+- 已实际验证：clean/Decision/role相关26 passed/8.18秒；新增测试在start与prompt两处断言新目录为空、交付信息完整、不泄露PI goal探索数值、封包仅新原生字节；字段缺失/空/超长负例已覆盖。
+- 尚未验证：W2真实干净线程产物/官方CLI试构建及续用。
+- 阻塞项：无新增资源；W4审查发现Kimi/Prime不消费spec.instructions，当前Astra/Terra原生Codex接线通过；将加比赛启动门禁并准确说明其他提供商支持边界，不编造协议字段。

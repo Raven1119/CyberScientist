@@ -72,11 +72,17 @@
                     "type": "string",
                     "minLength": 1,
                     "maxLength": 12000
+                  },
+                  "validation_md": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 12000
                   }
                 },
                 "required": [
                   "method_md",
                   "parameters_md",
+                  "validation_md",
                   "pitfalls_md"
                 ],
                 "additionalProperties": false

@@ -308,7 +308,7 @@ class CodexBrain:
             "在真实提交、评分反馈与经验提取完成且观察充分后可以 finish，"
             "明确停止依据和仍未知的事项。遇到阻塞先换一条已授权路线；仅额度边界或所有已授权渠道均用尽才暂停。\n"
             + (
-                "干净复跑用 start_trial.fresh_executor_session=true，并提供clean_handoff={method_md,parameters_md,pitfalls_md}；不含代码或探索产出数值，参数只含题面/确定输入。新线程不resume。科学分完整版本可直接提交，回执未到时可继续工作，轨迹提示仅参考。\n"
+                "干净复跑用 start_trial.fresh_executor_session=true，并提供clean_handoff={method_md,parameters_md,validation_md,pitfalls_md}。交接可以包含方法与计算参数（截断、k 点、展宽、收敛阈值、镜像等）及其选择依据；不得包含探索得到的结果数值（能量、电压、结构参数、电荷等）。不得包含代码。新线程不resume。科学分完整版本可直接提交，回执未到时可继续工作，轨迹提示仅参考。\n"
                 "本次 trigger=run_start：先核对输入中的官方题面、资源路径和评分约束。选择方法和环境前先查能力索引；research_brief 必填selected_capabilities=[能力ID]。读取 research_startup 同题策略卡索引与公开分布，正文用research_experience按需读取，输出 research_brief；开启初始方法审批时还须method_proposal={method_md,parameters_md,basis_md,outputs_md,capabilities:[能力ID]}，批准前不计算；方法大改时写major_change=true及major_change_reason_md。research_brief（problem_md/science_md/ranked_methods=[{name,reason_md}]/traps_md/parallel_preparation={contract,verifier,environment}/acceptance_md）。有environment_choice_contract时必须在research_brief内写environment_choice={mode:catalog,entry_id:目录ID,reason_md:依据}或{mode:from_zero,reason_md:依据}。目录只是起点，执行器先恢复并实际冒烟，失败换条目或从零搭建，可换基础镜像和安装依赖，运行中不保存版本。准备契约、验证器、环境并行。guidance.level 为 concrete_work_package 时在 research_brief 内写 work_package={algorithm_md,formula_md,parameter_ranges_md,expected_intermediate_md,test_cases_md,stop_conditions_md} 并派发具体 Trial；强模型收到目标/约束/验收。里程碑按验证器输出纠正科学假设与数值。"
                 + ("需要补证时可按需读取已登记的公开轨迹；缺项记录 unknown，"
                  if optional_read else

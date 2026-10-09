@@ -7,7 +7,7 @@ from test_mailboxes import _seed_challenge,_make_run
 from test_decision import valid_decision
 from test_trace_narrative import _zip
 
-HANDOFF={'method_md':'按题面完整方法重算','parameters_md':'固定题面参数','pitfalls_md':'核查单位与边界'}
+HANDOFF={'method_md':'按题面完整方法重算','parameters_md':'固定题面参数','validation_md':'独立核查方法与字段','pitfalls_md':'核查单位与边界'}
 
 async def test_fresh_thread_waits_idle_preserves_old_log_and_seals_only_new(tmp_path,monkeypatch):
     _seed_challenge();rid=_make_run();db.execute("UPDATE runs SET phase='running',gate='open' WHERE id=?",(rid,))
@@ -18,10 +18,15 @@ async def test_fresh_thread_waits_idle_preserves_old_log_and_seals_only_new(tmp_
         async def close(self,sid):assert sid=='old-thread'
         async def start(self,spec):
             specs.append(spec);assert 'resume_thread_id' not in spec
+            from pathlib import Path
+            assert Path(spec['working_directory']).parent.name == 'trials'
+            assert list(Path(spec['working_directory']).iterdir()) == []
             new.write_text(json.dumps({'type':'session_meta','payload':{'id':'new-thread'}})+'\n')
             db.append_event(rid,'controller','session.configuration',{'role':'executor','session_id':'new-thread','native_log_path':str(new),'model':'fixture-model'})
             return 'new-thread'
         async def prompt(self,sid,text):
+            from pathlib import Path
+            assert list(Path(specs[-1]['working_directory']).iterdir()) == []
             prompts.append((sid,text));return ActionReceipt(status='accepted',detail='fixture')
     ctrl=RunController();ctrl._prime_instances[rid]=Native();ctrl._prime_sessions[rid]='old-thread'
     monkeypatch.setattr(ctrl,'_make_prime',lambda settings:Native())
@@ -36,6 +41,11 @@ async def test_fresh_thread_waits_idle_preserves_old_log_and_seals_only_new(tmp_
     binding=json.loads(db.query_one("SELECT payload FROM events WHERE trial_id=? AND type='trial.native_session_bound'",(trial['id'],))[0])
     assert binding['session_id']=='new-thread' and old.read_bytes()==original
     assert prompts[0][0]=='new-thread' and '方法来自本方此前的探索' in prompts[0][1]
+    text = prompts[0][1]
+    assert all(item in text for item in (rid, trial['id'], specs[0]['working_directory'], 'result_package.zip', '真实原生轨迹由系统绑定，禁止编造', 'stage=trial_complete', '环境索引'))
+    assert text.index('流程（method_md）') < text.index('参数（parameters_md）') < text.index('验证（validation_md）') < text.index('故障（pitfalls_md）')
+    assert clean_runs.PARAMETER_POLICY in text
+    assert ctrl._prime_spec(rid, config.load_settings())['working_directory'] == specs[0]['working_directory']
     assert '987654' not in prompts[0][1] and '本地科学Python' not in prompts[0][1]
     source=_zip({'arm_manifest.json':b'{"trace_path":"trace.jsonl"}', 'trace.jsonl':b'{"step_type":"observation","title":"synthetic"}\n'})
     sealed,_=package_seal.seal(source,rid,trial['id'],0)
@@ -44,7 +54,7 @@ async def test_fresh_thread_waits_idle_preserves_old_log_and_seals_only_new(tmp_
         assert json.loads(archive.read('provenance/native_session.json'))['session_id']=='new-thread'
     assert old.read_bytes()==original
 
-@pytest.mark.parametrize('handoff',[{},HANDOFF|{'code':'x'},HANDOFF|{'method_md':'```python\nprint(1)\n```'}])
+@pytest.mark.parametrize('handoff',[{},HANDOFF|{'code':'x'},HANDOFF|{'method_md':'```python\nprint(1)\n```'}, {k:v for k,v in HANDOFF.items() if k != 'validation_md'}, HANDOFF|{'validation_md':' '}, HANDOFF|{'validation_md':'x'*12001}])
 def test_invalid_handoff_is_not_delivered(handoff):
     with pytest.raises(ValueError):clean_runs.validate(handoff)
 
