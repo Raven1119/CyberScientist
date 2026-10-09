@@ -127,3 +127,14 @@ pg-*只读报告：[REPORT.md](https://github.com/Raven1119/cs-private/blob/e823
 隐藏复验最终回执：17:49:56无Git重部署完成；17:52:48回退至`01a3627405441d3807352da3ab6e9a84f373f4ae`完成；17:55:42恢复`e0f56c8b6956810172fbe391203ce6be6cd82f11`完成；17:55:45最后审计完成，驱动退出0。两次release各自动推私有快照，回退快照`42b6face29061d1748d6e97d084d18a486c1a527`、恢复快照`8d2ecc275aede4b46280a77ee489bd9c39d0ffae`；各244运行文件/251导出文件/23技能，密钥扫描0。隔离进程实际看到开发目录为空，宿主目录始终可见。
 
 最后审计：开发路径/全局AGENTS命中0；比赛外技能名仍有上述真实字面命中，不能宣称全文全部0。Runs49、Trials130、Jobs163、Sandboxes67、Submissions14、Mailboxes5与隔离基线相同；workspace/runs只有本次Run，evals与旧challenges目录不存在。经验只改了本次clean Trial的工具检查点笔记，发布没有覆盖经验；该笔记被检查点重新激活后，结束前再次经API停用，正文不变、历史保留。最终有效索引45项，三条冒烟策略/经验选入0；Run为recovering、resume_on_startup=0，不会自动模型恢复。功能隐藏复验通过；全文无关技能名零命中属于明确未满足的文字验收项。
+
+
+## 最终发布与停止
+
+实际运行/tag版本：`4ef48d74d2f3c3f174527423477a18baf79a9410`。`ops release --target comp --commit 4ef48d7 --timeout 300`完成，后端健康、自检warn/0 fail、恢复/只读对账ready；244运行文件的逐项SHA与冻结测试版本e0f56c8完全相同。首次开发发布prepare因当前shell没有npm失败，尚未停止或修改比赛代码；按BUILD仅为该命令补`PATH=/home/wmywb/.local/bin:$PATH`后成功，不修改全局配置。失败回执`final-release-missing-npm.log`与成功原始回执均在私有证据目录。
+
+私有比赛快照：[Raven1119/CyberScientist-comp](https://github.com/Raven1119/CyberScientist-comp)，最终main提交`cc5e9b86b8a0acbd15062241d176af5e49d55161`；[完整导出清单](https://github.com/Raven1119/CyberScientist-comp/blob/cc5e9b86b8a0acbd15062241d176af5e49d55161/snapshot/export-manifest.json)。244运行文件、251导出文件、23技能；现有秘密及凭据形状扫描251文件0命中，isPrivate=true，远端main逐项核对。auth、秘密库、数据库、运行目录、原生记录、虚拟环境与日志均未导出。
+
+源仓库main已推送运行提交；注释标签[lightchaser-candidate-2](https://github.com/Raven1119/CyberScientist/tree/lightchaser-candidate-2)已推送，远端peeled SHA与实际运行SHA相同。发布后仅以文档提交补记本节和STATUS，不改变发布文件或运行指纹。
+
+交付停止：本卡Run1、Trial2、沙箱2且均已删除、Job0、镜像构建0、真实提交0；未跑排练。比赛后端保持运行，冒烟Run recovering且resume_on_startup=0，三条冒烟经验/策略最终不在有效索引中。独立登录、未调用角色真实帧与旧合同技能名字面问题如上明确保留；等待用户/设计助手验收及文字内容交付，不扩展研究或提交授权。

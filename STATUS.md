@@ -1172,3 +1172,11 @@ CS-UP-13 工作包提交索引（按Git事实，最终W8标签另录）：
 - 已实际验证：工具检查点重新激活本次clean笔记，审计后再次API停用，正文不变、active_revision_id为空；最终有效索引45项、冒烟三条选入0，Run recovering/resume_on_startup=0。未追加模型turn、Job、沙箱或提交。
 - 尚未验证：最终文档版本发布、快照、candidate-2标签推送，马上执行。
 - 阻塞项：独立登录条件未发生、未授权只读角色真实帧及旧合同技能全文字面问题已完整记录，不能写成全部硬项通过。
+
+### CS-UP-19最终交付与停止
+- 已实际验证：比赛运行版本4ef48d74d2f3c3f174527423477a18baf79a9410已release完成，health正常/preflight warn且0 fail、只读对账ready；244运行文件与e0f56c8冻结测试版本逐项SHA完全相同。首次prepare缺npm失败后仅给发布命令补BUILD约定的.local/bin PATH恢复，未改全局配置，失败保留。
+- 已实际验证：私有快照https://github.com/Raven1119/CyberScientist-comp，main=cc5e9b86b8a0acbd15062241d176af5e49d55161；244运行文件/251导出文件/23技能，扫描0，远端main一致。源main推送成功，lightchaser-candidate-2注释标签远端peeled SHA=4ef48d74d2f3c3f174527423477a18baf79a9410与运行版相同。
+- 已实际验证：完整后端1822 passed/1170.04秒，前端123 passed与构建通过；编译/语法/diff通过；功能隐藏依赖链与实际封包原生字节核对完成，所有原失败保留。
+- 已实际验证：用户原工作区已恢复并持续可见，比赛没有.git；开发后端迁移禁用且全部resume_on_startup=0；本卡仅Run1/Trial2/沙箱2已释放，Job0/镜像0/真实提交0，无排练。比赛后端保持运行，冒烟Run recovering/resume_on_startup=0，冒烟策略/经验有效选入0。
+- 尚未验证：设计助手文字内容交付与用户/设计助手验收；用户独立登录后两端最小会话。已停止本卡工作，等待验收，不自动扩大研究/提交。
+- 阻塞项：同源凭据尚未由用户独立登录；只读审查真实帧未获模型授权；全文无关技能名称仍由旧合同文字进入，W3只列不改，不能写成全部硬项通过。完整细节见docs/CS_UP_19_EVIDENCE.md与docs/ATTENTION_AUDIT_1009.md。
