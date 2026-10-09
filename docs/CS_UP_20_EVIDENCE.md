@@ -110,3 +110,11 @@
 - 已实际验证：`PATH=/home/wmywb/.local/share/node-v22.17.0-linux-x64/bin:$PATH npm --prefix apps/web test -- --run src/CompetitionPanel.test.tsx` → 11 passed；次数/用尽状态渲染和现有操作覆盖。
 - 尚未验证：平台真实拒收，本卡真实提交额度为 0，不能人为触发；RH-02 若出现则据真实回执核对。
 - 阻塞项：无。日志在 `.package-checks/cs-up20/w3-{tests,extra-tests,final-tests,frontend-tests}.log`；最初 npm 不在当前 PATH，改用已有 Linux 安装，不安装或修改全局配置。
+
+## W4：平台评分元数据
+
+- 已实现：模型投影去掉平台及原生 API wrapper 中的 scoring 元数据，加入 D-87 的 harbor 隐藏测试事实。覆盖当前/冻结题面、PI 生命周期帧、监督反馈、执行者探索/干净提示、渐进帧及可展开 facts。科学输出契约中名为 scoring 的字段仍保留，平台回执评分字段也不改。
+- 已实际验证：数据库原始题面与 Run 配置快照字节在前后相同；模型帧、可读 facts 无原元数据；冻结科学正文和输出 schema 保留。完整/轨迹回执缺 harbor_score 时一次告警，科学分保持 unknown；普通排队不触发，后续真实字段可更新。
+- 已实际验证：`.venv/bin/pytest -q tests/test_scoring_metadata_cs20.py tests/test_progressive_context_cs16.py tests/test_receipts_cs15.py tests/test_competition_panel_cs16.py tests/test_clean_runs_cs16.py` → 32 passed/9.53 秒，日志 `.package-checks/cs-up20/w4-tests.log`。
+- 尚未验证：发布后新 PI/执行者真实原生帧，随 W9/W11；真实缺 harbor 回执不在本卡零提交授权内。
+- 阻塞项：无。

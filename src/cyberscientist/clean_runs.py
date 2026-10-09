@@ -22,6 +22,8 @@ def validate(handoff):
 def prompt(challenge, handoff, enabled_skills, capability_index, *, run_id, trial_id,
            delivery_directory, environment_index):
     validate(handoff)
+    from . import challenge_context
+    challenge=challenge_context.project(challenge)
     from .package_seal import OUTPUT_PACKAGE_INSTRUCTION
     return ('方法来自本方此前的探索。\n按方法真实重算，不读取此前探索代码或数值产物。'
             + PARAMETER_POLICY + '\n'

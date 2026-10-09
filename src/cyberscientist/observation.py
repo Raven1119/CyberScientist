@@ -105,7 +105,8 @@ def authority_facts(run_id: str) -> dict[str, Any]:
             'SELECT COUNT(*) FROM submissions WHERE run_id=? AND is_harvest=? AND reservation_released=0',
             (run_id, flag))[0] for name, flag in (('experimental', 0), ('harvest', 1))}
     result['solver_note'] = template.get('solver_note', '')
-    result['round_challenge_snapshot'] = template.get('challenge_snapshot')
+    from . import challenge_context
+    result['round_challenge_snapshot'] = challenge_context.project(template.get('challenge_snapshot'))
     from . import package_reviews
     result['package_reviews'] = [package_reviews.get(row['operation_id'], run_id) for row in db.query('SELECT operation_id FROM package_reviews WHERE run_id=? ORDER BY created_at', (run_id,))]
     return result

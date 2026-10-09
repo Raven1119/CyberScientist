@@ -3652,7 +3652,9 @@ class RunController:
         packet["experience_manifest"] = feedback["experiences"]
         packet["experience_context_id"] = feedback["experience_context_id"]
         from . import competition_prompts
-        return {'user_prompt':competition_prompts.packet(run),**packet}
+        from . import challenge_context
+        packet['challenge']['science_scoring_fact']=challenge_context.SCORING_FACT
+        return challenge_context.project({'user_prompt':competition_prompts.packet(run),**packet})
 
     def _last_seq(self, run_id: str) -> int:
         row = db.query_one("SELECT COALESCE(MAX(seq),0) AS s FROM events WHERE run_id=?",
@@ -3661,12 +3663,14 @@ class RunController:
 
     @staticmethod
     def _challenge_for_run(run):
+        from . import challenge_context
         current = dict(db.query_one('SELECT title,content,resources_json,platform_snapshot_json FROM challenges WHERE id=?', (run['challenge_id'],)))
         frozen = json.loads(run['config_snapshot']).get('competition', {}).get('challenge_snapshot')
         if frozen:
             current.update(title=frozen['title'], content=frozen['content'], resources_json=json.dumps(frozen['resources'], ensure_ascii=False),
                            platform_snapshot_json=json.dumps(frozen['platform'], ensure_ascii=False))
-        return current
+        current['science_scoring_fact']=challenge_context.SCORING_FACT
+        return challenge_context.project(current)
 
     def _memory_manifest(self, run: Any, settings: dict[str, Any]) -> list[dict[str, Any]]:
         return experience_context.select(run["challenge_id"], goal=experience_context.run_goal(run['id']), role='brain')

@@ -34,6 +34,8 @@ def synchronize() -> None:
             if kind=='submission.rejected':
                 title=('本题账号提交上限已用尽，下次换账号' if payload.get('rejection_kind')=='submission_limit'
                        else '平台拒收结果包：'+str(payload.get('reason') or '包未通过校验'))
+            if kind=='submission.harbor_missing':
+                title='回执没有 harbor 科学分，可能是赛后补交的评分路径'
             if kind.endswith(('.error', '.failed')) or kind in ('submission.unknown', 'prime.crashed') or (kind == 'job.observed' and payload.get('status') == 'Failed'):
                 title = '研究操作出错或状态不明'
             if kind in ('submission.scored', 'submission.score_corrected'):

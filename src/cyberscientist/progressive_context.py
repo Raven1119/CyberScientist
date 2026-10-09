@@ -36,6 +36,8 @@ def catalog_index(items):
 
 
 def _store(run_id,packet):
+    from . import challenge_context
+    packet=challenge_context.project(packet)
     safe=observation.strip_secrets(encode(packet));digest=hashlib.sha256(safe.encode()).hexdigest()
     root=config.WORKSPACE_DIR/'runs'/run_id/'facts';root.mkdir(parents=True,exist_ok=True)
     if root.is_symlink() or not root.resolve().is_relative_to(config.WORKSPACE_DIR.resolve()):
@@ -51,7 +53,8 @@ def _store(run_id,packet):
 
 def compact(run_id,packet):
     """Retain unique scientific text. Repeated authority and large facts stay readable."""
-    full=deepcopy(packet);out=deepcopy(packet);reference=_store(run_id,full)
+    from . import challenge_context
+    full=challenge_context.project(packet);out=deepcopy(full);reference=_store(run_id,full)
     # Keep complete frozen statement once, including all task-specific contracts.
     challenge=out.get('challenge') or {}
     frozen=out.pop('round_challenge_snapshot',None)
@@ -98,6 +101,8 @@ def compact(run_id,packet):
 
 def executor_prompt(run_id,trial_id,challenge,goal,success,authority,enabled_skills,experience):
     from . import skills
+    from . import challenge_context
+    challenge=challenge_context.project(challenge)
     from .package_seal import OUTPUT_PACKAGE_INSTRUCTION
     data={'challenge':challenge,'goal':goal,'success_check':success,'authority':authority,'experience':experience}
     reference=_store(run_id,data)

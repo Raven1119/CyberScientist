@@ -67,6 +67,14 @@ def observe_tx(conn,row,body):
     payload={'submission_id':row['id'],'platform_ref':row['platform_ref'],'receipt_summary':summary(merged)}
     if science_changed:
         db.append_event_tx(conn,row['run_id'],'controller','submission.science_observed',payload,trial_id=row['trial_id'])
+    has_receipt=(merged.get('score_is_final') is True or merged.get('trace_score') is not None
+                 or merged.get('trace_decision') is not None)
+    if has_receipt and merged.get('harbor_score') is None and not conn.execute(
+            "SELECT 1 FROM events WHERE run_id=? AND type='submission.harbor_missing'"
+            " AND json_extract(payload,'$.submission_id')=?",(row['run_id'],row['id'])).fetchone():
+        db.append_event_tx(conn,row['run_id'],'controller','submission.harbor_missing',
+            payload | {'reason':'回执没有 harbor 科学分，可能是赛后补交的评分路径；科学分保持 unknown。'},
+            trial_id=row['trial_id'])
     trace_changed=any(k in incoming and previous.get(k)!=incoming[k] for k in ('trace_score','trace_decision','deductions','missing_evidence'))
     if trace_changed:
         db.append_event_tx(conn,row['run_id'],'controller','submission.receipt_observed',payload,trial_id=row['trial_id'])
