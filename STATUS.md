@@ -1368,3 +1368,7 @@ CS-UP-13 工作包提交索引（按Git事实，最终W8标签另录）：
 - 已实际验证：旧辅助检查的MISSING_ENTRY/run.sh非阻断提示与冻结输入不符，18:43:52Z实际目录存在run.sh/6681字节输入，记录交设计助手。18:42:38Z资源检查点已报告，guidance_8d0890b487因Trial变化标superseded，不能当已ACK；当前没有为非阻断提示额外热修复。
 - 已实际验证：18:45:05Z首Job23515079转Failed，18:46:11Z日志和18:46:38Z out.zip真实取回。入口已执行PAIR_BRANCH_BEGIN；atomic.stdout为0字节，atomic.time明确MPI slot不足16、启动ABACUS前exit1（0.04秒），不是SCF失败。执行者自行选择8 rank再提交，原失败Job保留额度计数。辅助MISSING_ENTRY来源已定位为.py/.txt扫描遗漏.sh，非阻断且实际入口已执行，交设计助手。
 - 已实际验证：18:47:10Z执行者8-rank替代操作trial4_strict_pair_cpu_v2_np8接收，Job23515081/bohr20868309；18:47:21Z平台Running且Preparing input files and computation environment，ABACUS实际启动待日志确认。当前Job2（1 Failed、1 Running）/真实沙箱创建2/提交0；原失败Job与日志保留，初报0.00费用可能滞后，不当免费证明。
+- 已实际验证：18:47:37Z执行者远程沙箱复核旧FM cube，球外直接积分/无重叠体素/周期平移枚举均有真实回执，分区残差约2.4e-15 μB；只覆盖旧粗基线后处理，严格新密度待验。18:51Z真实前端同步新Trial/Job2/沙箱2，ops摘要代码匹配、告警0/自动提交true/暂停false；18:52Z按历史sandbox.active事件和远程ID核对真实累计创建2，未用活跃行数或lifetime_version当累计次数。
+- 已实际验证：18:56Z W10采样PI9轮/输入4,701,523/输出29,688，执行者输入56,901,852/输出113,112，unknown_observations空。执行者18:38:11Z第二次原生压缩保留roles/executor v2；PI仍1次压缩，第9轮首/末请求输入113,770→127,707、6个用量增量事件。
+- 已实际验证：18:59:13Z平台费用回报首失败Job0.03/100秒、第二Job0.15/444秒，币种未标注，原初报零不是免费证明；平台时长不单独证明ABACUS收敛。18:57:25→18:58:14Z原生CLI4次willRetry，18:58:42Z用量续写，Job仍Running；原生具体错误未投影，原因unknown，未重启或重发Job。
+- 已实际验证：截至19:02Z完整事件复核原生重试累计4次（最后18:58:14Z），19:02:09Z同一会话research_job实际completed，成功工具调用恢复；不是回合终态确认。第二Job仍Running，原生金额0.28/803秒/币种unknown；严格科学产物仍待到达，保持原Job等待。
