@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import re
 import shlex
 import threading
 import uuid
@@ -29,6 +30,8 @@ def lifetime_ceiling() -> int:
 
 
 def _fingerprint(path):
+    if not Path(path).is_dir():
+        raise ValueError('工作目录不存在或不是目录')
     entries = []
     for p in sorted(Path(path).rglob('*')):
         if p.is_symlink():
@@ -55,7 +58,7 @@ print(json.dumps({'sha256':hashlib.sha256(json.dumps(entries,separators=(',',':'
 '''
     box = sandboxes._owned(run_id, sid)
     result = sandboxes.execute(run_id, sid, 'python3 -c ' + shlex.quote(script),
-                              min(30, sandboxes._seconds_left(box) - 1))
+                              min(30, sandboxes._seconds_left(box) - 1), _workspace_read_only=True)
     if result['status'] != 'completed' or result['exit_code'] != 0:
         raise ValueError('远端文件哈希未确认')
     node = sandboxes._data(sandboxes._body(result['receipt']))
@@ -68,7 +71,7 @@ def checkpoint(run_id, sid):
         fact = current(run_id)
         if fact.get('sandbox_id') != sid or fact['mode'] != 'sandbox':
             return fact
-        if db.query_one("SELECT 1 FROM compute_sandbox_operations WHERE sandbox_id=? AND action='background' AND status IN ('running','unknown')", (sid,)):
+        if pending_mutations(sid):
             return fact
         run = compute._run(run_id)
         destination = (config.WORKSPACE_DIR / 'challenges' / run['challenge_id'] /
@@ -90,6 +93,23 @@ def enabled(run_id: str) -> bool:
 def current(run_id: str) -> dict:
     row = db.query_one("SELECT payload FROM events WHERE run_id=? AND type='topic.workspace' ORDER BY seq DESC LIMIT 1", (run_id,))
     return json.loads(row['payload']) if row else {'mode': 'not_selected'}
+
+
+def pending_mutations(sid):
+    return db.query_one("SELECT 1 FROM compute_sandbox_operations WHERE sandbox_id=? AND action IN ('exec','background','files.write') AND status IN ('running','unknown')", (sid,)) is not None
+
+
+def before_mutation(run_id, sid, timeout=0):
+    """Caller holds the shared lock; preserve the window for a final snapshot."""
+    fact = current(run_id)
+    if fact.get('sandbox_id') != sid or fact['mode'] != 'sandbox':
+        return
+    from . import sandbox_background
+    sandbox_background._authorized(run_id, max(1, timeout))
+    if sandboxes._seconds_left(sandboxes._owned(run_id, sid)) <= timeout + 300:
+        raise compute.ComputeError('SANDBOX_SYNC_WINDOW', '常驻沙箱进入文件同步窗口；请用同镜像Job')
+    if fact.get('checkpoint'):
+        _record(run_id, fact | {'checkpoint': None})
 
 
 def ensure(run_id: str) -> dict:
@@ -144,6 +164,9 @@ def _ensure(run_id: str) -> dict:
             old = sandboxes._owned(run_id, prior['sandbox_id'])
             if old['status'] == 'deleted':
                 return _create(run_id, prior['image'], prior['generation'] + 1, prior.get('checkpoint'))
+            if old['status'] != 'deleting':
+                return _record(run_id, prior | {'mode': 'job', 'old_delete_status': old['status'],
+                    'reason': '旧沙箱删除未确认；保留预约、不重发删除，使用同镜像Job'})
             return prior
         if prior.get('sandbox_id'):
             box = sandboxes._owned(run_id, prior['sandbox_id'])
@@ -168,10 +191,18 @@ def _rotate(run_id, fact):
     from . import power
     if run['phase'] != 'running' or run['gate'] != 'open' or power.shutdown_requested():
         return fact | {'mode': 'job', 'reason': '门禁关闭，不新建沙箱'}
+    box = sandboxes._owned(run_id, fact['sandbox_id'])
+    if pending_mutations(fact['sandbox_id']):
+        return _record(run_id, fact | {'mode': 'job', 'checkpoint': None, 'reason': '工作目录仍有运行中或未知变更；不恢复未经确认的快照'})
+    if fact.get('checkpoint') and box['status'] == 'active' and sandboxes._seconds_left(box) > 1:
+        try:
+            if _remote_fingerprint(run_id, fact['sandbox_id']) != fact['checkpoint']['sha256']:
+                fact = fact | {'checkpoint': None}
+        except (compute.ComputeError, ValueError, OSError, KeyError, TypeError):
+            fact = fact | {'checkpoint': None}
     if not fact.get('checkpoint'):
         return _record(run_id, fact | {'mode': 'job', 'reason': '到期前没有确认的工作文件快照；使用显式Job输入，不假称完整恢复'})
     fact = _record(run_id, fact | {'mode': 'renewing'})
-    box = sandboxes._owned(run_id, fact['sandbox_id'])
     if box['status'] == 'active':
         sandboxes.delete(run_id, fact['sandbox_id'])
     return _ensure(run_id)
@@ -211,6 +242,8 @@ def work(run_id: str, body: dict) -> dict:
 def _work(run_id: str, body: dict) -> dict:
     """A work request includes its Job spec/input so fallback needs no second call."""
     op=body.get('operation_id')
+    if not isinstance(op, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,100}', op):
+        raise compute.ComputeError('INVALID_OPERATION', '工作请求需要稳定operation_id')
     previous=db.query_one("SELECT * FROM compute_sandbox_operations WHERE operation_id=? AND action='background'",(op,))
     if previous:
         from . import sandbox_background
@@ -224,6 +257,10 @@ def _work(run_id: str, body: dict) -> dict:
         if previous_job['run_id']!=run_id:
             raise compute.ComputeError('OPERATION_CONFLICT','工作操作不属于本Run')
         return compute.submit(run_id,op,body.get('spec'),body.get('input_directory'),body.get('preflight'))
+    stage_id = 'twi_' + hashlib.sha256((run_id + '\0' + op).encode()).hexdigest()[:40]
+    staged_work = db.query_one('SELECT status FROM operations WHERE operation_id=?', (stage_id,))
+    if staged_work and staged_work['status'] != 'confirmed':
+        raise compute.ComputeError('WORKSPACE_SYNC_UNKNOWN', '该工作输入传输未确认；不重新上传或执行')
     fact = ensure(run_id)
     if fact['mode'] in ('not_selected', 'renewing'):
         return fact
@@ -232,11 +269,33 @@ def _work(run_id: str, body: dict) -> dict:
         fact = fact | {'mode': 'job', 'reason': '命令将占用到期同步窗口，改用同镜像Job'}
     if fact['mode'] == 'sandbox':
         from . import sandbox_background
+        timeout = body.get('timeout')
+        if type(timeout) is not int or timeout < 1:
+            raise compute.ComputeError('INVALID_COMMAND', '后台命令需要正整数超时')
+        command = body.get('command')
+        if not isinstance(command, str) or not command or len(command) > 8000:
+            raise compute.ComputeError('INVALID_COMMAND', '后台命令无效')
+        sandbox_background._authorized(run_id, timeout)
         if body.get('input_directory'):
-            staged = sandboxes.transfer(run_id, 'write', fact['sandbox_id'], REMOTE,
-                                        local_path=body['input_directory'])
-            if staged['status'] != 'completed':
-                raise compute.ComputeError('WORKSPACE_SYNC_UNKNOWN', '工作输入同步未确认；未执行命令')
+            source = compute._path(compute._run(run_id), body['input_directory'])
+            source_sha = _fingerprint(source)
+            digest = hashlib.sha256(json.dumps([command, timeout, str(source), source_sha]).encode()).hexdigest()
+            prior = db.query_one('SELECT * FROM operations WHERE operation_id=?', (stage_id,))
+            if prior and prior['payload_hash'] != digest:
+                raise compute.ComputeError('OPERATION_CONFLICT', '工作输入已变化，需使用新的operation_id')
+            if prior and prior['status'] != 'confirmed':
+                raise compute.ComputeError('WORKSPACE_SYNC_UNKNOWN', '该工作输入传输未确认；不重新上传或执行')
+            if prior and json.loads(prior['request_summary'])['sandbox_id'] != fact['sandbox_id']:
+                raise compute.ComputeError('OPERATION_CONFLICT', '工作输入属于旧沙箱；需使用新的operation_id')
+            if not prior:
+                db.execute("INSERT INTO operations(operation_id,run_id,kind,status,request_summary,payload_hash,created_at) VALUES(?,?,'topic.work_input','unknown',?,?,?)",
+                           (stage_id, run_id, json.dumps({'sandbox_id': fact['sandbox_id']}), digest, db.utcnow()))
+                staged = sandboxes.transfer(run_id, 'write', fact['sandbox_id'], REMOTE,
+                                            local_path=str(source), operation_id=stage_id)
+                if staged['status'] == 'completed' and _fingerprint(source) == source_sha:
+                    db.execute("UPDATE operations SET status='confirmed' WHERE operation_id=?", (stage_id,))
+                else:
+                    raise compute.ComputeError('WORKSPACE_SYNC_UNKNOWN', '工作输入同步未确认；未执行命令、不重新上传')
         _record(run_id, fact | {'checkpoint': None})
         return sandbox_background.start(run_id, fact['sandbox_id'], body.get('command'),
                                         body.get('timeout'), body.get('operation_id'), cwd=REMOTE)
@@ -248,5 +307,5 @@ def _work(run_id: str, body: dict) -> dict:
     result = compute.submit(run_id, body.get('operation_id'), spec, body['input_directory'], body.get('preflight'))
     db.append_event(run_id, 'controller', 'topic.job_fallback',
                     {'operation_id': body.get('operation_id'), 'image': fact['image'],
-                     'reason': fact['reason'], 'sandbox_reservation_retained': fact.get('create_status') == 'unknown'})
+                     'reason': fact['reason'], 'sandbox_reservation_retained': fact.get('create_status') == 'unknown' or fact.get('old_delete_status') == 'unknown'})
     return result | {'fallback': 'job', 'fallback_reason': fact['reason']}

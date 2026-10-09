@@ -590,7 +590,16 @@ def reconcile_pending_creates() -> None:
 
 
 def execute(run_id: str, sandbox_id: str, command: str, timeout: int,
-            operation_id: str | None = None) -> dict:
+            operation_id: str | None = None, *, _workspace_read_only: bool = False) -> dict:
+    from . import topic_workspace
+    with topic_workspace._locks[run_id]:
+        if not _workspace_read_only and type(timeout) is int and timeout > 0:
+            topic_workspace.before_mutation(run_id, sandbox_id, timeout)
+        return _execute(run_id, sandbox_id, command, timeout, operation_id)
+
+
+def _execute(run_id: str, sandbox_id: str, command: str, timeout: int,
+             operation_id: str | None = None) -> dict:
     row = _owned(run_id,sandbox_id)
     if row['status'] != 'active':
         raise compute.ComputeError('SANDBOX_NOT_ACTIVE','沙箱未处于 active')
@@ -654,6 +663,17 @@ def execute(run_id: str, sandbox_id: str, command: str, timeout: int,
 def transfer(run_id: str, action: str, sandbox_id: str, remote_path: str,
              *, local_path: str | None = None, content: str | None = None,
              operation_id: str | None = None) -> dict:
+    from . import topic_workspace
+    with topic_workspace._locks[run_id]:
+        if action == 'write':
+            topic_workspace.before_mutation(run_id, sandbox_id)
+        return _transfer(run_id, action, sandbox_id, remote_path, local_path=local_path,
+                         content=content, operation_id=operation_id)
+
+
+def _transfer(run_id: str, action: str, sandbox_id: str, remote_path: str,
+              *, local_path: str | None = None, content: str | None = None,
+              operation_id: str | None = None) -> dict:
     row = _owned(run_id,sandbox_id)
     if row['status'] != 'active' or _seconds_left(row)<1:
         raise compute.ComputeError('SANDBOX_NOT_ACTIVE','沙箱未处于 active 或已到期')

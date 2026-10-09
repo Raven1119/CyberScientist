@@ -27,6 +27,13 @@ def _authorized(run_id: str, timeout: int) -> None:
 
 def start(run_id: str, sandbox_id: str, command: str, timeout: int,
           operation_id: str, *, cwd: str | None = None) -> dict:
+    from . import topic_workspace
+    with topic_workspace._locks[run_id]:
+        return _start(run_id, sandbox_id, command, timeout, operation_id, cwd=cwd)
+
+
+def _start(run_id: str, sandbox_id: str, command: str, timeout: int,
+           operation_id: str, *, cwd: str | None = None) -> dict:
     box = sandboxes._owned(run_id, sandbox_id)
     run = compute._run(run_id)
     if run['phase'] != 'running' or run['gate'] != 'open':
@@ -38,6 +45,8 @@ def start(run_id: str, sandbox_id: str, command: str, timeout: int,
     if not isinstance(operation_id, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,100}', operation_id):
         raise compute.ComputeError('INVALID_OPERATION', '后台执行需要稳定 operation_id')
     _authorized(run_id,timeout)
+    from . import topic_workspace
+    topic_workspace.before_mutation(run_id, sandbox_id, timeout)
     digest = command_digest(command, timeout, cwd)
     directory = '/tmp/cyberscientist-background/' + operation_id
     quoted = shlex.quote(directory)
@@ -113,7 +122,8 @@ def poll(run_id: str, operation_id: str) -> dict:
                f'else printf "CS_BACKGROUND_UNKNOWN\\n"; fi; '
                f'if test -f {directory}/output.log; then tail -c 12000 {directory}/output.log; fi')
     result = sandboxes.execute(run_id, row['sandbox_id'], command,
-                               min(30, sandboxes._seconds_left(box)), 'poll_' + __import__('uuid').uuid4().hex)
+                               min(30, sandboxes._seconds_left(box)), 'poll_' + __import__('uuid').uuid4().hex,
+                               _workspace_read_only=True)
     node = sandboxes._data(sandboxes._body(result['receipt']))
     output = node.get('stdout', '') if isinstance(node, dict) else ''
     # The backend-owned first line precedes all untrusted command log output.

@@ -150,3 +150,74 @@ def test_expiry_never_replaces_while_gate_or_shutdown_is_closed(run, monkeypatch
         monkeypatch.setattr(power, 'shutdown_requested', lambda: True)
     assert topic_workspace.ensure(rid)['mode'] == 'job'
     assert sum(c[:2] == ['sandbox','create'] for c in calls) == 1
+
+
+@pytest.mark.parametrize('blocked', ['paused', 'shutdown', 'expired'])
+def test_work_checks_authorization_before_input_upload(run, monkeypatch, blocked):
+    _, rid, work, _, _ = run
+    choose(monkeypatch); topic_workspace.ensure(rid)
+    if blocked == 'paused':
+        db.execute("UPDATE runs SET gate='paused' WHERE id=?", (rid,))
+    elif blocked == 'shutdown':
+        monkeypatch.setattr(power, 'shutdown_requested', lambda: True)
+    else:
+        db.execute('UPDATE authorizations SET max_run_minutes=0 WHERE id=(SELECT authorization_id FROM runs WHERE id=?)', (rid,))
+    monkeypatch.setattr(sandboxes, 'transfer', lambda *a, **kw: pytest.fail('no upload behind a closed gate'))
+    with pytest.raises(compute.ComputeError):
+        topic_workspace.work(rid, {'operation_id':'guarded-work','command':'pwd','timeout':30,'input_directory':str(work)})
+
+
+def test_unknown_input_upload_is_never_repeated_or_executed(run, monkeypatch):
+    _, rid, work, calls, _ = run
+    choose(monkeypatch); topic_workspace.ensure(rid)
+    uploads=[]
+    monkeypatch.setattr(sandboxes, 'transfer', lambda *a, **kw: uploads.append(kw['operation_id']) or {'status':'unknown'})
+    body={'operation_id':'unknown-input','command':'pwd','timeout':30,'input_directory':str(work)}
+    for _ in range(2):
+        with pytest.raises(compute.ComputeError) as failure:
+            topic_workspace.work(rid,body)
+        assert failure.value.code=='WORKSPACE_SYNC_UNKNOWN'
+    assert len(uploads)==1 and not any('--background' in c for c in calls)
+
+
+def test_direct_write_invalidates_snapshot_and_sync_window_rejects_new_writes(run, monkeypatch):
+    _, rid, _, calls, _ = run
+    choose(monkeypatch); fact=topic_workspace.ensure(rid)
+    topic_workspace._record(rid,fact|{'checkpoint':{'path':'fixture','sha256':'old'}})
+    sandboxes.transfer(rid,'write',fact['sandbox_id'],'/bohr-workspace/new.txt',content='new-data')
+    assert topic_workspace.current(rid)['checkpoint'] is None
+    db.execute('UPDATE compute_sandboxes SET expires_at=? WHERE sandbox_id=?',
+               ((datetime.now(timezone.utc)+timedelta(seconds=200)).isoformat(),fact['sandbox_id']))
+    before=len(calls)
+    with pytest.raises(compute.ComputeError) as failure:
+        sandboxes.transfer(rid,'write',fact['sandbox_id'],'/bohr-workspace/too-late.txt',content='late-data')
+    assert failure.value.code=='SANDBOX_SYNC_WINDOW' and len(calls)==before
+
+
+@pytest.mark.parametrize('unsafe', ['unknown_write','changed_hash'])
+def test_rotation_never_restores_an_unconfirmed_snapshot(run, monkeypatch, unsafe):
+    _, rid, _, calls, _ = run
+    choose(monkeypatch);fact=topic_workspace.ensure(rid)
+    topic_workspace._record(rid,fact|{'checkpoint':{'path':'fixture','sha256':'old'}})
+    db.execute('UPDATE compute_sandboxes SET expires_at=? WHERE sandbox_id=?',
+               ((datetime.now(timezone.utc)+timedelta(seconds=20)).isoformat(),fact['sandbox_id']))
+    if unsafe=='unknown_write':
+        db.execute("INSERT INTO compute_sandbox_operations(operation_id,run_id,sandbox_id,action,status,started_at) VALUES('unknown-write',?,?,'files.write','unknown',?)", (rid,fact['sandbox_id'],db.utcnow()))
+    else:
+        monkeypatch.setattr(topic_workspace,'_remote_fingerprint',lambda *a:'changed')
+    result=topic_workspace.ensure(rid)
+    assert result['mode']=='job' and result['checkpoint'] is None
+    assert sum(c[:2]==['sandbox','create'] for c in calls)==1
+
+
+def test_unknown_old_delete_has_job_fallback_without_delete_replay(run, monkeypatch):
+    _, rid, work, calls, _ = run
+    choose(monkeypatch);fact=topic_workspace.ensure(rid)
+    topic_workspace._record(rid,fact|{'mode':'renewing'})
+    db.execute("UPDATE compute_sandboxes SET status='unknown' WHERE sandbox_id=?", (fact['sandbox_id'],))
+    submitted=[]
+    monkeypatch.setattr(compute,'submit',lambda *a:submitted.append(a) or {'status':'accepted'})
+    result=topic_workspace.work(rid,{'operation_id':'delete-unknown-job','command':'echo bounded','input_directory':str(work),'spec':{'image_address':fact['image'],'command':'echo bounded'}})
+    assert result['fallback']=='job' and len(submitted)==1
+    assert topic_workspace.current(rid)['old_delete_status']=='unknown'
+    assert not any(c[:2]==['sandbox','delete'] for c in calls)

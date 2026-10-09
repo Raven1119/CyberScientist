@@ -17,3 +17,7 @@
 私有原件在比赛目录`.runtime/validation/post-accept-1009/`，不入Git：`unknown-archived.json`、`lifetime-{request,create,describe,delete,delete-reconciliation,result}.json`、`lifetime-observation.json`、`cell-relax/final.json`、`cell-relax/original-log-verification.json`、下载ZIP、两个Agent绑定摘要及`third-agent-identity.json`。原生秘密只保存在后端0600存储。
 
 相关回归64项24.81秒；前端25文件123项22.54秒；生产构建通过。完整后端、两轴审查、最终发布和账号隐藏补验结果完成后追加，不以专项测试代替完整验收。
+
+两轴初审发现并修正了上传前门禁、unknown上传重发、旧快照恢复和删除unknown阻塞Job问题。全部常驻沙箱变更入口共享锁、失效快照、保留同步窗口；换箱核验无未知变更和远端当前哈希；输入操作绑定哈希并持久去重，未知删除保留预约但允许Job。修正后72项专项23.83秒、26项发布回归8.05秒通过；因修正而主动中断的完整集不记通过。
+
+用户随后明确授权补申请一个Agent，唯一注册HTTP200：`cyberscientist-exp-d4dc48`、`mbox_2cd8e3729e`、operator90229。平台返回pending，ASP已存后端0600，不回显。五账号已登记，认领完成需独立核实。一次注册意图及结果另存`third-agent-registration-{intent,result}.json`，禁止重放。用户要求只完成当前工作，不执行CS-UP-19。
