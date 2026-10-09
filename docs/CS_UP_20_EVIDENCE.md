@@ -187,6 +187,7 @@
 
 ## W9：两端登录与最小原生回合
 
+- 登录复核结论：开发端与比赛端属于同一 Codex 账户，但刷新令牌指纹不同；两端各自的原生登录均有效，比赛 PI/执行者及开发 PI 的真实最小回合全部完成。没有代登录、复制凭据或修改全局配置；不需要重登录。完整比较与原生回执保存在本地私有证据区，不随源码公开。
 - 已实际验证：两端账户 ID 均为 `e1668cec-d8d7-4fcf-b1a8-2e679322df56`（相同）；刷新令牌指纹不同。只输出这一比较结论，没有输出指纹/令牌，没有复制凭据。比较证据 `.package-checks/cs-up20/w9-auth-comparison.json`。
 - 已实际验证：开发、比赛均使用项目内 Codex CLI 0.161.0；各自原登录目录，比赛 CODEX_HOME 为 `.runtime/codex`。真实最小回合全部 completed、回复 READY，工具调用 0；原生目录、session/turn 身份及字节 SHA 在私有 `w9-{competition-pi,competition-executor,development-pi}.json`。没有创建 Run、Job、沙箱或 Attempt。
 - 已实际验证：比赛 Astra xhigh PI 28.04 秒，比赛 Terra xhigh 执行者 32.36 秒，开发 Astra xhigh 16.62 秒；三会话 native model/list 支持 priority，thread/start 返回 priority、enabled=true；不把配置值冒充确认。
@@ -206,7 +207,7 @@
 
 彩排只读统计命令：`python scripts/native_token_usage.py --root /home/wmywb/CyberScientist-comp --run-id <Run ID>`；可加 `--since <ISO>` 与 `--timezone Asia/Shanghai`。脚本供监控在开发目录运行，不给科研模型引入开发依赖。
 
-## W11：完整验证与交付（进行中）
+## W11：完整验证与交付
 
 - 已实现：发布快照提交信息使用本卡标记；preflight 检查五个已启用比赛技能，明确停用的经验不再误报缺失，未登记的缺失仍告警。最终审查补齐 native cwd、直接 workdir、code-mode workdir、限定名 read_file 及 shell cd 的凭据相对路径检测。
 - 已实际验证：`npm test -- --run` → 25 文件/126 passed，21.83 秒；`npm run build` → TypeScript/Vite 通过，66 modules，2.37 秒。日志 `w11-frontend-full.log`、`w11-frontend-build.log`。最终审查专项 45 passed/13.55 秒；新版 Job 技能专项 16 passed/13.49 秒。`compileall -q src tests checks scripts` 与 `git diff --check` 均 exit 0；`w11-checks.json`。八个内容文件再次与本卡附录逐字比较一致，SHA 清单 `w11-source-exact-content.json`。
@@ -215,5 +216,10 @@
 - 已实际验证：有界代码审查覆盖停用经验判定、技能门禁、旧别名及凭据工作目录输入；原生报文与科研产出不改写，检测只记录读取意图，没有执行凭据读取。用于部署后验收的脚本放在开发目录私有证据区，比赛目录不新增验证残留。
 - 已实际验证：最终完整后端命令 `PATH=<Node22>:<comp runtime bin>:$PATH .venv/bin/pytest -q`，exit 0，1884 passed/4 skipped/2 warnings，1359.90 秒。四项均为 `test_trace_diagnostics.py` 的固定旧 CLI 夹具；Node22 的 bin 中新版 playground 先于用户旧 CLI，被 SHA 门禁拒绝。旧 CLI SHA d231fefe0f11a481866aeae399906fc587e75d95c0cf08ff405b3f6f7ee48b03、companion 及 S30/S32/S33、H7 历史证据均实际存在。
 - 已实际验证：私有证据区只为测试建立指向已核实旧 CLI 的 PATH 链接，不改全局 CLI/配置；`PATH=<historical-test-bin>:<Node22>:<comp runtime bin>:$PATH .venv/bin/pytest -q -ra tests/test_trace_diagnostics.py` → 7 passed/3.44 秒、0 skip，四项全部补验。总计 1888 个唯一用例均已实际通过，额外三项是重复验证，不额外计数。日志 `w11-historical-diagnostics-tests.log`；初次 PATH 仍由 Node22 中新版 CLI 抢先的 3 passed/4 skipped 保留在 `w11-historical-diagnostics-first-path.log`。没有排除、关闭或改写这些测试。
-- 尚未验证：候选版 3 的冷启动/目录迁移/22 原生技能、实际新 Run 的控制器角色注入和离线 CLI 构建、私有快照和标签，以及 RH-02 新赛道的模板版本。按依赖完成后补记真实回执。
+- 已实际验证：`ops release --target comp --commit 91ecfd39717c6b91bd37b88523b01d2c242ee744 --timeout 180` 完成冷启动与只读对账 ready；PID1771900、loaded commit匹配。完整自检 warn、0 fail：Codex inspect有一次workspace routing discovery超时警告，旧赛道与镜像预热事实仍warn，后续真实原生两角色完成；不把原自检改写成全pass。`w11-release.json`、`w11-release-audit.json` 核对245发布文件SHA、八个附录原文、13旧环境描述原字节、10旧ID别名、13新索引、135经验文件不变；运行内容违规0、验证残留0、比赛.git不存在。
+- 已实际验证：第一次原生技能接口显示22比赛技能之外的无关插件，物理清单不能代替原生验收。只在比赛专用Codex配置现有features表加入plugins=false；全部其他配置字段相同、全局配置未改、没有读取/复制登录凭据。零模型调用复查22技能，包括17个bohrium-*和5个比赛技能；证据 `w11-plugin-isolation-config.json`、`w11-native-skill-isolation.json`。原生失败检查的Run run_b983fd5c69在模型调用前关闭，历史及失败日志保留于`w11-runtime-probe-index-rejection.*`。
+- 已实际验证：新Run run_1b5cdf85b0经真实比赛API创建，使用已发布RunController的_brain_spec/_prime_spec及原生适配器，不手写角色内容。PI Astra xhigh完成21.34秒、执行者Terra xhigh完成29.09秒；双方native清单22、observed_tier=priority/enabled=true、原生前八帧有v2、开发路径及全局AGENTS内容0。使用其真实执行者原生记录和明确标注的应用就绪输出做系统补清单/暂存/官方CLI离线构建；输出与原生日志字节逐项核对，无合并轨迹/叙述进入CLI包，真实提交0。`w11-runtime-probe.json`含原始路径/ID/SHA及构建哈希，原生日志未改写；这不是科研计算或平台科学正确性证据。
+- 已实际验证：两个旧非恢复验证Run被非终态容量计数占满上限2，首个创建请求明确409、数据库确认未建Run；临时经设置接口2→3创建验收Run，finally恢复2，不恢复或改写旧Run。两个新验收Run关闭前重新授权allow_model_calls=false，再经control terminate结案，全部历史保留，未增加维护模型调用。最终51Run/130Trial/163Job/67沙箱/14提交，较发布前只有两条验证Run增加。
+- 已实际验证：首次发布快照b2cc2dd29c690a74ca71b3af1de687b32ff2ea8c后，刷新含隔离配置的私有快照301993e3c5350ece7237aa5978f34df37fb0fec2；245运行文件/252导出文件/22技能，扫描0，远端main核对成功。候选3本地源码标签指向91ecfd3，私有快照远端标签peeled SHA为301993e3；两种SHA分别记录，未推送公开源码仓库。比赛缓存release-aliases映射候选3到91ecfd3；`w11-final-snapshot.json`、`w11-tags.json`。暂存源码扫描的两处api_token形状命中是未变化的历史paper2arm-task数据集标识，严格按原HEAD同一行及前缀复核，已知秘密命中0，原文保留；`w11-staged-scan-review.json`。
+- 尚未验证：RH-02 新赛道提示的新版本/冻结与完整科学闭环，按既有决定在下一步前端创建赛道后完成模板发布，不更改三个已结束赛道。
 - 阻塞项：当前无；上述完整、补验与中断结果分别记录，不能混写为某一次全量 1888 passed。
