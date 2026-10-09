@@ -19,7 +19,8 @@ from . import db, job_preflight
 Error = job_preflight.PreflightError
 _BUILTINS = {'if','then','else','elif','fi','for','while','do','done','case','esac','in',
              'set','echo','printf','test','[',':','true','false','exit','export','cd','pwd',
-             'read','wait','trap','return','break','continue','source','.'}
+             'read','wait','trap','return','break','continue','source','.',
+             '(',')','{','}'}  # Shell group delimiters are syntax, not image executables.
 _NETWORK = re.compile(r'(?<![\w/])(?:curl|wget)\s|\bgit\s+clone\b|\b(?:pip(?:3)?\s+install|uv\s+pip\s+install|conda\s+install)\b')
 
 

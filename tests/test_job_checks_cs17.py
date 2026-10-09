@@ -93,6 +93,7 @@ def test_mandatory_failure_does_not_create_or_reserve_job_even_with_probe_option
     with pytest.raises(compute.ComputeError) as exc:
         compute.submit(rid,'blocked-job',spec(),str(work),{'purpose':'probe','allow_network_install':True})
     assert exc.value.code=='NETWORK_REQUIRED'
+    assert exc.value.details['line']=='pip install spglib'
     assert db.query_one('SELECT count(*) FROM compute_jobs WHERE run_id=?',(rid,))[0]==0
     assert not calls
     event=db.query_one("SELECT payload FROM events WHERE type='job.preflight' AND run_id=? ORDER BY seq DESC LIMIT 1",(rid,))
@@ -108,6 +109,25 @@ def test_shell_heredoc_cwd_and_wrappers_do_not_lose_semantics():
     assert exc.value.code=='ABACUS_INPUT_MISSING'
     with pytest.raises(job_checks.Error) as exc:job_checks.static({},spec("bash -c 'python missing.py'"),{})
     assert exc.value.code=='MISSING_ENTRY'
+
+
+@pytest.mark.parametrize('opening,closing', [('(', ')'), ('{', '}')])
+def test_standalone_shell_groups_check_programs_without_probing_group_tokens(opening,closing,run):
+    _,rid,_,_,_=run
+    files={'task.sh':f'{opening}\n  missing_science_program\n{closing}\n'.encode()}
+    report=job_checks.static(files,spec(),{})
+    assert set(report['commands'])=={'bash','missing_science_program'}
+    facts={'commands':{'bash':'/usr/bin/bash'},'paths':{},'packages':{}}
+    db.execute('INSERT INTO image_facts VALUES(?,?,?,?,?)',
+               ('fixture-image','f'*64,json.dumps(facts),'fixture-probe',db.utcnow()))
+    with pytest.raises(job_checks.Error) as exc:
+        job_checks.image(rid,'fixture-image',report)
+    assert exc.value.code=='IMAGE_FACTS_MISSING'
+    assert exc.value.details['missing']['commands']==['missing_science_program']
+    facts['commands']['missing_science_program']='/usr/bin/fixture-program'
+    db.execute('UPDATE image_facts SET facts_json=? WHERE image_address=?',
+               (json.dumps(facts),'fixture-image'))
+    assert job_checks.image(rid,'fixture-image',report)['image_checked']
 
 
 @pytest.mark.parametrize('command',["python3 -c 'import requests; requests.get(\"https://example.test\")'",'pip install --no-index local.whl && curl https://example.test -o result.txt'])

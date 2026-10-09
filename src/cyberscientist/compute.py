@@ -383,7 +383,7 @@ def submit(run_id: str, operation_id: str, spec: dict, input_directory: str,
                             {'operation_id':operation_id,'status':'blocked','mandatory':True,
                              'code':exc.code,'details':exc.details,'message':str(exc),'reservation_created':False},
                             trial_id=run['current_trial_id'])
-            raise ComputeError(exc.code,str(exc)) from exc
+            raise ComputeError(exc.code,str(exc),exc.details) from exc
     files = {rel: (source / rel).read_bytes() for rel, _ in manifest
              if Path(rel).suffix in ('.py', '.txt') and (source / rel).stat().st_size <= 2_000_000}
     options = preflight or {}
