@@ -25,6 +25,13 @@ def redact_settings(value, key=''):
 
 
 def export(root: Path, target: Path) -> dict:
+    import fcntl
+    with (root / '.runtime/release.lock').open('a') as lock:
+        fcntl.flock(lock, fcntl.LOCK_SH)
+        return _export(root, target)
+
+
+def _export(root: Path, target: Path) -> dict:
     root = root.resolve(); target = target.resolve()
     if target == root or root in target.parents:
         raise ValueError('Export must be outside the competition tree')
@@ -39,10 +46,11 @@ def export(root: Path, target: Path) -> dict:
         if not runtime_release.runtime_path(name):
             raise ValueError('Invalid manifest path')
         source = root / relative
-        if any(p.is_symlink() for p in (source, *source.parents)) or digest(source.read_bytes()) != expected:
+        data = source.read_bytes()
+        if any(p.is_symlink() for p in (source, *source.parents)) or digest(data) != expected:
             raise ValueError('Published bytes mismatch: ' + name)
         output = target / relative; output.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(source, output); output.chmod(source.stat().st_mode & 0o777)
+        output.write_bytes(data); output.chmod(source.stat().st_mode & 0o777)
     def write(name, data):
         path = target / name; path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + '\n')

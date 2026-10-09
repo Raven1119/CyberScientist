@@ -164,11 +164,6 @@ def main() -> None:
                     result.update(status='snapshot_failed', snapshot_error=str(exc), release_completed=True)
             print(observation.strip_secrets(json.dumps(result,ensure_ascii=False)))
             raise SystemExit(0 if result['status']=='completed' else 1)
-        if args.ops_command == 'redeploy':
-            from .redeploy import redeploy
-            result = redeploy(port, args.commit, timeout=args.timeout)
-            print(json.dumps(result, ensure_ascii=False))
-            raise SystemExit(0 if result['status'] == 'completed' else 1)
         method = 'GET'; body = None
         from . import redeploy
         try:redeploy.process_identity(redeploy.request(port,'/api/v1/health',timeout=5),root=root)
@@ -176,6 +171,10 @@ def main() -> None:
             label = '比赛后端身份未确认：' if args.target == 'comp' else '开发后端未运行或身份不匹配：'
             print(observation.strip_secrets(label+str(exc)),file=sys.stderr)
             raise SystemExit(2)
+        if args.ops_command == 'redeploy':
+            result = redeploy.redeploy(port, args.commit, timeout=args.timeout)
+            print(json.dumps(result, ensure_ascii=False))
+            raise SystemExit(0 if result['status'] == 'completed' else 1)
         if args.ops_command == 'submit':
             path = '/api/v1/ops/submit'; method = 'POST'
             body = {k: getattr(args,k) for k in ('run_id','trial_id','package_path','operation_id','mailbox_id','retry_of')}

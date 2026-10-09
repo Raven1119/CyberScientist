@@ -217,6 +217,27 @@ def start_runtime(root: Path, port: int, commit: str, timeout: float):
         return health
 
 
+def cache_release(stage: Path, runtime: Path, manifest: dict):
+    cached = runtime / 'releases' / manifest['commit']
+    if cached.is_dir() and json.loads((cached / 'manifest.json').read_text()) == manifest:
+        return
+    cached.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(dir=cached.parent, prefix='cache-') as temporary:
+        prepared = Path(temporary) / 'complete'; prepared.mkdir()
+        shutil.copytree(stage, prepared / 'tree')
+        (prepared / 'manifest.json').write_text(json.dumps(manifest, sort_keys=True, indent=2))
+        previous = None
+        if cached.exists():
+            previous = runtime / 'release-cache-history' / uuid.uuid4().hex
+            previous.parent.mkdir(parents=True, exist_ok=True)
+            cached.rename(previous)
+        try:
+            prepared.rename(cached)
+        except OSError:
+            if previous is not None:previous.rename(cached)
+            raise
+
+
 def publish(stage: Path, root: Path, manifest: dict):
     """Only release-owned paths move; mutable data/experience/HOME never move."""
     if any(not runtime_path(name) for name in manifest['files']):
@@ -325,9 +346,13 @@ def _release_locked(commit: str, *, root: Path, port: int, timeout=180, source: 
                 manifest=json.loads((cached/'manifest.json').read_text())
                 if manifest['commit']!=sha:raise ValueError('发布缓存版本不匹配')
                 for name,digest in manifest['files'].items():
-                    if not runtime_path(name):raise ValueError('发布缓存路径越界')
+                    legacy = name.startswith(('evals/', 'challenges/'))
+                    relative = PurePosixPath(name)
+                    if relative.is_absolute() or '..' in relative.parts or (not runtime_path(name) and not legacy):
+                        raise ValueError('发布缓存路径越界')
                     path=cached/'tree'/name
                     if path.is_symlink() or hashlib.sha256(path.read_bytes()).hexdigest()!=digest:raise ValueError('缓存哈希不匹配：'+name)
+                    if not runtime_path(name):continue
                     target=stage/name;target.parent.mkdir(parents=True,exist_ok=True);shutil.copy2(path,target)
             compatible(stage)
             # External competition skill directories were copied in full at
@@ -349,12 +374,7 @@ def _release_locked(commit: str, *, root: Path, port: int, timeout=180, source: 
                                for path in sorted(stage.rglob('*')) if path.is_file()}
             cached=runtime/'releases'/manifest['commit']
             if not cached.exists():
-                cached.parent.mkdir(parents=True,exist_ok=True)
-                with tempfile.TemporaryDirectory(dir=cached.parent,prefix='cache-') as temporary_cache:
-                    prepared=Path(temporary_cache)/'complete';prepared.mkdir()
-                    shutil.copytree(stage,prepared/'tree')
-                    (prepared/'manifest.json').write_text(json.dumps(manifest,sort_keys=True,indent=2))
-                    prepared.rename(cached)
+                cache_release(stage, runtime, manifest)
             if (source/'.git').exists():
                 tags=subprocess.run(['git','tag','--points-at',manifest['commit']],cwd=source,capture_output=True,text=True,check=True,timeout=30).stdout.splitlines()
                 aliases=json.loads((runtime/'release-aliases.json').read_text()) if (runtime/'release-aliases.json').exists() else {}
@@ -363,6 +383,7 @@ def _release_locked(commit: str, *, root: Path, port: int, timeout=180, source: 
             save('manifest',manifest)
             result['phase']='shutdown';save('stop',stop_runtime(root,port,timeout))
             result['phase']='publish';save('version',publish(stage,root,manifest))
+            cache_release(stage, runtime, manifest)
             result['phase']='dependencies';save('dependencies',sync_dependencies(root))
             result['phase']='start';save('health',start_runtime(root,port,manifest['commit'],timeout))
             result['phase']='resume';resumed=redeploy.request(port,'/api/v1/ops/resume',{});save('resume',resumed)

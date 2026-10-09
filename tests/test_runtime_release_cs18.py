@@ -109,6 +109,20 @@ def test_publish_removes_old_owned_evaluation_roots_and_preserves_research(tmp_p
     assert list((root/'.runtime/previous').glob('*/evals/suite.json'))
 
 
+def test_replacing_same_commit_cache_preserves_prior_manifest_evidence(tmp_path):
+    stage=tmp_path/'stage';stage.mkdir()
+    (stage/'start-runtime.sh').write_text('current')
+    runtime=tmp_path/'runtime';cache=runtime/'releases'/('a'*40)
+    cache.mkdir(parents=True)
+    previous={'commit':'a'*40,'files':{'evals/old.json':'old'}}
+    (cache/'manifest.json').write_text(json.dumps(previous))
+    manifest={'commit':'a'*40,'files':{'start-runtime.sh':hashlib.sha256(b'current').hexdigest()}}
+    runtime_release.cache_release(stage,runtime,manifest)
+    assert json.loads((cache/'manifest.json').read_text())==manifest
+    assert (cache/'tree/start-runtime.sh').read_text()=='current'
+    assert json.loads(next((runtime/'release-cache-history').glob('*/manifest.json')).read_text())==previous
+
+
 def test_official_dry_build_never_sends_or_reserves(tmp_path,monkeypatch):
     from test_cli_submission_cs14 import prepare,bundle,fake_build
     from cyberscientist import cli_submission,db

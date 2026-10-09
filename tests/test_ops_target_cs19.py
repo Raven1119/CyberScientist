@@ -29,7 +29,8 @@ def test_migrated_ops_default_targets_competition_and_checks_identity(tmp_path, 
     assert requests[0].full_url.startswith('http://127.0.0.1:9999/')
 
 
-def test_explicit_dev_rejects_competition_pid_before_mutation(tmp_path, monkeypatch, capsys):
+@pytest.mark.parametrize('action', ['shutdown', 'redeploy'])
+def test_explicit_dev_rejects_competition_pid_before_mutation(tmp_path, monkeypatch, capsys, action):
     dev, comp = migrated(tmp_path, monkeypatch)
     monkeypatch.setattr(redeploy, 'request', lambda *a, **k: {})
     def mismatch(health, root):
@@ -37,7 +38,8 @@ def test_explicit_dev_rejects_competition_pid_before_mutation(tmp_path, monkeypa
         raise RuntimeError('fixture wrong backend root')
     monkeypatch.setattr(redeploy, 'process_identity', mismatch)
     monkeypatch.setattr(cli.urllib.request, 'urlopen', lambda *a, **k: pytest.fail('no mutating HTTP allowed'))
-    monkeypatch.setattr(sys, 'argv', ['cyberscientist', 'ops', 'shutdown', '--target', 'dev'])
+    monkeypatch.setattr(redeploy, 'redeploy', lambda *a, **k: pytest.fail('no redeploy allowed'))
+    monkeypatch.setattr(sys, 'argv', ['cyberscientist', 'ops', action, '--target', 'dev'])
     with pytest.raises(SystemExit) as exc:
         cli.main()
     assert exc.value.code == 2 and '开发后端未运行或身份不匹配' in capsys.readouterr().err
