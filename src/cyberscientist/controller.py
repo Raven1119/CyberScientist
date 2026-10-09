@@ -395,10 +395,13 @@ class RunController:
         # including when two Runs study the same challenge concurrently.
         run_dir = config.WORKSPACE_DIR / "runs" / run_id
         run_dir.mkdir(parents=True, exist_ok=True)
-        if run['current_trial_id'] and db.query_one(
-                "SELECT 1 FROM events WHERE run_id=? AND trial_id=? AND type='trial.clean_run'",
-                (run_id, run['current_trial_id'])):
-            run_dir = run_dir / 'trials' / run['current_trial_id']
+        restarted = db.query_one("SELECT payload FROM events WHERE run_id=? AND type='executor.session_restarted' ORDER BY seq DESC LIMIT 1", (run_id,))
+        state = json.loads(restarted['payload']) if restarted else {}
+        if state.get('session_id') == run['executor_thread_id'] and state.get('working_directory'):
+            directory = Path(state['working_directory'])
+            if directory.parent != run_dir / 'trials' or not directory.name.startswith('trial_'):
+                raise ValueError('持久化干净线程目录不属于本Run')
+            run_dir = directory
             run_dir.mkdir(parents=True, exist_ok=True)
         runtime = (settings.get("executor") or {}).get("runtime", "kimi")
         spec: dict[str, Any] = {
@@ -2352,6 +2355,8 @@ class RunController:
                 db.append_event(run_id,"controller","executor.close_unknown",{"session_id":session,"fresh":fresh})
                 return False
             db.execute("DELETE FROM system_state WHERE key=?",("native_close_unknown:" + run_id,))
+            self._prime_instances.pop(run_id, None)
+            self._prime_sessions.pop(run_id, None)
         try:
             runtime = self._make_prime(self._runtime_settings(run_id))
             if isinstance(runtime, KimiExecutor):
@@ -2367,11 +2372,15 @@ class RunController:
             return False
         self._prime_instances[run_id] = runtime
         self._prime_sessions[run_id] = new_session
-        db.execute('UPDATE runs SET executor_thread_id=? WHERE id=?', (new_session, run_id))
+        with db.transaction() as conn:
+            conn.execute('UPDATE runs SET executor_thread_id=? WHERE id=?', (new_session, run_id))
+            db.append_event_tx(conn, run_id, "controller", "executor.session_restarted", {
+                "old_session_id": session, "session_id": new_session, "fresh": fresh,
+                "working_directory": str(working_directory) if working_directory is not None else (
+                    spec['working_directory'] if Path(spec['working_directory']).parent.name == 'trials' else None)})
         self._executor_busy[run_id] = False
         self._native_arrival_at.pop(run_id, None)
         self._last_native_marker_at.pop(run_id, None)
-        db.append_event(run_id, "controller", "executor.session_restarted", {"old_session_id": session, "session_id": new_session, "fresh": fresh})
         starter = self._start_pump.get(run_id)
         if starter:
             starter()
@@ -3850,6 +3859,7 @@ class RunController:
                     if not await self._restart_prime_session(run_id, fresh=True,
                                                              working_directory=clean_directory):
                         db.append_event(run_id,'controller','executor.fresh_failed',{'reason':'新会话未确认；未创建 Trial'})
+                        self._pause_needs_attention(run_id, '干净执行会话重建未确认；检查连接后恢复，未知关闭不得重试')
                         continue
                     prime_sid = self._prime_sessions[run_id]
                     prime = self._prime_instances[run_id]
@@ -3872,6 +3882,10 @@ class RunController:
                                        {"trial_id": trial_id,
                                         "goal": action["goal"]},
                                        trial_id=trial_id)
+                    if action.get('fresh_executor_session'):
+                        db.append_event_tx(conn, run_id, 'controller', 'trial.clean_run', {
+                            'session_id': prime_sid, 'parent_trial_id': parent,
+                            'disclosure': '方法来自本方此前的探索'}, trial_id=trial_id)
                 from . import topic_workspace
                 if run['mode'] == 'connected' and topic_workspace.enabled(run_id):
                     await asyncio.to_thread(topic_workspace.ensure, run_id)
@@ -3936,7 +3950,6 @@ class RunController:
                                                   environment_index={key: authority[key] for key in
                                                       ('runtime_environments', 'environment_catalog', 'environment_choice')
                                                       if key in authority} | {'topic_workspace': topic_workspace.current(run_id)})
-                    db.append_event(run_id,'controller','trial.clean_run',{'session_id':prime_sid,'parent_trial_id':parent,'disclosure':'方法来自本方此前的探索'},trial_id=trial_id)
                 if enabled_skills:
                     db.append_event(run_id, "controller",
                                     "trial.skills_enabled",

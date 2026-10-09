@@ -46,6 +46,9 @@ async def test_fresh_thread_waits_idle_preserves_old_log_and_seals_only_new(tmp_
     assert text.index('流程（method_md）') < text.index('参数（parameters_md）') < text.index('验证（validation_md）') < text.index('故障（pitfalls_md）')
     assert clean_runs.PARAMETER_POLICY in text
     assert ctrl._prime_spec(rid, config.load_settings())['working_directory'] == specs[0]['working_directory']
+    db.execute("DELETE FROM events WHERE run_id=? AND type='trial.clean_run'", (rid,))
+    db.execute('UPDATE runs SET current_trial_id=NULL WHERE id=?', (rid,))
+    assert ctrl._prime_spec(rid, config.load_settings())['working_directory'] == specs[0]['working_directory']
     assert '987654' not in prompts[0][1] and '本地科学Python' not in prompts[0][1]
     source=_zip({'arm_manifest.json':b'{"trace_path":"trace.jsonl"}', 'trace.jsonl':b'{"step_type":"observation","title":"synthetic"}\n'})
     sealed,_=package_seal.seal(source,rid,trial['id'],0)
@@ -74,3 +77,23 @@ async def test_unknown_old_close_retains_handle_and_prevents_new_trial(monkeypat
     assert ctrl._prime_instances[rid] is old and ctrl._prime_sessions[rid]=='old'
     assert not db.query('SELECT * FROM trials WHERE run_id=?',(rid,))
     assert db.query_one('SELECT 1 FROM system_state WHERE key=?',('native_close_unknown:'+rid,))
+
+
+async def test_confirmed_close_and_failed_fresh_start_cannot_leave_running_stale_handle(monkeypatch):
+    _seed_challenge(); rid = _make_run()
+    db.execute("UPDATE runs SET phase='running',gate='open' WHERE id=?", (rid,))
+    class Old:
+        async def close(self, sid):
+            return None
+    class Failed:
+        async def start(self, spec):
+            raise RuntimeError('fixture native start unavailable')
+    controller = RunController()
+    controller._prime_instances[rid] = Old(); controller._prime_sessions[rid] = 'old'
+    monkeypatch.setattr(controller, '_make_prime', lambda settings: Failed())
+    action = {'op': 'start_trial', 'goal': 'fresh', 'success_check': 'complete',
+              'fresh_executor_session': True, 'clean_handoff': HANDOFF}
+    await controller._apply_decision(rid, valid_decision(run_id=rid, actions=[action]), {}, None, None)
+    assert rid not in controller._prime_instances and rid not in controller._prime_sessions
+    assert db.query_one('SELECT phase FROM runs WHERE id=?', (rid,))['phase'] != 'running'
+    assert not db.query('SELECT * FROM trials WHERE run_id=?', (rid,))
