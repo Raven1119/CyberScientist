@@ -41,6 +41,23 @@ def test_fenced_write_directive_is_available_as_task_contract():
     assert artifact_contracts.inspect('',task_content=text)['task_paths']==['/app/submission.json']
 
 
+def test_app_prefix_is_removed_once_and_nested_app_file_keeps_identity(tmp_path):
+    content=package({'app/app/submission.json':'{"nested":true}','submission.json':'{"wrong":true}'})
+    staged=outputs.stage(content,tmp_path,{},contract={'paths':['/app/app/submission.json']})
+    assert staged['included']==['outputs/app/submission.json']
+    assert (tmp_path/'app/submission.json').read_text()=='{"nested":true}'
+
+
+def test_distinct_contract_sources_cannot_silently_share_cli_target(tmp_path):
+    content=package({'outputs/submission.json':'{"second":true}'})
+    directory=tmp_path/'stage';directory.mkdir()
+    with pytest.raises(ValueError,match='同一CLI路径'):
+        outputs.stage(content,directory,{},contract={'paths':['/app/submission.json','/app/outputs/submission.json']})
+    assert list(directory.iterdir())==[]
+    staged=outputs.stage(content,directory,{},contract={'paths':['/app/outputs/submission.json','outputs/submission.json']})
+    assert staged['included']==['outputs/submission.json']
+
+
 @pytest.mark.parametrize('files,contract',[
     ({'outputs/a.json':'bad json'},{'paths':['outputs/a.json'],'json_schemas':{'outputs/a.json':{'type':'object'}}}),
     ({'outputs/a.json':'{}'},{'paths':['outputs/missing.json']}),

@@ -13,7 +13,10 @@ def source_path(value):
     if not isinstance(value, str):
         raise ValueError('输出路径须为字符串')
     app_path = value.startswith(('/app/', 'app/'))
-    value = value.removeprefix('/app/').removeprefix('app/')
+    if value.startswith('/app/'):
+        value = value[len('/app/'):]
+    elif value.startswith('app/'):
+        value = value[len('app/'):]
     if (not value.startswith('outputs/') and not app_path) or '\\' in value:
         raise ValueError('输出契约须为明确的 /app 文件或 outputs 文件')
     path = PurePosixPath(value)
@@ -35,7 +38,12 @@ def stage(content, directory, manifest, *, contract=None):
             path = item.get('path') or item.get('name')
             if isinstance(path, str) and ('outputs/' in path):
                 declared.append(output_path(path))
-    specifications = {output_path(p): source_path(p) for p in contract['paths']} if contract else {p:p for p in declared}
+    specifications = {}
+    for value in contract['paths'] if contract else declared:
+        target, source = output_path(value), source_path(value)
+        if target in specifications and specifications[target] != source:
+            raise ValueError('不同契约产物映射同一CLI路径：' + target)
+        specifications[target] = source
     paths = sorted(specifications)
     if not paths:
         raise ValueError('缺少题面输出契约及执行者明确产物清单；未发送')
