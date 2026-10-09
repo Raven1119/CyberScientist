@@ -1,43 +1,36 @@
 ---
 name: cyberscientist-submission-gate
-description: Pre-submission checklist for the trace gate, packaging and submission spacing; read before any experiment or harvest submission decision.
+description: PI checklist before issuing kind=submit — science validity, output contract, required method, evidence in the executor session — and what the system handles automatically.
 metadata:
   audience: both
 ---
 
-# 提交前检查
+# 提交前检查（PI 用）
 
-## 一、轨迹门（任一不满足，先补证据）
+提交由你用 kind=submit 的指导发起。系统负责打包（官方 CLI，加上执行者的原生会话）、账号轮换、上传和取回回执。你只需确认以下几点。
 
-1. 每个提交文件，都能在轨迹中找到生成它的命令和输出（N11）。
-2. 最终结果来自题目要求的方法（N14）。
-3. 题目特定代码在轨迹中可见地创建（N17/N18/N16 蒸馏）。
-4. 工具调用都有结果；关键数字已打印（N08/N09/N06）。
-5. 有一次独立验证的输出。
-6. 关键证据在每个事件的开头；没有重复堆砌（N12）；时间真实（N15）。
-7. 本地 v8 确定性检查没有报出可靠的扣分码；本地复刻裁判的结果只作提示。
+## 科学
+1. 结果在科学上成立：物理或逻辑检查通过，收敛或稳定性有证据；题目要求时才需要第二种方法交叉验证。
+2. 最终结果来自题目要求的方法；替代方法只用于探索或对照。
+3. 这是当前真实的最佳版本，不是为试探评分器只改了一个参数。
 
-## 二、提交包
+## 交付
+4. 题面输出契约中的每个文件都在结果包里，文件名、路径、格式、字段与契约一致。
+5. 交付文件中的数值与执行者会话里最后一次生成时打印的一致。
 
-- 文件名、路径、格式与题面要求逐一对照，题面说写到 `/app/outputs/...` 就严格使用。
-- 先用平台公开 schema 做结构预检（manifest、characterization、handoff 等）。彩排中出现过两类拒收：
-  - `handoff.status=complete` 不被接受；
-  - characterization 缺少 modality。
+## 证据（执行者会话就是提交轨迹）
+6. 题目特定代码在会话中可见地写出再运行；每个交付文件都有生成它的可见命令；关键数字已打印。
+7. 会话中没有凭据，没有编造的工具结果或时间。
 
-  这类拒收会让草稿进入 bundle_blocked 状态，要在提交前就排除。
-- 方法说明（README）要写全：问题、方法（点明题目要求的方法）、关键公式、验证、结果、局限。
+任何一项不满足，先让执行者补上。轨迹不必追求完美，稳过 accept（轨迹分 ≥70）即可，写法见 cyberscientist-trace-writing。
 
-## 三、节奏与间隔
+## 系统会处理的
+- 提交前的结构预检、密钥扫描、官方 CLI 试构建；
+- 同题连续提交自动换账号；提交不限次数，但每次都应有实质变化；
+- 平台明确拒收（达到上限、包未通过校验）时换账号或报错；状态未知时先对账，不盲目重发；
+- 科学分先到，轨迹分和判定稍后；“人工复核中”的提交不影响继续迭代。
 
-- 同一账号同一题，两次提交间隔至少 30 分钟（≤2 分钟触发突发惩罚的概率是 54%，30 分钟以上约 5%）；每题每账号尽量不超过 3–4 次。系统也会强制执行。
-- 一个账号在多道题上的提交要错开，不要在 30 分钟内集中提交 5 次以上。
-- 只在有实质改进时提交：科学分提高，或轨迹证据明显补强。
-- 科学分高但判为 review/block 时：读扣分码和缺失证据，冻结科学结果，按干净复跑的做法重做一条证据充分的轨迹，再间隔提交。不要原包重交。
-- 回执中的 `missing_worker_submission` 或 `nonstandard-submission-guard` 是提交链路问题，立即报告，不要在轨迹上找原因。
-
-
-## 四、检查点与实际选中轨迹
-
-- 提交前审阅使用 `research_checkpoint(stage=progress, review=async/blocking)`，由PI决定是否提交；`stage=trial_complete`走Trial结束/承接流程，不等于提交前批准。
-- 检查实际封存包manifest指向的轨迹：仅搬运成果的承接Trial可能只有交付事件。完整原始会话存在不能代替所选轨迹的科学执行/验证链；应在产出最终结果的Trial连续完成复跑和提交审阅。
-- `create_sent`后没有Attempt ID仍为unknown；只读对账，无新增列表不授权重发。离线dry-run通过不证明上传或正式评分。
+## 回执之后
+- 科学分高且 accept：继续改进科学，或结束本题。
+- 科学分高但没有 accept：按干净复跑策略发起，交接写法见角色说明。
+- 回执出现 missing_worker_submission 或 nonstandard-submission-guard：这是提交链路问题，由系统和监控处理，不要改科学内容。

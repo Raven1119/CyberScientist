@@ -39,7 +39,7 @@ def test_new_and_resumed_specs_keep_roles_as_developer_instructions(tmp_path):
             if resumed:
                 spec['resume_thread_id'] = 'old-native-thread'
             params = thread_params(spec, 'fixture-model', 'xhigh', writable=writable)
-            assert 'roles/' + role + ' v1' in params['developerInstructions']
+            assert 'roles/' + role + ' v2' in params['developerInstructions']
 
 
 def test_legacy_prompt_read_failures_are_not_silenced(tmp_path, monkeypatch):
@@ -65,6 +65,6 @@ def test_competition_rejects_engines_without_confirmed_native_role_injection(mon
 
 def test_role_bodies_match_authorized_appendices():
     import hashlib
-    expected = {'pi': '5ce5de29f6aeb677aea7a4cc794fe3395a58da5f9bf98bbfa004c9ef14994d64', 'executor': 'e02a437f888f9b475490f3349f8c738215428dfdeb50f660de180620495806a3'}
+    expected = {'pi': '1bb4bb591785f3d43a780b4c653a66fc921b48b64286d9e7488a111a5f1d31ba', 'executor': 'a7329fd85321703e3057d2cf43d6ddb9c9ce4b9321734df53c7bccc9a285efae'}
     for name, sha in expected.items():
         assert hashlib.sha256(role_prompts.role(name).encode()).hexdigest() == sha

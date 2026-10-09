@@ -4,7 +4,7 @@ import re
 from . import config, observation, skills
 
 FIELDS = ('method_md', 'parameters_md', 'validation_md', 'pitfalls_md')
-PARAMETER_POLICY = '交接可以包含方法与计算参数（截断、k 点、展宽、收敛阈值、镜像等）及其选择依据；不得包含探索得到的结果数值（能量、电压、结构参数、电荷等）。'
+PARAMETER_POLICY = '交接可以包含方法与计算设置（网格、步长、截断、收敛阈值、随机种子、超参数、镜像等）及其选择依据；不得包含探索得到的结果数值（最终答案、拟合系数、指标值、物理量等）。'
 
 def validate(handoff):
     if not isinstance(handoff, dict) or set(handoff) != set(FIELDS):

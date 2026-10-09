@@ -113,6 +113,28 @@ def test_publish_removes_old_owned_evaluation_roots_and_preserves_research(tmp_p
     assert list((root/'.runtime/previous').glob('*/evals/suite.json'))
 
 
+def test_disabled_competition_skills_are_archived_without_removing_scoring_tools(tmp_path):
+    root=tmp_path/'comp';stage=tmp_path/'stage'
+    files={'src/cyberscientist/local_scoring.py':'scoring tool retained',
+           'skills/cyberscientist-submission-gate/SKILL.md':'enabled'}
+    old={'skills/cyberscientist-local-scorer/SKILL.md':'old scorer skill',
+         'skills/cyberscientist-toolchain-reference/SKILL.md':'old toolchain skill'}
+    for name,body in files.items():
+        path=stage/name;path.parent.mkdir(parents=True,exist_ok=True);path.write_text(body)
+    for name,body in old.items():
+        path=root/name;path.parent.mkdir(parents=True,exist_ok=True);path.write_text(body)
+        assert not runtime_release.allowed(name)
+    cache=root/'.runtime/releases/old/manifest.json'
+    cache.parent.mkdir(parents=True);cache.write_text(json.dumps({'files':old}))
+    (root/'.runtime/version.json').write_text(json.dumps({'commit':'old'}))
+    runtime_release.publish(stage,root,{'commit':'a'*40,'files':{
+        name:hashlib.sha256(body.encode()).hexdigest() for name,body in files.items()}})
+    assert (root/'src/cyberscientist/local_scoring.py').is_file()
+    assert not (root/'skills/cyberscientist-local-scorer').exists()
+    assert not (root/'skills/cyberscientist-toolchain-reference').exists()
+    assert list((root/'.runtime/previous').glob('*/skills/cyberscientist-local-scorer/SKILL.md'))
+
+
 def test_replacing_same_commit_cache_preserves_prior_manifest_evidence(tmp_path):
     stage=tmp_path/'stage';stage.mkdir()
     (stage/'start-runtime.sh').write_text('current')

@@ -27,10 +27,12 @@ FILES={'pyproject.toml','uv.lock','.env.example','config/workspace.example.yaml'
        'start-runtime.sh','templates/lightchaser-user-prompt.md','tools/playground-cli/0.1.40/package.json',
        'tools/playground-cli/0.1.40/integrity.json'}
 _NUMBER=re.compile(r'(?<!\w)(?:CS-UP-\d+[A-Za-z]*|D-\d+)(?!\w)')
+DISABLED_SKILL_PREFIXES = ('skills/cyberscientist-local-scorer/',
+                           'skills/cyberscientist-toolchain-reference/')
 
 
 def retired_release_path(name: str) -> bool:
-    return name.startswith(('evals/', 'challenges/')) or name in (
+    return name.startswith(('evals/', 'challenges/', *DISABLED_SKILL_PREFIXES)) or name in (
         'templates/experience.md', 'templates/trial.md')
 
 
@@ -39,6 +41,7 @@ def allowed(name: str) -> bool:
     if path.is_absolute() or '..' in path.parts:return False
     if any(part in ('.git','.package-checks','__pycache__','node_modules') for part in path.parts):return False
     if path.name in ('AGENTS.md','STATUS.md','DECISIONS.md') or path.suffix in ('.pyc','.pyo'):return False
+    if name.startswith(DISABLED_SKILL_PREFIXES):return False
     return name in FILES or name.startswith(PREFIXES)
 
 
