@@ -111,6 +111,13 @@ def main() -> None:
     ops_wait.add_argument('--port', type=int, default=None)
     ops_wait.add_argument('--target', choices=('dev', 'comp'), default=None)
     ops_gates = ops_sub.add_parser('gates', help='列出待复核的拦截项')
+    ops_prompts = ops_sub.add_parser('prompts', help='导出实际比赛提示词全集')
+    prompts_sub = ops_prompts.add_subparsers(dest='prompts_command', required=True)
+    prompts_dump = prompts_sub.add_parser('dump')
+    prompts_dump.add_argument('--target', choices=('dev','comp'), default='comp')
+    prompts_dump.add_argument('--port', type=int, default=None)
+    prompts_dump.add_argument('--run-id', default='run_c726779523')
+    prompts_dump.add_argument('--output', help='Markdown 文件；省略时输出全文')
     ops_gate = ops_sub.add_parser('gate', help='单项拦截复核')
     gate_sub = ops_gate.add_subparsers(dest='gate_command', required=True)
     gate_resolve = gate_sub.add_parser('resolve')
@@ -209,15 +216,24 @@ def main() -> None:
         elif args.ops_command == 'wait-alert':
             if not 0 <= args.timeout <= 43200: parser.error('timeout须为0–43200秒整数')
             path='/api/v1/ops/wait-alert?'+urllib.parse.urlencode({'timeout':args.timeout})
+        elif args.ops_command == 'prompts':
+            path='/api/v1/ops/prompts/dump?'+urllib.parse.urlencode({'run_id':args.run_id})
         elif args.ops_command == 'shutdown': path = '/api/v1/system/safe-shutdown'; method = 'POST'; body = {}
         elif args.ops_command == 'resume': path = '/api/v1/ops/resume'; method = 'POST'; body = {}
         else: path = '/api/v1/ops/' + args.ops_command
         request = urllib.request.Request(f'http://127.0.0.1:{port}' + path, data=json.dumps(body).encode() if body is not None else None, headers={'Content-Type': 'application/json'}, method=method)
         try:
-            with urllib.request.urlopen(request, timeout=args.timeout+30 if args.ops_command == 'wait-alert' else 180 if method == 'POST' else 30) as response: result = json.load(response)
+            with urllib.request.urlopen(request, timeout=args.timeout+30 if args.ops_command == 'wait-alert' else 210 if args.ops_command == 'prompts' else 180 if method == 'POST' else 30) as response: result = json.load(response)
         except (OSError, ValueError) as exc:
             print(observation.strip_secrets(str(exc)), file=sys.stderr); raise SystemExit(2)
-        print(observation.strip_secrets(result['text'] if args.ops_command in ('digest','wait-alert') else json.dumps(result, ensure_ascii=False)))
+        if args.ops_command == 'prompts':
+            if args.output:
+                Path(args.output).write_text(result['markdown'],encoding='utf-8')
+                print(json.dumps(result['metadata'],ensure_ascii=False))
+            else:
+                print(result['markdown'])
+        else:
+            print(observation.strip_secrets(result['text'] if args.ops_command in ('digest','wait-alert') else json.dumps(result, ensure_ascii=False)))
         if args.ops_command == 'shutdown' and result.get('can_shutdown') is not True: raise SystemExit(1)
         if args.ops_command == 'resume' and result.get('status') != 'ready': raise SystemExit(1)
         return

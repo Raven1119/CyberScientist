@@ -1107,6 +1107,14 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
         from . import gate_reviews
         return gate_reviews.pending()
 
+    @app.get('/api/v1/ops/prompts/dump')
+    async def ops_prompts_dump(run_id: str = 'run_c726779523'):
+        from . import prompt_book
+        try:
+            return await asyncio.to_thread(prompt_book.dump, run_id)
+        except (ValueError, OSError) as exc:
+            raise HTTPException(422, detail={'message': observation.strip_secrets(str(exc))}) from exc
+
     @app.post('/api/v1/ops/gates/{gate_id}/resolve')
     async def ops_gate_resolve(gate_id: str, body: dict[str, Any]):
         from . import gate_reviews
