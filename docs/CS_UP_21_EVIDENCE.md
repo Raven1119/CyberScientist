@@ -1,5 +1,13 @@
 # CS-UP-21 验收证据
 
+最终功能检查（2026-10-10 13:35，Asia/Shanghai）：**W1–W10 的应用改动已实现；后端完整 1939 passed / 2 warnings / 1227.20 秒，前端 128 passed / 26 files，构建、compileall、git diff --check 通过。** P0 已于 11:59 前发布，全集已于 13:17 从比赛代码正式生成，待本节所述完整检查通过后推送。
+
+- 真实旧题发送仅 **1 次**：Attempt **50633** / Worker **28223**，科学 **100**，轨迹 **82.8**，最终 **accept**。保留 N11/N14 说明；`counts_toward_season=false`，不是当期参赛资格证据。
+- 最终 [提示词全集](PROMPT_BOOK.md)：112 片段、22 技能全文、41 active 全局经验；SHA256 `c877d43bb443d4dbe322a9544ce3fb57b305b750d9c06e82d6ccd6ccb0930804`，已存凭据命中 0，渲染模型调用 0。最新 W2 补充及 v3 标记已核验，并标明相对 v2 改动。
+- 等待通过一次真实已结束 Job 的 MCP 调用验收；真实远端从非终态长等待仍未实测，相关转态/超时和客户端配置已有回归覆盖。供应商隐藏内建工具完整定义无法通过应用代码取得；全集导出全部应用 MCP 定义，明确范围及修改落点。
+- 发布缓存实际迁出、完整 SHA 无 Git 回退和恢复均完成；前端真实显示复核入口。自动提交 true、无暂停记录；RH-02 finished、没有为补测新增科研 Trial/Job。
+- 最终交付标签为 `lightchaser-candidate-4`；源码/私有快照的实际发布与远端 ref 读回记录在文末交付节及私有 delivery 证据中。
+
 ## W1 凭据检查
 
 - 已实现：原文、URL/二重URL、JSON转义及Base64编码的已存凭据硬拦截；形状只匹配至少20字符令牌及私钥块。普通英文 token、bearer、password 不触发。
@@ -54,7 +62,7 @@
 ### P0 发布前完整检查
 
 - 已实际验证：PATH=/home/wmywb/.local/bin:$PATH .venv/bin/pytest -q：1916 passed, 2 warnings in 1237.94s，完整重跑无跳过；日志.package-checks/cs21/p0-pytest-corrected.log。前端25文件126项全部通过、npm run build通过；compileall及git diff --check通过。
-- 已实际验证：正常/api/v1/mailboxes/claims/refresh读回5个已配置账号confirmed；平台GET目标题结束时间2026-08-08T12:00:00Z。旧题验证授权max_submissions=2；当前真实发送0。旧Run保持paused，其他旧recovering Run resume_on_startup=0。
+- 已实际验证：正常/api/v1/mailboxes/claims/refresh读回5个已配置账号confirmed；平台GET目标题结束时间2026-08-08T12:00:00Z。旧题验证授权max_submissions=2；当前真实发送0。发布前旧Run保持paused，其他旧recovering Run resume_on_startup=0。
 - 尚未验证：本次比赛发布和旧题发送；W6–W10尚未交付。
 
 ### W5 真实发送及提前科学回执
@@ -63,7 +71,7 @@
 - 已实际验证：正常ops submit入口、封存/清单/凭据检查/官方CLI试构建/正式发送完成：sub_dfe4af1401，Attempt 50633，Worker 28223，账号mbox_fdc3509fc3（cyberscientist-exp-89b8dd）。真实发送1/上限2，首次成功，不使用第二次。
 - 已实际验证：实际包SHA 7c0d6ab7d4afcb9b00c0588696cf6612eadfe965b5b85c38a4df5a9dfd59d36f，49,770,733字节；Worker receipt bundle.sha256一致。原候选三份科学输出逐字相同；native_trace/native.jsonl逐字哈希5aebd2234dea75ed1ee2d9f452712e81c4188ec8a3f05750c8299df35fd0def9，Worker native_trace哈希一致；原生记录未改。CLI试构建包哈希因时间字段不同，按既有接受例外核对实际包。平台未提供可核验同源下载URL，保留unknown，以Worker核对为证。
 - 已实际验证：03:59:44.673564Z应用submitted；04:06:29.555943Z提前科学事件submission.science_observed，harbor_reward=1、harbor_score=100、scoring_source=harbor_worker；轨迹分和判定仍null，score_is_final=false，平台仍evaluating；首个科学回执约6分45秒。回执英文摘要称未找到完整可信解答，与数值100并存，原样留证，不将其解释为最终accept。
-- 尚未验证：最终轨迹分、判定、扣分码与最终评分耗时；阶段回执未给扣分码。旧Run持续paused，所以科学事件供PI下一帧读取，未另开模型回合来演示实际PI唤醒；未恢复科研Run。私有w5-cli-receipt、w5-actual-package-check、w5-latest-receipt留存。
+- 尚未验证：最终轨迹分、判定、扣分码与最终评分耗时；阶段回执未给扣分码。后续终态台账纠正见下：旧Run于P0发布期间因原授权过期结束；科学事件已持久化供PI未来帧读取，未为演示唤醒另开科研回合。私有w5-cli-receipt、w5-actual-package-check、w5-latest-receipt留存。
 
 ## W6 统一拦截复核与续接
 
@@ -150,3 +158,15 @@
 空格修正版 `550f8854951ebbc1d2eedf6ff346755f862050df` release completed，重新通过比赛 `ops prompts dump` 导出。最终 [PROMPT_BOOK.md](PROMPT_BOOK.md) **2,653,024 字节**，SHA256 **c877d43bb443d4dbe322a9544ce3fb57b305b750d9c06e82d6ccd6ccb0930804**；PI 首条 **324,205 字节**。v3 新评分/精度约束检查 true；112 片段、22 技能全文、41 active 全局经验全文，已存凭据精确及编码检查 **0 命中**，模型调用 **0**。静态提示不变，时间、事件和节奏等真实字段使两次导出的总字节略有差别；前述旧文件哈希是历史生成事实，最终以本节为准。`git diff --check` 通过。
 
 WebBridge 通过自有标签读回 `http://localhost:8765/` 的真实比赛工作台，连接与设置页面显示 **拦截复核 / 没有待复核项** 和 **自动提交已启用**，API `/api/v1/settings`、`/api/v1/ops/gates` 均 200。浏览器后台标签的被动渲染导致初看“正在加载”，启用该自有标签的虚拟焦点后完成，非后端或接口故障。没有写设置、审批经验、放行真实拦截或恢复科研。真实页面证据在私有 `frontend-settings-confirmed.json`；操作行为及同原意图续接由原 W6 回归覆盖，不借演示再发平台 Attempt。
+
+### 运行台账后续核对（纠正早期 phase 概述）
+
+当前 RH-02 为 **finished**，`ended_at=2026-10-10T03:58:43.147446Z`，原因为 `authorization_expired`，早于 W5 发送。P0 发布在 03:58:31 恢复既有原生会话，03:58:43 原时限检查即结束；没有新增科研 Trial 或 Job。terminal 行遗留 `resume_on_startup=1`，启动查询排除 terminal，因此后续发布不恢复该 Run。此前关于 W5 期间“持续 paused”的概述按实际台账纠正。
+
+自动只读复盘在 04:03:34 报 `trace_delivery`：15/770 分块未完整读取，原失败保留，不当作本卡科学验收或全集生成成功。本卡 W8 一次工具调用与 W10 独立导出自身模型调用均为 0，不把它们与旧 Run 的自动复盘混算。此次台账核对不触发模型、复盘重试或新科研。原候选包仍为 `282461195c1287624238b85e2869e5134dff3ff475364599ea74f91990757387`；自动提交 true，`auto_submission_paused` 无记录，发布缓存五处均不在比赛目录内。
+
+## 最终完整检查
+
+最终从头运行 `PATH=/home/wmywb/.local/bin:$PATH .venv/bin/pytest -q`：**1939 passed / 2 warnings / 1227.20 秒**，退出 0。警告是现有依赖弃用提示，未隐藏；完整日志 `.package-checks/cs21/final-pytest-clean.log`。原来的 5 个开关失败已在全量中通过，测试未跳过/移除。前端 **128 passed / 26 files**，构建退出 0；compileall、git diff --check 通过。
+
+本次每项/补丁独立提交，消息均以 CS-UP-21 结尾。最终功能代码和模型输入与全集生成源 `550f885` 逐字节一致，后续仅文档证据；全集记录生成时比赛 SHA，不伪装为之后的文档提交。P0 11:59 前发布，全集交付按完整检查后推送，未变更原时间表。最终源代码与快照标签、实际远端读回在交付节补记。
