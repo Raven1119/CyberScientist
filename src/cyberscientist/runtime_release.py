@@ -31,6 +31,43 @@ DISABLED_SKILL_PREFIXES = ('skills/cyberscientist-local-scorer/',
                            'skills/cyberscientist-toolchain-reference/')
 
 
+def cache_root(root: Path) -> Path:
+    return root.parent / (root.name + '-cache')
+
+
+def manifest_path(root: Path, commit: str) -> Path:
+    outside = cache_root(root) / 'releases' / commit / 'manifest.json'
+    return outside if outside.is_file() else root / '.runtime/releases' / commit / 'manifest.json'
+
+
+def migrate_cache(root: Path) -> Path:
+    """Rename caches outside the native working tree; retain every prior byte."""
+    outside = cache_root(root); outside.mkdir(parents=True, exist_ok=True)
+    if outside.is_symlink(): raise ValueError('发布缓存根目录不能是链接')
+    for name in ('releases', 'release-cache-history', 'previous', 'release-journal', 'release-aliases.json'):
+        old = root / '.runtime' / name; new = outside / name
+        if not old.exists(): continue
+        if old.is_symlink(): raise ValueError('旧发布缓存不能是链接')
+        if not new.exists(): old.rename(new); continue
+        if old.is_dir() and new.is_dir():
+            for child in old.iterdir():
+                target = new / child.name
+                if target.exists():
+                    archive = outside / 'release-cache-history' / ('migration-' + uuid.uuid4().hex)
+                    archive.parent.mkdir(parents=True, exist_ok=True)
+                    target.rename(archive)
+                child.rename(target)
+            old.rmdir()
+        elif name == 'release-aliases.json':
+            aliases=json.loads(new.read_text()); aliases.update(json.loads(old.read_text()))
+            archive=outside/'release-cache-history'/('aliases-'+uuid.uuid4().hex+'.json')
+            archive.parent.mkdir(parents=True,exist_ok=True);old.rename(archive)
+            new.write_text(json.dumps(aliases,sort_keys=True))
+        else:
+            raise ValueError('发布缓存迁移目标冲突：' + name)
+    return outside
+
+
 def retired_release_path(name: str) -> bool:
     return name.startswith(('evals/', 'challenges/', *DISABLED_SKILL_PREFIXES)) or name in (
         'templates/experience.md', 'templates/trial.md')
@@ -254,12 +291,14 @@ def publish(stage: Path, root: Path, manifest: dict):
         path=stage/name
         if path.is_symlink() or hashlib.sha256(path.read_bytes()).hexdigest()!=digest:
             raise ValueError('暂存文件与封存清单不匹配：'+name)
-    backup=root/'.runtime/previous'/uuid.uuid4().hex;backup.mkdir(parents=True)
+    cache=migrate_cache(root)
+    (root/'.runtime').mkdir(parents=True,exist_ok=True)
+    backup=cache/'previous'/uuid.uuid4().hex;backup.mkdir(parents=True)
     previous_files = {}
     previous_version = root / '.runtime/version.json'
     if previous_version.is_file():
         previous = json.loads(previous_version.read_text())
-        previous_manifest = root / '.runtime/releases' / previous['commit'] / 'manifest.json'
+        previous_manifest = manifest_path(root, previous['commit'])
         if previous_manifest.is_file():
             previous_files = json.loads(previous_manifest.read_text())['files']
     owned=set()
@@ -336,21 +375,22 @@ def release(commit: str, *, root: Path, port: int, timeout=180, source: Path | N
 def _release_locked(commit: str, *, root: Path, port: int, timeout=180, source: Path | None = None):
     from . import redeploy
     source=source or config.WORKSPACE_ROOT;runtime=root/'.runtime';runtime.mkdir(parents=True,exist_ok=True)
-    journal=runtime/'release-journal'/str(uuid.uuid4());journal.parent.mkdir(parents=True,exist_ok=True)
+    cache=migrate_cache(root)
+    journal=cache/'release-journal'/str(uuid.uuid4());journal.parent.mkdir(parents=True,exist_ok=True)
     result={'status':'running','phase':'prepare','steps':[]}
     def save(step,value):
         result['steps'].append({'step':step,'result':value});journal.write_text(json.dumps(result,ensure_ascii=False,indent=2))
     try:
-        with tempfile.TemporaryDirectory(dir=runtime,prefix='staging-') as temporary:
+        with tempfile.TemporaryDirectory(dir=cache,prefix='staging-') as temporary:
             stage=Path(temporary)
             if (source/'.git').exists():
                 manifest=export(commit,stage,source=source)
                 build_frontend(source,manifest['commit'],stage)
             else:
-                aliases=json.loads((runtime/'release-aliases.json').read_text()) if (runtime/'release-aliases.json').exists() else {}
+                aliases=json.loads((cache/'release-aliases.json').read_text()) if (cache/'release-aliases.json').exists() else {}
                 sha=aliases.get(commit,commit)
                 if not re.fullmatch('[a-f0-9]{40}',sha):raise ValueError('无Git运行时只允许已缓存发布SHA/标签')
-                cached=runtime/'releases'/sha
+                cached=cache/'releases'/sha
                 manifest=json.loads((cached/'manifest.json').read_text())
                 if manifest['commit']!=sha:raise ValueError('发布缓存版本不匹配')
                 for name,digest in manifest['files'].items():
@@ -380,18 +420,18 @@ def _release_locked(commit: str, *, root: Path, port: int, timeout=180, source: 
             if hits:raise ValueError('运行时内容含开发引用：'+json.dumps(hits,ensure_ascii=False))
             manifest['files']={path.relative_to(stage).as_posix():hashlib.sha256(path.read_bytes()).hexdigest()
                                for path in sorted(stage.rglob('*')) if path.is_file()}
-            cached=runtime/'releases'/manifest['commit']
+            cached=cache/'releases'/manifest['commit']
             if not cached.exists():
-                cache_release(stage, runtime, manifest)
+                cache_release(stage, cache, manifest)
             if (source/'.git').exists():
                 tags=subprocess.run(['git','tag','--points-at',manifest['commit']],cwd=source,capture_output=True,text=True,check=True,timeout=30).stdout.splitlines()
-                aliases=json.loads((runtime/'release-aliases.json').read_text()) if (runtime/'release-aliases.json').exists() else {}
+                aliases=json.loads((cache/'release-aliases.json').read_text()) if (cache/'release-aliases.json').exists() else {}
                 aliases.update({tag:manifest['commit'] for tag in tags})
-                (runtime/'release-aliases.json').write_text(json.dumps(aliases,sort_keys=True))
+                (cache/'release-aliases.json').write_text(json.dumps(aliases,sort_keys=True))
             save('manifest',manifest)
             result['phase']='shutdown';save('stop',stop_runtime(root,port,timeout))
             result['phase']='publish';save('version',publish(stage,root,manifest))
-            cache_release(stage, runtime, manifest)
+            cache_release(stage, cache, manifest)
             result['phase']='dependencies';save('dependencies',sync_dependencies(root))
             result['phase']='start';save('health',start_runtime(root,port,manifest['commit'],timeout))
             result['phase']='resume';resumed=redeploy.request(port,'/api/v1/ops/resume',{});save('resume',resumed)

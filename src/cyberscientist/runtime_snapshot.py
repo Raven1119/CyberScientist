@@ -39,7 +39,7 @@ def _export(root: Path, target: Path) -> dict:
         raise ValueError('Export target must be empty')
     target.mkdir(parents=True, exist_ok=True)
     version = json.loads((root / '.runtime/version.json').read_text())
-    manifest_path = root / '.runtime/releases' / version['commit'] / 'manifest.json'
+    manifest_path = runtime_release.manifest_path(root, version['commit'])
     manifest = json.loads(manifest_path.read_text())
     for name, expected in manifest['files'].items():
         relative = Path(name)
@@ -167,7 +167,7 @@ def push(root: Path) -> dict:
                 temporary.replace(destination)
             command(['git', 'add', '--', *sorted(tracked | files)])
             command(['git', 'diff', '--cached', '--check'])
-            command(['git', 'commit', '-m', 'snapshot: publish competition runtime ' + result['commit'] + ' CS-UP-20'])
+            command(['git', 'commit', '-m', 'snapshot: publish competition runtime ' + result['commit'] + ' CS-UP-21'])
             helper = '!"' + gh + '" auth git-credential'
             git = ['git', '-c', 'credential.helper=', '-c', 'credential.helper=' + helper]
             command([*git, 'push', 'origin', 'main'])

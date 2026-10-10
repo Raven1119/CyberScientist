@@ -110,7 +110,7 @@ def test_publish_removes_old_owned_evaluation_roots_and_preserves_research(tmp_p
     assert runtime_release.allowed('templates/lightchaser-user-prompt.md')
     assert not runtime_release.allowed('templates/trial.md')
     assert mutable.read_text()=='current topic'
-    assert list((root/'.runtime/previous').glob('*/evals/suite.json'))
+    assert list((runtime_release.cache_root(root)/'previous').glob('*/evals/suite.json'))
 
 
 def test_disabled_competition_skills_are_archived_without_removing_scoring_tools(tmp_path):
@@ -132,7 +132,7 @@ def test_disabled_competition_skills_are_archived_without_removing_scoring_tools
     assert (root/'src/cyberscientist/local_scoring.py').is_file()
     assert not (root/'skills/cyberscientist-local-scorer').exists()
     assert not (root/'skills/cyberscientist-toolchain-reference').exists()
-    assert list((root/'.runtime/previous').glob('*/skills/cyberscientist-local-scorer/SKILL.md'))
+    assert list((runtime_release.cache_root(root)/'previous').glob('*/skills/cyberscientist-local-scorer/SKILL.md'))
 
 
 def test_replacing_same_commit_cache_preserves_prior_manifest_evidence(tmp_path):
