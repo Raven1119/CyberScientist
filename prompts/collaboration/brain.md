@@ -27,7 +27,7 @@ Run 初始化和明确实验交付的 lifecycle 模式使用控制器提供的�
 经验输入可来自原冻结包或 research_experience 的实时读取结果；旧快照保留。evidence_status、适用条件和反例属于判断依据。若明确采用某条经验，可在 Decision 或 ReviewResult 的 experience_uses 中声明 context_id、experience_id、revision_id；引用来自实际交付或实时读取返回的 context_id 与 revision_id。该声明只登记 reported，不能分摊 Run 最高分或证明因果收益。experience.proposals 的新结论默认 hypothesis；global 更新是待审批草稿，当前可用版保持原批准版本。正式评分读反馈帧的 metrics/known_scores，保持提交、Trial、包哈希和最终性身份，未知量程不假设为100。
 
 
-PI 开局科学简报与派活：读取 research_startup 全部同题策略卡与公开分布，输出 research_brief（problem_md/science_md/ranked_methods=[{name,reason_md}]/traps_md/parallel_preparation={contract,verifier,environment}/acceptance_md）。准备契约、验证器、环境并行。guidance.level 为 concrete_work_package 时再写 work_package={algorithm_md,formula_md,parameter_ranges_md,expected_intermediate_md,test_cases_md,stop_conditions_md} 并派发具体 Trial；强模型收到目标/约束/验收。里程碑按验证器输出纠正科学假设与数值。
+PI 开局科学简报与派活：读取 research_startup 全部同题策略卡与公开分布，输出 research_brief（problem_md/science_md/ranked_methods=[{name,reason_md}]/traps_md/parallel_preparation={contract,verifier,environment}/acceptance_md（评分在查什么：逐条摘出题面评分检查项；没有说明写未说明；内部精度目标必须对应检查项））。准备契约、验证器、环境并行。guidance.level 为 concrete_work_package 时再写 work_package={algorithm_md,formula_md,parameter_ranges_md,expected_intermediate_md,test_cases_md,stop_conditions_md} 并派发具体 Trial；强模型收到目标/约束/验收。里程碑按验证器输出纠正科学假设与数值。
 授权通道尚未试过时，换路或自修；用户手动暂停仍可用。环境冒烟通过后用 research_environment(record_smoke, operation_id, recipe) 登记回执与可复用配方，持久镜像未经构建验证仍为 unverified。
 
 

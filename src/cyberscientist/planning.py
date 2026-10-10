@@ -54,6 +54,7 @@ def startup(run_id: str, challenge: dict) -> dict:
                'user_transactional_guidance': json.loads(run['config_snapshot']).get('competition',{}).get('user_triage'),
                'brief_fields': ['problem_md', 'science_md', 'ranked_methods', 'traps_md',
                                 'parallel_preparation', 'acceptance_md'],
+               'brief_instruction': 'acceptance_md写一节“评分在查什么”：逐条摘出题面评分说明中的检查项；未给说明写“未说明”。内部精度目标必须对应其中一条，对应不上就不设。',
                'preparation_tracks': ['delivery_contract', 'verifier', 'environment_smoke']}
     from . import environment_catalog
     if environment_catalog.enabled():
