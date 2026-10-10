@@ -52,3 +52,24 @@ def test_foreign_trial_and_cross_account_hash_never_reserve(monkeypatch):
     larger=req|{'operation_id':'new-scope-intent','mailbox_id':new['id'],'authorization':req['authorization']|{'scope_id':'same-task-another-scope'}}
     with pytest.raises(ValueError,match='同哈希'):ops_submission.submit(larger)
     assert not db.query_one("SELECT 1 FROM submissions WHERE operation_id='new-scope-intent'")
+
+
+def test_outputs_only_candidate_uses_normal_seal_without_reopening_run(monkeypatch):
+    import io,zipfile,hashlib
+    req=request(monkeypatch)
+    sealed=(config.WORKSPACE_DIR/req['package_path']).read_bytes()
+    stream=io.BytesIO()
+    with zipfile.ZipFile(stream,'w') as archive:archive.writestr('outputs/result.json','{"result":1}')
+    candidate=stream.getvalue();path=config.WORKSPACE_DIR/'approved-candidate.zip';path.write_bytes(candidate)
+    before=dict(db.query_one('SELECT * FROM runs WHERE id=?',(req['run_id'],)))
+    seen=[]
+    def preflight(run_id,trial_id,package_path):
+        seen.append((run_id,trial_id,package_path))
+        assert path.read_bytes()==candidate
+        return {'error_code':None,'sealed_bytes':sealed}
+    monkeypatch.setattr(mailboxes,'preflight_submission',preflight)
+    result=ops_submission.submit(req|{'package_path':path.name})
+    assert seen==[(req['run_id'],req['trial_id'],str(path))]
+    assert result['package_sha256']==hashlib.sha256(sealed).hexdigest()
+    assert path.read_bytes()==candidate
+    assert dict(db.query_one('SELECT * FROM runs WHERE id=?',(req['run_id'],)))==before

@@ -1,6 +1,8 @@
 """Bounded old-task transport validation without opening a research Run."""
 import hashlib
+import io
 import json
+import zipfile
 from datetime import datetime, timezone
 from urllib.parse import quote
 from . import db, config, mailboxes, cli_submission
@@ -53,6 +55,17 @@ def submit(request):
         raise ValueError('未只读确认题目已经结束')
     package = mailboxes._resolve_package(run_id, trial_id, request['package_path'])
     content = package.read_bytes()
+    # The operator starts from the PI-approved outputs archive, just like the
+    # normal application path. Reuse an already sealed immutable archive only
+    # when it explicitly carries its native provenance.
+    with zipfile.ZipFile(io.BytesIO(content)) as archive:
+        sealed = any(name == 'provenance/native_session.json' or
+                     name.endswith('/provenance/native_session.json') for name in archive.namelist())
+    if not sealed:
+        checked = mailboxes.preflight_submission(run_id, trial_id, str(package))
+        if checked['error_code']:
+            raise ValueError('验证提交封存预检失败：' + checked['error_code'])
+        content = checked['sealed_bytes']
     _, _, proof = cli_submission._files(content)
     if proof.get('trial_id') != trial_id:
         raise ValueError('验证包不是该Trial的原生绑定')
