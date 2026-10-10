@@ -1264,6 +1264,10 @@ class RunController:
         }
         from . import competition_prompts
         packet['user_prompt']=competition_prompts.packet(run)
+        from . import pi_wake
+        packet.update(pi_wake.cadence(run_id))
+        question_extra = json.loads(req['frame_json'] or '{}')
+        packet['wake_messages'] = question_extra.get('wake_messages', [])
         if self._lifecycle_v2(run):
             packet.pop("current_intention", None)
             packet["run_objective"] = run["objective_md"]
@@ -1445,6 +1449,8 @@ class RunController:
 
     def notify_run_change(self, run_id: str) -> None:
         """collab 服务的内存唤醒提示（DB 已先行提交，丢失可由扫描恢复）。"""
+        from . import pi_wake
+        pi_wake.collect(self, run_id)
         from . import strategies
         strategies.maintain(run_id)
         from . import trial_notes
@@ -2172,6 +2178,8 @@ class RunController:
             db.append_event(run_id, "prime", f"prime.{etype}",
                             public, trial_id=trial_id)
             if etype in ('executor.turn_completed', 'trial.completed'):
+                from . import pi_wake
+                pi_wake.collect(self, run_id)
                 from . import model_fallback
                 model_fallback.recovered(self._runtime_settings(run_id)['executor'], request_id='run:' + run_id + ':executor')
             if etype in ("executor.turn_completed", "trial.completed", "run.aborted",
@@ -3061,6 +3069,11 @@ class RunController:
                 packet["protocol"] = "review_result"
                 packet["sparse_brain_version"] = 1 if self._sparse_brain(run) else 0
             from . import competition_prompts,clean_runs
+            from . import pi_wake
+            packet.update(pi_wake.cadence(run_id))
+            extra = json.loads(req['frame_json'] or '{}')
+            packet['wake_reasons'] = extra.get('wake_reasons', [])
+            packet['wake_messages'] = extra.get('wake_messages', [])
             packet['clean_run']=clean_runs.offer(run_id)
             packet['user_prompt']=competition_prompts.packet(run)
             from . import progressive_context
@@ -3596,6 +3609,8 @@ class RunController:
         }
         from . import local_scoring
         packet.update(local_scoring.latest_final_check(run_id))
+        from . import pi_wake
+        packet.update(pi_wake.cadence(run_id))
         if self._lifecycle_v2(run):
             packet.pop("current_intention", None)
             packet["lifecycle_version"] = 2

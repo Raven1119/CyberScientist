@@ -17,3 +17,12 @@
 - 已实际验证：通过比赛后端正常PUT /api/v1/rounds/round_a5637c86e9f9/prompt发布赛道建议版本2→3；数据库独立读回正文与v3模板逐字相同、SHA一致。未恢复旧Run。私有w2-prompt-publish.json。
 - 已实际验证：模型上下文源范围src/cyberscientist、prompts、skills、templates搜索“最佳版本”“收敛或稳定性有证据”“实测收敛”“收敛参数由执行者”“最终收敛参数”；原冲突仅位于PI角色、提交技能、用户模板，已被v3替换。旧Run历史方法简报保留不改；新生成简报说明按评分检查项定内部目标。
 - 尚未验证：W1–W4发布后的比赛原生参数渲染复核；W10全集将标记相对v2有改动。
+
+## W3 PI主动唤醒与节奏
+
+- 已实现：Job终态和沙箱后台命令终态形成compute.finished；当前Trial契约文件齐全/已有文件更新形成deliverables.ready；回合完成立即检查交付目录。后端独立观察后台命令，15秒巡视，Job对账后立即通知；不依赖检查点。
+- 已实现：距最近已完成PI审阅/有效唤醒满1800秒后排异步审阅；设置与前端可调pi_review_interval_seconds（60–86400）。多触发复用同一pending请求，进行中的审阅只排一条后续合并请求，按计算操作身份去重。
+- 已实现：决策/审阅/回答执行者提问的PI输入带节奏；计实际submitted次数和真实harbor_score，不由展示分推断科学分。批准90分钟、文件齐、实际提交0时生成前端“首次提交待办”。计算退出码/耗时/文件未被真实回执提供时保留unknown。
+- 已实际验证：PI唤醒与原协作全组 `.venv/bin/pytest -q tests/test_pi_wake_cs21.py tests/test_collaboration.py`：67 passed in 48.10s。含三触发、合并、重复终态不再唤醒、文件更新、30分钟计时、真实字段合成的提交数/回执/剩余时间、90分钟告警及旧协作回归。协议fixture证据不冒充真实PI科学运行。
+- 已实际验证：Linux PATH加入已有~/.local/bin后前端SettingsPage测试16 passed；无全局配置修改。
+- 尚未验证：比赛目录发布后真实后台计算和native PI唤醒；本卡不新增科研Run，等待工具的有界真实验证仅在W8执行。

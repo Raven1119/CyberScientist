@@ -305,6 +305,14 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
                     logger.exception('End-of-Run maintenance scheduling failed')
                 for row in db.query("SELECT id FROM runs WHERE phase='running'"):
                     try:
+                        from . import sandbox_background
+                        for op in db.query("SELECT o.operation_id FROM compute_sandbox_operations o JOIN runs r ON r.id=o.run_id WHERE o.run_id=? AND r.phase='running' AND o.action='background' AND o.status IN ('running','unknown')", (row['id'],)):
+                            try:
+                                await asyncio.to_thread(sandbox_background.poll, row['id'], op['operation_id'])
+                            except Exception:
+                                logger.exception('Background command observation failed for %s', op['operation_id'])
+                        from . import pi_wake
+                        pi_wake.collect(controller, row['id'])
                         controller.check_liveness(row['id'])
                         await controller.retry_limited_executor(row['id'])
                     except Exception:
@@ -590,6 +598,7 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
             for key, lower, upper in (("stall_seconds", 1, 86400),
                                       ("max_brain_wait_seconds", 1, 86400),
                                       ("brain_review_timeout_seconds", 1, 86400),
+                                      ("pi_review_interval_seconds", 60, 86400),
                                       ("rate_limit_max_seconds", 1, 86400)):
                 value = (merged.get("run_defaults") or {}).get(key,
                     config.DEFAULT_SETTINGS["run_defaults"][key])

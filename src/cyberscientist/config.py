@@ -96,6 +96,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
                      "max_model_turns": 0, "max_jobs": 3, "max_submissions": 0,
                      "stall_seconds": 300, "max_brain_wait_seconds": 3600,
                      "brain_review_timeout_seconds": 900,
+                     "pi_review_interval_seconds": 1800,
                      "rate_limit_max_seconds": 3600},
     "shadow": {"enabled": False, "min_interval_seconds": 60,
                "max_interval_seconds": 600, "max_reviews": 8},

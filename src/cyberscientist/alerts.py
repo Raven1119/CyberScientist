@@ -26,7 +26,7 @@ def synchronize() -> None:
                 continue
             kind = event['type']
             payload = json.loads(event['payload'])
-            title = {'method.major_change': '研究方法大改', 'run.blocked': '研究遇到阻塞', 'run.paused': '研究已暂停', 'run.failed': '研究运行出错',
+            title = {'submission.first_due': '首次提交待办', 'method.major_change': '研究方法大改', 'run.blocked': '研究遇到阻塞', 'run.paused': '研究已暂停', 'run.failed': '研究运行出错',
                      'run.needs_attention': '研究需要关注', 'run.runtime_error': '研究运行出错', 'harvest.done': '自动收割已受理',
                      'harvest.failed': '自动收割失败', 'harvest.unknown': '自动收割状态不明'}.get(kind)
             if kind=='harvest.started' and payload.get('last_mailbox_quota'):

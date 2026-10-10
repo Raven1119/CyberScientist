@@ -367,13 +367,14 @@ def build_frame(run_id: str, *, mode: str, frame_id: str,
         for item in notable:
             item["excerpt"] = item["excerpt"][:120]
 
-    from . import local_scoring
+    from . import local_scoring, pi_wake
     return {
         "frame_id": frame_id,
         "mode": mode,
         "run_id": run_id,
         **authority_facts(run_id),
         **local_scoring.latest_final_check(run_id),
+        **pi_wake.cadence(run_id),
         "gate": run["gate"],
         "trial_id": trial["id"] if trial else None,
         "trial_status": trial["status"] if trial else None,

@@ -341,6 +341,12 @@ export default function SettingsPage() {
               onChange={(event) => update((s) => ({ ...s, run_defaults: {
                 ...s.run_defaults, max_brain_wait_seconds: Number(event.target.value),
               } }))} />
+            <label htmlFor="pi-review-interval">PI 定时审阅间隔（秒）</label>
+            <input id="pi-review-interval" type="number" min={60} max={86400}
+              value={settings.run_defaults.pi_review_interval_seconds ?? 1800}
+              onChange={(event) => update((s) => ({ ...s, run_defaults: {
+                ...s.run_defaults, pi_review_interval_seconds: Number(event.target.value),
+              } }))} />
             <label htmlFor="brain-review-timeout">大脑单次审阅超时（秒）</label>
             <input id="brain-review-timeout" type="number" min={1} max={86400}
               value={settings.run_defaults.brain_review_timeout_seconds}

@@ -1488,13 +1488,14 @@ async def test_sparse_job_terminal_transition_wakes_once():
     c.notify_run_change(rid)
     assert await _wait(lambda: len(brain.calls) == count + 1)
     await brain.results.put({"review_result": _review_result(brain.calls[-1]["frame_id"])})
-    assert await _wait(lambda: _shadow_reviews(rid)[-1]["status"] == "done")
+    assert await _wait(lambda: db.query_one("SELECT status FROM review_requests WHERE run_id=? AND trigger='pi_proactive_review' ORDER BY created_at DESC LIMIT 1", (rid,))["status"] == "done")
     db.append_event(rid, "controller", "job.observed",
                     {"operation_id": "job-1", "status": "Failed"})
     c.notify_run_change(rid)
     await asyncio.sleep(0.35)
     assert len(brain.calls) == count + 1
-    assert len(_shadow_reviews(rid)) == 1
+    assert len(_shadow_reviews(rid)) == 0
+    assert db.query_one("SELECT COUNT(*) FROM review_requests WHERE run_id=? AND trigger='pi_proactive_review'", (rid,))[0] == 1
     db.append_event(rid, "controller", "submission.scored",
                     {"submission_id": "score-1", "score": 0.6})
     c.notify_run_change(rid)
