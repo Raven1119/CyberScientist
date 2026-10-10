@@ -1085,6 +1085,20 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
         from . import ops
         return ops.pending()
 
+    @app.get('/api/v1/ops/gates')
+    async def ops_gates():
+        from . import gate_reviews
+        return gate_reviews.pending()
+
+    @app.post('/api/v1/ops/gates/{gate_id}/resolve')
+    async def ops_gate_resolve(gate_id: str, body: dict[str, Any]):
+        from . import gate_reviews
+        try:
+            return gate_reviews.resolve(gate_id, reason=body.get('reason'),
+                                        false_positive=body.get('false_positive') is True)
+        except ValueError as exc:
+            raise HTTPException(422, detail={'message': str(exc)}) from exc
+
     @app.get('/api/v1/ops/events/{run_id}')
     async def ops_events(run_id: str, tail: int = 20):
         from . import ops

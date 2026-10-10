@@ -34,6 +34,12 @@ def get_db() -> sqlite3.Connection:
 
 
 SCHEMA = """
+CREATE TABLE IF NOT EXISTS gate_reviews (
+ id TEXT PRIMARY KEY, run_id TEXT, trial_id TEXT, rule TEXT NOT NULL,
+ content_hash TEXT NOT NULL, source TEXT NOT NULL, line INTEGER,
+ exact_stored INTEGER NOT NULL DEFAULT 0, context TEXT NOT NULL, risk TEXT NOT NULL,
+ status TEXT NOT NULL, reason TEXT, created_at TEXT NOT NULL, resolved_at TEXT
+);
 CREATE TABLE IF NOT EXISTS challenges (
     id TEXT PRIMARY KEY,
     platform_challenge_id TEXT,

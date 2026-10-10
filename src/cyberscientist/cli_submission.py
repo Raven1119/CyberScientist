@@ -73,8 +73,8 @@ def _files(content):
         if not isinstance(provenance, dict): raise ValueError('原生会话绑定须为对象')
         if provenance.get('sha256') != hashlib.sha256(raw).hexdigest():
             raise ValueError('封存原生会话哈希不符')
-        if native_logs.contains_secrets(raw.decode()):
-            raise ValueError('原始会话需脱敏；不得改写，请用干净Trial')
+        native_logs.assert_safe(raw.decode(), run_id=provenance.get('run_id'),
+                                trial_id=provenance.get('trial_id'), source='sealed_native_session')
         first = json.loads(raw.splitlines()[0])
         if first.get('payload', {}).get('id') != provenance.get('session_id'):
             raise ValueError('原生会话身份不符')

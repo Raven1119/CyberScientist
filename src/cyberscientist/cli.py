@@ -106,6 +106,16 @@ def main() -> None:
     ops_events.add_argument('run_id')
     ops_events.add_argument('--tail', type=int, default=20)
     ops_alerts = ops_sub.add_parser('alerts', help='未处理提醒和经验审批')
+    ops_gates = ops_sub.add_parser('gates', help='列出待复核的拦截项')
+    ops_gate = ops_sub.add_parser('gate', help='单项拦截复核')
+    gate_sub = ops_gate.add_subparsers(dest='gate_command', required=True)
+    gate_resolve = gate_sub.add_parser('resolve')
+    gate_resolve.add_argument('gate_id')
+    gate_resolve.add_argument('--false-positive', action='store_true', required=True)
+    gate_resolve.add_argument('--reason', required=True)
+    for command in (ops_gates, gate_resolve):
+        command.add_argument('--port', type=int, default=None)
+        command.add_argument('--target', choices=('dev', 'comp'), default=None)
     ops_shutdown = ops_sub.add_parser('shutdown', help='安全关机屏障和备份')
     ops_resume = ops_sub.add_parser('resume', help='远程只读对账后恢复安全关机意图')
     ops_redeploy = ops_sub.add_parser('redeploy', help='安全关机、只换代码、对账恢复和自检')
@@ -181,6 +191,9 @@ def main() -> None:
             if args.dry_run:body['dry_run']=True
             if args.authorization_file:
                 body['authorization'] = json.loads(Path(args.authorization_file).read_text())
+        elif args.ops_command == 'gate':
+            path = '/api/v1/ops/gates/' + urllib.parse.quote(args.gate_id, safe='') + '/resolve'
+            method = 'POST'; body = {'false_positive': args.false_positive, 'reason': args.reason}
         elif args.ops_command == 'switch':
             if args.name not in features.NAMES: parser.error('未知功能开关：' + args.name)
             path = '/api/v1/features/' + args.name; method = 'PUT'; body = {'enabled': args.state == 'on'}

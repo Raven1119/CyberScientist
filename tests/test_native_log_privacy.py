@@ -50,12 +50,12 @@ def test_public_examples_and_native_ciphertext_are_not_credentials(tmp_path, mon
 
 
 @pytest.mark.parametrize('text', [
-    'sk-private-test-value', 'Bearer actual-unknown-token',
-    'export BOHR_ACCESS_KEY=actual-unknown-value python run.py',
-    r'export BOHR_ACCESS_KEY=actual-unknown-value\npython run.py',
-    '{"api_key":"actual-unknown-value"}',
-    'https://files.example/data?access_key=actual-unknown-value',
-    'https%3A%2F%2Ffiles.example%2Fdata%3Faccess_key%3Dactual-unknown-value',
+    'sk-private-test-value-that-is-long', 'Bearer actual-unknown-token-that-is-long',
+    'export BOHR_ACCESS_KEY=actual-unknown-value-that-is-long python run.py',
+    r'export BOHR_ACCESS_KEY=actual-unknown-value-that-is-long\npython run.py',
+    '{"api_key":"actual-unknown-value-that-is-long"}',
+    'https://files.example/data?access_key=actual-unknown-value-that-is-long',
+    'https%3A%2F%2Ffiles.example%2Fdata%3Faccess_key%3Dactual-unknown-value-that-is-long',
     '-----BEGIN PRIVATE KEY-----\nprivate material\n-----END PRIVATE KEY-----',
 ])
 def test_real_credential_shapes_still_block(tmp_path, monkeypatch, text):
@@ -73,7 +73,7 @@ def test_known_secret_is_blocked_even_inside_opaque_provider_field(tmp_path, mon
 def test_user_text_cannot_claim_the_provider_ciphertext_exception(tmp_path, monkeypatch):
     with pytest.raises(ValueError, match='不得改写'):
         _snapshot(tmp_path, [{'type': 'event_msg', 'payload': {
-            'encrypted_content': 'sk-real-unknown-value'}}], monkeypatch)
+            'encrypted_content': 'sk-real-unknown-value-that-is-long'}}], monkeypatch)
 
 
 def test_placeholder_exception_does_not_bypass_a_known_secret(tmp_path, monkeypatch):

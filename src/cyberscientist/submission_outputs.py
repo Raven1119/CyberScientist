@@ -61,8 +61,7 @@ def stage(content, directory, manifest, *, contract=None):
                 raise ValueError('产物为链接或过大：' + path)
             raw = archive.read(matches[0])
             # Use the native classifier on an ordinary plaintext JSON message.
-            if native_logs.contains_secrets(json.dumps({'content': raw.decode('utf-8', errors='replace')})):
-                raise ValueError('产物命中密钥分类器：' + path)
+            native_logs.assert_safe(json.dumps({'content': raw.decode('utf-8', errors='replace')}), source=path)
             target = directory / path.removeprefix('outputs/')
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(raw)
