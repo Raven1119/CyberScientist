@@ -42,7 +42,8 @@ async def submit_async(function, *args, **kwargs):
     owner = 'submission-http-' + uuid.uuid4().hex
     async def worker():
         resource_coordinator.register_auxiliary(owner, asyncio.current_task())
-        http = asyncio.create_task(asyncio.to_thread(function, *args, **kwargs))
+        from . import gate_reviews
+        http = asyncio.create_task(asyncio.to_thread(gate_reviews.invoke, function, *args, **kwargs))
         try:
             while not http.done():
                 try:
@@ -816,6 +817,12 @@ def preflight_submission(run_id: str, trial_id: str | None,
                 sealed, challenge["content"] if challenge else "", run_id)
         except Exception as exc:
             diagnostic = trace_diagnostics.unavailable(type(exc).__name__)
+    if code:
+        from . import gate_reviews
+        if gate_reviews.approved('submission.preflight_failed:' + code, source_hash,
+                                 run_id=run_id, trial_id=trial_id):
+            advisory_warnings.append('监控单项误报复核已放行：' + code)
+            code = None
     return {"source_package_sha256": source_hash,
             "sealed_package_sha256": hashlib.sha256(sealed).hexdigest(),
             "sealed_bytes": sealed, "admission": report, "projected_steps": steps,

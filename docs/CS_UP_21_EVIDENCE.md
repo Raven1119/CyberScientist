@@ -64,3 +64,11 @@
 - 已实际验证：实际包SHA 7c0d6ab7d4afcb9b00c0588696cf6612eadfe965b5b85c38a4df5a9dfd59d36f，49,770,733字节；Worker receipt bundle.sha256一致。原候选三份科学输出逐字相同；native_trace/native.jsonl逐字哈希5aebd2234dea75ed1ee2d9f452712e81c4188ec8a3f05750c8299df35fd0def9，Worker native_trace哈希一致；原生记录未改。CLI试构建包哈希因时间字段不同，按既有接受例外核对实际包。平台未提供可核验同源下载URL，保留unknown，以Worker核对为证。
 - 已实际验证：03:59:44.673564Z应用submitted；04:06:29.555943Z提前科学事件submission.science_observed，harbor_reward=1、harbor_score=100、scoring_source=harbor_worker；轨迹分和判定仍null，score_is_final=false，平台仍evaluating；首个科学回执约6分45秒。回执英文摘要称未找到完整可信解答，与数值100并存，原样留证，不将其解释为最终accept。
 - 尚未验证：最终轨迹分、判定、扣分码与最终评分耗时；阶段回执未给扣分码。旧Run持续paused，所以科学事件供PI下一帧读取，未另开模型回合来演示实际PI唤醒；未恢复科研Run。私有w5-cli-receipt、w5-actual-package-check、w5-latest-receipt留存。
+
+## W6 统一拦截复核与续接
+
+- 已实现：未来凭据、封包/平台schema、Job强制预检、准入与明确拒收事件进入同一队列；源文件/原生行或event位置、规则、打码前后文、风险与已存原文标记。旧事件不回填，不自动恢复旧unknown。
+- 已实现：原提交意图单独持久化、按原意图+内容哈希隔离；前端设置页逐项填误报理由，CLI/API审计后排原流程续接。未发送项复用原幂等键；明确失败、预约释放且无平台ref的项使用可审计续接键，仍重新检查授权/额度；已发送/unknown禁止重放。内容变化不续接，已存原文始终不能放行。Job预检批准绑定完整输入/权限/spec摘要，不影响另一包。
+- 已实现：复核与续接结果只送PI的异步帧，执行者轨迹不接收监控开发指导；真实原生文件不改写。不可封存的损坏结构仍无法变成有效包，续接失败如实记录，不能伪造通过。
+- 已实际验证：W6/原生凭据/旧题授权/PI唤醒回归39 passed in 13.56s；覆盖真实存储夹具硬拦截、误报后同原意图自动继续、候选变化停止、四类事件同队列、明确失败续接与unknown不重放、原文件不变及PI通知。前端复核+设置18 passed，含已存原文无操作按钮和显式理由提交。隔离fixture未进行额外真实发送。
+- 尚未验证：最终比赛发布后的前端操作读回和完整全组检查，随W7–W10完成后发布。

@@ -9,6 +9,7 @@ import EnvironmentCatalog from '../EnvironmentCatalog'
 import ProtocolDrift from '../ProtocolDrift'
 import Preflight from '../Preflight'
 import SubmissionQueue from '../SubmissionQueue'
+import GateReviews from '../GateReviews'
 import type {
   ConnectionTestResult,
   LlmProfile,
@@ -228,6 +229,7 @@ export default function SettingsPage() {
         <label>提交方式<select aria-label="提交方式" value={settings.submission_transport ?? 'cli'} onChange={e => update(s => ({ ...s, submission_transport: e.target.value as 'cli' | 'api' }))}><option value="cli">官方 CLI（默认）</option><option value="api">原接口（显式回退）</option></select></label>
         <label>官方 CLI 路径<input aria-label="官方 CLI 路径" value={settings.playground.cli_executable ?? ''} onChange={e => update(s => ({ ...s, playground: { ...s.playground, cli_executable: e.target.value } }))} /></label>
         <SubmissionQueue />
+        <GateReviews />
         <article className="card card-body"><h2>提交间隔</h2>
           {Object.entries({ same_topic_minutes: '同账号同题最小间隔（分钟）', cross_topic_minutes: '跨题突发窗口（分钟）', cross_topic_limit: '窗口内跨题提交上限' }).map(([key, label]) => <label key={key}>{label}<input type="number" min={key === 'cross_topic_limit' ? 1 : 0} value={settings.submission_policy?.[key as keyof NonNullable<Settings['submission_policy']>] ?? (key === 'cross_topic_limit' ? 4 : 30)} onChange={e => update(s => ({ ...s, submission_policy: { same_topic_minutes: 30, cross_topic_minutes: 30, cross_topic_limit: 4, ...s.submission_policy, [key]: Number(e.target.value) } }))} /></label>)}
         </article>

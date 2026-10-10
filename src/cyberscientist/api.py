@@ -1103,8 +1103,13 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
     async def ops_gate_resolve(gate_id: str, body: dict[str, Any]):
         from . import gate_reviews
         try:
-            return gate_reviews.resolve(gate_id, reason=body.get('reason'),
-                                        false_positive=body.get('false_positive') is True)
+            result = gate_reviews.resolve(gate_id, reason=body.get('reason'),
+                                           false_positive=body.get('false_positive') is True)
+            from . import maintenance
+            maintenance.schedule(gate_reviews.continue_resolved(gate_id, controller))
+            if result['run_id']:
+                controller.notify_run_change(result['run_id'])
+            return result | {'continuation': 'scheduled'}
         except ValueError as exc:
             raise HTTPException(422, detail={'message': str(exc)}) from exc
 
@@ -1465,7 +1470,8 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
         if isinstance(args, list) and '--cs-operation-id' in args:
             index = args.index('--cs-operation-id')
             request.state.operation_id = args[index + 1] if index + 1 < len(args) else None
-        result = await resource_coordinator.tracked_thread(compute.cli, identity["run_id"], body.get("args"), body.get("cwd", ""), owner_prefix='bohr-tool-')
+        from . import gate_reviews
+        result = await resource_coordinator.tracked_thread(gate_reviews.invoke, compute.cli, identity["run_id"], body.get("args"), body.get("cwd", ""), owner_prefix='bohr-tool-')
         controller.notify_run_change(identity["run_id"])
         from . import tool_feedback
         return tool_feedback.attach(identity['run_id'], 'bohr', result)
@@ -1531,7 +1537,8 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
         action = body.get("action")
         request.state.operation_id = body.get('operation_id')
         if action == "submit":
-            result = await asyncio.to_thread(compute.submit, rid, body.get("operation_id"),
+            from . import gate_reviews
+            result = await asyncio.to_thread(gate_reviews.invoke, compute.submit, rid, body.get("operation_id"),
                                              body.get("spec"), body.get("input_directory", ""),
                                              body.get("preflight"))
         elif action == "reconcile":

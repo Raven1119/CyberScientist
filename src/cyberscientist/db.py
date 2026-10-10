@@ -34,6 +34,14 @@ def get_db() -> sqlite3.Connection:
 
 
 SCHEMA = """
+CREATE TABLE IF NOT EXISTS gate_attempts (
+ id TEXT PRIMARY KEY, request_json TEXT NOT NULL, source_hash TEXT,
+ status TEXT NOT NULL, error TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS gate_attempt_links (
+ gate_id TEXT NOT NULL, attempt_id TEXT NOT NULL,
+ PRIMARY KEY(gate_id,attempt_id)
+);
 CREATE TABLE IF NOT EXISTS gate_reviews (
  id TEXT PRIMARY KEY, run_id TEXT, trial_id TEXT, rule TEXT NOT NULL,
  content_hash TEXT NOT NULL, source TEXT NOT NULL, line INTEGER,
@@ -851,6 +859,9 @@ def append_event_tx(conn: sqlite3.Connection, run_id: str, source: str,
         " source, type, trial_id, payload, raw_ref) VALUES(?,?,?,?,?,?,?,?,?,?)",
         (event_id, run_id, seq, now, now, source, type_, trial_id,
          json.dumps(payload or {}, ensure_ascii=False), raw_ref))
+    if type_ in ('submission.preflight_failed', 'submission.rejected', 'job.preflight', 'admission.blocked'):
+        from . import gate_reviews
+        gate_reviews.record_event(conn, run_id, trial_id, type_, payload or {}, seq)
     return {"event_id": event_id, "run_id": run_id, "seq": seq,
             "occurred_at": now, "recorded_at": now, "source": source,
             "type": type_, "trial_id": trial_id,

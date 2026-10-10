@@ -72,6 +72,12 @@ def collect(controller, run_id, *, now=None):
         texts = []; reasons = []; current = deliveries(run)
         for event in events:
             payload = json.loads(event['payload']); kind = event['type']
+            if kind in ('gate.resolved', 'gate.continuation'):
+                reasons.append(kind)
+                texts.append(('拦截复核结论：监控已将此项判为误报并放行；原提交流程已排入续接，结果仍以实际回执为准。'
+                              if kind == 'gate.resolved' else '原提交流程续接结果：')
+                             + json.dumps(payload, ensure_ascii=False))
+                continue
             terminal = (kind == 'job.observed' and payload.get('status') in ('Finished','Failed','Stopped') or
                         kind in ('sandbox.background_polled','sandbox.background_observed') and payload.get('status') in ('completed','failed','cancelled'))
             if not terminal:
