@@ -170,3 +170,13 @@ WebBridge 通过自有标签读回 `http://localhost:8765/` 的真实比赛工�
 最终从头运行 `PATH=/home/wmywb/.local/bin:$PATH .venv/bin/pytest -q`：**1939 passed / 2 warnings / 1227.20 秒**，退出 0。警告是现有依赖弃用提示，未隐藏；完整日志 `.package-checks/cs21/final-pytest-clean.log`。原来的 5 个开关失败已在全量中通过，测试未跳过/移除。前端 **128 passed / 26 files**，构建退出 0；compileall、git diff --check 通过。
 
 本次每项/补丁独立提交，消息均以 CS-UP-21 结尾。最终功能代码和模型输入与全集生成源 `550f885` 逐字节一致，后续仅文档证据；全集记录生成时比赛 SHA，不伪装为之后的文档提交。P0 11:59 前发布，全集交付按完整检查后推送，未变更原时间表。最终源代码与快照标签、实际远端读回在交付节补记。
+
+## 实际交付与停止
+
+最终 `ops release --commit 48c033b57a24cd776480608e703f58749c0f1faa --target comp --timeout 240` **completed**。比赛健康身份为同一 source SHA，代码指纹 **3b9bf065dd4ac462611220bcee6d9fc2be3c5c82c0159ef9039a5b05a7c92d07**；发布清单 **250 个运行文件全部逐项 SHA256 一致**，缓存 `lightchaser-candidate-4` 别名指向相同完整 SHA。前端继续运行于 **http://localhost:8765/**，保留工作区及历史数据，不启动新研究。
+
+源码 `main` 和 `lightchaser-candidate-4` 实际原子推送，远端 peeled 标签读回 **48c033b57a24cd776480608e703f58749c0f1faa**；[GitHub 源码标签](https://github.com/Raven1119/CyberScientist/tree/lightchaser-candidate-4) 中包含最终全集。私有快照 release 生成并推送，`main` 及同名 peeled 标签读回 **e7bbaac6ba83d316e1662eecf92dcb2dc9710d9a**；[私有比赛快照标签](https://github.com/Raven1119/CyberScientist-comp/tree/lightchaser-candidate-4)，22 技能、257 导出文件、密钥扫描 **0 命中**。只使用已有凭据，没有新登录或修改全局配置，没有 force push/reset/clean。
+
+本交付事实在发布后追加为文档提交，源码 main 因此比冻结标签前进一步；运行代码与标签版本完全相同，不移动已发布标签。完整远端 refs、源代码/登录凭据扫描、最终健康/250 文件逐项校验保存在私有 `.package-checks/cs21/{source-push.txt,snapshot-remote-refs.txt,final-source-secret-scan.json,final-deployment-proof.json}`。
+
+P0 在 14:30 前发布，全集在 15:30 前已推送，代码在 16:00 前冻结。实现/测试/发布/推送/标签没有未完成项；真实长等待及供应商隐藏工具定义的验收覆盖限制见最终摘要，不把替代证据说成完整真实长耗时测试。停止等待用户与设计助手验收，不继续科研、重发未知、追加提交或收割。
