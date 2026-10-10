@@ -48,7 +48,11 @@
 - 后端通过数按唯一用例去重：组 0 前段 472 + 后段 162，组 1 前段 390 + 后段 227，组 2 全部 701。重跑文件中此前通过的 6/4 项不重复计数。日志为 `backend-final-group-*.log`、`backend-final-group-{0,1}-remainder.log`；最初因继续修补而中断的运行不计为通过。
 - 有界代码审查、`compileall`、`git diff --check` 通过。前端实体归属/响应顺序、提醒 ACK、后台查看不发控制操作，以及原生管道超时/unknown/脱敏路径已逐处检查。
 
-源仓库推送及比赛发布结果在完成后追加。
+- 源码修复提交 `562b2fe9ad82e48e5680731d0e50d511117e3265` 已推送，远端 main 读回一致。`ops release --commit 562b2fe9ad82e48e5680731d0e50d511117e3265 --target comp --timeout 420` 返回 completed；比赛后端 PID 33103，唯一 8765 监听，前端地址仍为 `http://localhost:8765/`。
+- 发布后 loaded/checkout 均为上述 SHA、`matches=true`，运行指纹 `258f641e2cf2bcb9813bdc175a1bda3250100822848b8ca8f5640a5ea59f834b`。私有快照 `2c152c99d5e116948c6d5436122e26b6e011e12b` 已推送；250 个运行文件、257 个导出文件、22 个技能，密钥扫描 0 命中。
+- `production-verification.json` / `production-bridge-records.json`：WebBridge 在实际比赛前端查看 `run_cc0251a839`，题目 ID、完整 Run ID、`cancelled` → “已终止”、冻结模型逐项匹配后端。冻结大脑/执行者均为历史 `gpt-6.1-sol/xhigh`；题目下次配置的大脑为 `gpt-6-astra`，界面分开显示，不把后续配置当历史会话模型。查看过程 350 个 API 请求均为 GET；比赛截图 `production/research.png` 经查看，无 Demo 标识。
+- 发布前后 52 个 Run ID、15 条提交 ID 完全一致；设置文件及凭据存储文件的 SHA256 不变。自动提交仍 true、队列 0、暂停 false；历史 unknown 沙箱记录保留。独立 Demo 后端已停止，真实比赛后端保持运行。
+- 本记录的最终文档提交在修复发布后追加；运行代码仍对应上述修复 SHA。未重试旧完整复盘、未新增科学 Run/Job/Attempt、未修改原生记录或全局 CLI 配置。
 
 ## 尚未验证
 
