@@ -48,4 +48,4 @@ def render_science_policy(text):
     if enabled('local_calculation'): return text
     import re
     return re.sub(r'(?:按D-49，|执行器可用项目科学Python|秒级小计算可在项目)[^\n]*?(?=计费Job核对|$)',
-                  science_instruction().strip() + ' ', text, flags=re.MULTILINE)
+                  science_instruction().strip(), text, flags=re.MULTILINE)
