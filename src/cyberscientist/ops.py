@@ -2,10 +2,32 @@
 import asyncio
 import json
 import subprocess
+import time
 from datetime import datetime, timezone
 from . import alerts, backend_identity, config, db, experiences, observation, power, resource_coordinator
 
 RESUME_TASK = None
+
+
+async def wait_alert(timeout=1800):
+    if type(timeout) is not int or not 0 <= timeout <= 43200:
+        raise ValueError('timeout须为0–43200秒整数')
+    await asyncio.to_thread(alerts.pending)
+    alert_cursor = db.query_one('SELECT COALESCE(MAX(rowid),0) FROM alerts')[0]
+    gate_cursor = db.query_one('SELECT COALESCE(MAX(rowid),0) FROM gate_reviews')[0]
+    deadline = time.monotonic() + timeout
+    while True:
+        await asyncio.to_thread(alerts.pending)
+        new_alerts = [dict(r) for r in db.query('SELECT id,title,run_id,kind FROM alerts WHERE rowid>? AND acknowledged_at IS NULL', (alert_cursor,))]
+        new_gates = [dict(r) for r in db.query("SELECT id,rule,run_id,risk,exact_stored,source,line FROM gate_reviews WHERE rowid>? AND status='pending'", (gate_cursor,))]
+        if new_alerts or new_gates:
+            text = '\n'.join(['新告警：' + item['title'] + ' [' + item['id'] + ']' for item in new_alerts]
+                             + ['新待复核：' + item['rule'] + ' [' + item['id'] + ']' for item in new_gates])
+            return safe({'status': 'event', 'text': text, 'alerts': new_alerts, 'gates': new_gates})
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return {'status': 'timeout', 'text': '无新事件', 'alerts': [], 'gates': []}
+        await asyncio.sleep(min(.5, remaining))
 
 
 def safe(value):

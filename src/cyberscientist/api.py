@@ -1094,6 +1094,14 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
         from . import ops
         return ops.pending()
 
+    @app.get('/api/v1/ops/wait-alert')
+    async def ops_wait_alert(timeout: int = 1800):
+        from . import ops
+        try:
+            return await ops.wait_alert(timeout)
+        except ValueError as exc:
+            raise HTTPException(422, detail={'message': str(exc)}) from exc
+
     @app.get('/api/v1/ops/gates')
     async def ops_gates():
         from . import gate_reviews

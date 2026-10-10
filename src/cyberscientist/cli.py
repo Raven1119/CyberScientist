@@ -106,6 +106,10 @@ def main() -> None:
     ops_events.add_argument('run_id')
     ops_events.add_argument('--tail', type=int, default=20)
     ops_alerts = ops_sub.add_parser('alerts', help='未处理提醒和经验审批')
+    ops_wait = ops_sub.add_parser('wait-alert', help='等待新的告警或待复核项；超时返回无新事件')
+    ops_wait.add_argument('--timeout', type=int, default=1800)
+    ops_wait.add_argument('--port', type=int, default=None)
+    ops_wait.add_argument('--target', choices=('dev', 'comp'), default=None)
     ops_gates = ops_sub.add_parser('gates', help='列出待复核的拦截项')
     ops_gate = ops_sub.add_parser('gate', help='单项拦截复核')
     gate_sub = ops_gate.add_subparsers(dest='gate_command', required=True)
@@ -202,15 +206,18 @@ def main() -> None:
             path = '/api/v1/ops/events/' + urllib.parse.quote(args.run_id, safe='') + '?tail=' + str(args.tail)
         elif args.ops_command == 'digest':
             path='/api/v1/ops/digest'+('?'+urllib.parse.urlencode({'since':args.since}) if args.since else '')
+        elif args.ops_command == 'wait-alert':
+            if not 0 <= args.timeout <= 43200: parser.error('timeout须为0–43200秒整数')
+            path='/api/v1/ops/wait-alert?'+urllib.parse.urlencode({'timeout':args.timeout})
         elif args.ops_command == 'shutdown': path = '/api/v1/system/safe-shutdown'; method = 'POST'; body = {}
         elif args.ops_command == 'resume': path = '/api/v1/ops/resume'; method = 'POST'; body = {}
         else: path = '/api/v1/ops/' + args.ops_command
         request = urllib.request.Request(f'http://127.0.0.1:{port}' + path, data=json.dumps(body).encode() if body is not None else None, headers={'Content-Type': 'application/json'}, method=method)
         try:
-            with urllib.request.urlopen(request, timeout=180 if method == 'POST' else 30) as response: result = json.load(response)
+            with urllib.request.urlopen(request, timeout=args.timeout+30 if args.ops_command == 'wait-alert' else 180 if method == 'POST' else 30) as response: result = json.load(response)
         except (OSError, ValueError) as exc:
             print(observation.strip_secrets(str(exc)), file=sys.stderr); raise SystemExit(2)
-        print(observation.strip_secrets(result['text'] if args.ops_command=='digest' else json.dumps(result, ensure_ascii=False)))
+        print(observation.strip_secrets(result['text'] if args.ops_command in ('digest','wait-alert') else json.dumps(result, ensure_ascii=False)))
         if args.ops_command == 'shutdown' and result.get('can_shutdown') is not True: raise SystemExit(1)
         if args.ops_command == 'resume' and result.get('status') != 'ready': raise SystemExit(1)
         return
