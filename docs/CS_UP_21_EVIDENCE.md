@@ -114,3 +114,29 @@
 全量回归发现 5 个原有本地计算开关断言失败：W9 删除开发编号后，旧替换仍只匹配 `按D-49`。同步匹配无编号的实际段落，保留全部原有测试。失败记录保留，不计通过；修正后的结果另记。
 
 修正后的 `tests/test_prompt_book_cs21.py tests/test_features_cs10.py`：**58 passed / 85.56 秒**；再次运行完整交接文本提取测试：**4 passed / 5.72 秒**。无 Git 的比赛目录按设计只接受完整缓存 SHA 或缓存标签；短 SHA 的回退在 prepare 阶段被拒，未停服务。随后用完整缓存 SHA 执行真实回退，结果后补。
+
+### W5 最终平台回执（补测已完成）
+
+正常应用路径的一次正式发送 `sub_dfe4af1401` / Attempt **50633** / Worker **28223**，账号 `mbox_fdc3509fc3`（cyberscientist-exp-89b8dd）。平台最终回执于 **2026-10-10T04:10:07.126869Z** 已观察到：`harbor_reward=1.0`，`harbor_score=100.0`，展示科学分 **100.0**，`trace_score=82.8`，`trace_decision=accept`，`scoreIsFinal=true`。科学分提前观察时间 04:06:29.555943Z，距发送约 6 分 45 秒；最终状态距发送约 10 分 22 秒。最终分数读取记录 04:10:11.682056Z。
+
+原始最终回执 `trace_low_score_reasons` 仍列出 **N11_OUTPUT_NOT_CAUSALLY_SUPPORTED** 和 **N14_METHOD_SUBSTITUTION_OR_FALLBACK**；其解释、score_effect、remediation 完整保留，不因最终 accept 删去。`scoringDetails.gradable=true`、`counts_toward_season=false`：这是已经结束旧题的有界补测，不声称具备 Lightchaser 或当期正式参赛有效性。平台字节无法下载的既有例外仍采用 Worker 实际发送包及原生轨迹哈希逐项一致作为证据。最终平台响应、数据库快照保存在 `.package-checks/cs21/w5-final-platform-response.json`、`w5-final-receipt.json`，均未入 Git。第一发送成功，第二次发送条件未触发，真实提交总数 **1**。
+
+### W7 / W9 实际命令验证
+
+`ops wait-alert --target comp --timeout 1` 实际阻塞至超时并输出 **无新事件**；新事件几秒内返回的回归见 23 项测试。缓存回退用无 Git 的比赛目录执行：`ops redeploy --commit 0b012a1e0648cc92fabc53bfa899eb0ba5612c90 --target comp --timeout 240` **completed**；恢复最新版和最终清单后补。整个过程旧 RH-02 未恢复科研执行，未知外部操作未重发。
+
+### W2 最新补充在 W10 中的实际送达证据
+
+正式命令 `ops prompts dump --target comp --output docs/PROMPT_BOOK.md` 成功。生成源为比赛 `ed22d25ab1807d2640221398b2e5911192f66f93` 的实际模块，使用真实 RH-02 题面和后台配置，模型调用 **0**。PI 实际开发者指令 **18,400 字节**，首条消息 **324,202 字节**。数值设置第一版采用题面给定取值/界限、评分检查项、量级差异硬错误检查、干净复跑参数沿用要复做的提交均已进入开发者指令；首条消息中的简报协议也要求“评分在查什么”。PI 开发者指令及投稿技能在《提示词全集》中明确标为**相对 v2 有改动**，角色文件仍为 **v3**。完整历史交接只读提取，书中将历史昂贵设置单列为历史材料，不修改已批准方法或原生轨迹。
+
+### W10 正式生成结果
+
+[docs/PROMPT_BOOK.md](PROMPT_BOOK.md)：**2,653,012 字节**，SHA256 **a34935f6aa8d93ae6455466bfce3c3a434bc0e8ffcc1c2f9de2357ccdc421ee5**。112 个片段，22 个启用技能全文、41 个 active 全局经验全文；五个角色按送达时机组织，源文件/函数、可编辑位置、字节和 v2 对照逐段列出。2408 条疑似冲突扫描命中逐项列出全集行列及修改位置；包括历史交接、旧经验和模板源码，不自动改写这些材料。全局经验的后续改变仍须前端审批。
+
+以比赛已存凭据原文及编码形式检查完整全集，**0 命中**。供应商完整隐藏内建工具定义不由应用代码提供：本书导出全部应用 MCP 清单/说明并写明限制，不假造供应商工具文本。重新生成使用 `ops prompts dump --target comp --output docs/PROMPT_BOOK.md`；运行事实、时间和回执字段随实际状态变化，比较时应区分动态数据与静态指令。
+
+### W9 恢复及全量检查进行中
+
+完整 SHA 回退后，`ops release --commit ed22d25 --target comp --timeout 240` **completed**，私有比赛快照 **b4eb0f773817722e74e9ebc3d74c7f1ae4668ef4** 已推送。旧缓存位置保持不存在。
+
+第一轮全部后端测试 **1934 passed / 5 failed / 2 warnings / 1275.16 秒**；五个失败均是移除开发编号后开关替换的原有断言，修正后的相关 58 项通过。现重新运行完整套件，不跳过或移除失败测试。前端全量 **128 passed / 26 files**，构建通过；compileall、diff 检查通过。最终全量结果与推送标签另补。
