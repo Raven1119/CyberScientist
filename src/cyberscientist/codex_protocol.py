@@ -138,6 +138,7 @@ def thread_params(spec: dict[str, Any], model: str | None,
                 allowed_tools=tuple(name for name in allowed_tools if name!='research_trace_narrative_check')
             cfg["mcp_servers"][server["name"]].update({
                 "enabled_tools": list(allowed_tools),
+                "tool_timeout_sec": 1500,
                 "tools": {name: {"approval_mode": "approve"}
                           for name in allowed_tools},
             })

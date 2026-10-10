@@ -60,9 +60,10 @@ _TOOLS = [
 
 _TOOLS.append({
     "name": "research_job",
-    "description": "本 Run 的受控 Bohrium Job：创建前原子预留额度；相同 operation_id 幂等，unknown 先 reconcile 不重建。暂停后只读/停止，禁止新增计算。",
+    "description": "本 Run 的受控 Bohrium Job：创建前原子预留额度；相同 operation_id 幂等，unknown 先 reconcile 不重建。长计算用action=wait一次等待终态（timeout上限1200秒），不要反复查询；服务器等待不调用模型。暂停后只读/停止，禁止新增计算。",
     "inputSchema": {"type": "object", "additionalProperties": False,
-        "properties": {"action": {"enum": ["submit", "list", "reconcile", "stop"]},
+        "properties": {"action": {"enum": ["submit", "list", "reconcile", "stop", "wait"]},
+                       "timeout": {"type": "integer", "minimum": 0, "maximum": 1200},
                        "operation_id": {"type": "string", "maxLength": 100},
                        "spec": {"type": "object"}, "input_directory": {"type": "string"},
                        "preflight": {"type": "object"}},
@@ -70,9 +71,9 @@ _TOOLS.append({
 
 _TOOLS.append({
     "name": "research_sandbox",
-    "description": "本 Run 的受控 Bohrium 沙箱：有界创建、执行、文件传输、查询与删除；create/exec/files.write 需稳定 operation_id，结果未知时先对账不重发。",
+    "description": "本 Run 的受控 Bohrium 沙箱：有界创建、执行、文件传输、查询与删除；create/exec/files.write 需稳定 operation_id，结果未知时先对账不重发。后台长计算用action=wait和原operation_id一次等到终态（timeout上限1200秒），不要反复poll；服务器等待不调用模型。",
     "inputSchema": {"type": "object", "additionalProperties": False,
-        "properties": {"action": {"enum": ["create", "reconcile", "exec", "background", "poll", "ensure", "work", "files.read",
+        "properties": {"action": {"enum": ["create", "reconcile", "exec", "background", "poll", "wait", "ensure", "work", "files.read",
                                             "files.write", "delete", "list", "describe",
                                             "quota", "machine.list", "template.list"]},
                        "operation_id": {"type": "string", "maxLength": 100},
@@ -299,14 +300,14 @@ def _handle(msg: dict) -> dict | None:
             else:
                 action = args.get("action")
                 out = _post("/api/v1/tools/job", args,
-                            timeout=1350 if action == "submit" else 120 if action == "stop" else 30,
-                            retry_transient=action not in ("submit", "stop"))
+                            timeout=1260 if action == 'wait' else 1350 if action == "submit" else 120 if action == "stop" else 30,
+                            retry_transient=action not in ("submit", "stop", 'wait'))
         elif name == "research_sandbox":
             requested = args.get('timeout')
             wait = (max(420, requested + 240) if args.get('action') == 'exec'
                     and type(requested) is int and 1 <= requested <= 10800 else
                     375 if args.get('action') in ('files.read', 'files.write') else
-                    3000 if args.get('action') == 'create' else 180)
+                    3000 if args.get('action') == 'create' else 1260 if args.get('action') == 'wait' else 180)
             out = _post("/api/v1/tools/sandbox", args, timeout=wait,
                         retry_transient=False)
         elif name == "research_package_check":

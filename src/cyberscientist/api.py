@@ -1487,7 +1487,12 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
     @app.post('/api/v1/tools/sandbox')
     async def tool_sandbox(request: Request) -> dict:
         identity = _tool_auth(request)
-        result = await resource_coordinator.tracked_thread(sandboxes.dispatch, identity['run_id'], await request.json(), owner_prefix='sandbox-tool-')
+        body = await request.json()
+        if body.get('action') == 'wait':
+            from . import server_wait
+            result = await server_wait.wait(identity['run_id'],body.get('operation_id'),body.get('timeout',1200),kind='sandbox')
+        else:
+            result = await resource_coordinator.tracked_thread(sandboxes.dispatch, identity['run_id'], body, owner_prefix='sandbox-tool-')
         controller.notify_run_change(identity['run_id'])
         from . import tool_feedback
         return tool_feedback.attach(identity['run_id'], 'sandbox', result)
@@ -1551,12 +1556,15 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
                                              body.get("preflight"))
         elif action == "reconcile":
             result = await job_recovery.reconcile(rid, controller)
+        elif action == 'wait':
+            from . import server_wait
+            result = await server_wait.wait(rid,body.get('operation_id'),body.get('timeout',1200),kind='job')
         elif action == "stop":
             result = await asyncio.to_thread(compute.stop, rid, body.get("operation_id"))
         elif action == "list":
             result = compute.list_jobs(rid)
         else:
-            raise compute.ComputeError("INVALID_ACTION", "支持 submit/list/reconcile/stop")
+            raise compute.ComputeError("INVALID_ACTION", "支持 submit/list/reconcile/stop/wait")
         controller.notify_run_change(rid)
         from . import tool_feedback
         return tool_feedback.attach(rid, 'job.' + str(action), result)
