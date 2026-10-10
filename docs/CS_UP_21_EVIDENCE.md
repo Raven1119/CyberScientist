@@ -56,3 +56,11 @@
 - 已实际验证：PATH=/home/wmywb/.local/bin:$PATH .venv/bin/pytest -q：1916 passed, 2 warnings in 1237.94s，完整重跑无跳过；日志.package-checks/cs21/p0-pytest-corrected.log。前端25文件126项全部通过、npm run build通过；compileall及git diff --check通过。
 - 已实际验证：正常/api/v1/mailboxes/claims/refresh读回5个已配置账号confirmed；平台GET目标题结束时间2026-08-08T12:00:00Z。旧题验证授权max_submissions=2；当前真实发送0。旧Run保持paused，其他旧recovering Run resume_on_startup=0。
 - 尚未验证：本次比赛发布和旧题发送；W6–W10尚未交付。
+
+### W5 真实发送及提前科学回执
+
+- 已实际验证：W1–W4完整1916项检查后ops release 91b0faf001f25db0187cb250407d4f49e200832d completed；比赛健康身份PID1990018、同版本/比赛根目录，WebBridge前端成功打开。开发main已推送91b0faf；私有快照d2687fc6cc7ad3a7ca8e3b9f6b4549481c0f79f8、254文件密钥扫描0命中。
+- 已实际验证：正常ops submit入口、封存/清单/凭据检查/官方CLI试构建/正式发送完成：sub_dfe4af1401，Attempt 50633，Worker 28223，账号mbox_fdc3509fc3（cyberscientist-exp-89b8dd）。真实发送1/上限2，首次成功，不使用第二次。
+- 已实际验证：实际包SHA 7c0d6ab7d4afcb9b00c0588696cf6612eadfe965b5b85c38a4df5a9dfd59d36f，49,770,733字节；Worker receipt bundle.sha256一致。原候选三份科学输出逐字相同；native_trace/native.jsonl逐字哈希5aebd2234dea75ed1ee2d9f452712e81c4188ec8a3f05750c8299df35fd0def9，Worker native_trace哈希一致；原生记录未改。CLI试构建包哈希因时间字段不同，按既有接受例外核对实际包。平台未提供可核验同源下载URL，保留unknown，以Worker核对为证。
+- 已实际验证：03:59:44.673564Z应用submitted；04:06:29.555943Z提前科学事件submission.science_observed，harbor_reward=1、harbor_score=100、scoring_source=harbor_worker；轨迹分和判定仍null，score_is_final=false，平台仍evaluating；首个科学回执约6分45秒。回执英文摘要称未找到完整可信解答，与数值100并存，原样留证，不将其解释为最终accept。
+- 尚未验证：最终轨迹分、判定、扣分码与最终评分耗时；阶段回执未给扣分码。旧Run持续paused，所以科学事件供PI下一帧读取，未另开模型回合来演示实际PI唤醒；未恢复科研Run。私有w5-cli-receipt、w5-actual-package-check、w5-latest-receipt留存。

@@ -1510,3 +1510,8 @@ CS-UP-13 工作包提交索引（按Git事实，最终W8标签另录）：
 
 - 已实际验证：完整后端1916 passed in 1237.94s；前端126 passed/25文件、构建、compileall、diff检查通过。5个账号fresh自检confirmed，旧题已结束只读确认；无新科研Run。
 - 尚未验证：正式发布及W5真实发送，P1和提示词全集继续按卡推进。
+
+### CS-UP-21 W5 真实补提
+
+- 已实际验证：P0 ops release completed、比赛前端与私有快照正常；真实提交1/2，Attempt50633 / Worker28223。三科学输出和原生字节不变，实际包与Worker哈希一致。提前harbor科学分100，约6分45秒；最终轨迹/判定仍unknown，平台evaluating、score_is_final=false。
+- 尚未验证：最终评分；旧Run保持暂停，不为验收恢复科研或额外提交。P1及提示词全集继续。
