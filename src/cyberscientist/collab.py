@@ -129,7 +129,7 @@ def guidance_eligible(conn: sqlite3.Connection, run_id: str, g) -> bool:
                      (status,db.utcnow(),g["id"]))
         db.append_event_tx(conn,run_id,"controller","guidance."+status,{"guidance_id":g["id"]},trial_id=g["target_trial_id"])
         return False
-    return run["phase"] == "running" and run["gate"] == "open"
+    return run["phase"] == "running" and (run["gate"] == "open" or run["gate"] == "stopped" and g['kind'] == 'stop')
 
 
 def eligible_guidance(conn: sqlite3.Connection, run_id: str):

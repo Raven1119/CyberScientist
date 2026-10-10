@@ -26,3 +26,10 @@
 - 已实际验证：PI唤醒与原协作全组 `.venv/bin/pytest -q tests/test_pi_wake_cs21.py tests/test_collaboration.py`：67 passed in 48.10s。含三触发、合并、重复终态不再唤醒、文件更新、30分钟计时、真实字段合成的提交数/回执/剩余时间、90分钟告警及旧协作回归。协议fixture证据不冒充真实PI科学运行。
 - 已实际验证：Linux PATH加入已有~/.local/bin后前端SettingsPage测试16 passed；无全局配置修改。
 - 尚未验证：比赛目录发布后真实后台计算和native PI唤醒；本卡不新增科研Run，等待工具的有界真实验证仅在W8执行。
+
+## W4 紧急指导直达
+
+- 已实现：stop、改向（intent=reframe/change_direction）、提交前交付（deliver_before_submit）使用既有Prime.steer/Codex turn/steer，在busy当前回合插入，不等待检查点；普通补充仍排队。显式生命周期steer视为改向。
+- 已实现：送达仍以原生accepted记sent/busy_insert；未知送达不冒称成功、不自动重放；ACK协议不变。停止先关受控动作门，再投递停止指导并请求原生abort。忙时插入不覆盖当前回合/Trial的归属。
+- 已实际验证：紧急指导及协作全组67 passed in 46.70s；补充实际ACK回归5项另跑通过。隔离fake原生长命令仍等待时，紧急指导在同一忙回合投递并ACK，重复投递0；普通说明留queued。原生真实turn/steer协议为既有已验证机制，本卡未额外发科研模型回合。
+- 尚未验证：W1–W4比赛发布与W5真实旧题提交；不以fixture回归代替真实提交。

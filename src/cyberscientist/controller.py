@@ -2469,11 +2469,12 @@ class RunController:
     async def _deliver_queued_guidance(self, run_id: str) -> None:
         prime = self._prime_instances.get(run_id)
         sid = self._prime_sessions.get(run_id)
-        if not prime or not sid or self._executor_busy.get(run_id):
+        busy = self._executor_busy.get(run_id, False)
+        if not prime or not sid:
             return
         # 只有运行中且门禁开放才投递：暂停/等待大脑期间不准唤醒执行器
         run = self._require_run(run_id)
-        if (run["phase"] != "running" or run["gate"] != "open"
+        if (run["phase"] != "running" or run["gate"] not in ("open", "stopped")
                 or self._run_minutes_exceeded(run)):
             return
         try:
@@ -2482,6 +2483,8 @@ class RunController:
             return
         with db.transaction() as conn:
             rows = collab.eligible_guidance(conn, run_id)
+            if busy:
+                rows = [g for g in rows if self._urgent_guidance(g)]
             if not rows:
                 return
             g = rows[0]
@@ -2497,10 +2500,12 @@ class RunController:
                 f"预期：{g['expected_change_md'] or ''}\n"
                 f"重新讨论条件：{g['revisit_when_md'] or ''}\n"
                 f"请用 ack_guidance 确认 accepted 或 challenged。")
-        self._prime_prompts[run_id] = (g["target_trial_id"], text)
-        self._prime_guidance_ids[run_id] = g["id"]
+        if not busy:
+            self._prime_prompts[run_id] = (g["target_trial_id"], text)
+            self._prime_guidance_ids[run_id] = g["id"]
+        channel = 'busy_insert' if busy else 'idle_prompt'
         try:
-            receipt = await prime.prompt(sid, text)
+            receipt = await prime.steer(sid, text) if busy else await prime.prompt(sid, text)
         except Exception as exc:
             from .prime import ActionReceipt
             receipt = ActionReceipt(status="unknown", detail=str(exc)[:200])
@@ -2512,11 +2517,11 @@ class RunController:
                 conn.execute(
                     "UPDATE guidance SET status='sent', delivery_channel=?,"
                     " operation_id=?, updated_at=? WHERE id=?",
-                    ("idle_prompt", receipt.operation_id or "", db.utcnow(),
+                    (channel, receipt.operation_id or "", db.utcnow(),
                      g["id"]))
                 db.append_event_tx(conn, run_id, "controller", "guidance.sent",
                                    {"guidance_id": g["id"], "kind": g["kind"],
-                                    "channel": "idle_prompt",
+                                    "channel": channel,
                                     "operation_id": receipt.operation_id},
                                    trial_id=g["target_trial_id"])
             else:
@@ -2534,6 +2539,16 @@ class RunController:
         if limit:
             self._record_model_limit(run_id, "executor", limit,
                                      trial_id=g["target_trial_id"])
+
+    @staticmethod
+    def _urgent_guidance(g):
+        return (g['kind'] == 'stop' or
+                g['kind'] == 'steer' and (g['intent'] in ('reframe', 'change_direction', 'deliver_before_submit') or
+                '提交前' in g['text_md'] and '交付' in g['text_md'] or '先交付' in g['text_md']))
+
+    async def _deliver_stop_guidance(self, run_id):
+        await self._deliver_queued_guidance(run_id)
+        await self._request_abort(run_id)
 
     async def _request_executor_repair(self, run_id: str, trial_id: str | None,
                                        *, stage: str, code: str, detail: str,
@@ -3439,11 +3454,11 @@ class RunController:
         if result["disposition"] == "intervene":
             g = result["guidance"]
             if g["kind"] == "stop":
-                asyncio.create_task(self._request_abort(run_id))
+                asyncio.create_task(self._deliver_stop_guidance(run_id))
             elif g["kind"] == "submit":
                 asyncio.create_task(self._execute_submit(
                     run_id, guidance_id, frame.get("trial_id")))
-            elif not self._executor_busy.get(run_id):
+            elif not self._executor_busy.get(run_id) or self._urgent_guidance(g):
                 asyncio.create_task(self._deliver_queued_guidance(run_id))
         elif req["blocking"]:
             db.append_event(run_id, "controller", "brain.blocking_unanswered",
@@ -4022,7 +4037,7 @@ class RunController:
                         " AND status='stalled'", (action["trial_id"],))
                     gid = collab.create_guidance(
                         conn, run_id, source="requested",
-                        g={"kind": "steer", "intent": "continue",
+                        g={"kind": "steer", "intent": "change_direction",
                            "text_md": action["message"] + planning.brief_for_run(run_id),
                            "reason_md": "大脑生命周期判断",
                            "evidence_refs": [],
@@ -4037,8 +4052,7 @@ class RunController:
                                        {"guidance_id": gid, "kind": "steer",
                                         "via": "lifecycle_decision"},
                                        trial_id=action["trial_id"])
-                if not self._executor_busy.get(run_id):
-                    await self._deliver_queued_guidance(run_id)
+                await self._deliver_queued_guidance(run_id)
             elif op == "wait":
                 requested = action.get("duration_seconds")
                 wait_limit = defaults["max_brain_wait_seconds"]

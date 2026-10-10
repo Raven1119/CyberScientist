@@ -542,7 +542,9 @@
           "enum": [
             "continue",
             "observe",
-            "reframe"
+            "reframe",
+            "change_direction",
+            "deliver_before_submit"
           ]
         },
         "text_md": {

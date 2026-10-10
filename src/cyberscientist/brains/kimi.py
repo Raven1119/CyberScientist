@@ -340,6 +340,7 @@ class KimiBrain:
         if packet.get("protocol") == "review_result":
             return (
                 _brain_instruction() + "\n\n"
+                "紧急指导：停止用kind=stop；改向用intent=change_direction/reframe；提交前要求交付用intent=deliver_before_submit。三类直接插入当前回合，普通补充用nudge并排队；送达仍须ACK。\n"
                 "ReviewResult 结构（必须严格遵守）：\n"
                 '{"schema_version":1,"message_type":"review_result",'
                 '"frame_id":"见 ObservationFrame","disposition":"silent|intervene",'
@@ -349,7 +350,7 @@ class KimiBrain:
                 '"intervene_when_md":"何时介入","evidence_refs":[]}\n'
                 "没有观察项就输出空数组 []；禁止输出字符串数组。\n"
                 "guidance 非空时结构："
-                '{"kind":"nudge|steer|stop|submit","intent":"continue|observe|reframe",'
+                '{"kind":"nudge|steer|stop|submit","intent":"continue|observe|reframe|change_direction|deliver_before_submit",'
                 '"text_md":"...","reason_md":"...","evidence_refs":[],'
                 '"expected_change_md":"...","revisit_when_md":"..."}\n'
                 "kind=submit：结果包已可提交时发出；仅在已有 Run 授权、提交预算"
