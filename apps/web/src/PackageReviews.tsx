@@ -1,5 +1,6 @@
-import { useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { api } from './api'
+import { useLatestRequest } from './useLatestRequest'
 
 type Review = { operation_id: string; status: string; source_sha256: string; sealed_sha256: string; error: string | null;
   scorer_source?: { status: string; scorer_version?: string };
@@ -12,12 +13,22 @@ type Review = { operation_id: string; status: string; source_sha256: string; sea
 export default function PackageReviews({ runId }: { runId: string }) {
   const [reviews, setReviews] = useState<Review[]>([])
   const [error, setError] = useState('')
+  const [viewing, setViewing] = useState(false)
+  const beginRead = useLatestRequest(runId)
+  const load = useCallback(async () => {
+    const current = beginRead()
+    try { const data = await api.get<{ items: Review[] }>(`/api/v1/runs/${runId}/package-reviews`); if (current()) { setReviews(data.items); setError(data.items.length ? '' : '尚无审查报告') } }
+    catch (problem) { if (current()) setError(problem instanceof Error ? problem.message : String(problem)) }
+  }, [runId, beginRead])
+  useEffect(() => {
+    if (!viewing) return
+    void load()
+    const timer = window.setInterval(() => void load(), 5000)
+    return () => window.clearInterval(timer)
+  }, [viewing, load])
   return <article className="card card-body"><h2>包审查与评分器审计</h2>
     <p>审查意见供 PI 判断；负向对照由 PI 决定是否交给执行器运行。</p>
-    <button type="button" onClick={async () => {
-      try { const data = await api.get<{ items: Review[] }>(`/api/v1/runs/${runId}/package-reviews`); setReviews(data.items); setError(data.items.length ? '' : '尚无审查报告') }
-      catch (problem) { setError(problem instanceof Error ? problem.message : String(problem)) }
-    }}>查看审查报告</button>
+    <button type="button" onClick={() => { if (viewing) void load(); else setViewing(true) }}>查看审查报告</button>
     {error && <p role="status">{error}</p>}
     {reviews.map(review => <details key={review.operation_id}><summary>{review.operation_id} · {review.status}</summary>
       <p>{review.error || review.result?.summary_md}</p>

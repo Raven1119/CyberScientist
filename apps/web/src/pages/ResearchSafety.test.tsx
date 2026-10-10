@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import ResearchPage from './ResearchPage'
 import type { RunEvent } from '../types'
@@ -47,9 +47,75 @@ beforeEach(() => {
   listSkills.mockResolvedValue({ skills: [], always_on: [], bound: [] })
   post.mockResolvedValue({})
 })
-afterEach(() => { cleanup(); vi.resetAllMocks(); vi.unstubAllGlobals(); stream.clear() })
+afterEach(() => { cleanup(); vi.resetAllMocks(); vi.unstubAllGlobals(); vi.useRealTimers(); stream.clear() })
 
 describe('research selection and lifecycle safety', () => {
+  it('labels the selected Run frozen model separately from next research defaults', async () => {
+    get.mockImplementation(async path => path === '/api/v1/runs/run-A'
+      ? { ...detail('A'), config_snapshot: { settings: { brain: { model_id: 'frozen-pi', reasoning_effort: 'xhigh' },
+          executor: { model_id: 'frozen-executor', reasoning_effort: 'high' } } } }
+      : path === '/api/v1/challenges/A' ? { ...challenge('A'), model_config: {
+          brain: { runtime: 'codex', model_id: 'next-pi' }, executor: { runtime: 'codex', model_id: 'next-executor' } } } : data(path))
+    render(<ResearchPage />)
+    await screen.findByText('A intention')
+    expect(screen.getByLabelText('本轮冻结模型').textContent).toContain('frozen-executor / high')
+    expect(screen.getByText(/下次研究模型/).textContent).toContain('next-executor')
+  })
+  it.each(['created', 'paused', 'recovering'])('does not offer steering a %s Run', async phase => {
+    get.mockImplementation(async path => path === '/api/v1/runs' ? { items: [summary('A', phase)] }
+      : path === '/api/v1/runs/run-A' ? detail('A', phase) : data(path))
+    render(<ResearchPage />)
+    await screen.findByText('A intention')
+    fireEvent.change(screen.getByLabelText('指导内容'), { target: { value: 'unsent draft' } })
+    expect(screen.getByRole('button', { name: '发送指导' }).matches(':disabled')).toBe(true)
+    expect(post).not.toHaveBeenCalled()
+  })
+  it('refreshes stored scores without requiring a new SSE event or submitting anything', async () => {
+    vi.useFakeTimers()
+    let score = 64.79
+    get.mockImplementation(async (path: string) => path === '/api/v1/challenges/A/submissions'
+      ? { items: [] } : path === '/api/v1/challenges/A/local-scores'
+        ? { scorer: null, calibrations: [], local_scores: [{ id: 'verified', run_id: 'run-A',
+          science_score: score, score_source: 'executor_verified', package_sha256: 'abcdef1234569999' }] }
+        : data(path))
+    render(<ResearchPage />)
+    await act(async () => { await Promise.resolve() })
+    await act(async () => fireEvent.click(screen.getByRole('tab', { name: '提交与评分' })))
+    expect(screen.getByText(/科学分 64.79/)).toBeTruthy()
+    score = 100
+    await act(async () => { await vi.advanceTimersByTimeAsync(5000) })
+    expect(screen.getByText(/科学分 100/)).toBeTruthy()
+    expect(post).not.toHaveBeenCalled()
+  })
+  it('keeps each parallel question guidance draft and switches views without control requests', async () => {
+    const user = userEvent.setup()
+    render(<ResearchPage />)
+    await screen.findByText('A intention')
+    await user.type(screen.getByLabelText('指导内容'), 'A unsent draft')
+    await user.selectOptions(screen.getByLabelText('切换题目'), 'B')
+    await screen.findByText('B intention')
+    await user.type(screen.getByLabelText('指导内容'), 'B unsent draft')
+    await user.selectOptions(screen.getByLabelText('切换题目'), 'A')
+    await screen.findByText('A intention')
+    expect((screen.getByLabelText('指导内容') as HTMLTextAreaElement).value).toBe('A unsent draft')
+    expect(post).not.toHaveBeenCalled()
+  })
+  it('lets the user inspect an older Run of the same question without controlling either Run', async () => {
+    get.mockImplementation(async (path: string) => path === '/api/v1/runs'
+      ? { items: [summary('A'), { ...summary('A', 'finished'), id: 'run-A-old', created_at: '2026-09-27T00:00:00Z' }] }
+      : path === '/api/v1/runs/run-A-old' ? { ...detail('A', 'finished'), id: 'run-A-old', intention: 'older A intention' }
+      : path === '/api/v1/runs/run-A-old/supervision' ? null
+      : path.startsWith('/api/v1/runs/run-A-old/') ? { items: [] } : data(path))
+    const user = userEvent.setup()
+    render(<ResearchPage />)
+    await screen.findByText('A intention')
+    await user.selectOptions(screen.getByLabelText('查看 Run'), 'run-A-old')
+    await screen.findByText('older A intention')
+    expect(screen.queryByText('A intention')).toBeNull()
+    await user.selectOptions(screen.getByLabelText('查看 Run'), 'run-A')
+    await screen.findByText('A intention')
+    expect(post).not.toHaveBeenCalled()
+  })
   it('shows formally registered executor scores with their source and package', async () => {
     get.mockImplementation(async (path: string) => path === '/api/v1/challenges/A/submissions'
       ? { items: [] } : path === '/api/v1/challenges/A/local-scores'

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api } from './api'
+import { useLatestRequest } from './useLatestRequest'
 
 type Gate = { id: string; run_id: string | null; rule: string; source: string; line: number | null; context: string; risk: string; exact_stored: number }
 export default function GateReviews() {
@@ -8,7 +9,8 @@ export default function GateReviews() {
   const [checked, setChecked] = useState<Record<string, boolean>>({})
   const [busy, setBusy] = useState('')
   const [error, setError] = useState('')
-  const reload = useCallback(async () => { const result = await api.get<{ items: Gate[] }>('/api/v1/ops/gates'); setItems(result.items ?? []) }, [])
+  const beginRead = useLatestRequest()
+  const reload = useCallback(async () => { const current = beginRead(); const result = await api.get<{ items: Gate[] }>('/api/v1/ops/gates'); if (current()) setItems(result.items ?? []) }, [beginRead])
   useEffect(() => { const refresh = () => void reload().catch(() => {}); refresh(); const timer = window.setInterval(refresh, 5000); return () => window.clearInterval(timer) }, [reload])
   async function resolve(item: Gate) {
     setBusy(item.id); setError('')

@@ -93,6 +93,48 @@ async def test_large_json_line_is_not_truncated():
         await rpc.stop()
 
 
+async def test_request_deadline_includes_blocked_stdin_drain():
+    rpc = JsonRpcStdio([sys.executable, '-c', 'import time; time.sleep(60)'], name='not-reading')
+    await rpc.start()
+    try:
+        task = asyncio.create_task(rpc.request('ping', {'text': 'x' * 2_000_000}, timeout=0.05))
+        done, _ = await asyncio.wait({task}, timeout=0.5)
+        if not done:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+        assert done, 'request timeout must also bound a blocked pipe write'
+        with pytest.raises(asyncio.TimeoutError):
+            await task
+        assert not rpc._pending
+    finally:
+        await rpc.stop()
+
+
+@pytest.mark.parametrize('kind', ['notification', 'approval_response'])
+async def test_native_write_deadline_also_bounds_notifications_and_responses(monkeypatch, kind):
+    monkeypatch.setattr('cyberscientist.jsonrpc_stdio.WRITE_TIMEOUT_SECONDS', 0.05)
+    rpc = JsonRpcStdio([sys.executable, '-c', 'import time; time.sleep(60)'], name='not-reading')
+    await rpc.start()
+    try:
+        call = rpc.notify('push', {'text': 'x' * 2_000_000}) if kind == 'notification' else rpc.respond(1, result='x' * 2_000_000)
+        with pytest.raises(asyncio.TimeoutError):
+            await call
+    finally:
+        await rpc.stop()
+
+
+async def test_oversized_stderr_line_cannot_block_protocol_responses(monkeypatch):
+    monkeypatch.setattr('cyberscientist.jsonrpc_stdio.MAX_FRAME_BYTES', 256)
+    script = "import sys; sys.stderr.write('x' * 2000000 + '\\n'); sys.stderr.flush();\n" + FAKE_SERVER
+    rpc = JsonRpcStdio([sys.executable, '-c', script], name='long-stderr')
+    await rpc.start()
+    try:
+        assert (await rpc.request('ping', {'alive': True}, timeout=1))['echo']['alive']
+        assert all(len(line) <= 300 for line in rpc.stderr_tail())
+    finally:
+        await rpc.stop()
+
+
 async def test_resumed_thread_response_larger_than_eight_mib_preserves_connection():
     rpc = await _start()
     try:
@@ -139,3 +181,14 @@ async def test_timed_out_request_does_not_leak_pending():
         assert (await rpc.request('ping', {'alive': True}))['echo']['alive']
     finally:
         await rpc.stop()
+
+
+async def test_long_rpc_error_preserves_parseable_code_and_final_detail():
+    rpc = JsonRpcStdio([])
+    future = asyncio.get_running_loop().create_future()
+    rpc._pending[1] = future
+    error = {'code': -32602, 'message': 'x' * 2000 + '\nFINAL: invalid input'}
+    await rpc._dispatch({'id': 1, 'error': error})
+    with pytest.raises(ProtocolError) as caught:
+        await future
+    assert json.loads(str(caught.value)) == error

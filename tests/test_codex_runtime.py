@@ -95,6 +95,54 @@ async def test_brain_native_fields_and_concurrent_approval(monkeypatch, tmp_path
         await brain.close(session)
 
 
+@pytest.mark.parametrize('role', ['brain', 'executor'])
+async def test_native_tool_receipts_preserve_complete_output(monkeypatch, tmp_path, role):
+    output = 'FIRST_EVIDENCE\n' + '完整证据🙂' * 5000 + '\nLAST_EVIDENCE'
+    class LongOutputRpc(FakeRpc):
+        async def respond(self, req_id, result=None, error=None):
+            await self.messages.put({'method': 'item/completed', 'params': {
+                'threadId': 'thread-1', 'item': {'type': 'commandExecution', 'id': 'long-receipt',
+                    'command': 'cat complete-evidence.txt', 'status': 'completed',
+                    'exitCode': 0, 'aggregatedOutput': output}}})
+            await super().respond(req_id, result, error)
+    if role == 'brain':
+        monkeypatch.setattr('cyberscientist.brains.codex.JsonRpcStdio', LongOutputRpc)
+        runtime = CodexBrain('/bin/true', 'gpt-6-astra', 'xhigh')
+        session = await runtime.open({'working_directory': str(tmp_path), 'instructions': 'test'})
+        try:
+            events = [e async for e in runtime.review(session, {'run_id': 'run-1'})]
+            receipt = next(e.payload for e in events if e.payload.get('item_id') == 'long-receipt')
+            assert receipt['output'] == output
+        finally:
+            await runtime.close(session)
+    else:
+        monkeypatch.setattr('cyberscientist.prime.codex_exec.JsonRpcStdio', LongOutputRpc)
+        runtime = CodexExecutor('/bin/true', 'gpt-6-astra', 'medium')
+        sid = await runtime.start({'working_directory': str(tmp_path)})
+        try:
+            await runtime.prompt(sid, 'test')
+            async def receipt():
+                while True:
+                    event = await runtime._sessions[sid].queue.get()
+                    if event.get('item_id') == 'long-receipt': return event
+            event = await asyncio.wait_for(receipt(), 1)
+            assert event['output'] == output
+        finally:
+            await runtime.close(sid)
+
+
+async def test_executor_lost_start_receipt_stays_unknown_and_cannot_launch_a_second_turn():
+    class LostReceiptRpc(FakeRpc):
+        async def request(self, *args, **kwargs): raise asyncio.TimeoutError('receipt lost')
+    runtime = CodexExecutor('/bin/true', 'gpt-6-astra', 'medium')
+    session = _Session(LostReceiptRpc(), 'thread-unknown', busy=True)
+    runtime._sessions[session.thread_id] = session
+    await runtime._run_turn(session, 'original instruction')
+    assert (await runtime.state(session.thread_id))['status'] == 'unknown'
+    assert (await runtime.prompt(session.thread_id, 'must not resend')).status == 'rejected'
+    assert (await runtime.abort(session.thread_id)).status == 'unknown'
+
+
 def test_no_silent_model_or_effort_downgrade():
     with pytest.raises(RuntimeError, match='模型'):
         verify_thread_config({'model': 'other'}, 'gpt-6-astra', 'xhigh')

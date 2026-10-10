@@ -4,6 +4,13 @@ import SubmissionQueue from './SubmissionQueue'
 import { api } from './api'
 vi.mock('./api', () => ({ api: { get: vi.fn(), put: vi.fn() } }))
 afterEach(() => { cleanup(); vi.clearAllMocks() })
+test('does not claim automatic submission is enabled before reading the backend', () => {
+  vi.mocked(api.get).mockReturnValue(new Promise(() => {}))
+  render(<SubmissionQueue />)
+  expect(screen.getByText('自动提交状态未确认，正在读取')).toBeTruthy()
+  expect(screen.getByRole('button').matches(':disabled')).toBe(true)
+  expect(api.put).not.toHaveBeenCalled()
+})
 test('queued item is visible and resume calls the persistent switch', async () => {
   let enabled = false
   vi.mocked(api.get).mockImplementation(async path => path.endsWith('features') ? { features: { auto_submission: enabled } } : { paused: !enabled, items: [{ submission_id: 's', challenge_id: 'topic', mailbox_id: 'account', is_harvest: 1, not_before: '2026-10-08T05:00Z', reason: '同账号同题提交间隔' }] })

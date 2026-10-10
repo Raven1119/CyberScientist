@@ -1,5 +1,6 @@
-import { useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { api } from './api'
+import { useLatestRequest } from './useLatestRequest'
 
 type Shared = { enabled: boolean; items: { id: string; name: string; version: number; sha256: string;
   source_run_id: string; source_trial_id: string; source_event_seq: number; integrity: string }[];
@@ -7,12 +8,22 @@ type Shared = { enabled: boolean; items: { id: string; name: string; version: nu
 export default function SharedArea({ challengeId }: { challengeId: string }) {
   const [data, setData] = useState<Shared | null>(null)
   const [error, setError] = useState('')
+  const [viewing, setViewing] = useState(false)
+  const beginRead = useLatestRequest(challengeId)
+  const load = useCallback(async () => {
+    const current = beginRead()
+    try { const value = await api.get<Shared>(`/api/v1/challenges/${challengeId}/shared`); if (current()) { setData(value); setError('') } }
+    catch (err) { if (current()) setError(String(err)) }
+  }, [challengeId, beginRead])
+  useEffect(() => {
+    if (!viewing) return
+    void load()
+    const timer = window.setInterval(() => void load(), 5000)
+    return () => window.clearInterval(timer)
+  }, [viewing, load])
   return <article className="card card-body"><h2>题目共享区</h2>
     <p>版本只追加。导入会复制到本 Trial 并记录来源；共享文件的科学正确性需要另行验证。</p>
-    <button type="button" onClick={async () => {
-      try { setData(await api.get(`/api/v1/challenges/${challengeId}/shared`)); setError('') }
-      catch (err) { setError(String(err)) }
-    }}>查看共享区</button>
+    <button type="button" onClick={() => { if (viewing) void load(); else setViewing(true) }}>查看共享区</button>
     {error && <p role="alert">{error}</p>}
     {data && <>
       <p>{data.enabled ? '共享区已启用' : '共享区已关闭，保留历史版本'}</p>

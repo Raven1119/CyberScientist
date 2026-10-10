@@ -31,6 +31,16 @@ test('failed acknowledgement keeps the durable alert visible', async () => {
   expect(navigation.setPage).not.toHaveBeenCalled()
 })
 
+test('can defer an alert and keep viewing other topics without acknowledging it', async () => {
+  render(<PersistentAlerts />)
+  await screen.findByRole('dialog')
+  fireEvent.click(screen.getByText('稍后查看'))
+  expect(screen.queryByRole('dialog')).toBeNull()
+  expect(api.post).not.toHaveBeenCalled()
+  fireEvent.click(screen.getByRole('button', { name: /未确认提醒/ }))
+  expect(screen.getByRole('dialog')).toBeTruthy()
+})
+
 test('protocol drift popup shows changed field facts and navigates to settings', async () => {
   vi.mocked(api.get).mockResolvedValue({ items: [{ id: 'drift', run_id: null, challenge_id: null,
     kind: 'platform.protocol_changed', title: '平台协议或接口文档发生变化', payload: { changes: [{ document: 'protocol', changed_paths: ['version'] }] } }] })

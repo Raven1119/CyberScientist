@@ -5,6 +5,26 @@ import { RunOperations } from './RunOperations'
 vi.mock('../api', () => ({ api: { get: vi.fn(), post: vi.fn() } }))
 afterEach(() => { cleanup(); vi.resetAllMocks() })
 
+it('does not replace a reconciled Job with an older in-flight poll response', async () => {
+  let resolveOld!: (value: unknown) => void
+  const old = new Promise(resolve => { resolveOld = resolve })
+  let jobReads = 0
+  vi.mocked(api.get).mockImplementation(path => path.endsWith('/jobs')
+    ? (++jobReads === 1 ? old : Promise.resolve({ items: [{ operation_id: 'job-a', platform_job_id: 123,
+      status: 'Finished', retrieval_status: 'retrieved' }], reserved_jobs: 1, active_or_unknown: 0 }))
+    : Promise.resolve({ state: 'idle', items: [], active_or_unknown: 0, cumulative_minutes: 0 }))
+  vi.mocked(api.post).mockResolvedValue({})
+  render(<RunOperations runId="run-a" phase="running" />)
+  fireEvent.click(screen.getByText('核对远端状态'))
+  await screen.findByText('Finished')
+  resolveOld({ items: [{ operation_id: 'job-a', platform_job_id: 123, status: 'unknown' }],
+    reserved_jobs: 1, active_or_unknown: 1 })
+  await waitFor(() => expect(jobReads).toBe(2))
+  await new Promise(resolve => setTimeout(resolve, 0))
+  expect(screen.getByText('Finished')).toBeTruthy()
+  expect(screen.queryByText('unknown')).toBeNull()
+})
+
 it('keeps unknown work occupied and prevents stopping without a remote ID', async () => {
   vi.mocked(api.get).mockImplementation(async path => path.endsWith('/jobs') ? {
     items: [{ operation_id: 'uncertain', platform_job_id: null, status: 'unknown' }], reserved_jobs: 1, active_or_unknown: 1,

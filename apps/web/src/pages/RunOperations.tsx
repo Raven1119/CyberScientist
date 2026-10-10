@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api } from '../api'
+import { useLatestRequest } from '../useLatestRequest'
 
 type Job = { operation_id: string; platform_job_id: number | null; status: string; retrieval_status: string; observed_at: string | null }
 type Jobs = { items: Job[]; reserved_jobs: number; active_or_unknown: number }
@@ -16,14 +17,16 @@ export function RunOperations({ runId, phase }: { runId: string; phase: string }
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [curationOperation, setCurationOperation] = useState<string | null>(null)
+  const beginRead = useLatestRequest(runId)
   const refresh = useCallback(async () => {
+    const current = beginRead()
     const [j, c, s] = await Promise.all([
       api.get<Jobs>(`/api/v1/runs/${runId}/jobs`),
       api.get<Curation>(`/api/v1/runs/${runId}/curation`),
       api.get<Sandboxes>(`/api/v1/runs/${runId}/sandboxes`),
     ])
-    setJobs(j); setCuration(c); setSandboxes(s)
-  }, [runId])
+    if (current()) { setJobs(j); setCuration(c); setSandboxes(s) }
+  }, [runId, beginRead])
   useEffect(() => {
     let mounted = true
     const load = () => { if (mounted) void refresh().catch(e => { if (mounted) setError(String(e)) }) }
@@ -32,6 +35,7 @@ export function RunOperations({ runId, phase }: { runId: string; phase: string }
     return () => { mounted = false; window.clearInterval(timer) }
   }, [refresh])
   async function act(path: string, body?: object) {
+    beginRead()
     setBusy(true); setError('')
     try { await api.post(path, body); await refresh() }
     catch (e) { setError(e instanceof Error ? e.message : String(e)) }

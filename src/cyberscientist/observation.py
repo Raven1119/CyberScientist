@@ -144,13 +144,18 @@ def executor_digest(events: list[dict[str, Any]], *,
         detail = _substantive_detail(e)
         if detail:
             payload = e['payload']
-            item = {"seq": e["seq"], "excerpt": strip_secrets(detail)[:_MAX_DIGEST_EACH]}
+            excerpt, clipped = _clip(strip_secrets(detail), _MAX_DIGEST_EACH)
+            item = {"seq": e["seq"], "excerpt": excerpt, "body_truncated": clipped}
+            if e.get('run_id'):
+                item['source_ref'] = f"event:{e['run_id']}:{e['seq']}"
             for source, dest in (('item_id', 'operation_id'), ('status', 'status'), ('exit_code', 'exit_code')):
                 if source in payload:
                     item[dest] = payload[source]
             output = payload.get('output') or payload.get('content') or payload.get('result')
             if output:
-                item['output_excerpt'] = strip_secrets(output if isinstance(output, str) else json.dumps(output, ensure_ascii=False))[:2000]
+                item['output_excerpt'], output_clipped = _clip(strip_secrets(
+                    output if isinstance(output, str) else json.dumps(output, ensure_ascii=False)), 2000)
+                item['body_truncated'] |= output_clipped
             # A completed receipt replaces its earlier started activity.
             if item.get('operation_id'):
                 items = [old for old in items if old.get('operation_id') != item['operation_id']]
@@ -324,7 +329,9 @@ def build_frame(run_id: str, *, mode: str, frame_id: str,
     # 执行器实质进展摘要：关键状态变化不能只存在于执行器思考流里
     digest, digest_omitted = ([], 0) if sparse else executor_digest(events)
     omitted += digest_omitted
-    truncated = truncated or digest_omitted > 0
+    truncated = truncated or digest_omitted > 0 or any(it.get('body_truncated') for it in digest)
+    for item in digest:
+        item['source_ref'] = f"event:{run_id}:{item['seq']}"
 
     context = experience_context.freeze(run_id,run["current_trial_id"],
                                         f"frame:{frame_id}",role='brain')

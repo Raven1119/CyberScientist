@@ -42,6 +42,7 @@ import type {
   SupervisionStatus,
 } from '../types'
 import { useRunEventStream, type StreamStatus } from '../useRunEventStream'
+import { useLatestRequest } from '../useLatestRequest'
 
 type Tab = 'events' | 'trials' | 'checkpoints' | 'data' | 'submission'
 
@@ -63,7 +64,7 @@ const SOURCE_AVATAR: Record<string, string> = {
 }
 
 export default function ResearchPage() {
-  const { toast, currentChallengeId, setCurrentChallengeId, focusedRunId, demoMode, setPage } = useApp()
+  const { toast, currentChallengeId, setCurrentChallengeId, focusedRunId, setFocusedRunId, demoMode, setPage } = useApp()
 
   const [challenges, setChallenges] = useState<ChallengeSummary[]>([])
   const [challengeId, setChallengeId] = useState<string | null>(currentChallengeId)
@@ -73,11 +74,16 @@ export default function ResearchPage() {
   selectedChallengeId.current = challengeId
   const [runs, setRuns] = useState<RunSummary[]>([])
   const [overview, setOverview] = useState<RunOverview[]>([])
-  const [preferredRunId, setPreferredRunId] = useState<string | null>(null)
+  const [preferredRuns, setPreferredRuns] = useState<Record<string, string>>({})
+  const preferredRunId = challengeId ? preferredRuns[challengeId] ?? null : null
+  const setPreferredRunId = useCallback((id: string, topic = challengeId) => {
+    setFocusedRunId?.(null)
+    if (topic) setPreferredRuns(previous => ({ ...previous, [topic]: id }))
+  }, [challengeId, setFocusedRunId])
   useEffect(() => {
     if (focusedRunId) {
       setChallengeId(currentChallengeId)
-      setPreferredRunId(focusedRunId)
+      setPreferredRuns(previous => currentChallengeId ? { ...previous, [currentChallengeId]: focusedRunId } : previous)
     }
   }, [focusedRunId, currentChallengeId])
   const [editModelsOpen, setEditModelsOpen] = useState(false)
@@ -98,30 +104,34 @@ export default function ResearchPage() {
   const [supervisionSnapshot, setSupervisionSnapshot] = useState<{ runId: string; data: SupervisionStatus } | null>(null)
   const [subRefresh, setSubRefresh] = useState(0)
   const [streamStatus, setStreamStatus] = useState<StreamStatus>('idle')
+  const beginChallenges = useLatestRequest()
+  const beginRuns = useLatestRequest()
 
   const eventsRef = useRef<HTMLDivElement>(null)
   const atBottomRef = useRef(true)
   const [showJump, setShowJump] = useState(false)
 
   const refreshChallenges = useCallback(async () => {
+    const current = beginChallenges()
     try {
       const data = await api.get<{ items: ChallengeSummary[] }>('/api/v1/challenges')
-      setChallenges(data.items)
+      if (current()) setChallenges(data.items)
     } catch (err) {
-      toast('加载题目列表失败：' + (err instanceof Error ? err.message : String(err)))
+      if (current()) toast('加载题目列表失败：' + (err instanceof Error ? err.message : String(err)))
     }
-  }, [toast])
+  }, [toast, beginChallenges])
 
   const refreshRuns = useCallback(async () => {
+    const current = beginRuns()
     try {
       const data = await api.get<{ items: RunSummary[] }>('/api/v1/runs')
-      setRuns(data.items)
+      if (current()) setRuns(data.items)
       const active = await api.get<{ items: RunOverview[] }>('/api/v1/runs/overview')
-      setOverview(active.items)
+      if (current()) setOverview(active.items)
     } catch (err) {
-      toast('加载 Run 列表失败：' + (err instanceof Error ? err.message : String(err)))
+      if (current()) toast('加载 Run 列表失败：' + (err instanceof Error ? err.message : String(err)))
     }
-  }, [toast])
+  }, [toast, beginRuns])
 
   useEffect(() => {
     const timer = window.setInterval(() => void refreshRuns(), 10000)
@@ -154,15 +164,16 @@ export default function ResearchPage() {
     return () => { cancelled = true }
   }, [challengeId, setCurrentChallengeId])
 
-  const currentRun: RunSummary | null = useMemo(() => {
-    if (!challengeId) return null
-    const forChallenge = runs
+  const challengeRuns = useMemo(() => runs
       .filter((r) => r.challenge_id === challengeId)
-      .sort((a, b) => (b.created_at ?? '').localeCompare(a.created_at ?? ''))
-    return forChallenge.find((run) => run.id === preferredRunId)
-      ?? forChallenge.find((run) => ACTIVE_PHASES.includes(run.phase))
-      ?? forChallenge[0] ?? null
-  }, [runs, challengeId, preferredRunId])
+      .sort((a, b) => (b.created_at ?? '').localeCompare(a.created_at ?? '')),
+    [runs, challengeId])
+  const currentRun: RunSummary | null = useMemo(() => {
+    return challengeRuns.find((run) => run.id === preferredRunId)
+      ?? challengeRuns.find((run) => ACTIVE_PHASES.includes(run.phase))
+      ?? challengeRuns[0] ?? null
+  }, [challengeRuns, preferredRunId])
+  const beginSupervision = useLatestRequest(currentRun?.id ?? '')
 
   // A delayed response from a previous selection must never animate this Run.
   const selectedRunId = useRef<string | null>(null)
@@ -177,6 +188,7 @@ export default function ResearchPage() {
 
   const [runSnapshot, setRunDetail] = useState<RunDetail | null>(null)
   const runDetail = runSnapshot?.id === currentRun?.id ? runSnapshot : null
+  const frozenModels = (runDetail?.config_snapshot as { settings?: { brain?: ModelChoice; executor?: ModelChoice } } | undefined)?.settings
   const detailRequest = useRef(0)
   const checkpointRequest = useRef(0)
   const lifecycleV2 = (runDetail?.config_snapshot as { lifecycle_version?: number } | undefined)?.lifecycle_version === 2
@@ -233,13 +245,14 @@ export default function ResearchPage() {
 
   const refreshSupervision = useCallback(async () => {
     if (!currentRun) return
+    const current = beginSupervision()
     try {
       const data = await api.get<SupervisionStatus>(`/api/v1/runs/${currentRun.id}/supervision`)
-      if (selectedRunId.current === currentRun.id) setSupervisionSnapshot({ runId: currentRun.id, data })
+      if (current() && selectedRunId.current === currentRun.id) setSupervisionSnapshot({ runId: currentRun.id, data })
     } catch {
       // 监督接口失败不打扰用户；下次轮询或事件会重试
     }
-  }, [currentRun])
+  }, [currentRun, beginSupervision])
 
   // 挂载即拉取一次，另保留 10s 轮询兜底；SSE 事件另行触发即时刷新
   useEffect(() => {
@@ -260,6 +273,7 @@ export default function ResearchPage() {
 
   const handleEvent = useCallback(
     (event: RunEvent) => {
+      if (event.run_id && event.run_id !== selectedRunId.current) return
       setEvents((list) => [...list, event])
       const pendingSteer = steerStateRef.current
       if (pendingSteer && pendingSteer.state === 'queued') {
@@ -418,7 +432,7 @@ export default function ResearchPage() {
 
       <RunOverviewPanel items={overview} onSelect={(item) => {
         setChallengeId(item.challenge_id)
-        setPreferredRunId(item.id)
+        setPreferredRunId(item.id, item.challenge_id)
       }} />
 
       {challenge ? (
@@ -428,7 +442,8 @@ export default function ResearchPage() {
               {challenge.is_demo ? 'DEMO_CHALLENGE · 非真实竞赛题' : (challenge.platform_challenge_id ?? '本地题目')}
             </div>
             <div className="challenge-title">{challenge.title}</div>
-            <p className="small-text">大脑 {challenge.model_config?.brain.runtime ?? '未配置'} / {challenge.model_config?.brain.model_id ?? '未知'} · 执行器 {challenge.model_config?.executor.runtime ?? '未配置'} / {challenge.model_config?.executor.model_id ?? '未知'}</p>
+            <p className="small-text">下次研究模型：大脑 {challenge.model_config?.brain.runtime ?? '未配置'} / {challenge.model_config?.brain.model_id ?? '未知'} · 执行器 {challenge.model_config?.executor.runtime ?? '未配置'} / {challenge.model_config?.executor.model_id ?? '未知'}</p>
+            {currentRun && <p className="small-text" aria-label="本轮冻结模型">本轮冻结模型：大脑 {frozenModels?.brain?.model_id ?? '未确认'} / {frozenModels?.brain?.reasoning_effort ?? '未确认'} · 执行器 {frozenModels?.executor?.model_id ?? '未确认'} / {frozenModels?.executor?.reasoning_effort ?? '未确认'}</p>}
             {challenge.platform_snapshot && (
               <p className="small-text">
                 平台状态：{challenge.platform_snapshot.status ?? '未知'}
@@ -470,7 +485,7 @@ export default function ResearchPage() {
           <select
             id="challenge-picker"
             value={challengeId ?? ''}
-            onChange={(e) => setChallengeId(e.target.value)}
+            onChange={(e) => { setFocusedRunId?.(null); setChallengeId(e.target.value) }}
           >
             {challenges.map((c) => (
               <option key={c.id} value={c.id}>
@@ -483,6 +498,17 @@ export default function ResearchPage() {
       )}
 
       {challengeId && <ChallengeSkills key={challengeId} challengeId={challengeId} />}
+
+      {challengeRuns.length > 1 && <div className="challenge-picker">
+        <label htmlFor="run-picker">查看 Run</label>
+        <select id="run-picker" value={currentRun?.id ?? ''}
+          onChange={event => setPreferredRunId(event.target.value)}>
+          {challengeRuns.map(run => <option key={run.id} value={run.id}>
+            {run.id} · {PHASE_LABELS[run.phase] ?? run.phase} · {formatTime(run.created_at)}
+          </option>)}
+        </select>
+        <span className="small-text">切换只改变查看的研究，后台继续运行。</span>
+      </div>}
 
       {(phase === 'blocked' || phase === 'paused' || phase === 'pausing') && runDetail?.block_reason && (
         <div className="callout danger" role="alert">
@@ -565,7 +591,7 @@ export default function ResearchPage() {
                 type="button"
                 className="btn primary"
                 style={{ marginTop: 10 }}
-                disabled={!active || paused || pausing || !steerText.trim() || busy}
+                disabled={phase !== 'running' || !steerText.trim() || busy}
                 title={terminal ? 'Run 已结束，不能发送指导' : undefined}
                 onClick={() => void sendSteer()}
               >
@@ -578,7 +604,7 @@ export default function ResearchPage() {
           </article>
 
           {currentRun && <MethodApproval key={'method-'+currentRun.id} runId={currentRun.id} onChanged={()=>void refreshRunDetail()} />}
-          {currentRun && <RunOperations key={currentRun.id} runId={currentRun.id} phase={phase ?? currentRun.phase} />}
+          {currentRun && <RunOperations key={'operations-'+currentRun.id} runId={currentRun.id} phase={phase ?? currentRun.phase} />}
 
           <article className="card">
             <div className="card-head">
@@ -728,9 +754,9 @@ export default function ResearchPage() {
         </div>
 
         <div className="stack right">
-          {currentRun && <PackageReviews key={currentRun.id} runId={currentRun.id} />}
-          {currentRun && <PostReviews key={currentRun.id} runId={currentRun.id} phase={phase ?? 'created'} />}
-          {currentRun && <SharedArea key={currentRun.challenge_id} challengeId={currentRun.challenge_id} />}
+          {currentRun && <PackageReviews key={'package-reviews-'+currentRun.id} runId={currentRun.id} />}
+          {currentRun && <PostReviews key={'post-reviews-'+currentRun.id} runId={currentRun.id} phase={phase ?? 'created'} />}
+          {currentRun && <SharedArea key={'shared-'+currentRun.challenge_id} challengeId={currentRun.challenge_id} />}
           <Observation key={currentRun?.id ?? challengeId ?? 'idle'} runId={currentRun?.id}
             phase={runDetail?.id === currentRun?.id ? runDetail?.phase : currentRun?.phase}
             connected={streamStatus === 'open'} supervision={supervision} demo={demoMode} />
@@ -742,7 +768,7 @@ export default function ResearchPage() {
             <div className="card-body">
               <div className="meta-row">
                 <span>Run</span>
-                <span>{currentRun ? currentRun.id.slice(0, 8) + '…' : '尚未创建'}</span>
+                <span>{currentRun?.id ?? '尚未创建'}</span>
               </div>
               <div className="meta-row">
                 <span>大脑状态</span>
@@ -1872,6 +1898,8 @@ function SubmissionsPanel({
   } | null>(null)
   const [busy, setBusy] = useState(false)
   const [packagePath, setPackagePath] = useState('')
+  const beginSubmissions = useLatestRequest(`${challengeId}:${runId ?? ''}`)
+  const beginScores = useLatestRequest(challengeId)
   const preflightRequest = useRef(0)
   const [preflight, setPreflight] = useState<{
     sealed_package_sha256: string
@@ -1887,39 +1915,47 @@ function SubmissionsPanel({
     }
   } | null>(null)
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (notify = true) => {
+    const current = beginSubmissions()
     try {
       // 按题聚合所有 Run 的提交；后端题级端点未就绪时回退到当前 Run 级端点
       const res = await api.get<{ items: Submission[] }>(
         `/api/v1/challenges/${encodeURIComponent(challengeId)}/submissions`,
       )
-      setItems(res.items)
+      if (current()) setItems(res.items)
     } catch (err) {
+      if (!current()) return
       if (runId && err instanceof ApiError && err.status === 404) {
         try {
           const res = await api.get<{ items: Submission[] }>(`/api/v1/runs/${runId}/submissions`)
-          setItems(res.items)
+          if (current()) setItems(res.items)
           return
         } catch (fallbackErr) {
-          toast('加载提交记录失败：' + (fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr)))
-          setItems([])
+          if (current() && notify) { toast('加载提交记录失败：' + (fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr))); setItems([]) }
           return
         }
       }
-      toast('加载提交记录失败：' + (err instanceof Error ? err.message : String(err)))
-      setItems([])
+      if (current() && notify) { toast('加载提交记录失败：' + (err instanceof Error ? err.message : String(err))); setItems([]) }
     }
-  }, [challengeId, runId, toast])
+  }, [challengeId, runId, toast, beginSubmissions])
 
   useEffect(() => {
     void load()
+    const timer = window.setInterval(() => void load(false), 5000)
+    return () => window.clearInterval(timer)
   }, [load, refreshKey])
 
-  useEffect(() => {
-    void api.get<typeof localScoring>(
+  const loadScores = useCallback(async () => {
+    const current = beginScores()
+    try { const value = await api.get<typeof localScoring>(
       `/api/v1/challenges/${encodeURIComponent(challengeId)}/local-scores`,
-    ).then(setLocalScoring).catch(() => setLocalScoring(null))
-  }, [challengeId, refreshKey])
+    ); if (current()) setLocalScoring(value) } catch { /* Preserve the last confirmed stored score. */ }
+  }, [challengeId, beginScores])
+  useEffect(() => {
+    void loadScores()
+    const timer = window.setInterval(() => void loadScores(), 5000)
+    return () => window.clearInterval(timer)
+  }, [loadScores, refreshKey])
 
   async function poll() {
     setBusy(true)
@@ -1928,8 +1964,7 @@ function SubmissionsPanel({
         '/api/v1/submissions/poll', runId ? { run_id: runId } : {})
       toast(`评分轮询：检查 ${res.polled}，新出分 ${res.updated}，等待中 ${res.still_unknown}。`)
       await load()
-      setLocalScoring(await api.get<typeof localScoring>(
-        `/api/v1/challenges/${encodeURIComponent(challengeId)}/local-scores`))
+      await loadScores()
     } catch (err) {
       toast('轮询失败：' + (err instanceof Error ? err.message : String(err)))
     } finally {

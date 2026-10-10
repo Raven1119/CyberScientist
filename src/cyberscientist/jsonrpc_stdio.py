@@ -10,6 +10,7 @@ log = logging.getLogger("cyberscientist.jsonrpc")
 # Native thread/resume returns the saved turns in one LF-delimited frame.
 # Keep a finite bound while allowing ordinary multi-hour research histories.
 MAX_FRAME_BYTES = 64 * 1024 * 1024
+WRITE_TIMEOUT_SECONDS = 60.0
 
 
 class ProtocolError(Exception):
@@ -43,16 +44,34 @@ class JsonRpcStdio:
 
     async def _drain_stderr(self) -> None:
         assert self.proc and self.proc.stderr
+        pending = bytearray()
+        oversized = False
+        # stderr is a byte stream, not an RPC frame. readline() can throw on
+        # one large log line and stop draining, leaving the child pipe blocked.
         while True:
-            line = await self.proc.stderr.readline()
-            if not line:
+            chunk = await self.proc.stderr.read(16384)
+            if not chunk:
                 break
-            text = line.decode("utf-8", errors="replace").rstrip()
-            from .observation import strip_secrets
-            text = strip_secrets(text)
-            self._stderr_tail.append(text[:300])
-            del self._stderr_tail[:-20]  # 只保留尾窗，有界
-            log.debug("%s stderr: %.200s", self.name, text)
+            parts = chunk.split(b'\n')
+            for index, part in enumerate(parts):
+                if not oversized:
+                    pending.extend(part)
+                    if len(pending) > 65536:
+                        pending.clear()
+                        oversized = True
+                if index < len(parts) - 1:
+                    self._record_stderr('[stderr oversized line omitted]' if oversized else pending.decode('utf-8', errors='replace'))
+                    pending.clear()
+                    oversized = False
+        if pending or oversized:
+            self._record_stderr('[stderr oversized line omitted]' if oversized else pending.decode('utf-8', errors='replace'))
+
+    def _record_stderr(self, text: str) -> None:
+        from .observation import strip_secrets
+        text = strip_secrets(text).rstrip()
+        self._stderr_tail.append(text[:300])
+        del self._stderr_tail[:-20]
+        log.debug('%s stderr: %.200s', self.name, text)
 
     def stderr_tail(self) -> list[str]:
         return list(self._stderr_tail)
@@ -94,7 +113,7 @@ class JsonRpcStdio:
             if fut and not fut.done():
                 if msg.get("error") is not None:
                     from .observation import strip_secrets
-                    fut.set_exception(ProtocolError(strip_secrets(json.dumps(msg["error"]))[:500]))
+                    fut.set_exception(ProtocolError(strip_secrets(json.dumps(msg["error"]))))
                 else:
                     fut.set_result(msg.get("result"))
         elif "id" in msg and "method" in msg:
@@ -114,9 +133,12 @@ class JsonRpcStdio:
         frame = json.dumps({"jsonrpc": "2.0", "id": rid, "method": method,
                             "params": params or {}}, ensure_ascii=False) + "\n"
         try:
-            self.proc.stdin.write(frame.encode("utf-8"))
-            await self.proc.stdin.drain()
-            return await asyncio.wait_for(fut, timeout)
+            # Backpressure is part of the request. A child that stops reading
+            # stdin must not bypass the deadline while drain() waits forever.
+            async with asyncio.timeout(timeout):
+                self.proc.stdin.write(frame.encode("utf-8"))
+                await self.proc.stdin.drain()
+                return await fut
         finally:
             self._pending.pop(rid, None)
 
@@ -125,8 +147,13 @@ class JsonRpcStdio:
             raise ProtocolError(f"{self.name} 未启动")
         frame = json.dumps({"method": method, "params": params or {}},
                            ensure_ascii=False) + "\n"
-        self.proc.stdin.write(frame.encode("utf-8"))
-        await self.proc.stdin.drain()
+        await self._write_frame(frame)
+
+    async def _write_frame(self, frame: str) -> None:
+        assert self.proc and self.proc.stdin
+        async with asyncio.timeout(WRITE_TIMEOUT_SECONDS):
+            self.proc.stdin.write(frame.encode('utf-8'))
+            await self.proc.stdin.drain()
 
     def notifications(self) -> AsyncIterator[dict[str, Any]]:
         return _queue_iter(self._notifications)
@@ -157,8 +184,7 @@ class JsonRpcStdio:
     async def notify_special(self, msg: dict[str, Any]) -> None:
         if not self.proc or self.proc.stdin is None:
             raise ProtocolError(f"{self.name} 未启动")
-        self.proc.stdin.write((json.dumps(msg, ensure_ascii=False) + "\n").encode())
-        await self.proc.stdin.drain()
+        await self._write_frame(json.dumps(msg, ensure_ascii=False) + '\n')
 
     async def stop(self) -> None:
         tasks = [t for t in (self._reader_task, self._stderr_task)

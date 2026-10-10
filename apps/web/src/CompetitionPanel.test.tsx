@@ -2,6 +2,8 @@ import {render,screen,fireEvent,waitFor,cleanup} from '@testing-library/react'
 import {test,expect,vi,afterEach} from 'vitest'
 import {CompetitionPanel} from './CompetitionPanel'
 import {api} from './api'
+const navigation=vi.hoisted(()=>({setPage:vi.fn(),setCurrentChallengeId:vi.fn(),setFocusedRunId:vi.fn()}))
+vi.mock('./app-context',()=>({useApp:()=>navigation}))
 vi.mock('./api',()=>({api:{get:vi.fn(),post:vi.fn(),put:vi.fn()}}))
 vi.mock('./MethodApproval',()=>({MethodApproval:()=>null}))
 vi.mock('./AccountRoles',()=>({AccountRoles:()=>null}))
@@ -12,6 +14,14 @@ function setup(phase='running'){
  vi.mocked(api.post).mockResolvedValue({} as never);vi.mocked(api.put).mockResolvedValue({} as never)
  render(<CompetitionPanel/>);return screen.findByText('完整方法摘要')
 }
+test('opens the exact topic and Run without interrupting background research',async()=>{
+ await setup()
+ fireEvent.click(screen.getByRole('button',{name:'题查看研究'}))
+ expect(navigation.setCurrentChallengeId).toHaveBeenCalledWith('topic')
+ expect(navigation.setFocusedRunId).toHaveBeenCalledWith('run')
+ expect(navigation.setPage).toHaveBeenCalledWith('research')
+ expect(api.post).not.toHaveBeenCalled()
+})
 for(const [label,phase,path,body] of [
  ['启动','created','/api/v1/runs/run/start',{}],
  ['暂停','running','/api/v1/runs/run/control',{action:'pause'}],

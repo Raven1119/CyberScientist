@@ -112,7 +112,7 @@ function Shell() {
         </header>
         <div className="content" id="workspace" tabIndex={-1}>
           <div ref={view} className="page-view">
-          {page === 'research' && <ResearchPage />}
+          <div hidden={page !== 'research'}><ResearchPage /></div>
           {page === 'competition' && <CompetitionPage />}
           {page === 'evaluation' && <EvaluationPage />}
           {page === 'experience' && <ExperiencePage />}

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api } from './api'
 import type { Mailbox } from './types'
+import { useLatestRequest } from './useLatestRequest'
 
 export function AccountRoles() {
   const [items, setItems] = useState<Mailbox[]>([])
@@ -10,17 +11,18 @@ export function AccountRoles() {
   const [cliNotice, setCliNotice] = useState('')
   const [agentToken, setAgentToken] = useState('')
   const [bindingNotice, setBindingNotice] = useState('')
+  const beginRead = useLatestRequest()
   const refresh = useCallback(async () => {
+    const current = beginRead()
     try {
       const [accounts, settings] = await Promise.all([
         api.get<{items: Mailbox[]}>('/api/v1/mailboxes'),
         api.get<{features?: Record<string, boolean>}>('/api/v1/settings'),
       ])
-      setItems(accounts.items ?? [])
-      setEnabled(settings.features?.auto_harvest === true)
-    } catch (e) { setError(String(e)) }
-  }, [])
-  useEffect(() => { void refresh() }, [refresh])
+      if (current()) { setItems(accounts.items ?? []); setEnabled(settings.features?.auto_harvest === true) }
+    } catch (e) { if (current()) setError(String(e)) }
+  }, [beginRead])
+  useEffect(() => { void refresh(); const timer = window.setInterval(() => void refresh(), 5000); return () => window.clearInterval(timer) }, [refresh])
   const change = async (id: string, role: string) => {
     setBusy(true); setError('')
     try { await api.put(`/api/v1/mailboxes/${id}/role`, {role}); await refresh() }

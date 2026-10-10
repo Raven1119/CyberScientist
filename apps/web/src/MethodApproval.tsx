@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api } from './api'
+import { useLatestRequest } from './useLatestRequest'
 
 type Proposal = {method_md:string; parameters_md:string; basis_md:string; outputs_md:string; capabilities:string[]}
 type State = {status:string; version:number; proposal:Proposal|null; approved_by?:string; approved_at?:string}
 export function MethodApproval({runId,onChanged}:{runId:string;onChanged?:()=>void}) {
   const [value,setValue]=useState<State|null>(null)
   const [text,setText]=useState(''),[actor,setActor]=useState('user'),[busy,setBusy]=useState(false),[error,setError]=useState('')
-  const refresh=useCallback(async()=>{try {setValue(await api.get<State>(`/api/v1/runs/${runId}/method`))}catch(e){setError(String(e))}},[runId])
+  const beginRead=useLatestRequest(runId)
+  const refresh=useCallback(async()=>{const current=beginRead();try {const data=await api.get<State>(`/api/v1/runs/${runId}/method`);if(current()){setValue(data);setError('')}}catch(e){if(current())setError(String(e))}},[runId,beginRead])
   useEffect(()=>{setValue(null);void refresh();const id=setInterval(()=>void refresh(),5000);return()=>clearInterval(id)},[refresh])
   const act=async(action:string)=>{
     setBusy(true);setError('')

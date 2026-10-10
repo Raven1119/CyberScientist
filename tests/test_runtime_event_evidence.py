@@ -60,7 +60,7 @@ async def test_executor_public_fields_and_raw_usage_survive_without_secrets():
     events = [
         {"type": "execution.progress", "detail": "command completed saved-private-key",
          "status": "failed", "exit_code": 9, "item_id": "tool-1",
-         "output": "saved-private-key https://host/?accessKey=unknown-private-key&x=1 " + "x" * 15000},
+         "output": "saved-private-key https://host/?accessKey=unknown-private-key&x=1 " + "x" * 15000 + '\nFINAL: do not submit'},
         {"type": "usage.updated", "usage": {
             "total": {"inputTokens": 123, "outputTokens": 17}, "cost": None,
             "provider_note": "https://host/?api_key=other-private-key"}},
@@ -76,7 +76,7 @@ async def test_executor_public_fields_and_raw_usage_survive_without_secrets():
     assert progress["status"] == "failed" and progress["exit_code"] == 9
     assert progress["item_id"] == "tool-1"
     assert progress["output"].startswith("[REDACTED] https://host/?accessKey=[REDACTED]&x=1")
-    assert len(progress["output"]) <= 12000
+    assert progress['output'] == '[REDACTED] https://host/?accessKey=[REDACTED]&x=1 ' + 'x' * 15000 + '\nFINAL: do not submit'
     assert recorded[1]["payload"]["usage"]["total"] == {"inputTokens": 123, "outputTokens": 17}
     assert recorded[1]["payload"]["usage"]["cost"] is None
     assert recorded[2]["payload"]["usage"] is None

@@ -243,6 +243,7 @@ export interface RunDetail extends RunSummary {
 }
 
 export interface RunEvent {
+  run_id?: string
   event_id: string
   seq: number
   occurred_at: string

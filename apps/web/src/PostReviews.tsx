@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { api } from './api'
+import { useLatestRequest } from './useLatestRequest'
 
 interface Version { id: string; version: number; status: string; calls_used: number; native_call_limit: number; error?: string; report_md?: string }
 interface Reviews { status: string; error?: string; report_md?: string; versions: Version[] }
@@ -13,21 +14,32 @@ export default function PostReviews({ runId, phase }: { runId: string; phase: st
   const [rewrites, setRewrites] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const [viewing, setViewing] = useState(false)
+  const beginRead = useLatestRequest(runId)
   const terminal = ['finished', 'failed', 'cancelled'].includes(phase)
-  async function load() {
+  const load = useCallback(async () => {
+    const current = beginRead()
     try {
       const data = await api.get<Reviews>(`/api/v1/runs/${runId}/post-review`)
+      if (!current()) return
       setReviews(data)
       const operation = sessionStorage.getItem(key)
       if (operation && data.versions.some(version => version.id === operation)) {
         sessionStorage.removeItem(key); setPending(null); setAuthorized(false); setError('')
       } else { setError(operation ? '原授权尚未确认；保留操作标识，请继续核对，不发起另一复盘。' : '') }
     }
-    catch (problem) { setError(String(problem)) }
-  }
-  useEffect(() => { if (sessionStorage.getItem(key)) void load() }, [key])
+    catch (problem) { if (current()) setError(String(problem)) }
+  }, [runId, key, beginRead])
+  useEffect(() => { if (sessionStorage.getItem(key)) setViewing(true) }, [key])
+  useEffect(() => {
+    if (!viewing) return
+    void load()
+    const timer = window.setInterval(() => void load(), 5000)
+    return () => window.clearInterval(timer)
+  }, [viewing, load])
   async function repeat() {
     if (pending || busy) return
+    beginRead()
     setBusy(true); setError('')
     let operation = sessionStorage.getItem(key)
     if (!operation) { operation = crypto.randomUUID(); sessionStorage.setItem(key, operation) }
@@ -40,7 +52,7 @@ export default function PostReviews({ runId, phase }: { runId: string; phase: st
     finally { setBusy(false) }
   }
   return <article className="card card-body"><h2>完整复盘</h2>
-    <button type="button" disabled={busy} onClick={() => void load()}>查看复盘及历史版本</button>
+    <button type="button" disabled={busy} onClick={() => { if (viewing) void load(); else setViewing(true) }}>查看复盘及历史版本</button>
     {reviews && <><p>原复盘：{reviews.status} {reviews.error}</p>
       {reviews.report_md && <details><summary>原复盘报告</summary><pre>{reviews.report_md}</pre></details>}
       {reviews.versions.map(version => <details key={version.id}><summary>版本 {version.version} · {version.status} · 模型调用 {version.calls_used}/{version.native_call_limit}</summary>

@@ -128,11 +128,8 @@ def _salvage_review_result(result: Any) -> tuple[Any, list[str]]:
     if isinstance(wl, list):
         items: list[dict[str, Any]] = []
         for i, item in enumerate(wl):
-            if len(items) >= 3:
-                notes.append("watchlist 超过 3 项，多余项已截断")
-                break
             if isinstance(item, str) and item.strip():
-                items.append({"id": f"w{i + 1}", "hypothesis_md": item.strip()[:1000],
+                items.append({"id": f"w{i + 1}", "hypothesis_md": item.strip(),
                               "evidence_needed_md": "（大脑未说明）",
                               "intervene_when_md": "出现反证或新证据时",
                               "evidence_refs": []})
@@ -146,19 +143,21 @@ def _salvage_review_result(result: Any) -> tuple[Any, list[str]]:
                 refs = item.get("evidence_refs")
                 items.append({
                     "id": (str(item.get("id") or f"w{i + 1}").strip()
-                           or f"w{i + 1}")[:96],
-                    "hypothesis_md": hypothesis[:1000],
+                           or f"w{i + 1}"),
+                    "hypothesis_md": hypothesis,
                     "evidence_needed_md": str(
-                        item.get("evidence_needed_md") or "（大脑未说明）")[:1000],
+                        item.get("evidence_needed_md") or "（大脑未说明）"),
                     "intervene_when_md": str(
-                        item.get("intervene_when_md") or "出现反证或新证据时")[:1000],
-                    "evidence_refs": ([str(r)[:256] for r in refs if r][:32]
+                        item.get("intervene_when_md") or "出现反证或新证据时"),
+                    "evidence_refs": ([str(r) for r in refs if r]
                                       if isinstance(refs, list) else []),
                 })
                 notes.append(f"watchlist[{i}] 字段已规整")
             else:
                 notes.append(f"watchlist[{i}] 非法类型，已丢弃")
         fixed["watchlist"] = items
+        # Contract limits are validated by the caller. An overlong scientific
+        # condition must fail explicitly rather than lose its final qualifier.
     return fixed, notes
 
 
@@ -174,14 +173,14 @@ def _rid(prefix: str) -> str:
 
 
 def _redact(text: str | None, limit: int = 2000) -> str:
-    """指导文本入库前截断并遮蔽明显密钥形态（事件库等同日志）。"""
+    """Bounded audit excerpt. Never use this for a delivered instruction."""
     if not text:
         return ""
-    return observation.strip_secrets(text[:limit])
+    return observation.strip_secrets(text)[:limit]
 
 
 def _runtime_event_payload(payload: dict[str, Any]) -> dict[str, Any]:
-    """Public runtime evidence only, bounded and scrubbed before persistence."""
+    """Whitelist and scrub public evidence; canonical replies retain their body."""
     from .bohr_proxy import redact
 
     secrets = [value for value in config.sensitive_values() if isinstance(value, str)]
@@ -215,10 +214,23 @@ def _runtime_event_payload(payload: dict[str, Any]) -> dict[str, Any]:
             return value
         return "[unsupported]"
 
+    def complete(value: Any) -> Any:
+        # These are the public receipt/reply bodies used by research_trace.
+        # A diagnostic budget must not silently replace their final conditions.
+        if isinstance(value, str):
+            return safe_text(value)
+        if isinstance(value, dict):
+            return {safe_text(str(key)): complete(item) for key, item in value.items()}
+        if isinstance(value, list):
+            return [complete(item) for item in value]
+        if value is None or isinstance(value, (bool, int, float)):
+            return value
+        return '[unsupported]'
+
     limits = {"detail": 4000, "status": 128, "exit_code": 128, "item_id": 256,
               "output": 12000, "usage": 12000, "error": 4000,
               "text": 2000, "message": 2000}
-    return {name: clean(payload[name], [limit, 64])
+    return {name: complete(payload[name]) if name in ('output', 'text') else clean(payload[name], [limit, 64])
             for name, limit in limits.items() if name in payload}
 
 
@@ -727,13 +739,14 @@ class RunController:
         if not self._lifecycle_v2(run) or not run["pending_action_json"]:
             raise ControllerError("INVALID_STATE", "没有待处理的 Trial 意图")
         pending = json.loads(run["pending_action_json"])
+        reason = observation.strip_secrets(reason)
         with db.transaction() as conn:
             conn.execute("UPDATE runs SET pending_action_json=NULL,gate='open' WHERE id=?", (run_id,))
             db.append_event_tx(conn, run_id, "user", "run.pending_intent_dropped",
-                               {"reason": reason[:500], "pending_intent": pending})
+                               {"reason": reason, "pending_intent": pending})
         if run["phase"] == "running":
             self._enqueue_lifecycle(run_id, trigger="pending_intent_dropped",
-                                    user_guidance=f"用户放弃意图 {json.dumps(pending, ensure_ascii=False)}；原因：{reason[:500]}")
+                                    user_guidance=f"用户放弃意图 {json.dumps(pending, ensure_ascii=False)}；原因：{reason}")
         return self.run_snapshot(run_id)
 
     async def start_async(self, run_id: str) -> dict[str, Any]:
@@ -854,7 +867,7 @@ class RunController:
                     "SELECT status FROM operations WHERE operation_id=?", (operation_id,))
                 return {"status": existing["status"], "deduplicated": True}
             db.append_event(run_id, "user", "user.steer.queued",
-                            {"text": _redact(text), "status": "queued", "operation_id": operation_id})
+                            {"text": observation.strip_secrets(text or ''), "status": "queued", "operation_id": operation_id})
             db.bump_state_version(run_id)
             await q.put({"type": "steer", "text": text, "operation_id": operation_id})
             return {"status": "queued",
@@ -2593,7 +2606,7 @@ class RunController:
                     target_trial_id=trial_id, review_request_id=None, frame_id=None,
                     state_version=current['state_version'], evidence_revision=0, shadow_epoch=0,
                     g={'kind': 'steer', 'intent': 'continue', 'reason_md': reason,
-                       'text_md': _redact(
+                       'text_md': observation.strip_secrets(
                            f'流程阻塞，阶段：{stage}；错误：{code}。\n{detail}\n'
                            f'原始事实：{run_id}#{event_seq}。请检查并尝试修复后报告检查点。'
                            + '\n受控工具反馈：' + json.dumps(feedback, ensure_ascii=False) + '\n'
@@ -2623,7 +2636,7 @@ class RunController:
             if user_guidance:
                 conn.execute(
                     "UPDATE review_requests SET frame_json=? WHERE id=?",
-                    (json.dumps({"user_guidance": _redact(user_guidance)},
+                    (json.dumps({"user_guidance": observation.strip_secrets(user_guidance)},
                                 ensure_ascii=False), rid))
             if operation_id:
                 db.append_event_tx(conn, run_id, "controller", "user.steer.review_queued",

@@ -14,7 +14,7 @@ from typing import Any, AsyncIterator
 from ..brains.codex import CodexBrain, default_executable
 from ..codex_protocol import (deny_requests, initialize, open_thread, process_environment,
                               thread_params, verify_thread_config)
-from ..jsonrpc_stdio import JsonRpcStdio
+from ..jsonrpc_stdio import JsonRpcStdio, ProtocolError
 from . import ActionReceipt, PrimeHealth, with_stall_watchdog
 from .. import model_limits
 
@@ -29,6 +29,7 @@ class _Session:
     requests_task: asyncio.Task | None = None
     turn_id: str | None = None
     busy: bool = False
+    start_receipt_unknown: bool = False
     rate_generation: int = 0
     cwd: str | None = None
     home: str | None = None
@@ -100,6 +101,8 @@ class CodexExecutor:
         sess = self._sessions.get(session_id)
         if not sess:
             return ActionReceipt(status="rejected", detail="会话不存在")
+        if sess.start_receipt_unknown:
+            return ActionReceipt(status='rejected', detail='原生回合启动回执未知；先核对或关闭原会话，不重发')
         if sess.busy:
             return ActionReceipt(status="rejected", detail="上一回合仍在执行")
         sess.busy = True
@@ -124,19 +127,30 @@ class CodexExecutor:
             await sess.queue.put({"type": "execution.progress",
                                   "detail": f"turn 已开始: {result['turn']['id']}", "turn_id": result["turn"]["id"]})
         except Exception as exc:
-            sess.busy = False
-            sess.turn_id = None
             limited = model_limits.classify(exc)
+            rejected = False
+            if isinstance(exc, ProtocolError):
+                try:
+                    rejection = json.loads(str(exc))
+                    rejected = isinstance(rejection, dict) and rejection.get('code') in (-32700, -32600, -32601, -32602)
+                except (ValueError, TypeError):
+                    pass
+            sess.start_receipt_unknown = not (limited or rejected)
+            sess.busy = sess.start_receipt_unknown
+            sess.turn_id = None
             await sess.queue.put(
                 {"type": "model.rate_limited",
                  "retry_after_seconds": limited.retry_after_seconds,
                  "reason": limited.reason} if limited else
-                {"type": "run.aborted", "detail": f"turn/start 失败: {str(exc)[:500]}"})
+                {"type": "run.aborted", "detail": f"turn/start {'回执未知，未自动重发' if sess.start_receipt_unknown else '被拒绝'}: {str(exc)[:500]}",
+                 'code': 'NATIVE_TURN_UNKNOWN' if sess.start_receipt_unknown else 'NATIVE_REQUEST_REJECTED'})
 
     async def steer(self, session_id: str, text: str) -> ActionReceipt:
         sess = self._sessions.get(session_id)
         if not sess:
             return ActionReceipt(status="rejected", detail="会话不存在")
+        if sess.start_receipt_unknown:
+            return ActionReceipt(status='unknown', detail='turn/start 回执未知，不能声称空闲或猜测 turn ID')
         if not sess.busy:
             return await self.prompt(session_id, f"【人工指导】{text}")
         if not sess.turn_id:
@@ -154,6 +168,8 @@ class CodexExecutor:
         sess = self._sessions.get(session_id)
         if not sess:
             return ActionReceipt(status="rejected", detail="会话不存在")
+        if sess.start_receipt_unknown:
+            return ActionReceipt(status='unknown', detail='turn/start 回执未知；关闭并核对原会话之前，不声称已停止')
         if not sess.busy:
             return ActionReceipt(status="confirmed", detail="当前无活动 turn")
         if not sess.turn_id and sess.turn_task:
@@ -174,7 +190,7 @@ class CodexExecutor:
         sess = self._sessions.get(session_id)
         if not sess:
             return {"status": "unknown", "error": "会话不存在"}
-        return {"status": "streaming" if sess.busy else "idle",
+        return {"status": 'unknown' if sess.start_receipt_unknown else "streaming" if sess.busy else "idle",
                 "session_id": session_id, "turn_id": sess.turn_id}
 
     async def events(self, session_id: str) -> AsyncIterator[dict[str, Any]]:
@@ -242,7 +258,7 @@ class CodexExecutor:
                             "type": "execution.progress", "item_id": item.get("id"),
                             "detail": f"{itype} {'完成' if completed else '开始'}: {label[:2000]}",
                             "status": item.get("status"), "exit_code": item.get("exitCode"),
-                            "output": output[-12000:],
+                            "output": output,
                         })
                 elif method == "thread/tokenUsage/updated":
                     await emit({"type": "usage.updated", "usage": params.get("tokenUsage"),

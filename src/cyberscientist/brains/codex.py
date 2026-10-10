@@ -213,7 +213,7 @@ class CodexBrain:
                         yield BrainEvent("progress", {
                             "detail": f"{itype} {'完成' if completed else '开始'}: {label[:2000]}",
                             "status": item.get("status"), "exit_code": item.get("exitCode"),
-                            "output": output[-12000:], "item_id": item.get("id"),
+                            "output": output, "item_id": item.get("id"),
                             "item_type": itype, "command": item.get("command") if itype == "commandExecution" else None,
                         })
                     elif itype == "error":
