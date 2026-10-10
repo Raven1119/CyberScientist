@@ -98,3 +98,19 @@
 `ops prompts dump --target comp` 从运行中的比赛后端调用该版本自带的生成器。生成器在独立进程备份数据库、复制经验后渲染，不修改在用令牌、运行事实或原生记录，不启动模型。v2 比对基线为开发提交 `d6140cb`，补入比赛 v2 `b327babb0aaf32c83663e53cae029936efad33af` 的技能文件哈希；只记录哈希，不复制凭据。五个角色分别给出开发者指令、真实 RH-02 首条和代码模板、协议/事件/指导、工具、技能、经验、赛道提示。全部启用技能和 active 全局经验正文在共用附录完整收录。
 
 `tests/test_prompt_book_cs21.py`、原角色文本和内容导入回归合计 **14 passed**。全集实际生成、推送和最终版本证据将在发布后补记。供应商内建工具的隐藏定义不由应用代码提供，全集列出所有应用 MCP 定义，并明确此限制；不编造供应商文本。
+
+### W8 实际 MCP 等待证据
+
+比赛 `f967096` 经 stdio MCP 初始化、工具目录和一次 `research_job wait` 调用返回真实 RH-02 Bohrium Job **23515296** 的终态：`operation_id=triala_sigma0025_pair_cpu_v1`，`Finished`，`terminal=true`，`timed_out=false`，`waited_seconds=0.006`，请求上限 1200 秒。该 Job 在调用前已完成，所以此项验证真实 API/MCP 路径及终态返回，不声称验证了真实远端长耗时中途等待。运行中至终态和挂起读取硬超时见 23 项等待/MCP/协议回归。为验证等待未创建新 Job 或沙箱，模型调用 0；临时能力令牌验证后撤销。原始证据 `.package-checks/cs21/w8-real-wait.json` 保留在私有目录。
+
+### W9 实际迁移与首轮发布
+
+`ops release --commit 0b012a1 --target comp --timeout 240` completed，代码 manifest SHA `3eeb64f7c6e8d4f109afbe6afe117087823072864dae678b7d7220ffaa66df42`，私有快照 `0ed31de13bda477af208a96844da81e24f137985` 已推送。`.runtime/{releases,release-cache-history,previous,release-journal,release-aliases.json}` 五处均不存在，迁移后保留的全部缓存版本位于兄弟目录 `CyberScientist-comp-cache`。随后发布 `f967096` completed；回退和恢复证据后补。
+
+### W10 实际导出错误及修正
+
+首轮 `ops prompts dump` 返回 422：RH-02 事件的 `brain.raw_output` 只有 2000 字符摘要，完整交接在原生 PI 记录中，生成器未取得四段。修正为从该 Run 登记的 PI 会话 ID 在比赛原生目录唯一定位原始记录，只读解析完整已批准决定；不改记录，也不补造交接。
+
+全量回归发现 5 个原有本地计算开关断言失败：W9 删除开发编号后，旧替换仍只匹配 `按D-49`。同步匹配无编号的实际段落，保留全部原有测试。失败记录保留，不计通过；修正后的结果另记。
+
+修正后的 `tests/test_prompt_book_cs21.py tests/test_features_cs10.py`：**58 passed / 85.56 秒**；再次运行完整交接文本提取测试：**4 passed / 5.72 秒**。无 Git 的比赛目录按设计只接受完整缓存 SHA 或缓存标签；短 SHA 的回退在 prepare 阶段被拒，未停服务。随后用完整缓存 SHA 执行真实回退，结果后补。

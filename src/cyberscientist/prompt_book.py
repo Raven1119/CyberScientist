@@ -95,6 +95,10 @@ class Book:
 
 
 def _handoff(value):
+    if isinstance(value, str):
+        from .role_tasks import extract
+        parsed=extract(value)
+        return _handoff(parsed) if parsed else None
     if isinstance(value, dict):
         if isinstance(value.get('clean_handoff'), dict):
             return value['clean_handoff']
@@ -165,6 +169,32 @@ def generate(run_id='run_c726779523'):
             handoff = _handoff(json.loads(event['payload']))
             if handoff:
                 break
+        if not handoff:
+            # Event summaries are bounded to 2000 characters. The registered
+            # provider record retains the complete approved decision.
+            for event in db.query("SELECT payload FROM events WHERE run_id=? AND payload LIKE '%native_log_path%' ORDER BY seq DESC",(run_id,)):
+                metadata=json.loads(event['payload'])
+                if metadata.get('role')!='brain' or metadata.get('session_id')!=run['brain_thread_id']:
+                    continue
+                if metadata.get('native_log_path'):
+                    path=Path(metadata['native_log_path'])
+                else:
+                    matches=list((root/'.runtime/codex/sessions').rglob('*-'+run['brain_thread_id']+'.jsonl'))
+                    if len(matches)!=1:
+                        raise ValueError('Registered brain session must have exactly one provider record')
+                    path=matches[0]
+                if not path.resolve().is_relative_to((root/'.runtime/codex/sessions').resolve()):
+                    raise ValueError('Registered brain record is outside competition native storage')
+                with path.open() as native:
+                    for line in native:
+                        item=json.loads(line);payload=item.get('payload',{})
+                        if item.get('type')=='response_item' and payload.get('type')=='message' and payload.get('role')=='assistant':
+                            for content in payload.get('content',[]):
+                                found=_handoff(content.get('text',''))
+                                if found:
+                                    handoff=found
+                if handoff:
+                    break
         if not handoff:
             raise ValueError('No actual clean handoff in RH-02 evidence')
         clean_trial = db.query_one('SELECT * FROM trials WHERE run_id=? ORDER BY rowid DESC LIMIT 1', (run_id,))

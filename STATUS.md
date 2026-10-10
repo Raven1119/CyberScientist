@@ -1545,3 +1545,10 @@ CS-UP-13 工作包提交索引（按Git事实，最终W8标签另录）：
 - 已实际验证：`PATH=/home/wmywb/.local/bin:$PATH .venv/bin/pytest -q tests/test_prompt_book_cs21.py tests/test_role_prompts_cs19.py tests/test_content_import_cs20.py`：14 passed。导出源函数、嵌套历史交接、无服务端配置变更和中文相邻开发编号扫描通过。
 - 尚未验证：比赛目录实际命令生成、全集推送、最终全量回归；供应商隐藏内建工具定义不由应用导出，全集明确此范围。
 - 阻塞项：无；发布迁移、真实等待及回退仍在执行。
+
+### CS-UP-21 W8/W9：实际调用及迁移
+- 已实际验证：比赛版本 `f967096` 上，真实 MCP stdio `research_job(action=wait,operation_id=triala_sigma0025_pair_cpu_v1,timeout=1200)` 仅调用一次，返回 `Finished/terminal=true/timed_out=false`，等待 0.006 秒。对应真实 Bohrium Job 23515296 在入参时已结束；未新建 Job/沙箱，模型调用 0。运行中转终态和硬超时由服务器等待回归覆盖，真实长耗时非终态等待尚未验证。
+- 已实际验证：`ops release --commit 0b012a1 --target comp --timeout 240` completed；22 技能的私有快照 `0ed31de13bda477af208a96844da81e24f137985` 已推送；旧缓存均迁至 `/home/wmywb/CyberScientist-comp-cache/`，比赛 `.runtime` 五个缓存位置均不存在。
+- 尚未验证：回退和恢复最新版本正在执行；最终全量后端回归尚未完成。
+- 阻塞项：全集首轮实际导出因 RH-02 事件仅保留 2000 字符摘要、缺完整 clean_handoff 失败；改用登记的原生 PI 会话只读提取。移除开发编号后本地计算开关旧匹配失效，5 个原有回归失败；匹配已同步修正，原测试保留重跑。
+- 已实际验证：W10 与原本地计算开关回归修正后 **58 passed**；随后完整交接 JSON 文本提取回归 **4 passed**。无 Git 的缓存回退拒绝短 SHA，发生在 prepare 阶段、未停服务；已改用缓存完整 SHA 重新执行。

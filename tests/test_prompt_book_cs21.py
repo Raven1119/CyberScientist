@@ -38,3 +38,4 @@ def test_server_export_uses_child_process_without_mutating_paths(monkeypatch):
 def test_handoff_uses_actual_nested_action():
     handoff={'method_md':'real method'}
     assert prompt_book._handoff({'decision':{'actions':[{'clean_handoff':handoff}]}})==handoff
+    assert prompt_book._handoff('```json\n'+json.dumps({'actions':[{'clean_handoff':handoff}]})+'\n```')==handoff
