@@ -44,3 +44,9 @@
 ### W2 全组检查发现的旧断言同步
 
 - 已实际验证：全组检查的两项失败是test_content_import_cs20固定v2提交技能/用户模板哈希及roles/pi/executor v2标记；依用户追加要求同步为授权v3，其他技能正文哈希断言保持。包括该旧组在内的全部提示词/角色/技能回归40 passed in 49.73s；没有删除或跳过测试。
+
+### W4 忙时改向补充复核
+
+- 已实现：PI停止当前路线但仍有已授权未尝试通道时，既有换路转换明确使用change_direction，确保也走当前回合忙时插入。
+- 已实际验证：PATH=/home/wmywb/.local/bin:$PATH .venv/bin/pytest -q tests/test_urgent_guidance_cs21.py tests/test_content_import_cs20.py tests/test_output_only_package_cs20.py：14 passed in 9.92s；保持原ACK和原生字节规则。
+- 已实际验证：首轮全量1912 passed、3 failed，原因分别为两项v2固定断言和测试PATH缺Linux Node；已修正断言及测试启动环境，完整重跑中，不跳过测试。

@@ -3343,7 +3343,7 @@ class RunController:
                     'via': 'review_result_stop', 'untried_authorized_channels': channels,
                     'notice': 'PI 停止当前路线改为换路指导；仍有授权通道，用户手动暂停可用'})
                 result = {**result, 'guidance': {**result['guidance'], 'kind': 'steer',
-                    'intent': 'continue', 'text_md': result['guidance']['text_md'] +
+                    'intent': 'change_direction', 'text_md': result['guidance']['text_md'] +
                     '\n请尝试尚未使用的授权通道：' + ', '.join(channels)}}
         with db.transaction() as conn:
             sup = conn.execute("SELECT * FROM supervision WHERE run_id=?",
