@@ -1603,3 +1603,10 @@ CS-UP-13 工作包提交索引（按Git事实，最终W8标签另录）：
 - 已实际验证：WebBridge 实际比赛前端的 `run_cc0251a839` 题目/完整 Run ID/已终止状态/冻结模型逐项匹配后端，冻结模型和下次研究配置分别展示；350 个查看 API 请求均 GET。发布前后 52 个 Run、15 条提交 ID 一致；设置及凭据文件指纹未变，自动提交仍 true、队列 0、未暂停。隔离 Demo 已停止，比赛 PID 33103 唯一监听 http://localhost:8765/。证据见 `docs/FRONTEND_SYNC_DEBUG_2026-10-10.md`；最终文档提交不改变已发布运行代码。
 - 尚未验证：本次未追加真实原生模型调用/科研/提交；协议 fixture 不作为真实模型调用证据。供应商上下文与原生 64 MiB 单帧上限保留，越界明确失败；不声称排除所有可能死锁，已复现的背压/长 stderr/回执未知/响应倒退路径已修复验证。
 - 阻塞项：无当前施工阻塞；保留旧完整复盘缺块失败，本次不追加模型授权或重做科研。
+
+### 2026-10-10 Watch 字段上限热修复（LC-HOTFIX）
+- 已实现：ReviewResult 的 Watch 中 hypothesis_md、evidence_needed_md、intervene_when_md 上限由 1000 改为 4000；id、evidence_refs 及其余契约逐项比较一致，不增加裁剪或改变恢复流程。
+- 已实际验证：新增三个字段各 1500 字的控制器回归，审阅 done、全文落库、Run 保持 running、无 brain.error；旧契约下该回归 1 failed，新契约相关测试命令 `PATH=/home/wmywb/.local/bin:$PATH .venv/bin/python -m pytest tests/test_collaboration.py tests/test_message_integrity.py tests/test_rule_simplification.py tests/test_review_defects_cs12.py -q` 得到 123 passed in 74.11s；差异检查与有界审查通过。
+- 已实际验证：提交前全量比赛事件查询“ReviewResult 契约校验失败”0 命中，没有对应 Run 需要手动恢复。发布前临时监测每 2 秒检查该错误，仅对命中的原 Run 使用现有恢复/监督接口，原始回执保存在 `.package-checks/lc-hotfix-watch/`，不入 Git。
+- 尚未验证：本次不增加真实 PI 模型调用、科研 Job 或比赛提交；新增回归使用控制器与隔离 SQLite、合成代理，不能冒充原生模型往返。比赛发布结果由同目录 release.json 与发布后核验回执记录。
+- 阻塞项：当前无施工阻塞；保留既有历史未知外部操作，比赛目录继续通过发布白名单排除开发文档。

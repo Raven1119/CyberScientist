@@ -1157,6 +1157,34 @@ async def test_trial_prompt_without_skills_unchanged(tmp_path, monkeypatch):
 
 # ---------- 容错：格式问题不整单拒收 ----------
 
+async def test_review_accepts_1500_character_watch_without_truncation():
+    """1500 字监视项通过真实接受入口，完整落库且不阻塞 Run。"""
+    _seed_challenge()
+    c, brain, ex = _rig(shadow=True)
+    rid = c.create_run("COLLAB_CH", shadow_enabled=True)["id"]
+    await _start(c, brain, rid)
+    collab.submit_checkpoint(rid, {
+        "schema_version": 1, "message_type": "checkpoint",
+        "checkpoint_key": "long-watch", "review": "async", "stage": "progress",
+        "report_md": "r", "evidence_refs": []},
+        source="executor", notify=c.notify_run_change)
+    assert await _wait(lambda: len(brain.calls) >= 2)
+    watch = {"id": "long-watch", "hypothesis_md": "假" * 1500,
+             "evidence_needed_md": "据" * 1500,
+             "intervene_when_md": "时" * 1500, "evidence_refs": []}
+    frame = brain.calls[-1]
+    await brain.results.put({"review_result": _review_result(
+        frame["frame_id"], watchlist=[watch])})
+    assert await _wait(lambda: db.query_one(
+        "SELECT status FROM review_requests WHERE run_id=? AND source='executor'",
+        (rid,))["status"] == "done")
+    stored = db.query_one("SELECT watchlist FROM supervision WHERE run_id=?", (rid,))
+    assert json.loads(stored["watchlist"]) == [watch]
+    assert c.run_snapshot(rid)["phase"] == "running"
+    assert not any(e["type"] == "brain.error" for e in db.events_after(rid, 0))
+    await c.control(rid, "terminate", None, "op-term-long-watch")
+
+
 async def test_review_salvage_string_watchlist():
     """watchlist 写成字符串数组：就地包装为 Watch 对象接受，笔记与审阅不陪葬。"""
     _seed_challenge()

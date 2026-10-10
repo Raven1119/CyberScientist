@@ -495,17 +495,17 @@
         "hypothesis_md": {
           "type": "string",
           "minLength": 1,
-          "maxLength": 1000
+          "maxLength": 4000
         },
         "evidence_needed_md": {
           "type": "string",
           "minLength": 1,
-          "maxLength": 1000
+          "maxLength": 4000
         },
         "intervene_when_md": {
           "type": "string",
           "minLength": 1,
-          "maxLength": 1000
+          "maxLength": 4000
         },
         "evidence_refs": {
           "type": "array",
